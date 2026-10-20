@@ -1,0 +1,33 @@
+{
+  "asr_vocabulary": [
+    "ฝน",
+    "ลุงเล็ก"
+  ],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "media": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+      "duration_ms": 240000
+    }
+  ],
+  "questions": [
+    {
+      "question_id": "q-speakers",
+      "text": "Who is speaking in each interval, and what do they say?"
+    },
+    {
+      "question_id": "q-amounts",
+      "text": "List any numbers or amounts that are spoken or shown on screen."
+    }
+  ],
+  "request_id": "5e619c21-67e1-5c39-93ff-629e1a5227e0",
+  "reservation_id": null,
+  "sampling": {
+    "dense_ranges": [],
+    "frames_per_window": 2,
+    "window_ms": 2000
+  },
+  "schema_version": "1.0",
+  "transcript_locale": "th-TH"
+}

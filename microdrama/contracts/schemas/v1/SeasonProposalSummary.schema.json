@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "SeasonState": {
+      "enum": [
+        "PROPOSED",
+        "SEASON_APPROVED",
+        "ACTIVE",
+        "COMPLETE",
+        "REJECTED",
+        "CANCELLED"
+      ],
+      "title": "SeasonState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:SeasonProposalSummary",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "logline": {
+      "title": "Logline",
+      "type": "string"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "title": "Proposal Id",
+      "type": "string"
+    },
+    "research_spend_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Research Spend Micro Usd",
+      "type": "integer"
+    },
+    "revision": {
+      "description": "Optimistic revision",
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Scope Hash",
+      "type": "string"
+    },
+    "scope_version": {
+      "minimum": 0,
+      "title": "Scope Version",
+      "type": "integer"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/SeasonState"
+    },
+    "title_en": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Title En",
+      "type": "string"
+    },
+    "title_th": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Title Th",
+      "type": "string"
+    },
+    "uncertainty_notes": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Uncertainty Notes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "season_id",
+    "proposal_id",
+    "state",
+    "revision",
+    "scope_version",
+    "scope_hash",
+    "title_th",
+    "title_en",
+    "logline",
+    "research_spend_micro_usd"
+  ],
+  "title": "SeasonProposalSummary",
+  "type": "object"
+}

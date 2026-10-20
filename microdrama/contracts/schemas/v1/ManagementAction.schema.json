@@ -1,0 +1,221 @@
+{
+  "$defs": {
+    "ActionDecision": {
+      "enum": [
+        "PROPOSED",
+        "EXECUTED",
+        "SUPPRESSED",
+        "DEFERRED",
+        "FAILED",
+        "NEEDS_RECONCILIATION"
+      ],
+      "title": "ActionDecision",
+      "type": "string"
+    },
+    "CostBasis": {
+      "description": "How an amount was established. Only PROVIDER_REPORTED/BILLED are measured.",
+      "enum": [
+        "SYNTHETIC_FAKE",
+        "ESTIMATED",
+        "PROVIDER_REPORTED",
+        "BILLED"
+      ],
+      "title": "CostBasis",
+      "type": "string"
+    },
+    "ManagementActionKind": {
+      "enum": [
+        "TITLE_EDIT",
+        "CAPTION_EDIT",
+        "DESCRIPTION_EDIT",
+        "HASHTAG_EDIT",
+        "COVER_CHANGE",
+        "LINK_UPDATE",
+        "PUBLIC_REPLY",
+        "DM_SEND",
+        "MODERATE_HIDE",
+        "MODERATE_DELETE",
+        "MODERATE_REPORT",
+        "NO_ACTION"
+      ],
+      "title": "ManagementActionKind",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ManagementAction",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Account Ref",
+      "type": "string"
+    },
+    "action_id": {
+      "format": "uuid",
+      "title": "Action Id",
+      "type": "string"
+    },
+    "catalog_version": {
+      "minimum": 1,
+      "title": "Catalog Version",
+      "type": "integer"
+    },
+    "classifier_confidence_bp": {
+      "anyOf": [
+        {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Classifier Confidence Bp"
+    },
+    "community_event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Community Event Id"
+    },
+    "content": {
+      "anyOf": [
+        {
+          "maxLength": 5000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Content"
+    },
+    "cost_basis": {
+      "$ref": "#/$defs/CostBasis",
+      "default": "ESTIMATED"
+    },
+    "decision": {
+      "$ref": "#/$defs/ActionDecision",
+      "default": "PROPOSED"
+    },
+    "dedupe_key": {
+      "maxLength": 400,
+      "minLength": 3,
+      "pattern": "^[A-Za-z0-9._:/\\-|=]+$",
+      "title": "Dedupe Key",
+      "type": "string"
+    },
+    "estimated_cost_micro_usd": {
+      "default": 0,
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Estimated Cost Micro Usd",
+      "type": "integer"
+    },
+    "kind": {
+      "$ref": "#/$defs/ManagementActionKind"
+    },
+    "management_policy_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Management Policy Hash",
+      "type": "string"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "platform_post_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform Post Id"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reservation Id"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target_external_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target External Id"
+    }
+  },
+  "required": [
+    "action_id",
+    "kind",
+    "platform",
+    "account_ref",
+    "catalog_version",
+    "management_policy_hash",
+    "dedupe_key"
+  ],
+  "title": "ManagementAction",
+  "type": "object"
+}

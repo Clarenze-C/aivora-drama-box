@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "ReleaseState": {
+      "enum": [
+        "RELEASE_APPROVED",
+        "SCHEDULED",
+        "SUBMITTED",
+        "PROCESSING",
+        "PUBLISHED_VERIFIED",
+        "RETRY_WAIT",
+        "NEEDS_RECONCILIATION",
+        "HELD",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "ReleaseState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:PublishResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "external_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Id"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "retry_after_ms": {
+      "anyOf": [
+        {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry After Ms"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/ReleaseState"
+    },
+    "transient": {
+      "default": false,
+      "title": "Transient",
+      "type": "boolean"
+    },
+    "unverified_fields": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Unverified Fields",
+      "type": "array"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Url"
+    },
+    "verified_fields": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Verified Fields",
+      "type": "array"
+    }
+  },
+  "required": [
+    "state",
+    "provenance"
+  ],
+  "title": "PublishResult",
+  "type": "object"
+}

@@ -1,0 +1,81 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:ImageRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "client_token": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "height": {
+      "minimum": 1,
+      "title": "Height",
+      "type": "integer"
+    },
+    "model_config_ref": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Model Config Ref",
+      "type": "string"
+    },
+    "prompt_text": {
+      "maxLength": 4000,
+      "title": "Prompt Text",
+      "type": "string"
+    },
+    "reference_asset_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Reference Asset Ids",
+      "type": "array"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reservation_id": {
+      "format": "uuid",
+      "title": "Reservation Id",
+      "type": "string"
+    },
+    "rights_route_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Rights Route Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seed": {
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "width": {
+      "minimum": 1,
+      "title": "Width",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "model_config_ref",
+    "rights_route_id",
+    "prompt_text",
+    "width",
+    "height",
+    "seed",
+    "client_token",
+    "reservation_id"
+  ],
+  "title": "ImageRequest",
+  "type": "object"
+}

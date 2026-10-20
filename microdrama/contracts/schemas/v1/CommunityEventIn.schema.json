@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "CommunityEventKind": {
+      "enum": [
+        "COMMENT",
+        "REPLY",
+        "DIRECT_MESSAGE",
+        "MENTION",
+        "POST_STATUS"
+      ],
+      "title": "CommunityEventKind",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:CommunityEventIn",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Account Ref",
+      "type": "string"
+    },
+    "author_ref": {
+      "description": "Provider user id or hash; no private contact data",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Author Ref",
+      "type": "string"
+    },
+    "dm_window_expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dm Window Expires At"
+    },
+    "external_post_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Post Id"
+    },
+    "in_reply_to": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "In Reply To"
+    },
+    "kind": {
+      "$ref": "#/$defs/CommunityEventKind"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "provider_event_id": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Provider Event Id",
+      "type": "string"
+    },
+    "received_at": {
+      "format": "date-time",
+      "title": "Received At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "text": {
+      "default": "",
+      "description": "Untrusted data; never instructions",
+      "maxLength": 5000,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "provider_event_id",
+    "kind",
+    "platform",
+    "account_ref",
+    "author_ref",
+    "received_at",
+    "provenance"
+  ],
+  "title": "CommunityEventIn",
+  "type": "object"
+}

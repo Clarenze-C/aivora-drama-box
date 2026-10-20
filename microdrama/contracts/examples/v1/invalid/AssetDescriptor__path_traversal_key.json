@@ -1,0 +1,32 @@
+{
+  "asset_id": "2887cccd-5c15-505a-a6dd-0501bd10b846",
+  "asset_kind": "VIDEO",
+  "created_at": "2026-10-20T00:00:00Z",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "license_refs": [],
+  "lineage": [
+    "c3bcd991-5a5b-57d9-bf58-ace7aa00e2a1"
+  ],
+  "media": {
+    "audio_codec": "aac",
+    "channels": 2,
+    "duration_ms": 4000,
+    "fps_den": 1,
+    "fps_num": 24,
+    "has_audio": true,
+    "has_video": true,
+    "height": 1280,
+    "sample_rate_hz": 48000,
+    "video_codec": "h264",
+    "width": 720
+  },
+  "media_type": "video/mp4",
+  "object_key": "episodes/../../etc/passwd",
+  "provenance": "FAKE_SYNTHETIC",
+  "schema_version": "1.0",
+  "season_id": null,
+  "sha256": "aaeaaa5d30c2f7f7e0ec8ae39172dcf1f057f3ccd370a7c7c53bc0ecc2d18b3d",
+  "size_bytes": 1234567,
+  "state": "ACCEPTED",
+  "version": 1
+}

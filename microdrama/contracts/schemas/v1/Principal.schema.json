@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "PrincipalKind": {
+      "enum": [
+        "HUMAN_OWNER",
+        "SERVICE_WORKER",
+        "RUNTIME_MODEL",
+        "PROVIDER_WEBHOOK",
+        "SCHEDULER"
+      ],
+      "title": "PrincipalKind",
+      "type": "string"
+    },
+    "RuntimeRole": {
+      "description": "Runtime application model roles (not development agents).",
+      "enum": [
+        "STORY_ARCHITECT",
+        "RESEARCHER",
+        "CRITIC",
+        "CLASSIFIER",
+        "OBSERVER",
+        "COMPARATOR",
+        "COMMUNITY_RESPONDER",
+        "METADATA_WRITER"
+      ],
+      "title": "RuntimeRole",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:Principal",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Who is acting. Only HUMAN_OWNER principals carry a human session.\n\nApproval events require a HUMAN_OWNER principal with a live human session;\nworker, model, webhook and scheduler principals can never produce them.",
+  "properties": {
+    "kind": {
+      "$ref": "#/$defs/PrincipalKind"
+    },
+    "principal_id": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Principal Id",
+      "type": "string"
+    },
+    "runtime_role": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeRole"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "scopes": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Scopes",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "session_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Human review session (humans only)",
+      "title": "Session Id"
+    }
+  },
+  "required": [
+    "principal_id",
+    "kind"
+  ],
+  "title": "Principal",
+  "type": "object"
+}

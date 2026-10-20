@@ -1,0 +1,106 @@
+{
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "episode_number": 2,
+  "identity_lock_id": null,
+  "manifest_id": "1e653402-e5da-5982-8803-d232fd97acc9",
+  "schema_version": "1.0",
+  "script_id": "938cea0d-e838-52a7-9ad7-1d25fa31d216",
+  "script_version": 1,
+  "shots": [
+    {
+      "acceptance_criteria": [
+        "ledger amount readable via composite insert",
+        "Fon identity matches anchor"
+      ],
+      "coverage_role": "evidence_or_action",
+      "depends_on_shot_ids": [],
+      "dialogue_complexity": "SINGLE_SPEAKER",
+      "dramatic_importance": "HIGH",
+      "eyelines": "Fon looks down-left at ledger",
+      "fallback_edit": "COMPOSITE_TEXT_INSERT",
+      "framing": "medium close-up, ledger in lower third",
+      "line_ids": [
+        "s1-l1"
+      ],
+      "location_id": "stall",
+      "outfit_ids": [
+        "fon-apron-v1"
+      ],
+      "preferred_render_tier": "quality_eight_step",
+      "prop_ids": [
+        "ledger-v1"
+      ],
+      "purpose": "Fon reads the ledger amount.",
+      "reference_lock_version": null,
+      "required_identity_controls": [
+        "CHARACTER_REFERENCE",
+        "FIRST_FRAME"
+      ],
+      "required_reference_asset_ids": [
+        "c3bcd991-5a5b-57d9-bf58-ace7aa00e2a1"
+      ],
+      "scene_id": "s1",
+      "sequence": 1,
+      "shot_id": "sh1",
+      "shot_pattern_id": "revelation_v1",
+      "sound": "stall ambience, distant traffic",
+      "speaker_ids": [
+        "fon"
+      ],
+      "target_duration_ms": 4000,
+      "temporal_risk": "MEDIUM",
+      "voice_ids": [
+        "voice-fon-v1"
+      ]
+    },
+    {
+      "acceptance_criteria": [
+        "ledger amount readable via composite insert",
+        "Fon identity matches anchor"
+      ],
+      "coverage_role": "evidence_or_action",
+      "depends_on_shot_ids": [
+        "sh1"
+      ],
+      "dialogue_complexity": "SINGLE_SPEAKER",
+      "dramatic_importance": "HIGH",
+      "eyelines": "Fon looks down-left at ledger",
+      "fallback_edit": "COMPOSITE_TEXT_INSERT",
+      "framing": "medium close-up, ledger in lower third",
+      "line_ids": [
+        "s1-l1"
+      ],
+      "location_id": "stall",
+      "outfit_ids": [
+        "fon-apron-v1"
+      ],
+      "preferred_render_tier": "quality_eight_step",
+      "prop_ids": [
+        "ledger-v1"
+      ],
+      "purpose": "Fon reads the ledger amount.",
+      "reference_lock_version": null,
+      "required_identity_controls": [
+        "CHARACTER_REFERENCE",
+        "FIRST_FRAME"
+      ],
+      "required_reference_asset_ids": [
+        "c3bcd991-5a5b-57d9-bf58-ace7aa00e2a1"
+      ],
+      "scene_id": "s1",
+      "sequence": 2,
+      "shot_id": "sh2",
+      "shot_pattern_id": "revelation_v1",
+      "sound": "stall ambience, distant traffic",
+      "speaker_ids": [
+        "fon"
+      ],
+      "target_duration_ms": 4000,
+      "temporal_risk": "MEDIUM",
+      "voice_ids": [
+        "voice-fon-v1"
+      ]
+    }
+  ],
+  "version": 1
+}

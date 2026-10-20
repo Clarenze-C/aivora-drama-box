@@ -1,0 +1,177 @@
+{
+  "$defs": {
+    "MediaUnderReview": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "duration_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "asset_id",
+        "asset_sha256",
+        "duration_ms"
+      ],
+      "title": "MediaUnderReview",
+      "type": "object"
+    },
+    "NeutralQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "question_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Question Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "text"
+      ],
+      "title": "NeutralQuestion",
+      "type": "object"
+    },
+    "SamplingPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "dense_ranges": {
+          "description": "Ranges needing dense local review (e.g. lip-sync)",
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "description": "Integer milliseconds",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Integer milliseconds",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Dense Ranges",
+          "type": "array"
+        },
+        "frames_per_window": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Frames Per Window",
+          "type": "integer"
+        },
+        "window_ms": {
+          "default": 2000,
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Window Ms",
+          "type": "integer"
+        }
+      },
+      "title": "SamplingPlan",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ObservationRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Pass A input: actual media + neutral questions only.",
+  "properties": {
+    "asr_vocabulary": {
+      "description": "Neutral vocabulary assistance (names/places); logged; never expected lines",
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Asr Vocabulary",
+      "type": "array"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "media": {
+      "items": {
+        "$ref": "#/$defs/MediaUnderReview"
+      },
+      "minItems": 1,
+      "title": "Media",
+      "type": "array"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/NeutralQuestion"
+      },
+      "minItems": 1,
+      "title": "Questions",
+      "type": "array"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reservation Id"
+    },
+    "sampling": {
+      "$ref": "#/$defs/SamplingPlan"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "transcript_locale": {
+      "default": "th-TH",
+      "description": "e.g. th-TH",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+      "title": "Transcript Locale",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "episode_id",
+    "media",
+    "questions"
+  ],
+  "title": "ObservationRequest",
+  "type": "object"
+}

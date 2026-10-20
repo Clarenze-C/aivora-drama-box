@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "HookAssignment": {
+      "additionalProperties": false,
+      "description": "Planned/actual exposure of a candidate in an eligible slot (ledger row).",
+      "properties": {
+        "account_ref": {
+          "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+          "title": "Account Ref",
+          "type": "string"
+        },
+        "candidate_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "cohort": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Cohort",
+          "type": "string"
+        },
+        "offer_ref": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offer Ref"
+        },
+        "paid_spend_micro_usd": {
+          "default": 0,
+          "description": "Signed integer micro-USD",
+          "title": "Paid Spend Micro Usd",
+          "type": "integer"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "release_slot": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Release Slot",
+          "type": "string"
+        },
+        "scheduled_utc": {
+          "format": "date-time",
+          "title": "Scheduled Utc",
+          "type": "string"
+        },
+        "subtitle_locale": {
+          "anyOf": [
+            {
+              "description": "e.g. th-TH",
+              "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtitle Locale"
+        },
+        "traffic": {
+          "$ref": "#/$defs/TrafficKind",
+          "default": "ORGANIC"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "platform",
+        "account_ref",
+        "release_slot",
+        "cohort",
+        "scheduled_utc"
+      ],
+      "title": "HookAssignment",
+      "type": "object"
+    },
+    "HookCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "changed_framing": {
+          "title": "Changed Framing",
+          "type": "boolean"
+        },
+        "duration_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "edl_id": {
+          "format": "uuid",
+          "title": "Edl Id",
+          "type": "string"
+        },
+        "reading_load_note": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reading Load Note",
+          "type": "string"
+        },
+        "source_asset_ids": {
+          "description": "Existing accepted footage only",
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Asset Ids",
+          "type": "array"
+        },
+        "treatment": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Treatment",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "edl_id",
+        "duration_ms",
+        "source_asset_ids",
+        "treatment",
+        "changed_framing",
+        "reading_load_note"
+      ],
+      "title": "HookCandidate",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "TrafficKind": {
+      "enum": [
+        "ORGANIC",
+        "PAID",
+        "UNKNOWN"
+      ],
+      "title": "TrafficKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:HookExperiment",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Three candidates from accepted footage; no fresh video renders (IMP-07).",
+  "properties": {
+    "assignments": {
+      "items": {
+        "$ref": "#/$defs/HookAssignment"
+      },
+      "title": "Assignments",
+      "type": "array"
+    },
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/HookCandidate"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Candidates",
+      "type": "array"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "experiment_id": {
+      "format": "uuid",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "new_video_render_job_ids": {
+      "description": "Must stay empty",
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 0,
+      "title": "New Video Render Job Ids",
+      "type": "array"
+    },
+    "observational_only": {
+      "default": true,
+      "description": "Organic comparisons are not causal",
+      "title": "Observational Only",
+      "type": "boolean"
+    },
+    "primary_outcome": {
+      "default": "engaged_viewing_and_next_episode_continuation",
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Primary Outcome",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "episode_id",
+    "candidates"
+  ],
+  "title": "HookExperiment",
+  "type": "object"
+}

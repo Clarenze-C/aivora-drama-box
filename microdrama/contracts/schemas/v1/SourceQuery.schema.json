@@ -1,0 +1,61 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:SourceQuery",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allowed_source_ids": {
+      "description": "Approved sources only",
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Allowed Source Ids",
+      "type": "array"
+    },
+    "max_results": {
+      "default": 20,
+      "minimum": 1,
+      "title": "Max Results",
+      "type": "integer"
+    },
+    "query_id": {
+      "format": "uuid",
+      "title": "Query Id",
+      "type": "string"
+    },
+    "query_text": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Query Text",
+      "type": "string"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reservation Id"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query_id",
+    "query_text",
+    "allowed_source_ids"
+  ],
+  "title": "SourceQuery",
+  "type": "object"
+}

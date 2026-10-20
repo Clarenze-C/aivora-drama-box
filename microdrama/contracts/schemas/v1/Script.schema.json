@@ -1,0 +1,227 @@
+{
+  "$defs": {
+    "CriticalTerm": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CriticalTermKind"
+        },
+        "value_en": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value En"
+        },
+        "value_th": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Value Th",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value_th"
+      ],
+      "title": "CriticalTerm",
+      "type": "object"
+    },
+    "CriticalTermKind": {
+      "enum": [
+        "NAME",
+        "MONEY",
+        "NUMBER",
+        "NEGATION",
+        "RELATIONSHIP_TERM",
+        "DATE_TIME"
+      ],
+      "title": "CriticalTermKind",
+      "type": "string"
+    },
+    "DialogueLine": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_duration_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "From actual synthesized audio; None until measured",
+          "title": "Actual Duration Ms"
+        },
+        "critical_terms": {
+          "items": {
+            "$ref": "#/$defs/CriticalTerm"
+          },
+          "title": "Critical Terms",
+          "type": "array"
+        },
+        "estimated_duration_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Estimated Duration Ms",
+          "type": "integer"
+        },
+        "line_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Line Id",
+          "type": "string"
+        },
+        "speaker_character_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Speaker Character Id",
+          "type": "string"
+        },
+        "text_en": {
+          "description": "English translation",
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Text En",
+          "type": "string"
+        },
+        "text_th": {
+          "description": "Exact Thai line",
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Text Th",
+          "type": "string"
+        },
+        "voice_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voice Id"
+        }
+      },
+      "required": [
+        "line_id",
+        "speaker_character_id",
+        "text_th",
+        "text_en",
+        "estimated_duration_ms"
+      ],
+      "title": "DialogueLine",
+      "type": "object"
+    },
+    "Scene": {
+      "additionalProperties": false,
+      "properties": {
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/DialogueLine"
+          },
+          "title": "Lines",
+          "type": "array"
+        },
+        "location_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Location Id",
+          "type": "string"
+        },
+        "scene_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_id",
+        "location_id",
+        "summary"
+      ],
+      "title": "Scene",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:Script",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approved_scope_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Approved Scope Hash",
+      "type": "string"
+    },
+    "canon_version": {
+      "minimum": 0,
+      "title": "Canon Version",
+      "type": "integer"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "estimated_runtime_ms": {
+      "description": "Integer milliseconds > 0",
+      "exclusiveMinimum": 0,
+      "title": "Estimated Runtime Ms",
+      "type": "integer"
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/Scene"
+      },
+      "minItems": 1,
+      "title": "Scenes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_id": {
+      "format": "uuid",
+      "title": "Script Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "script_id",
+    "episode_id",
+    "version",
+    "approved_scope_hash",
+    "canon_version",
+    "scenes",
+    "estimated_runtime_ms"
+  ],
+  "title": "Script",
+  "type": "object"
+}

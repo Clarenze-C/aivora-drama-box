@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:MemberPostResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "member_post_id": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Member Post Id",
+      "type": "string"
+    },
+    "member_url": {
+      "title": "Member Url",
+      "type": "string"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "member_post_id",
+    "member_url",
+    "provenance"
+  ],
+  "title": "MemberPostResult",
+  "type": "object"
+}

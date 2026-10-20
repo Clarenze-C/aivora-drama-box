@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "RuntimeRole": {
+      "description": "Runtime application model roles (not development agents).",
+      "enum": [
+        "STORY_ARCHITECT",
+        "RESEARCHER",
+        "CRITIC",
+        "CLASSIFIER",
+        "OBSERVER",
+        "COMPARATOR",
+        "COMMUNITY_RESPONDER",
+        "METADATA_WRITER"
+      ],
+      "title": "RuntimeRole",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:LLMRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "client_token": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "instruction": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Instruction",
+      "type": "string"
+    },
+    "max_input_tokens": {
+      "minimum": 1,
+      "title": "Max Input Tokens",
+      "type": "integer"
+    },
+    "max_output_tokens": {
+      "minimum": 1,
+      "title": "Max Output Tokens",
+      "type": "integer"
+    },
+    "model_config_ref": {
+      "description": "Configured model profile, not a model ID",
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Model Config Ref",
+      "type": "string"
+    },
+    "output_schema": {
+      "additionalProperties": true,
+      "description": "JSON Schema the output must satisfy",
+      "title": "Output Schema",
+      "type": "object"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reservation Id"
+    },
+    "role": {
+      "$ref": "#/$defs/RuntimeRole"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "untrusted_documents": {
+      "description": "Data blocks (sources/comments); never instructions",
+      "items": {
+        "type": "string"
+      },
+      "title": "Untrusted Documents",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "role",
+    "model_config_ref",
+    "instruction",
+    "output_schema",
+    "max_input_tokens",
+    "max_output_tokens",
+    "client_token"
+  ],
+  "title": "LLMRequest",
+  "type": "object"
+}

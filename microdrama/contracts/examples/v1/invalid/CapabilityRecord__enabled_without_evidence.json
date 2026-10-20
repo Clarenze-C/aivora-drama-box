@@ -1,0 +1,31 @@
+{
+  "account_ref": "acct:youtube-main",
+  "account_type": "channel",
+  "capability_id": "1e3bc301-9f3c-5ef9-818c-84880d0f9d4f",
+  "dm_window_hours": null,
+  "enabled": true,
+  "evidence": [],
+  "limits": {
+    "aspect_ratios": [],
+    "daily_post_quota": null,
+    "max_duration_ms": null,
+    "max_file_bytes": null,
+    "min_duration_ms": null,
+    "video_codecs": []
+  },
+  "operations": {
+    "AI_DISCLOSURE": "SUPPORTED_TESTED",
+    "DM_SEND": "UNSUPPORTED",
+    "SCHEDULE": "SUPPORTED_TESTED",
+    "UPLOAD_FULL_VIDEO": "SUPPORTED_TESTED"
+  },
+  "platform": "YOUTUBE",
+  "provider_route": "fake-youtube-data-api",
+  "schema_version": "1.0",
+  "supported_disclosures": [
+    "AI_GENERATED_CONTENT",
+    "SYNTHETIC_VOICE"
+  ],
+  "verified_at": "2026-10-20T00:00:00Z",
+  "version": 1
+}

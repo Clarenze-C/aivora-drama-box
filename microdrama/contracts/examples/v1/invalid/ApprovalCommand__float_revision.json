@@ -1,0 +1,14 @@
+{
+  "action": "APPROVE",
+  "entity_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "expected_revision": 3.0,
+  "feedback": [],
+  "gate": "SEASON_CONCEPT",
+  "idempotency_key": "gate1-approve-season-0001",
+  "management_policy_hash": null,
+  "media_hashes": [],
+  "package_hash": "9279a7bb2155f7eeae2d063c39c866ec3c2b46a7d232770615f9a359cf613bd5",
+  "reason": null,
+  "release_scope_hash": null,
+  "schema_version": "1.0"
+}

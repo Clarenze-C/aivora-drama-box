@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "DisclosureKind": {
+      "enum": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE",
+        "SPONSORED",
+        "MEMBER_OFFER"
+      ],
+      "title": "DisclosureKind",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:PostReadback",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "disclosures_visible": {
+      "items": {
+        "$ref": "#/$defs/DisclosureKind"
+      },
+      "title": "Disclosures Visible",
+      "type": "array"
+    },
+    "external_id": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "External Id",
+      "type": "string"
+    },
+    "links": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "privacy": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Privacy"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "subtitles_present": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Subtitles Present"
+    },
+    "unverified_fields": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Unverified Fields",
+      "type": "array"
+    },
+    "visible": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Visible"
+    }
+  },
+  "required": [
+    "external_id",
+    "provenance"
+  ],
+  "title": "PostReadback",
+  "type": "object"
+}

@@ -1,0 +1,412 @@
+{
+  "$defs": {
+    "BudgetCategory": {
+      "enum": [
+        "RESEARCH_SCRIPT_PROMPTS_METADATA",
+        "REFERENCES_DIALOGUE",
+        "GPU_GENERATION",
+        "QA_CAPTIONS",
+        "CPU_STORAGE_TRANSFER",
+        "METERED_MANAGEMENT",
+        "RECOVERY_HEADROOM"
+      ],
+      "title": "BudgetCategory",
+      "type": "string"
+    },
+    "CostBasis": {
+      "description": "How an amount was established. Only PROVIDER_REPORTED/BILLED are measured.",
+      "enum": [
+        "SYNTHETIC_FAKE",
+        "ESTIMATED",
+        "PROVIDER_REPORTED",
+        "BILLED"
+      ],
+      "title": "CostBasis",
+      "type": "string"
+    },
+    "OutputRef": {
+      "additionalProperties": false,
+      "description": "A provider output not yet copied into durable storage.",
+      "properties": {
+        "complete": {
+          "description": "True only when the provider reports a finished file",
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "media_type": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "provider_ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Provider Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "size_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
+        }
+      },
+      "required": [
+        "name",
+        "media_type",
+        "provider_ref",
+        "complete"
+      ],
+      "title": "OutputRef",
+      "type": "object"
+    },
+    "PriceUnit": {
+      "enum": [
+        "REQUEST",
+        "INPUT_TOKEN_1K",
+        "OUTPUT_TOKEN_1K",
+        "AUDIO_SECOND",
+        "VIDEO_SECOND",
+        "GPU_SECOND",
+        "IMAGE",
+        "CHARACTER_1K",
+        "GIGABYTE"
+      ],
+      "title": "PriceUnit",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "ProviderOperationState": {
+      "enum": [
+        "PENDING_SUBMIT",
+        "SUBMITTED",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELLED",
+        "UNKNOWN",
+        "NOT_FOUND"
+      ],
+      "title": "ProviderOperationState",
+      "type": "string"
+    },
+    "ReceiptKind": {
+      "enum": [
+        "ACCRUAL",
+        "SETTLEMENT",
+        "CREDIT",
+        "ADJUSTMENT"
+      ],
+      "title": "ReceiptKind",
+      "type": "string"
+    },
+    "UsageReceipt": {
+      "additionalProperties": false,
+      "description": "Observed usage. Fakes emit SYNTHETIC_FAKE; only PROVIDER_REPORTED/BILLED are measured.",
+      "properties": {
+        "amount_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Amount Micro Usd",
+          "type": "integer"
+        },
+        "category": {
+          "$ref": "#/$defs/BudgetCategory"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/CostBasis"
+        },
+        "currency": {
+          "default": "USD",
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "interval_end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval End"
+        },
+        "interval_start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval Start"
+        },
+        "job_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Job Id"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReceiptKind"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "provider": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "provider_receipt_id": {
+          "description": "Provider-side dedupe key",
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Provider Receipt Id",
+          "type": "string"
+        },
+        "receipt_id": {
+          "format": "uuid",
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "reservation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reservation Id"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "season_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Season Id"
+        },
+        "unit": {
+          "$ref": "#/$defs/PriceUnit"
+        },
+        "units": {
+          "minimum": 0,
+          "title": "Units",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "provider",
+        "provider_receipt_id",
+        "kind",
+        "cost_basis",
+        "category",
+        "amount_micro_usd",
+        "units",
+        "unit",
+        "observed_at",
+        "provenance"
+      ],
+      "title": "UsageReceipt",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ProviderOperationResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Result of submit/status/reconcile. UNKNOWN means reconcile, never blind resubmit.",
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "external_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Id"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "title": "Operation Id",
+      "type": "string"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/OutputRef"
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "raw_response_key": {
+      "anyOf": [
+        {
+          "description": "Private object-store key; relative, no '..' segments",
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._\\-/]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Private raw response",
+      "title": "Raw Response Key"
+    },
+    "retry_after_ms": {
+      "anyOf": [
+        {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry After Ms"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/ProviderOperationState"
+    },
+    "transient": {
+      "default": false,
+      "title": "Transient",
+      "type": "boolean"
+    },
+    "usage": {
+      "items": {
+        "$ref": "#/$defs/UsageReceipt"
+      },
+      "title": "Usage",
+      "type": "array"
+    }
+  },
+  "required": [
+    "operation_id",
+    "state",
+    "provenance"
+  ],
+  "title": "ProviderOperationResult",
+  "type": "object"
+}

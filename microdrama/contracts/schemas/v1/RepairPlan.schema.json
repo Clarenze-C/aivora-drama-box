@@ -1,0 +1,193 @@
+{
+  "$defs": {
+    "BudgetCategory": {
+      "enum": [
+        "RESEARCH_SCRIPT_PROMPTS_METADATA",
+        "REFERENCES_DIALOGUE",
+        "GPU_GENERATION",
+        "QA_CAPTIONS",
+        "CPU_STORAGE_TRANSFER",
+        "METERED_MANAGEMENT",
+        "RECOVERY_HEADROOM"
+      ],
+      "title": "BudgetCategory",
+      "type": "string"
+    },
+    "RepairStep": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "category": {
+          "$ref": "#/$defs/BudgetCategory"
+        },
+        "consumes_shot_attempt": {
+          "default": false,
+          "title": "Consumes Shot Attempt",
+          "type": "boolean"
+        },
+        "estimated_cost_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Estimated Cost Micro Usd",
+          "type": "integer"
+        },
+        "invalidates_asset_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Invalidates Asset Ids",
+          "type": "array"
+        },
+        "recheck_check_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Recheck Check Ids",
+          "type": "array"
+        },
+        "step_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/RepairTarget"
+        },
+        "target_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Target Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "step_id",
+        "target",
+        "target_ids",
+        "action",
+        "category",
+        "estimated_cost_micro_usd"
+      ],
+      "title": "RepairStep",
+      "type": "object"
+    },
+    "RepairTarget": {
+      "enum": [
+        "CAPTION",
+        "LINE",
+        "SHOT",
+        "EDIT",
+        "AUDIO_MIX",
+        "SCRIPT"
+      ],
+      "title": "RepairTarget",
+      "type": "string"
+    },
+    "RepairTrigger": {
+      "enum": [
+        "QA_FINDING",
+        "HUMAN_FEEDBACK"
+      ],
+      "title": "RepairTrigger",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:RepairPlan",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "feedback_event_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Feedback Event Ids",
+      "type": "array"
+    },
+    "finding_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Finding Ids",
+      "type": "array"
+    },
+    "plan_id": {
+      "format": "uuid",
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "remaining_budget_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Remaining Budget Micro Usd",
+      "type": "integer"
+    },
+    "returns_to_gate2": {
+      "default": true,
+      "title": "Returns To Gate2",
+      "type": "boolean"
+    },
+    "round_number": {
+      "minimum": 1,
+      "title": "Round Number",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/RepairStep"
+      },
+      "minItems": 1,
+      "title": "Steps",
+      "type": "array"
+    },
+    "total_estimated_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Total Estimated Micro Usd",
+      "type": "integer"
+    },
+    "trigger": {
+      "$ref": "#/$defs/RepairTrigger"
+    }
+  },
+  "required": [
+    "plan_id",
+    "episode_id",
+    "trigger",
+    "round_number",
+    "steps",
+    "total_estimated_micro_usd",
+    "remaining_budget_micro_usd",
+    "created_at"
+  ],
+  "title": "RepairPlan",
+  "type": "object"
+}

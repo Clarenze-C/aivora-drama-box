@@ -1,0 +1,25 @@
+{
+  "action": "REVISE",
+  "entity_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "expected_revision": 7,
+  "feedback": [
+    {
+      "asset_id": null,
+      "category": "subtitles",
+      "comment": "English subtitle says 5,000 baht; Fon says 50,000.",
+      "end_ms": 15500,
+      "explicit_recurring_instruction": false,
+      "scope": "EPISODE",
+      "shot_id": null,
+      "start_ms": 12000
+    }
+  ],
+  "gate": "EPISODE_FINAL",
+  "idempotency_key": "gate2-revise-ep1-0001",
+  "management_policy_hash": null,
+  "media_hashes": [],
+  "package_hash": "86507ed091e685696d9e41f2bc7a6a861b8f059f1f4b2cdd5f4ed7327e1321ac",
+  "reason": null,
+  "release_scope_hash": null,
+  "schema_version": "1.0"
+}

@@ -1,0 +1,200 @@
+{
+  "$defs": {
+    "MetricValue": {
+      "additionalProperties": false,
+      "properties": {
+        "definition": {
+          "description": "Platform's own metric definition id",
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Definition",
+          "type": "string"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "None = missing, not zero",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "definition"
+      ],
+      "title": "MetricValue",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "SnapshotWindow": {
+      "enum": [
+        "H24",
+        "H72",
+        "D7"
+      ],
+      "title": "SnapshotWindow",
+      "type": "string"
+    },
+    "TrafficKind": {
+      "enum": [
+        "ORGANIC",
+        "PAID",
+        "UNKNOWN"
+      ],
+      "title": "TrafficKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:MetricSnapshot",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Account Ref",
+      "type": "string"
+    },
+    "country": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Country"
+    },
+    "definitions_version": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Definitions Version",
+      "type": "string"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "external_post_id": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "External Post Id",
+      "type": "string"
+    },
+    "metrics": {
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9_.\\-]{0,119}$": {
+          "$ref": "#/$defs/MetricValue"
+        }
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "platform_post_id": {
+      "format": "uuid",
+      "title": "Platform Post Id",
+      "type": "string"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "sample_count": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sample Count"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_id": {
+      "format": "uuid",
+      "title": "Snapshot Id",
+      "type": "string"
+    },
+    "traffic": {
+      "$ref": "#/$defs/TrafficKind",
+      "default": "UNKNOWN"
+    },
+    "window": {
+      "$ref": "#/$defs/SnapshotWindow"
+    }
+  },
+  "required": [
+    "snapshot_id",
+    "platform",
+    "account_ref",
+    "platform_post_id",
+    "external_post_id",
+    "episode_id",
+    "window",
+    "observed_at",
+    "definitions_version",
+    "metrics",
+    "provenance"
+  ],
+  "title": "MetricSnapshot",
+  "type": "object"
+}

@@ -1,0 +1,44 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:EpisodeStepInput",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "anyOf": [
+        {
+          "description": "Optimistic revision",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Revision"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "trigger": {
+      "default": "pipeline",
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Trigger",
+      "type": "string"
+    }
+  },
+  "required": [
+    "episode_id"
+  ],
+  "title": "EpisodeStepInput",
+  "type": "object"
+}

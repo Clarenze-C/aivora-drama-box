@@ -1,0 +1,131 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:EpisodePlan",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approved_scope_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Approved Scope Hash",
+      "type": "string"
+    },
+    "canon_version": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Canon Version",
+      "type": "integer"
+    },
+    "cliffhanger": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cliffhanger"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "episode_number": {
+      "minimum": 1,
+      "title": "Episode Number",
+      "type": "integer"
+    },
+    "featured_character_ids": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Featured Character Ids",
+      "type": "array"
+    },
+    "location_ids": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Location Ids",
+      "type": "array"
+    },
+    "planned_beats": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Planned Beats",
+      "type": "array"
+    },
+    "planned_reveals": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Planned Reveals",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    },
+    "synopsis": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Synopsis",
+      "type": "string"
+    },
+    "target_duration_ms": {
+      "description": "Integer milliseconds > 0",
+      "exclusiveMinimum": 0,
+      "title": "Target Duration Ms",
+      "type": "integer"
+    },
+    "title_en": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Title En",
+      "type": "string"
+    },
+    "title_th": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Title Th",
+      "type": "string"
+    }
+  },
+  "required": [
+    "episode_id",
+    "season_id",
+    "approved_scope_hash",
+    "episode_number",
+    "title_th",
+    "title_en",
+    "synopsis",
+    "target_duration_ms",
+    "featured_character_ids",
+    "location_ids",
+    "planned_beats"
+  ],
+  "title": "EpisodePlan",
+  "type": "object"
+}

@@ -1,0 +1,307 @@
+{
+  "$defs": {
+    "DisclosureKind": {
+      "enum": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE",
+        "SPONSORED",
+        "MEMBER_OFFER"
+      ],
+      "title": "DisclosureKind",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "PostMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "caption": {
+          "default": "",
+          "maxLength": 5000,
+          "title": "Caption",
+          "type": "string"
+        },
+        "catalog_version": {
+          "minimum": 1,
+          "title": "Catalog Version",
+          "type": "integer"
+        },
+        "cover_asset_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Asset Id"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 5000,
+          "title": "Description",
+          "type": "string"
+        },
+        "disclosures": {
+          "items": {
+            "$ref": "#/$defs/DisclosureKind"
+          },
+          "minItems": 1,
+          "title": "Disclosures",
+          "type": "array"
+        },
+        "hashtags": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Hashtags",
+          "type": "array"
+        },
+        "links": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "locale": {
+          "description": "e.g. th-TH",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+          "title": "Locale",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "locale",
+        "title",
+        "disclosures",
+        "catalog_version"
+      ],
+      "title": "PostMetadata",
+      "type": "object"
+    },
+    "ReleaseSlotKey": {
+      "additionalProperties": false,
+      "description": "Unique publication slot: (series, episode, part, locale, platform, account, slot).",
+      "properties": {
+        "account_ref": {
+          "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+          "title": "Account Ref",
+          "type": "string"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "locale": {
+          "description": "e.g. th-TH",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+          "title": "Locale",
+          "type": "string"
+        },
+        "part": {
+          "description": "0 = full episode; 1..n = parts",
+          "minimum": 0,
+          "title": "Part",
+          "type": "integer"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "release_slot": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Release Slot",
+          "type": "string"
+        },
+        "series_id": {
+          "format": "uuid",
+          "title": "Series Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "series_id",
+        "episode_id",
+        "part",
+        "locale",
+        "platform",
+        "account_ref",
+        "release_slot"
+      ],
+      "title": "ReleaseSlotKey",
+      "type": "object"
+    },
+    "ScheduleInstant": {
+      "additionalProperties": false,
+      "description": "A schedule point: IANA zone + local wall time + the concrete UTC instant.\n\nValidation rejects nonexistent local times (DST gaps) and ambiguous local times\n(DST overlaps) unless ``fold`` is given, and requires ``utc_instant`` to equal\nthe conversion, so a DST change can never silently move an announced time.",
+      "properties": {
+        "fold": {
+          "anyOf": [
+            {
+              "enum": [
+                0,
+                1
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fold"
+        },
+        "iana_zone": {
+          "title": "Iana Zone",
+          "type": "string"
+        },
+        "local_time": {
+          "description": "Wall-clock time in iana_zone, ISO 'YYYY-MM-DDTHH:MM[:SS]' without offset",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?$",
+          "title": "Local Time",
+          "type": "string"
+        },
+        "utc_instant": {
+          "format": "date-time",
+          "title": "Utc Instant",
+          "type": "string"
+        }
+      },
+      "required": [
+        "iana_zone",
+        "local_time",
+        "utc_instant"
+      ],
+      "title": "ScheduleInstant",
+      "type": "object"
+    },
+    "SlotKind": {
+      "enum": [
+        "FULL_EPISODE",
+        "PART",
+        "PROMO_CUT",
+        "HOOK"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:PublicationCommand",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "approval_event_id": {
+      "format": "uuid",
+      "title": "Approval Event Id",
+      "type": "string"
+    },
+    "asset_id": {
+      "format": "uuid",
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "asset_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Asset Sha256",
+      "type": "string"
+    },
+    "capability_id": {
+      "format": "uuid",
+      "title": "Capability Id",
+      "type": "string"
+    },
+    "capability_version": {
+      "minimum": 1,
+      "title": "Capability Version",
+      "type": "integer"
+    },
+    "client_token": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "command_id": {
+      "format": "uuid",
+      "title": "Command Id",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/PostMetadata"
+    },
+    "metadata_version_id": {
+      "format": "uuid",
+      "title": "Metadata Version Id",
+      "type": "string"
+    },
+    "release_package_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Release Package Hash",
+      "type": "string"
+    },
+    "release_package_id": {
+      "format": "uuid",
+      "title": "Release Package Id",
+      "type": "string"
+    },
+    "schedule": {
+      "$ref": "#/$defs/ScheduleInstant"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slot": {
+      "$ref": "#/$defs/ReleaseSlotKey"
+    },
+    "slot_kind": {
+      "$ref": "#/$defs/SlotKind"
+    }
+  },
+  "required": [
+    "command_id",
+    "release_package_id",
+    "release_package_hash",
+    "approval_event_id",
+    "slot",
+    "slot_kind",
+    "asset_id",
+    "asset_sha256",
+    "metadata",
+    "metadata_version_id",
+    "schedule",
+    "capability_id",
+    "capability_version",
+    "client_token"
+  ],
+  "title": "PublicationCommand",
+  "type": "object"
+}

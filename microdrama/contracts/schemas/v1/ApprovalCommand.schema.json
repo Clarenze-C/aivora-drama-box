@@ -1,0 +1,226 @@
+{
+  "$defs": {
+    "ApprovalAction": {
+      "enum": [
+        "APPROVE",
+        "REVISE",
+        "REJECT"
+      ],
+      "title": "ApprovalAction",
+      "type": "string"
+    },
+    "FeedbackCategory": {
+      "enum": [
+        "identity_voice",
+        "thai_dialogue",
+        "subtitles",
+        "motivation",
+        "continuity_props",
+        "pacing",
+        "sound",
+        "other"
+      ],
+      "title": "FeedbackCategory",
+      "type": "string"
+    },
+    "FeedbackScope": {
+      "enum": [
+        "SHOT",
+        "EPISODE",
+        "SERIES"
+      ],
+      "title": "FeedbackScope",
+      "type": "string"
+    },
+    "GateType": {
+      "enum": [
+        "SEASON_CONCEPT",
+        "EPISODE_FINAL"
+      ],
+      "title": "GateType",
+      "type": "string"
+    },
+    "TimecodedFeedback": {
+      "additionalProperties": false,
+      "description": "One Gate 2 revision note. Defaults to the smallest scope (shot/episode).",
+      "properties": {
+        "asset_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Id"
+        },
+        "category": {
+          "$ref": "#/$defs/FeedbackCategory"
+        },
+        "comment": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Comment",
+          "type": "string"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "explicit_recurring_instruction": {
+          "default": false,
+          "description": "User explicitly asked for this to apply to the series",
+          "title": "Explicit Recurring Instruction",
+          "type": "boolean"
+        },
+        "scope": {
+          "$ref": "#/$defs/FeedbackScope",
+          "default": "EPISODE"
+        },
+        "shot_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shot Id"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "category",
+        "start_ms",
+        "end_ms",
+        "comment"
+      ],
+      "title": "TimecodedFeedback",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ApprovalCommand",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A human gate decision. The actor comes from the authenticated session, not here.",
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/ApprovalAction"
+    },
+    "entity_id": {
+      "description": "season_id for Gate 1, episode_id for Gate 2",
+      "format": "uuid",
+      "title": "Entity Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "description": "Optimistic revision",
+      "minimum": 0,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "feedback": {
+      "items": {
+        "$ref": "#/$defs/TimecodedFeedback"
+      },
+      "title": "Feedback",
+      "type": "array"
+    },
+    "gate": {
+      "$ref": "#/$defs/GateType"
+    },
+    "idempotency_key": {
+      "maxLength": 200,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9._:\\-]+$",
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "management_policy_hash": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Management Policy Hash"
+    },
+    "media_hashes": {
+      "items": {
+        "description": "Lowercase SHA-256 hex",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Media Hashes",
+      "type": "array"
+    },
+    "package_hash": {
+      "description": "Gate 1 scope hash / Gate 2 release package hash",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Hash",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "release_scope_hash": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Scope Hash"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "gate",
+    "action",
+    "entity_id",
+    "expected_revision",
+    "package_hash",
+    "idempotency_key"
+  ],
+  "title": "ApprovalCommand",
+  "type": "object"
+}

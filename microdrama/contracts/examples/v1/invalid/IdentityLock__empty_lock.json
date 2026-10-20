@@ -1,0 +1,11 @@
+{
+  "approval_event_id": "93e94673-46ae-5784-b41d-fc0c9af4861f",
+  "created_at": "2026-10-20T00:00:00Z",
+  "lock_id": "6c82e1e2-e21b-5eed-a6a8-d55b9598ddf4",
+  "locked_assets": [],
+  "release_package_hash": "86507ed091e685696d9e41f2bc7a6a861b8f059f1f4b2cdd5f4ed7327e1321ac",
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "source_episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "version": 1
+}

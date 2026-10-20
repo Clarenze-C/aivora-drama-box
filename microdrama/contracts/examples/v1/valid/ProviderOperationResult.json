@@ -1,0 +1,44 @@
+{
+  "error_code": null,
+  "external_id": "fake-prompt-0001",
+  "operation_id": "d17b2edf-68d7-5728-8f0d-51c64eb4853b",
+  "outputs": [
+    {
+      "complete": true,
+      "media_type": "video/mp4",
+      "name": "sh1_00001.mp4",
+      "provider_ref": "output/sh1_00001.mp4",
+      "sha256": null,
+      "size_bytes": null
+    }
+  ],
+  "provenance": "FAKE_SYNTHETIC",
+  "raw_response_key": null,
+  "retry_after_ms": null,
+  "schema_version": "1.0",
+  "state": "SUCCEEDED",
+  "transient": false,
+  "usage": [
+    {
+      "amount_micro_usd": 97500,
+      "category": "GPU_GENERATION",
+      "cost_basis": "SYNTHETIC_FAKE",
+      "currency": "USD",
+      "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+      "interval_end": "2026-10-20T00:06:30Z",
+      "interval_start": "2026-10-20T00:00:00Z",
+      "job_id": null,
+      "kind": "SETTLEMENT",
+      "observed_at": "2026-10-20T00:06:40Z",
+      "provenance": "FAKE_SYNTHETIC",
+      "provider": "fake-runpod",
+      "provider_receipt_id": "fake-usage-0001",
+      "receipt_id": "f009b052-559d-5743-914f-a152a1a0e688",
+      "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
+      "schema_version": "1.0",
+      "season_id": null,
+      "unit": "GPU_SECOND",
+      "units": 390
+    }
+  ]
+}

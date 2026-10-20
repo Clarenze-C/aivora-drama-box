@@ -1,0 +1,456 @@
+{
+  "$defs": {
+    "CostSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "accrued_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Accrued Micro Usd",
+          "type": "integer"
+        },
+        "episode_cap_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Episode Cap Micro Usd",
+          "type": "integer"
+        },
+        "remaining_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Remaining Micro Usd",
+          "type": "integer"
+        },
+        "reserved_outstanding_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Reserved Outstanding Micro Usd",
+          "type": "integer"
+        },
+        "settled_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Settled Micro Usd",
+          "type": "integer"
+        },
+        "synthetic_fake_micro_usd": {
+          "default": 0,
+          "description": "Portion from fake providers (not real money)",
+          "minimum": 0,
+          "title": "Synthetic Fake Micro Usd",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "episode_cap_micro_usd",
+        "settled_micro_usd",
+        "accrued_micro_usd",
+        "reserved_outstanding_micro_usd",
+        "remaining_micro_usd"
+      ],
+      "title": "CostSummary",
+      "type": "object"
+    },
+    "DisclosureKind": {
+      "enum": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE",
+        "SPONSORED",
+        "MEMBER_OFFER"
+      ],
+      "title": "DisclosureKind",
+      "type": "string"
+    },
+    "MediaRef": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "role": {
+          "description": "master/variant/cover/caption/hook/contact_sheet/voice_anchor",
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "sha256",
+        "role"
+      ],
+      "title": "MediaRef",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "QASummary": {
+      "additionalProperties": false,
+      "properties": {
+        "blocking_finding_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Blocking Finding Ids",
+          "type": "array"
+        },
+        "finding_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Finding Count",
+          "type": "integer"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "unknown_coverage_check_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Unknown Coverage Check Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "provenance"
+      ],
+      "title": "QASummary",
+      "type": "object"
+    },
+    "ReleaseSlotKey": {
+      "additionalProperties": false,
+      "description": "Unique publication slot: (series, episode, part, locale, platform, account, slot).",
+      "properties": {
+        "account_ref": {
+          "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+          "title": "Account Ref",
+          "type": "string"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "locale": {
+          "description": "e.g. th-TH",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+          "title": "Locale",
+          "type": "string"
+        },
+        "part": {
+          "description": "0 = full episode; 1..n = parts",
+          "minimum": 0,
+          "title": "Part",
+          "type": "integer"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "release_slot": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Release Slot",
+          "type": "string"
+        },
+        "series_id": {
+          "format": "uuid",
+          "title": "Series Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "series_id",
+        "episode_id",
+        "part",
+        "locale",
+        "platform",
+        "account_ref",
+        "release_slot"
+      ],
+      "title": "ReleaseSlotKey",
+      "type": "object"
+    },
+    "ReleaseSlotPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "capability_id": {
+          "format": "uuid",
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "capability_version": {
+          "minimum": 1,
+          "title": "Capability Version",
+          "type": "integer"
+        },
+        "depends_on": {
+          "description": "dedupe_keys that must be PUBLISHED_VERIFIED first",
+          "items": {
+            "description": "Lowercase SHA-256 hex",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "disclosures": {
+          "items": {
+            "$ref": "#/$defs/DisclosureKind"
+          },
+          "minItems": 1,
+          "title": "Disclosures",
+          "type": "array"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleInstant"
+        },
+        "slot": {
+          "$ref": "#/$defs/ReleaseSlotKey"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        }
+      },
+      "required": [
+        "slot",
+        "slot_kind",
+        "required",
+        "asset_id",
+        "asset_sha256",
+        "schedule",
+        "disclosures",
+        "capability_id",
+        "capability_version"
+      ],
+      "title": "ReleaseSlotPlan",
+      "type": "object"
+    },
+    "ScheduleInstant": {
+      "additionalProperties": false,
+      "description": "A schedule point: IANA zone + local wall time + the concrete UTC instant.\n\nValidation rejects nonexistent local times (DST gaps) and ambiguous local times\n(DST overlaps) unless ``fold`` is given, and requires ``utc_instant`` to equal\nthe conversion, so a DST change can never silently move an announced time.",
+      "properties": {
+        "fold": {
+          "anyOf": [
+            {
+              "enum": [
+                0,
+                1
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fold"
+        },
+        "iana_zone": {
+          "title": "Iana Zone",
+          "type": "string"
+        },
+        "local_time": {
+          "description": "Wall-clock time in iana_zone, ISO 'YYYY-MM-DDTHH:MM[:SS]' without offset",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?$",
+          "title": "Local Time",
+          "type": "string"
+        },
+        "utc_instant": {
+          "format": "date-time",
+          "title": "Utc Instant",
+          "type": "string"
+        }
+      },
+      "required": [
+        "iana_zone",
+        "local_time",
+        "utc_instant"
+      ],
+      "title": "ScheduleInstant",
+      "type": "object"
+    },
+    "SlotKind": {
+      "enum": [
+        "FULL_EPISODE",
+        "PART",
+        "PROMO_CUT",
+        "HOOK"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ReleasePackage",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What Gate 2 reviews. ``package_hash`` covers every immutable field.",
+  "properties": {
+    "caption_track_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Caption Track Ids",
+      "type": "array"
+    },
+    "cast_package_asset_ids": {
+      "description": "Episode one: contact sheet, voice anchors, outfits/sets",
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Cast Package Asset Ids",
+      "type": "array"
+    },
+    "cost": {
+      "$ref": "#/$defs/CostSummary"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "episode_number": {
+      "minimum": 1,
+      "title": "Episode Number",
+      "type": "integer"
+    },
+    "gate_blockers": {
+      "description": "Reasons Gate 2 approval is disabled (empty = enabled)",
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Gate Blockers",
+      "type": "array"
+    },
+    "hook_experiment_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hook Experiment Id"
+    },
+    "management_policy_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Management Policy Hash",
+      "type": "string"
+    },
+    "media": {
+      "items": {
+        "$ref": "#/$defs/MediaRef"
+      },
+      "minItems": 1,
+      "title": "Media",
+      "type": "array"
+    },
+    "package_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Hash",
+      "type": "string"
+    },
+    "package_id": {
+      "format": "uuid",
+      "title": "Package Id",
+      "type": "string"
+    },
+    "qa": {
+      "$ref": "#/$defs/QASummary"
+    },
+    "release_scope": {
+      "items": {
+        "$ref": "#/$defs/ReleaseSlotPlan"
+      },
+      "minItems": 1,
+      "title": "Release Scope",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "package_id",
+    "episode_id",
+    "season_id",
+    "episode_number",
+    "version",
+    "media",
+    "caption_track_ids",
+    "release_scope",
+    "management_policy_hash",
+    "qa",
+    "cost",
+    "package_hash"
+  ],
+  "title": "ReleasePackage",
+  "type": "object"
+}

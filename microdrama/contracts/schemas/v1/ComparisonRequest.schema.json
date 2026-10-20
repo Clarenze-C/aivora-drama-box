@@ -1,0 +1,111 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:ComparisonRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Pass B input: references to the frozen report plus intended script/canon/anchors.",
+  "properties": {
+    "acceptance_criteria": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Acceptance Criteria",
+      "type": "array"
+    },
+    "canon_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Canon Sha256",
+      "type": "string"
+    },
+    "canon_version": {
+      "minimum": 0,
+      "title": "Canon Version",
+      "type": "integer"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "identity_lock_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Identity Lock Id"
+    },
+    "observation_report_id": {
+      "format": "uuid",
+      "title": "Observation Report Id",
+      "type": "string"
+    },
+    "observation_report_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Observation Report Sha256",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reservation Id"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_id": {
+      "format": "uuid",
+      "title": "Script Id",
+      "type": "string"
+    },
+    "script_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Sha256",
+      "type": "string"
+    },
+    "script_version": {
+      "minimum": 1,
+      "title": "Script Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "episode_id",
+    "observation_report_id",
+    "observation_report_sha256",
+    "script_id",
+    "script_version",
+    "script_sha256",
+    "canon_version",
+    "canon_sha256"
+  ],
+  "title": "ComparisonRequest",
+  "type": "object"
+}

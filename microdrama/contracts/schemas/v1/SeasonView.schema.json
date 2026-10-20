@@ -1,0 +1,721 @@
+{
+  "$defs": {
+    "ArcBeat": {
+      "additionalProperties": false,
+      "properties": {
+        "cliffhanger": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cliffhanger"
+        },
+        "episode_number": {
+          "minimum": 1,
+          "title": "Episode Number",
+          "type": "integer"
+        },
+        "planned_reveals": {
+          "description": "Planned only; not published canon",
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Planned Reveals",
+          "type": "array"
+        },
+        "summary": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "episode_number",
+        "summary"
+      ],
+      "title": "ArcBeat",
+      "type": "object"
+    },
+    "BudgetCategory": {
+      "enum": [
+        "RESEARCH_SCRIPT_PROMPTS_METADATA",
+        "REFERENCES_DIALOGUE",
+        "GPU_GENERATION",
+        "QA_CAPTIONS",
+        "CPU_STORAGE_TRANSFER",
+        "METERED_MANAGEMENT",
+        "RECOVERY_HEADROOM"
+      ],
+      "title": "BudgetCategory",
+      "type": "string"
+    },
+    "CharacterBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "character_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "featured": {
+          "default": true,
+          "title": "Featured",
+          "type": "boolean"
+        },
+        "name_en": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Name En",
+          "type": "string"
+        },
+        "name_th": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Name Th",
+          "type": "string"
+        },
+        "role": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "voice_direction": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Voice Direction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "character_id",
+        "name_th",
+        "name_en",
+        "role",
+        "description",
+        "voice_direction"
+      ],
+      "title": "CharacterBrief",
+      "type": "object"
+    },
+    "CostPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allocation_micro_usd": {
+          "additionalProperties": {
+            "description": "Integer micro-USD (no floats)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/BudgetCategory"
+          },
+          "title": "Allocation Micro Usd",
+          "type": "object"
+        },
+        "automatic_cap_increase": {
+          "default": false,
+          "title": "Automatic Cap Increase",
+          "type": "boolean"
+        },
+        "episode_cap_micro_usd": {
+          "default": 10000000,
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Episode Cap Micro Usd",
+          "type": "integer"
+        },
+        "max_attempts_per_shot": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Attempts Per Shot",
+          "type": "integer"
+        },
+        "max_final_repair_rounds": {
+          "default": 2,
+          "minimum": 0,
+          "title": "Max Final Repair Rounds",
+          "type": "integer"
+        },
+        "max_transport_attempts": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Transport Attempts",
+          "type": "integer"
+        },
+        "paid_advertising_budget_micro_usd": {
+          "default": 0,
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Paid Advertising Budget Micro Usd",
+          "type": "integer"
+        },
+        "shutdown_reserve_micro_usd": {
+          "default": 250000,
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Shutdown Reserve Micro Usd",
+          "type": "integer"
+        }
+      },
+      "title": "CostPolicy",
+      "type": "object"
+    },
+    "CreativeConstraints": {
+      "additionalProperties": false,
+      "properties": {
+        "content_rules": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Content Rules",
+          "type": "array"
+        },
+        "max_active_locations_per_episode": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Max Active Locations Per Episode",
+          "type": "integer"
+        },
+        "max_featured_speaking_characters_per_episode": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Featured Speaking Characters Per Episode",
+          "type": "integer"
+        },
+        "max_speakers_per_shot": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Max Speakers Per Shot",
+          "type": "integer"
+        },
+        "original_fiction_only": {
+          "default": true,
+          "title": "Original Fiction Only",
+          "type": "boolean"
+        },
+        "retain_thai_performances": {
+          "default": true,
+          "title": "Retain Thai Performances",
+          "type": "boolean"
+        },
+        "style_rules": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Style Rules",
+          "type": "array"
+        }
+      },
+      "title": "CreativeConstraints",
+      "type": "object"
+    },
+    "DestinationSlotPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "account_ref": {
+          "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+          "title": "Account Ref",
+          "type": "string"
+        },
+        "locale": {
+          "default": "th-TH",
+          "description": "e.g. th-TH",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+          "title": "Locale",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        }
+      },
+      "required": [
+        "platform",
+        "account_ref",
+        "slot_kind"
+      ],
+      "title": "DestinationSlotPlan",
+      "type": "object"
+    },
+    "ManagementActionKind": {
+      "enum": [
+        "TITLE_EDIT",
+        "CAPTION_EDIT",
+        "DESCRIPTION_EDIT",
+        "HASHTAG_EDIT",
+        "COVER_CHANGE",
+        "LINK_UPDATE",
+        "PUBLIC_REPLY",
+        "DM_SEND",
+        "MODERATE_HIDE",
+        "MODERATE_DELETE",
+        "MODERATE_REPORT",
+        "NO_ACTION"
+      ],
+      "title": "ManagementActionKind",
+      "type": "string"
+    },
+    "ManagementPolicy": {
+      "additionalProperties": false,
+      "description": "The mutable-metadata/community scope Gate 2 approval binds by hash.",
+      "properties": {
+        "accept_contracts_sponsors_refunds": {
+          "default": false,
+          "title": "Accept Contracts Sponsors Refunds",
+          "type": "boolean"
+        },
+        "allowed_actions": {
+          "items": {
+            "$ref": "#/$defs/ManagementActionKind"
+          },
+          "title": "Allowed Actions",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "automatic_account_bans": {
+          "default": false,
+          "title": "Automatic Account Bans",
+          "type": "boolean"
+        },
+        "cold_outbound_dms": {
+          "default": false,
+          "title": "Cold Outbound Dms",
+          "type": "boolean"
+        },
+        "dm_keywords": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Dm Keywords",
+          "type": "array"
+        },
+        "max_dms_per_conversation": {
+          "default": 3,
+          "minimum": 0,
+          "title": "Max Dms Per Conversation",
+          "type": "integer"
+        },
+        "max_replies_per_post_per_day": {
+          "default": 50,
+          "minimum": 0,
+          "title": "Max Replies Per Post Per Day",
+          "type": "integer"
+        },
+        "max_substantive_edits_first_7_days": {
+          "default": 2,
+          "minimum": 0,
+          "title": "Max Substantive Edits First 7 Days",
+          "type": "integer"
+        },
+        "metadata_cooldown_hours": {
+          "default": 24,
+          "minimum": 1,
+          "title": "Metadata Cooldown Hours",
+          "type": "integer"
+        },
+        "moderation_policy_id": {
+          "default": "moderate-clear-spam-scams-threats-v1",
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Moderation Policy Id",
+          "type": "string"
+        },
+        "remove_ordinary_criticism": {
+          "default": false,
+          "title": "Remove Ordinary Criticism",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allowed_actions"
+      ],
+      "title": "ManagementPolicy",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "ReleaseCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "iana_zone": {
+          "default": "Asia/Bangkok",
+          "title": "Iana Zone",
+          "type": "string"
+        },
+        "local_times": {
+          "description": "HH:MM wall-clock times",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Local Times",
+          "type": "array"
+        },
+        "weekdays": {
+          "description": "ISO weekdays 1..7",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Weekdays",
+          "type": "array"
+        }
+      },
+      "required": [
+        "weekdays",
+        "local_times"
+      ],
+      "title": "ReleaseCadence",
+      "type": "object"
+    },
+    "SeasonProposalSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "logline": {
+          "title": "Logline",
+          "type": "string"
+        },
+        "proposal_id": {
+          "format": "uuid",
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "research_spend_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Research Spend Micro Usd",
+          "type": "integer"
+        },
+        "revision": {
+          "description": "Optimistic revision",
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "scope_hash": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Scope Hash",
+          "type": "string"
+        },
+        "scope_version": {
+          "minimum": 0,
+          "title": "Scope Version",
+          "type": "integer"
+        },
+        "season_id": {
+          "format": "uuid",
+          "title": "Season Id",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SeasonState"
+        },
+        "title_en": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Title En",
+          "type": "string"
+        },
+        "title_th": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Title Th",
+          "type": "string"
+        },
+        "uncertainty_notes": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Uncertainty Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "season_id",
+        "proposal_id",
+        "state",
+        "revision",
+        "scope_version",
+        "scope_hash",
+        "title_th",
+        "title_en",
+        "logline",
+        "research_spend_micro_usd"
+      ],
+      "title": "SeasonProposalSummary",
+      "type": "object"
+    },
+    "SeasonScope": {
+      "additionalProperties": false,
+      "description": "Versioned season concept/arc/policy. Gate 1 approves ``scope_hash`` of this.",
+      "properties": {
+        "arc": {
+          "items": {
+            "$ref": "#/$defs/ArcBeat"
+          },
+          "minItems": 1,
+          "title": "Arc",
+          "type": "array"
+        },
+        "characters": {
+          "items": {
+            "$ref": "#/$defs/CharacterBrief"
+          },
+          "minItems": 1,
+          "title": "Characters",
+          "type": "array"
+        },
+        "cost_policy": {
+          "$ref": "#/$defs/CostPolicy"
+        },
+        "creative_constraints": {
+          "$ref": "#/$defs/CreativeConstraints"
+        },
+        "destinations": {
+          "items": {
+            "$ref": "#/$defs/DestinationSlotPlan"
+          },
+          "minItems": 1,
+          "title": "Destinations",
+          "type": "array"
+        },
+        "episode_max_duration_ms": {
+          "default": 300000,
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Episode Max Duration Ms",
+          "type": "integer"
+        },
+        "episode_min_duration_ms": {
+          "default": 180000,
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Episode Min Duration Ms",
+          "type": "integer"
+        },
+        "expected_episode_count": {
+          "default": 10,
+          "minimum": 1,
+          "title": "Expected Episode Count",
+          "type": "integer"
+        },
+        "genre_tags": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Genre Tags",
+          "type": "array"
+        },
+        "logline": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Logline",
+          "type": "string"
+        },
+        "management_policy": {
+          "$ref": "#/$defs/ManagementPolicy"
+        },
+        "originality_statement": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Originality Statement",
+          "type": "string"
+        },
+        "premise": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Premise",
+          "type": "string"
+        },
+        "release_cadence": {
+          "$ref": "#/$defs/ReleaseCadence"
+        },
+        "research_evidence_refs": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Research Evidence Refs",
+          "type": "array"
+        },
+        "rights_route_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rights Route Id"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "scope_version": {
+          "minimum": 1,
+          "title": "Scope Version",
+          "type": "integer"
+        },
+        "season_id": {
+          "format": "uuid",
+          "title": "Season Id",
+          "type": "string"
+        },
+        "source_proposal_id": {
+          "format": "uuid",
+          "title": "Source Proposal Id",
+          "type": "string"
+        },
+        "title_en": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Title En",
+          "type": "string"
+        },
+        "title_th": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Title Th",
+          "type": "string"
+        },
+        "uncertainty_notes": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Uncertainty Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "season_id",
+        "scope_version",
+        "source_proposal_id",
+        "title_th",
+        "title_en",
+        "logline",
+        "premise",
+        "arc",
+        "characters",
+        "destinations",
+        "release_cadence",
+        "management_policy",
+        "originality_statement"
+      ],
+      "title": "SeasonScope",
+      "type": "object"
+    },
+    "SeasonState": {
+      "enum": [
+        "PROPOSED",
+        "SEASON_APPROVED",
+        "ACTIVE",
+        "COMPLETE",
+        "REJECTED",
+        "CANCELLED"
+      ],
+      "title": "SeasonState",
+      "type": "string"
+    },
+    "SlotKind": {
+      "enum": [
+        "FULL_EPISODE",
+        "PART",
+        "PROMO_CUT",
+        "HOOK"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:SeasonView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "evidence_refs": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/SeasonScope"
+    },
+    "summary": {
+      "$ref": "#/$defs/SeasonProposalSummary"
+    }
+  },
+  "required": [
+    "summary",
+    "scope"
+  ],
+  "title": "SeasonView",
+  "type": "object"
+}

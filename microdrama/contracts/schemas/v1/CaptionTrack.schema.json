@@ -1,0 +1,125 @@
+{
+  "$defs": {
+    "CaptionCue": {
+      "additionalProperties": false,
+      "properties": {
+        "cue_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Cue Id",
+          "type": "string"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "line_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Id"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cue_id",
+        "start_ms",
+        "end_ms",
+        "text"
+      ],
+      "title": "CaptionCue",
+      "type": "object"
+    },
+    "CaptionTimingSource": {
+      "enum": [
+        "ACTUAL_AUDIO_ALIGNMENT",
+        "ESTIMATED_FROM_SCRIPT"
+      ],
+      "title": "CaptionTimingSource",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:CaptionTrack",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "cues": {
+      "items": {
+        "$ref": "#/$defs/CaptionCue"
+      },
+      "minItems": 1,
+      "title": "Cues",
+      "type": "array"
+    },
+    "derived_from_audio_sha256": {
+      "description": "Actual audio the timing was aligned to",
+      "items": {
+        "description": "Lowercase SHA-256 hex",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Derived From Audio Sha256",
+      "type": "array"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "locale": {
+      "description": "e.g. th-TH",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+      "title": "Locale",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "timing_source": {
+      "$ref": "#/$defs/CaptionTimingSource"
+    },
+    "track_id": {
+      "format": "uuid",
+      "title": "Track Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "track_id",
+    "episode_id",
+    "version",
+    "locale",
+    "timing_source",
+    "cues"
+  ],
+  "title": "CaptionTrack",
+  "type": "object"
+}

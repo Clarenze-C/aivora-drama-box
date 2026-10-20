@@ -1,0 +1,73 @@
+{
+  "approved_scope_hash": "9279a7bb2155f7eeae2d063c39c866ec3c2b46a7d232770615f9a359cf613bd5",
+  "canon_version": 1,
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "estimated_runtime_ms": 240000,
+  "scenes": [
+    {
+      "lines": [
+        {
+          "actual_duration_ms": null,
+          "critical_terms": [
+            {
+              "kind": "MONEY",
+              "value_en": "50,000 baht",
+              "value_th": "ห้าหมื่นบาท"
+            }
+          ],
+          "estimated_duration_ms": 3200,
+          "line_id": "s1-l1",
+          "speaker_character_id": "fon",
+          "text_en": "Uncle Lek, what is this fifty-thousand-baht debt?",
+          "text_th": "ลุงเล็ก หนี้ห้าหมื่นบาทนี่คืออะไรคะ",
+          "voice_id": "voice-fon-v1"
+        },
+        {
+          "actual_duration_ms": null,
+          "critical_terms": [
+            {
+              "kind": "NEGATION",
+              "value_en": null,
+              "value_th": "ไม่อยาก"
+            }
+          ],
+          "estimated_duration_ms": 2600,
+          "line_id": "s1-l2",
+          "speaker_character_id": "lek",
+          "text_en": "Your mother didn't want you to know.",
+          "text_th": "แม่หนูไม่อยากให้หนูรู้",
+          "voice_id": "voice-lek-v1"
+        }
+      ],
+      "location_id": "stall",
+      "scene_id": "s1",
+      "summary": "Fon finds the ledger."
+    },
+    {
+      "lines": [
+        {
+          "actual_duration_ms": null,
+          "critical_terms": [
+            {
+              "kind": "DATE_TIME",
+              "value_en": "Friday",
+              "value_th": "วันศุกร์"
+            }
+          ],
+          "estimated_duration_ms": 1800,
+          "line_id": "s2-l1",
+          "speaker_character_id": "nok",
+          "text_en": "By Friday, please.",
+          "text_th": "ภายในวันศุกร์นะครับ",
+          "voice_id": "voice-nok-v1"
+        }
+      ],
+      "location_id": "shophouse-room",
+      "scene_id": "s2",
+      "summary": "Nok arrives."
+    }
+  ],
+  "schema_version": "1.0",
+  "script_id": "938cea0d-e838-52a7-9ad7-1d25fa31d216",
+  "version": 1
+}

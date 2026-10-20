@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "DomainEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregate_id": {
+          "format": "uuid",
+          "title": "Aggregate Id",
+          "type": "string"
+        },
+        "aggregate_type": {
+          "maxLength": 60,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Aggregate Type",
+          "type": "string"
+        },
+        "causation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Causation Id"
+        },
+        "correlation_id": {
+          "format": "uuid",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "event_id": {
+          "format": "uuid",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_type": {
+          "maxLength": 120,
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sequence": {
+          "description": "Monotonic per aggregate",
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "aggregate_type",
+        "aggregate_id",
+        "sequence",
+        "correlation_id",
+        "occurred_at"
+      ],
+      "title": "DomainEvent",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:EventsView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "aggregate_id": {
+      "format": "uuid",
+      "title": "Aggregate Id",
+      "type": "string"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/DomainEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "unknown_states": {
+      "description": "Explicitly unknown",
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Unknown States",
+      "type": "array"
+    }
+  },
+  "required": [
+    "aggregate_id"
+  ],
+  "title": "EventsView",
+  "type": "object"
+}

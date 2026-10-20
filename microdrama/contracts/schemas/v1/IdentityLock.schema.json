@@ -1,0 +1,136 @@
+{
+  "$defs": {
+    "IdentityAssetKind": {
+      "enum": [
+        "FACE",
+        "VOICE",
+        "WARDROBE",
+        "LOCATION",
+        "STYLE"
+      ],
+      "title": "IdentityAssetKind",
+      "type": "string"
+    },
+    "LockedAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_kind": {
+          "$ref": "#/$defs/IdentityAssetKind"
+        },
+        "asset_version": {
+          "minimum": 1,
+          "title": "Asset Version",
+          "type": "integer"
+        },
+        "character_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Character Id"
+        },
+        "content_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_kind",
+        "asset_id",
+        "asset_version",
+        "content_sha256",
+        "label"
+      ],
+      "title": "LockedAsset",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:IdentityLock",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Created atomically by the episode-one Gate 2 approval (SPEC §5 rule 6).",
+  "properties": {
+    "approval_event_id": {
+      "format": "uuid",
+      "title": "Approval Event Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "lock_id": {
+      "format": "uuid",
+      "title": "Lock Id",
+      "type": "string"
+    },
+    "locked_assets": {
+      "items": {
+        "$ref": "#/$defs/LockedAsset"
+      },
+      "minItems": 1,
+      "title": "Locked Assets",
+      "type": "array"
+    },
+    "release_package_hash": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Release Package Hash",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    },
+    "source_episode_id": {
+      "format": "uuid",
+      "title": "Source Episode Id",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "lock_id",
+    "season_id",
+    "source_episode_id",
+    "version",
+    "approval_event_id",
+    "release_package_hash",
+    "locked_assets",
+    "created_at"
+  ],
+  "title": "IdentityLock",
+  "type": "object"
+}

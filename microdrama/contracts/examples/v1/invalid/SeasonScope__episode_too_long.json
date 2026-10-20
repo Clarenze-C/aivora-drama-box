@@ -1,0 +1,146 @@
+{
+  "arc": [
+    {
+      "cliffhanger": "The lender arrives early.",
+      "episode_number": 1,
+      "planned_reveals": [],
+      "summary": "Fon discovers the stall's hidden debt."
+    },
+    {
+      "cliffhanger": null,
+      "episode_number": 2,
+      "planned_reveals": [
+        "Uncle Lek co-signed"
+      ],
+      "summary": "Fon negotiates for time and learns who co-signed."
+    }
+  ],
+  "characters": [
+    {
+      "character_id": "fon",
+      "description": "Returning daughter, pragmatic, guarded.",
+      "featured": true,
+      "name_en": "Fon",
+      "name_th": "ฝน",
+      "role": "lead",
+      "voice_direction": "warm, clipped when stressed"
+    },
+    {
+      "character_id": "lek",
+      "description": "Stall cook, loyal, hiding guilt.",
+      "featured": true,
+      "name_en": "Uncle Lek",
+      "name_th": "ลุงเล็ก",
+      "role": "supporting",
+      "voice_direction": "low, gentle"
+    },
+    {
+      "character_id": "nok",
+      "description": "Lender's collector, polite and relentless.",
+      "featured": true,
+      "name_en": "Nok",
+      "name_th": "นก",
+      "role": "antagonist",
+      "voice_direction": "even, formal"
+    }
+  ],
+  "cost_policy": {
+    "allocation_micro_usd": {
+      "CPU_STORAGE_TRANSFER": 500000,
+      "GPU_GENERATION": 2500000,
+      "METERED_MANAGEMENT": 1000000,
+      "QA_CAPTIONS": 1000000,
+      "RECOVERY_HEADROOM": 2500000,
+      "REFERENCES_DIALOGUE": 1500000,
+      "RESEARCH_SCRIPT_PROMPTS_METADATA": 1000000
+    },
+    "automatic_cap_increase": false,
+    "episode_cap_micro_usd": 10000000,
+    "max_attempts_per_shot": 3,
+    "max_final_repair_rounds": 2,
+    "max_transport_attempts": 3,
+    "paid_advertising_budget_micro_usd": 0,
+    "shutdown_reserve_micro_usd": 250000
+  },
+  "creative_constraints": {
+    "content_rules": [],
+    "max_active_locations_per_episode": 2,
+    "max_featured_speaking_characters_per_episode": 3,
+    "max_speakers_per_shot": 2,
+    "original_fiction_only": true,
+    "retain_thai_performances": true,
+    "style_rules": []
+  },
+  "destinations": [
+    {
+      "account_ref": "acct:tiktok-main",
+      "locale": "th-TH",
+      "platform": "TIKTOK",
+      "required": true,
+      "slot_kind": "PART"
+    },
+    {
+      "account_ref": "acct:youtube-main",
+      "locale": "th-TH",
+      "platform": "YOUTUBE",
+      "required": true,
+      "slot_kind": "FULL_EPISODE"
+    }
+  ],
+  "episode_max_duration_ms": 400000,
+  "episode_min_duration_ms": 180000,
+  "expected_episode_count": 10,
+  "genre_tags": [
+    "family",
+    "drama"
+  ],
+  "logline": "A daughter returns to Bangkok to save her late mother's food stall from a debt she never knew about.",
+  "management_policy": {
+    "accept_contracts_sponsors_refunds": false,
+    "allowed_actions": [
+      "CAPTION_EDIT",
+      "DM_SEND",
+      "HASHTAG_EDIT",
+      "MODERATE_HIDE",
+      "PUBLIC_REPLY",
+      "TITLE_EDIT"
+    ],
+    "automatic_account_bans": false,
+    "cold_outbound_dms": false,
+    "dm_keywords": [
+      "ตอนต่อไป",
+      "next"
+    ],
+    "max_dms_per_conversation": 3,
+    "max_replies_per_post_per_day": 50,
+    "max_substantive_edits_first_7_days": 2,
+    "metadata_cooldown_hours": 24,
+    "moderation_policy_id": "moderate-clear-spam-scams-threats-v1",
+    "remove_ordinary_criticism": false
+  },
+  "originality_statement": "Premise, characters and plot are original; comparables were used only for theme coding.",
+  "premise": "Original fiction. Family obligation, money pressure and quiet reconciliation over ten episodes.",
+  "release_cadence": {
+    "iana_zone": "Asia/Bangkok",
+    "local_times": [
+      "19:30"
+    ],
+    "weekdays": [
+      2,
+      5
+    ]
+  },
+  "research_evidence_refs": [
+    "fixture:source/thai-family-drama-themes"
+  ],
+  "rights_route_id": null,
+  "schema_version": "1.0",
+  "scope_version": 1,
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "source_proposal_id": "cdf582c5-63bb-5c10-81a9-585a6f284e46",
+  "title_en": "Mother's Chicken Rice Stall",
+  "title_th": "ร้านข้าวมันไก่ของแม่",
+  "uncertainty_notes": [
+    "Audience response is untested; theme signals come from fixture sources."
+  ]
+}

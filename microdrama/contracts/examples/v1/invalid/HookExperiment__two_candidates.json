@@ -1,0 +1,33 @@
+{
+  "assignments": [],
+  "candidates": [
+    {
+      "candidate_id": "hook-a",
+      "changed_framing": false,
+      "duration_ms": 25000,
+      "edl_id": "d34c035f-e784-502d-86c4-bbc88e38b3cd",
+      "reading_load_note": "one subtitle line per cue",
+      "source_asset_ids": [
+        "2887cccd-5c15-505a-a6dd-0501bd10b846"
+      ],
+      "treatment": "cold open on ledger"
+    },
+    {
+      "candidate_id": "hook-b",
+      "changed_framing": true,
+      "duration_ms": 32000,
+      "edl_id": "439ac8f4-a6bf-5e59-ab0d-7f219d7bc505",
+      "reading_load_note": "crop to 9:16 center",
+      "source_asset_ids": [
+        "52a04f9d-5534-579a-ba9e-f3773beb5ed9"
+      ],
+      "treatment": "collector arrival first"
+    }
+  ],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "experiment_id": "c43a046e-936e-57fd-a3a8-5ad1e686dc91",
+  "new_video_render_job_ids": [],
+  "observational_only": true,
+  "primary_outcome": "engaged_viewing_and_next_episode_continuation",
+  "schema_version": "1.0"
+}

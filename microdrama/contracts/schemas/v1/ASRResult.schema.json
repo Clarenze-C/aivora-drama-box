@@ -1,0 +1,408 @@
+{
+  "$defs": {
+    "BudgetCategory": {
+      "enum": [
+        "RESEARCH_SCRIPT_PROMPTS_METADATA",
+        "REFERENCES_DIALOGUE",
+        "GPU_GENERATION",
+        "QA_CAPTIONS",
+        "CPU_STORAGE_TRANSFER",
+        "METERED_MANAGEMENT",
+        "RECOVERY_HEADROOM"
+      ],
+      "title": "BudgetCategory",
+      "type": "string"
+    },
+    "CheckFamily": {
+      "enum": [
+        "TECHNICAL",
+        "AUDIO",
+        "ASR",
+        "CAPTION",
+        "VISUAL_IDENTITY",
+        "TEMPORAL",
+        "NARRATIVE",
+        "LOCALIZATION",
+        "POLICY"
+      ],
+      "title": "CheckFamily",
+      "type": "string"
+    },
+    "CostBasis": {
+      "description": "How an amount was established. Only PROVIDER_REPORTED/BILLED are measured.",
+      "enum": [
+        "SYNTHETIC_FAKE",
+        "ESTIMATED",
+        "PROVIDER_REPORTED",
+        "BILLED"
+      ],
+      "title": "CostBasis",
+      "type": "string"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "CHECKED",
+        "PARTIAL",
+        "UNSAMPLED",
+        "UNAVAILABLE"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "CoverageWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "check_family": {
+          "$ref": "#/$defs/CheckFamily"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        }
+      },
+      "required": [
+        "asset_id",
+        "check_family",
+        "start_ms",
+        "end_ms",
+        "status"
+      ],
+      "title": "CoverageWindow",
+      "type": "object"
+    },
+    "PriceUnit": {
+      "enum": [
+        "REQUEST",
+        "INPUT_TOKEN_1K",
+        "OUTPUT_TOKEN_1K",
+        "AUDIO_SECOND",
+        "VIDEO_SECOND",
+        "GPU_SECOND",
+        "IMAGE",
+        "CHARACTER_1K",
+        "GIGABYTE"
+      ],
+      "title": "PriceUnit",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "ReceiptKind": {
+      "enum": [
+        "ACCRUAL",
+        "SETTLEMENT",
+        "CREDIT",
+        "ADJUSTMENT"
+      ],
+      "title": "ReceiptKind",
+      "type": "string"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence_bp": {
+          "anyOf": [
+            {
+              "description": "0..10000",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Bp"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "speaker_label": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speaker Label"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 2000,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms",
+        "text"
+      ],
+      "title": "TranscriptSegment",
+      "type": "object"
+    },
+    "UsageReceipt": {
+      "additionalProperties": false,
+      "description": "Observed usage. Fakes emit SYNTHETIC_FAKE; only PROVIDER_REPORTED/BILLED are measured.",
+      "properties": {
+        "amount_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Amount Micro Usd",
+          "type": "integer"
+        },
+        "category": {
+          "$ref": "#/$defs/BudgetCategory"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/CostBasis"
+        },
+        "currency": {
+          "default": "USD",
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "interval_end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval End"
+        },
+        "interval_start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval Start"
+        },
+        "job_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Job Id"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReceiptKind"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "provider": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "provider_receipt_id": {
+          "description": "Provider-side dedupe key",
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Provider Receipt Id",
+          "type": "string"
+        },
+        "receipt_id": {
+          "format": "uuid",
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "reservation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reservation Id"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "season_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Season Id"
+        },
+        "unit": {
+          "$ref": "#/$defs/PriceUnit"
+        },
+        "units": {
+          "minimum": 0,
+          "title": "Units",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "provider",
+        "provider_receipt_id",
+        "kind",
+        "cost_basis",
+        "category",
+        "amount_micro_usd",
+        "units",
+        "unit",
+        "observed_at",
+        "provenance"
+      ],
+      "title": "UsageReceipt",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ASRResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/CoverageWindow"
+      },
+      "minItems": 1,
+      "title": "Coverage",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/TranscriptSegment"
+      },
+      "title": "Segments",
+      "type": "array"
+    },
+    "usage": {
+      "items": {
+        "$ref": "#/$defs/UsageReceipt"
+      },
+      "title": "Usage",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "coverage",
+    "provenance"
+  ],
+  "title": "ASRResult",
+  "type": "object"
+}

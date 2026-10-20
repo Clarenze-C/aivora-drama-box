@@ -1,0 +1,31 @@
+{
+  "asset_id": "13f3fa60-45e2-5a00-a6fa-2e0169b24c02",
+  "check_family": "CAPTION",
+  "check_id": "caption.critical_term_match",
+  "confidence_bp": 9000,
+  "coverage": "CHECKED",
+  "end_ms": 3600,
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "evidence": [
+    {
+      "note": null,
+      "recorded_at": null,
+      "ref": "obs-report-ep1#o1",
+      "sha256": null,
+      "source": "FAKE_FIXTURE"
+    }
+  ],
+  "expected": "50,000 baht",
+  "finding_id": "2a5b107a-4b35-56ba-b252-9e92bb02801e",
+  "observed": "5,000 baht",
+  "outcome": "REPAIRABLE",
+  "provenance": "FAKE_SYNTHETIC",
+  "repair_dependency_ids": [],
+  "repair_targets": [
+    "CAPTION"
+  ],
+  "schema_version": "1.0",
+  "severity": "CRITICAL",
+  "source_pass": "PASS_B_COMPARISON",
+  "start_ms": 400
+}

@@ -1,0 +1,72 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:JobEnqueueRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "correlation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "episode_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Episode Id"
+    },
+    "idempotency_key": {
+      "maxLength": 200,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9._:\\-]+$",
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "input": {
+      "additionalProperties": true,
+      "title": "Input",
+      "type": "object"
+    },
+    "job_type": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Job Type",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "semantic_key": {
+      "maxLength": 400,
+      "minLength": 3,
+      "pattern": "^[A-Za-z0-9._:/\\-|=]+$",
+      "title": "Semantic Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_type",
+    "semantic_key",
+    "input",
+    "idempotency_key"
+  ],
+  "title": "JobEnqueueRequest",
+  "type": "object"
+}

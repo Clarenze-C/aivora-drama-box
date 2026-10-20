@@ -1,0 +1,154 @@
+{
+  "$defs": {
+    "ReleaseSlotStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "account_ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Account Ref",
+          "type": "string"
+        },
+        "blocker": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blocker"
+        },
+        "dedupe_key": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Dedupe Key",
+          "type": "string"
+        },
+        "external_id": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Id"
+        },
+        "platform": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Platform",
+          "type": "string"
+        },
+        "release_slot": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Release Slot",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/ReleaseState"
+        },
+        "unverified_fields": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Unverified Fields",
+          "type": "array"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "verified_fields": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Verified Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dedupe_key",
+        "platform",
+        "account_ref",
+        "release_slot",
+        "required",
+        "state"
+      ],
+      "title": "ReleaseSlotStatus",
+      "type": "object"
+    },
+    "ReleaseState": {
+      "enum": [
+        "RELEASE_APPROVED",
+        "SCHEDULED",
+        "SUBMITTED",
+        "PROCESSING",
+        "PUBLISHED_VERIFIED",
+        "RETRY_WAIT",
+        "NEEDS_RECONCILIATION",
+        "HELD",
+        "FAILED",
+        "CANCELLED"
+      ],
+      "title": "ReleaseState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ReleasesView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "all_required_verified": {
+      "title": "All Required Verified",
+      "type": "boolean"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slots": {
+      "items": {
+        "$ref": "#/$defs/ReleaseSlotStatus"
+      },
+      "title": "Slots",
+      "type": "array"
+    }
+  },
+  "required": [
+    "episode_id",
+    "all_required_verified"
+  ],
+  "title": "ReleasesView",
+  "type": "object"
+}

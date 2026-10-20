@@ -1,0 +1,320 @@
+{
+  "$defs": {
+    "BudgetCategory": {
+      "enum": [
+        "RESEARCH_SCRIPT_PROMPTS_METADATA",
+        "REFERENCES_DIALOGUE",
+        "GPU_GENERATION",
+        "QA_CAPTIONS",
+        "CPU_STORAGE_TRANSFER",
+        "METERED_MANAGEMENT",
+        "RECOVERY_HEADROOM"
+      ],
+      "title": "BudgetCategory",
+      "type": "string"
+    },
+    "BudgetScopeKind": {
+      "enum": [
+        "EPISODE",
+        "SEASON_RESEARCH"
+      ],
+      "title": "BudgetScopeKind",
+      "type": "string"
+    },
+    "ExposureCeilings": {
+      "additionalProperties": false,
+      "description": "Hard ceilings that bound worst-case exposure. A timeout is always required.",
+      "properties": {
+        "max_duration_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Duration Ms"
+        },
+        "max_height": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Height"
+        },
+        "max_input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Input Tokens"
+        },
+        "max_output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Output Tokens"
+        },
+        "max_units": {
+          "minimum": 1,
+          "title": "Max Units",
+          "type": "integer"
+        },
+        "max_width": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Width"
+        },
+        "timeout_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Timeout Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "timeout_ms",
+        "max_units"
+      ],
+      "title": "ExposureCeilings",
+      "type": "object"
+    },
+    "PriceQuote": {
+      "additionalProperties": false,
+      "description": "Unit price for a paid operation. Non-USD currency means unknown price (no FX).",
+      "properties": {
+        "as_of": {
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "price_table_version": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Price Table Version",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/PriceSource"
+        },
+        "unit": {
+          "$ref": "#/$defs/PriceUnit"
+        },
+        "unit_price_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Unit Price Micro Usd",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "currency",
+        "unit",
+        "unit_price_micro_usd",
+        "source",
+        "price_table_version",
+        "as_of"
+      ],
+      "title": "PriceQuote",
+      "type": "object"
+    },
+    "PriceSource": {
+      "enum": [
+        "CONFIG_PRICE_TABLE",
+        "PROVIDER_QUOTE",
+        "FAKE_SYNTHETIC"
+      ],
+      "title": "PriceSource",
+      "type": "string"
+    },
+    "PriceUnit": {
+      "enum": [
+        "REQUEST",
+        "INPUT_TOKEN_1K",
+        "OUTPUT_TOKEN_1K",
+        "AUDIO_SECOND",
+        "VIDEO_SECOND",
+        "GPU_SECOND",
+        "IMAGE",
+        "CHARACTER_1K",
+        "GIGABYTE"
+      ],
+      "title": "PriceUnit",
+      "type": "string"
+    },
+    "QueueName": {
+      "enum": [
+        "production",
+        "publication",
+        "community"
+      ],
+      "title": "QueueName",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:BudgetReservationRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Ask the budget service to reserve worst-case exposure before paid dispatch.\n\n``price`` is None when the price is unknown; the budget service must then\nrefuse with ``UnknownPrice`` (never assume zero).",
+  "properties": {
+    "category": {
+      "$ref": "#/$defs/BudgetCategory"
+    },
+    "ceilings": {
+      "$ref": "#/$defs/ExposureCeilings"
+    },
+    "episode_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Episode Id"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "is_shutdown_or_cleanup": {
+      "default": false,
+      "description": "Only shutdown/cleanup may draw on the shutdown reserve",
+      "title": "Is Shutdown Or Cleanup",
+      "type": "boolean"
+    },
+    "job_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Job Id"
+    },
+    "operation_kind": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Operation Kind",
+      "type": "string"
+    },
+    "price": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PriceQuote"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "provider": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "queue": {
+      "$ref": "#/$defs/QueueName"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope_kind": {
+      "$ref": "#/$defs/BudgetScopeKind"
+    },
+    "season_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Season Id"
+    },
+    "semantic_key": {
+      "description": "Unique per logical paid step; retries reuse it",
+      "maxLength": 400,
+      "minLength": 3,
+      "pattern": "^[A-Za-z0-9._:/\\-|=]+$",
+      "title": "Semantic Key",
+      "type": "string"
+    },
+    "worst_case_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Worst Case Micro Usd",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_id",
+    "semantic_key",
+    "scope_kind",
+    "category",
+    "queue",
+    "provider",
+    "operation_kind",
+    "price",
+    "ceilings",
+    "worst_case_micro_usd",
+    "expires_at"
+  ],
+  "title": "BudgetReservationRequest",
+  "type": "object"
+}

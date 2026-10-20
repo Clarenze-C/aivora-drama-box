@@ -1,0 +1,264 @@
+{
+  "$defs": {
+    "CatalogPublicState": {
+      "enum": [
+        "NOT_RELEASED",
+        "EARLY_ACCESS_MEMBERS",
+        "PUBLIC_FREE",
+        "WITHDRAWN"
+      ],
+      "title": "CatalogPublicState",
+      "type": "string"
+    },
+    "MemberPrice": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Amount Micro Usd",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "interval": {
+          "default": "month",
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Interval",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_micro_usd"
+      ],
+      "title": "MemberPrice",
+      "type": "object"
+    },
+    "MembershipProviderKind": {
+      "enum": [
+        "PATREON",
+        "BUY_ME_A_COFFEE"
+      ],
+      "title": "MembershipProviderKind",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "ScheduleInstant": {
+      "additionalProperties": false,
+      "description": "A schedule point: IANA zone + local wall time + the concrete UTC instant.\n\nValidation rejects nonexistent local times (DST gaps) and ambiguous local times\n(DST overlaps) unless ``fold`` is given, and requires ``utc_instant`` to equal\nthe conversion, so a DST change can never silently move an announced time.",
+      "properties": {
+        "fold": {
+          "anyOf": [
+            {
+              "enum": [
+                0,
+                1
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fold"
+        },
+        "iana_zone": {
+          "title": "Iana Zone",
+          "type": "string"
+        },
+        "local_time": {
+          "description": "Wall-clock time in iana_zone, ISO 'YYYY-MM-DDTHH:MM[:SS]' without offset",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?$",
+          "title": "Local Time",
+          "type": "string"
+        },
+        "utc_instant": {
+          "format": "date-time",
+          "title": "Utc Instant",
+          "type": "string"
+        }
+      },
+      "required": [
+        "iana_zone",
+        "local_time",
+        "utc_instant"
+      ],
+      "title": "ScheduleInstant",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:MembershipCatalogEntry",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Truthful public/early-access state for one episode (MD-016).",
+  "properties": {
+    "approval_event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approval Event Id"
+    },
+    "catalog_version": {
+      "minimum": 1,
+      "title": "Catalog Version",
+      "type": "integer"
+    },
+    "entitlement_verified_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Entitlement Verified At"
+    },
+    "entry_id": {
+      "format": "uuid",
+      "title": "Entry Id",
+      "type": "string"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "episode_number": {
+      "minimum": 1,
+      "title": "Episode Number",
+      "type": "integer"
+    },
+    "free_release": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScheduleInstant"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Announced free date; cannot silently move"
+    },
+    "media_finished_and_approved": {
+      "title": "Media Finished And Approved",
+      "type": "boolean"
+    },
+    "member_post_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Member Post Id"
+    },
+    "member_price": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MemberPrice"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "member_provider": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MembershipProviderKind"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "member_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Member Url"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "public_state": {
+      "$ref": "#/$defs/CatalogPublicState"
+    },
+    "public_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Public Url"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "entry_id",
+    "season_id",
+    "episode_id",
+    "episode_number",
+    "catalog_version",
+    "public_state",
+    "media_finished_and_approved",
+    "provenance"
+  ],
+  "title": "MembershipCatalogEntry",
+  "type": "object"
+}

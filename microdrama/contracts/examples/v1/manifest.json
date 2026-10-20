@@ -1,0 +1,462 @@
+{
+  "examples/v1/invalid/ApprovalCommand__float_revision.json": {
+    "expect": "invalid",
+    "model": "ApprovalCommand",
+    "reason": "integers only"
+  },
+  "examples/v1/invalid/ApprovalCommand__gate1_revise.json": {
+    "expect": "invalid",
+    "model": "ApprovalCommand",
+    "reason": "Gate 1 has no Revise"
+  },
+  "examples/v1/invalid/ApprovalCommand__gate2_approve_without_media.json": {
+    "expect": "invalid",
+    "model": "ApprovalCommand",
+    "reason": "Gate 2 approval must bind media hashes"
+  },
+  "examples/v1/invalid/ApprovalCommand__series_feedback_without_explicit_scope.json": {
+    "expect": "invalid",
+    "model": "ApprovalCommand",
+    "reason": "no inferred globalization"
+  },
+  "examples/v1/invalid/AssetDescriptor__path_traversal_key.json": {
+    "expect": "invalid",
+    "model": "AssetDescriptor",
+    "reason": "private relative keys only"
+  },
+  "examples/v1/invalid/AssetDescriptor__video_without_media_info.json": {
+    "expect": "invalid",
+    "model": "AssetDescriptor",
+    "reason": "measured media facts required"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__float_money.json": {
+    "expect": "invalid",
+    "model": "BudgetReservationRequest",
+    "reason": "money must be integer micro-USD"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__no_timeout.json": {
+    "expect": "invalid",
+    "model": "BudgetReservationRequest",
+    "reason": "timeout ceiling required"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__under_bounded_exposure.json": {
+    "expect": "invalid",
+    "model": "BudgetReservationRequest",
+    "reason": "worst case below price x units"
+  },
+  "examples/v1/invalid/CapabilityRecord__enabled_without_evidence.json": {
+    "expect": "invalid",
+    "model": "CapabilityRecord",
+    "reason": "enabled needs evidence"
+  },
+  "examples/v1/invalid/CaptionTrack__actual_timing_without_audio.json": {
+    "expect": "invalid",
+    "model": "CaptionTrack",
+    "reason": "must name aligned audio"
+  },
+  "examples/v1/invalid/CaptionTrack__overlapping_cues.json": {
+    "expect": "invalid",
+    "model": "CaptionTrack",
+    "reason": "cues ordered, non-overlapping"
+  },
+  "examples/v1/invalid/ComparisonRequest__bad_hash.json": {
+    "expect": "invalid",
+    "model": "ComparisonRequest",
+    "reason": "sha256 hex"
+  },
+  "examples/v1/invalid/DomainEvent__bad_event_type.json": {
+    "expect": "invalid",
+    "model": "DomainEvent",
+    "reason": "dotted lowercase type"
+  },
+  "examples/v1/invalid/DomainEvent__oversized_payload.json": {
+    "expect": "invalid",
+    "model": "DomainEvent",
+    "reason": "bounded payload"
+  },
+  "examples/v1/invalid/EditDecisionList__inverted_source_range.json": {
+    "expect": "invalid",
+    "model": "EditDecisionList",
+    "reason": "out > in"
+  },
+  "examples/v1/invalid/EditDecisionList__overlapping_video.json": {
+    "expect": "invalid",
+    "model": "EditDecisionList",
+    "reason": "video clips cannot overlap"
+  },
+  "examples/v1/invalid/EpisodePlan__four_featured_speakers.json": {
+    "expect": "invalid",
+    "model": "EpisodePlan",
+    "reason": "max three featured speaking characters"
+  },
+  "examples/v1/invalid/HookExperiment__hook_too_long.json": {
+    "expect": "invalid",
+    "model": "HookExperiment",
+    "reason": "20-40 s"
+  },
+  "examples/v1/invalid/HookExperiment__new_render_jobs.json": {
+    "expect": "invalid",
+    "model": "HookExperiment",
+    "reason": "no new video renders for hooks"
+  },
+  "examples/v1/invalid/HookExperiment__two_candidates.json": {
+    "expect": "invalid",
+    "model": "HookExperiment",
+    "reason": "exactly three candidates"
+  },
+  "examples/v1/invalid/IdentityLock__empty_lock.json": {
+    "expect": "invalid",
+    "model": "IdentityLock",
+    "reason": "lock must include assets"
+  },
+  "examples/v1/invalid/ManagementAction__reply_without_content.json": {
+    "expect": "invalid",
+    "model": "ManagementAction",
+    "reason": "replies need content"
+  },
+  "examples/v1/invalid/ManagementAction__suppressed_without_reason.json": {
+    "expect": "invalid",
+    "model": "ManagementAction",
+    "reason": "suppression must be explained"
+  },
+  "examples/v1/invalid/MembershipCatalogEntry__early_access_unapproved.json": {
+    "expect": "invalid",
+    "model": "MembershipCatalogEntry",
+    "reason": "cannot sell unapproved media"
+  },
+  "examples/v1/invalid/MembershipCatalogEntry__fake_with_real_url.json": {
+    "expect": "invalid",
+    "model": "MembershipCatalogEntry",
+    "reason": "fakes only report .invalid URLs"
+  },
+  "examples/v1/invalid/MembershipCatalogEntry__token_in_link.json": {
+    "expect": "invalid",
+    "model": "MembershipCatalogEntry",
+    "reason": "no secret playback token in links"
+  },
+  "examples/v1/invalid/MetricSnapshot__float_metric.json": {
+    "expect": "invalid",
+    "model": "MetricSnapshot",
+    "reason": "integers or null only"
+  },
+  "examples/v1/invalid/ObservationReport__no_coverage.json": {
+    "expect": "invalid",
+    "model": "ObservationReport",
+    "reason": "coverage must be explicit"
+  },
+  "examples/v1/invalid/ObservationRequest__includes_expected_dialogue.json": {
+    "expect": "invalid",
+    "model": "ObservationRequest",
+    "reason": "Pass A excludes expected dialogue"
+  },
+  "examples/v1/invalid/ObservationRequest__includes_intended_script.json": {
+    "expect": "invalid",
+    "model": "ObservationRequest",
+    "reason": "Pass A excludes intended script"
+  },
+  "examples/v1/invalid/PodLease__float_price.json": {
+    "expect": "invalid",
+    "model": "PodLease",
+    "reason": "integer micro-USD"
+  },
+  "examples/v1/invalid/ProviderOperationResult__failed_without_error.json": {
+    "expect": "invalid",
+    "model": "ProviderOperationResult",
+    "reason": "typed failure"
+  },
+  "examples/v1/invalid/ProviderOperation__missing_client_token.json": {
+    "expect": "invalid",
+    "model": "ProviderOperation",
+    "reason": "idempotent token required"
+  },
+  "examples/v1/invalid/PublicationCommand__dst_ambiguous_without_fold.json": {
+    "expect": "invalid",
+    "model": "PublicationCommand",
+    "reason": "ambiguous local time needs fold"
+  },
+  "examples/v1/invalid/PublicationCommand__dst_gap_schedule.json": {
+    "expect": "invalid",
+    "model": "PublicationCommand",
+    "reason": "nonexistent local time"
+  },
+  "examples/v1/invalid/PublicationCommand__utc_mismatch.json": {
+    "expect": "invalid",
+    "model": "PublicationCommand",
+    "reason": "utc_instant must match zone conversion"
+  },
+  "examples/v1/invalid/QAFinding__partial_pass.json": {
+    "expect": "invalid",
+    "model": "QAFinding",
+    "reason": "PASS requires CHECKED"
+  },
+  "examples/v1/invalid/QAFinding__unsampled_pass.json": {
+    "expect": "invalid",
+    "model": "QAFinding",
+    "reason": "unsampled coverage is UNKNOWN, never PASS"
+  },
+  "examples/v1/invalid/QualificationResult__qualified_after_one.json": {
+    "expect": "invalid",
+    "model": "QualificationResult",
+    "reason": "ten consecutive episodes required"
+  },
+  "examples/v1/invalid/QualificationResult__required_not_ten.json": {
+    "expect": "invalid",
+    "model": "QualificationResult",
+    "reason": "requirement fixed at ten"
+  },
+  "examples/v1/invalid/ReleasePackage__episode1_without_cast_package.json": {
+    "expect": "invalid",
+    "model": "ReleasePackage",
+    "reason": "IMP-01 cast package"
+  },
+  "examples/v1/invalid/ReleasePackage__missing_ai_disclosure.json": {
+    "expect": "invalid",
+    "model": "ReleasePackage",
+    "reason": "MD-015"
+  },
+  "examples/v1/invalid/ReleasePackage__tampered_hash.json": {
+    "expect": "invalid",
+    "model": "ReleasePackage",
+    "reason": "package hash must match content"
+  },
+  "examples/v1/invalid/RenderRequest__fourth_attempt.json": {
+    "expect": "invalid",
+    "model": "RenderRequest",
+    "reason": "max three paid attempts"
+  },
+  "examples/v1/invalid/RenderRequest__later_episode_without_lock.json": {
+    "expect": "invalid",
+    "model": "RenderRequest",
+    "reason": "IMP-01"
+  },
+  "examples/v1/invalid/RenderRequest__unknown_control.json": {
+    "expect": "invalid",
+    "model": "RenderRequest",
+    "reason": "unknown control"
+  },
+  "examples/v1/invalid/RepairPlan__over_budget.json": {
+    "expect": "invalid",
+    "model": "RepairPlan",
+    "reason": "cannot exceed remaining budget"
+  },
+  "examples/v1/invalid/RepairPlan__shot_rerender_without_attempt.json": {
+    "expect": "invalid",
+    "model": "RepairPlan",
+    "reason": "tier promotion consumes ordinary attempt"
+  },
+  "examples/v1/invalid/RepairPlan__third_qa_round.json": {
+    "expect": "invalid",
+    "model": "RepairPlan",
+    "reason": "max two automatic repair rounds"
+  },
+  "examples/v1/invalid/Script__duplicate_line_id.json": {
+    "expect": "invalid",
+    "model": "Script",
+    "reason": "line ids unique"
+  },
+  "examples/v1/invalid/SeasonScope__cap_above_ten_dollars.json": {
+    "expect": "invalid",
+    "model": "SeasonScope",
+    "reason": "cap > US$10"
+  },
+  "examples/v1/invalid/SeasonScope__episode_too_long.json": {
+    "expect": "invalid",
+    "model": "SeasonScope",
+    "reason": "MD-002 max 300 s"
+  },
+  "examples/v1/invalid/SeasonScope__paid_ads.json": {
+    "expect": "invalid",
+    "model": "SeasonScope",
+    "reason": "MD-018 paid ads zero"
+  },
+  "examples/v1/invalid/SeasonScope__stale_schema_version.json": {
+    "expect": "invalid",
+    "model": "SeasonScope",
+    "reason": "unsupported schema version"
+  },
+  "examples/v1/invalid/SeasonScope__unknown_field.json": {
+    "expect": "invalid",
+    "model": "SeasonScope",
+    "reason": "closed schema rejects unknown fields"
+  },
+  "examples/v1/invalid/ShotManifest__later_episode_without_lock.json": {
+    "expect": "invalid",
+    "model": "ShotManifest",
+    "reason": "IMP-01 identity lock required"
+  },
+  "examples/v1/invalid/ShotManifest__shot_over_15s.json": {
+    "expect": "invalid",
+    "model": "ShotManifest",
+    "reason": "15 s unit"
+  },
+  "examples/v1/invalid/ShotManifest__three_speakers_in_shot.json": {
+    "expect": "invalid",
+    "model": "ShotManifest",
+    "reason": "max two speakers per shot"
+  },
+  "examples/v1/invalid/ShotManifest__unknown_control.json": {
+    "expect": "invalid",
+    "model": "ShotManifest",
+    "reason": "unknown controls cannot be silently discarded"
+  },
+  "examples/v1/invalid/UsageReceipt__fake_claims_billed.json": {
+    "expect": "invalid",
+    "model": "UsageReceipt",
+    "reason": "fake usage cannot claim measured cost"
+  },
+  "examples/v1/invalid/UsageReceipt__negative_amount.json": {
+    "expect": "invalid",
+    "model": "UsageReceipt",
+    "reason": "non-negative micro-USD"
+  },
+  "examples/v1/valid/ApprovalCommand.json": {
+    "canonical_sha256": "daf2fdb0410f8a38c8b1e5a74e0973601f20d27ca0ffa3d2624e5cc8f518e183",
+    "expect": "valid",
+    "model": "ApprovalCommand"
+  },
+  "examples/v1/valid/ApprovalCommand__gate2_revise.json": {
+    "canonical_sha256": "24f85dcc25b9359776f587ddf89fd2c8289c5b5be5d8158cc6a75fc7841bd1a5",
+    "expect": "valid",
+    "model": "ApprovalCommand"
+  },
+  "examples/v1/valid/AssetDescriptor.json": {
+    "canonical_sha256": "05fd568b783dd37e0a6eabd541dde26e96d308c16775f8faf2451ef438e26876",
+    "expect": "valid",
+    "model": "AssetDescriptor"
+  },
+  "examples/v1/valid/BudgetReservationRequest.json": {
+    "canonical_sha256": "029705dc5882230aa01d9f58846bcdfe94b2b850d6ffb4d6df5191177e5ff154",
+    "expect": "valid",
+    "model": "BudgetReservationRequest"
+  },
+  "examples/v1/valid/CapabilityRecord.json": {
+    "canonical_sha256": "a04e9ab14f5c96356eb151a864be2d8a77dfcc5c939e972c425fac3fb2d9da92",
+    "expect": "valid",
+    "model": "CapabilityRecord"
+  },
+  "examples/v1/valid/CaptionTrack.json": {
+    "canonical_sha256": "2f23d24711cfa44c4e1cf4512fd360ff4d27d1a3977be7dd5777d8e8f8ea613e",
+    "expect": "valid",
+    "model": "CaptionTrack"
+  },
+  "examples/v1/valid/ComparisonRequest.json": {
+    "canonical_sha256": "46f36e1a3c09d195b0b3714305df103a0efd744ca89de9f35f2a529ed22b7dc2",
+    "expect": "valid",
+    "model": "ComparisonRequest"
+  },
+  "examples/v1/valid/DomainEvent.json": {
+    "canonical_sha256": "d04aa18a2cb611b00ea2485104b49fb745479036fc8ff47b0815987497392f74",
+    "expect": "valid",
+    "model": "DomainEvent"
+  },
+  "examples/v1/valid/EditDecisionList.json": {
+    "canonical_sha256": "cdfbcd69cdd3fe53204ddab95fdd6dddc60d1c5105e4585a3fddf466b8587c5a",
+    "expect": "valid",
+    "model": "EditDecisionList"
+  },
+  "examples/v1/valid/EpisodePlan.json": {
+    "canonical_sha256": "41491eaaefa08a2ff4c5ad4bf606fbe31ebdd0544c47c5514698eb346104ac34",
+    "expect": "valid",
+    "model": "EpisodePlan"
+  },
+  "examples/v1/valid/HookExperiment.json": {
+    "canonical_sha256": "b336bb2beb0c2c8d7e6f0ac0fd875d743fb5012740e8c89cb9cafab492e2a483",
+    "expect": "valid",
+    "model": "HookExperiment"
+  },
+  "examples/v1/valid/IdentityLock.json": {
+    "canonical_sha256": "e3ec31cda8365cf04ff293003d93eba071f2b656d5a4974e9f0ea6b16e462fe8",
+    "expect": "valid",
+    "model": "IdentityLock"
+  },
+  "examples/v1/valid/ManagementAction.json": {
+    "canonical_sha256": "0b41679f051dbc849989b92ce4cab581947911930b5c57661063afc85201c946",
+    "expect": "valid",
+    "model": "ManagementAction"
+  },
+  "examples/v1/valid/MembershipCatalogEntry.json": {
+    "canonical_sha256": "5578ef48295759ba5fe7940e6693e7c873d1bf54b4de088e8efa1c68ca844895",
+    "expect": "valid",
+    "model": "MembershipCatalogEntry"
+  },
+  "examples/v1/valid/MetricSnapshot.json": {
+    "canonical_sha256": "de743aa8dd77a8789767730f2f8e2a85e3537c2a7d50339dcf53e95ddcd676c8",
+    "expect": "valid",
+    "model": "MetricSnapshot"
+  },
+  "examples/v1/valid/ObservationReport.json": {
+    "canonical_sha256": "6e70140ee844463af8d097761963f455b63abaffd1fe0d161afbbfcdfed15d9e",
+    "expect": "valid",
+    "model": "ObservationReport"
+  },
+  "examples/v1/valid/ObservationRequest.json": {
+    "canonical_sha256": "373d00877456e6d6ab0b05c025846e02bea0db400725452888ad4bb855120457",
+    "expect": "valid",
+    "model": "ObservationRequest"
+  },
+  "examples/v1/valid/PodLease.json": {
+    "canonical_sha256": "484041f3144d30ba341bd4e8df6b3c190b7a3807565ce4f04d5c74aebf3b3956",
+    "expect": "valid",
+    "model": "PodLease"
+  },
+  "examples/v1/valid/ProviderOperation.json": {
+    "canonical_sha256": "f1cc92684b330115ed86bd43f4234b59ce43d069e0c9483030e7cd3d9cf71d2f",
+    "expect": "valid",
+    "model": "ProviderOperation"
+  },
+  "examples/v1/valid/ProviderOperationResult.json": {
+    "canonical_sha256": "c3631a02cae5fb3c2e12f0f1822621441f0d26cccaf7890027c30eac6f01344e",
+    "expect": "valid",
+    "model": "ProviderOperationResult"
+  },
+  "examples/v1/valid/PublicationCommand.json": {
+    "canonical_sha256": "fad7cd92c90fc74d65b378cb5bb182718269f4f5be4de7613c3cf4a9cb6c6207",
+    "expect": "valid",
+    "model": "PublicationCommand"
+  },
+  "examples/v1/valid/QAFinding.json": {
+    "canonical_sha256": "f58709ee938503e76bd2fad907445763fc9d91d437721caf0b13fa2d4a976f7f",
+    "expect": "valid",
+    "model": "QAFinding"
+  },
+  "examples/v1/valid/QualificationResult.json": {
+    "canonical_sha256": "38690efe0762f952a14d35ba5e5827fcf81055a4402978721bf91bcc1090fae4",
+    "expect": "valid",
+    "model": "QualificationResult"
+  },
+  "examples/v1/valid/ReleasePackage.json": {
+    "canonical_sha256": "5795538d81ef3fbdb323146092667d50729dd4e0857e6985dd24c3ab7fffcc76",
+    "expect": "valid",
+    "model": "ReleasePackage"
+  },
+  "examples/v1/valid/RenderRequest.json": {
+    "canonical_sha256": "e10dcce162ea73eab242495f581d70748e5b7851bf430c0287260bfeef87ed70",
+    "expect": "valid",
+    "model": "RenderRequest"
+  },
+  "examples/v1/valid/RepairPlan.json": {
+    "canonical_sha256": "058325c5cbaa3a7592a1386958993814eafc8b804bb5f67bcb281ee6a9f9803c",
+    "expect": "valid",
+    "model": "RepairPlan"
+  },
+  "examples/v1/valid/Script.json": {
+    "canonical_sha256": "add5afa37555124fb7c696364ef1c3f5078ed87d38875485ccbdb520c59a6047",
+    "expect": "valid",
+    "model": "Script"
+  },
+  "examples/v1/valid/SeasonScope.json": {
+    "canonical_sha256": "9279a7bb2155f7eeae2d063c39c866ec3c2b46a7d232770615f9a359cf613bd5",
+    "expect": "valid",
+    "model": "SeasonScope"
+  },
+  "examples/v1/valid/ShotManifest.json": {
+    "canonical_sha256": "de199f8ce3d3a311303a784b47b8f6978dfcdf1d23d00e89e04f550127aa4837",
+    "expect": "valid",
+    "model": "ShotManifest"
+  },
+  "examples/v1/valid/UsageReceipt.json": {
+    "canonical_sha256": "2bee4a385a6b9852d5521d1e6c3583afa8bda51d25d3117ceb30448664137b3b",
+    "expect": "valid",
+    "model": "UsageReceipt"
+  }
+}

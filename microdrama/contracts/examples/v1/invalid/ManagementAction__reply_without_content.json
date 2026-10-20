@@ -1,0 +1,20 @@
+{
+  "account_ref": "acct:tiktok-main",
+  "action_id": "a06ea222-7698-5920-8445-93d112d0d572",
+  "catalog_version": 1,
+  "classifier_confidence_bp": null,
+  "community_event_id": "2733c7f6-0f9d-5e5f-877f-97c14a7e17bc",
+  "content": null,
+  "cost_basis": "ESTIMATED",
+  "decision": "PROPOSED",
+  "dedupe_key": "reply:fake-comment-0001",
+  "estimated_cost_micro_usd": 0,
+  "kind": "PUBLIC_REPLY",
+  "management_policy_hash": "3baf0ca0753062c9c6cae100c24cf27c75d3207289dd4164f3a4fd4e07960309",
+  "platform": "TIKTOK",
+  "platform_post_id": "1dfa9e1c-503e-54ff-91d8-176a19249aed",
+  "reason": null,
+  "reservation_id": null,
+  "schema_version": "1.0",
+  "target_external_id": "fake-comment-0001"
+}

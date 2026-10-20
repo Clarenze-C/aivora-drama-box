@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "JobStatus": {
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "WAITING_EXTERNAL",
+        "RETRY_WAIT",
+        "SUCCEEDED",
+        "FAILED",
+        "NEEDS_RECONCILIATION",
+        "CANCELLED"
+      ],
+      "title": "JobStatus",
+      "type": "string"
+    },
+    "QueueName": {
+      "enum": [
+        "production",
+        "publication",
+        "community"
+      ],
+      "title": "QueueName",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:JobStatusView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attempt": {
+      "minimum": 0,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "external_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "External Id"
+    },
+    "job_id": {
+      "format": "uuid",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "job_type": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Job Type",
+      "type": "string"
+    },
+    "queue": {
+      "$ref": "#/$defs/QueueName"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/JobStatus"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "job_type",
+    "queue",
+    "status",
+    "attempt",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "JobStatusView",
+  "type": "object"
+}

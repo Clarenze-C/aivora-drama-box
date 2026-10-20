@@ -1,0 +1,19 @@
+{
+  "accrued_until": "2026-10-20T00:05:00Z",
+  "client_token": "lease-1-create",
+  "created_at": "2026-10-20T00:00:00Z",
+  "gpu_type": "FAKE-GPU-24GB",
+  "heartbeat_at": "2026-10-20T00:05:00Z",
+  "hourly_price_micro_usd": 0.9,
+  "lease_expires_at": "2026-10-20T00:20:00Z",
+  "lease_id": "6b1393d8-d084-5837-8f87-cbb49aa227e2",
+  "lease_state": "ACTIVE",
+  "owned_tag": "microdrama-owned:env-test",
+  "owner_episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "owner_job_id": "1e964beb-c389-52aa-9012-c7e7368e69ec",
+  "pod_id": "fake-pod-0001",
+  "pod_state": "RUNNING",
+  "provider": "fake-runpod",
+  "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
+  "schema_version": "1.0"
+}

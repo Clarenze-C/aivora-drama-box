@@ -1,0 +1,1306 @@
+{
+  "$defs": {
+    "CatalogPublicState": {
+      "enum": [
+        "NOT_RELEASED",
+        "EARLY_ACCESS_MEMBERS",
+        "PUBLIC_FREE",
+        "WITHDRAWN"
+      ],
+      "title": "CatalogPublicState",
+      "type": "string"
+    },
+    "CheckFamily": {
+      "enum": [
+        "TECHNICAL",
+        "AUDIO",
+        "ASR",
+        "CAPTION",
+        "VISUAL_IDENTITY",
+        "TEMPORAL",
+        "NARRATIVE",
+        "LOCALIZATION",
+        "POLICY"
+      ],
+      "title": "CheckFamily",
+      "type": "string"
+    },
+    "CostSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "accrued_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Accrued Micro Usd",
+          "type": "integer"
+        },
+        "episode_cap_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Episode Cap Micro Usd",
+          "type": "integer"
+        },
+        "remaining_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Remaining Micro Usd",
+          "type": "integer"
+        },
+        "reserved_outstanding_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Reserved Outstanding Micro Usd",
+          "type": "integer"
+        },
+        "settled_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Settled Micro Usd",
+          "type": "integer"
+        },
+        "synthetic_fake_micro_usd": {
+          "default": 0,
+          "description": "Portion from fake providers (not real money)",
+          "minimum": 0,
+          "title": "Synthetic Fake Micro Usd",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "episode_cap_micro_usd",
+        "settled_micro_usd",
+        "accrued_micro_usd",
+        "reserved_outstanding_micro_usd",
+        "remaining_micro_usd"
+      ],
+      "title": "CostSummary",
+      "type": "object"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "CHECKED",
+        "PARTIAL",
+        "UNSAMPLED",
+        "UNAVAILABLE"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "CoverageWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "check_family": {
+          "$ref": "#/$defs/CheckFamily"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        }
+      },
+      "required": [
+        "asset_id",
+        "check_family",
+        "start_ms",
+        "end_ms",
+        "status"
+      ],
+      "title": "CoverageWindow",
+      "type": "object"
+    },
+    "DisclosureKind": {
+      "enum": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE",
+        "SPONSORED",
+        "MEMBER_OFFER"
+      ],
+      "title": "DisclosureKind",
+      "type": "string"
+    },
+    "EpisodeOutcome": {
+      "description": "Typed failure outcome recorded alongside the last valid stage (SPEC §5).",
+      "enum": [
+        "BUDGET_EXHAUSTED",
+        "FAILED_QA",
+        "FAILED_INFRA",
+        "RIGHTS_UNCLEARED",
+        "CAPABILITY_UNAVAILABLE",
+        "NEEDS_RECONCILIATION",
+        "REJECTED",
+        "CANCELLED"
+      ],
+      "title": "EpisodeOutcome",
+      "type": "string"
+    },
+    "EpisodeState": {
+      "enum": [
+        "PLANNED",
+        "SCRIPTING",
+        "REFERENCES",
+        "RENDERING",
+        "ASSEMBLING",
+        "AI_REVIEW",
+        "AWAITING_FINAL_REVIEW",
+        "RELEASE_APPROVED",
+        "SCHEDULED",
+        "PUBLISHING",
+        "PUBLISHED_VERIFIED",
+        "MANAGED"
+      ],
+      "title": "EpisodeState",
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Pointer to evidence. A hash proves integrity/identity, not truth or rights.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "recorded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recorded At"
+        },
+        "ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        }
+      },
+      "required": [
+        "source",
+        "ref"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "EvidenceSource": {
+      "enum": [
+        "FAKE_FIXTURE",
+        "OFFICIAL_DOCUMENTATION",
+        "CONTROLLED_ACCOUNT_TEST",
+        "MEASURED_BENCHMARK",
+        "LICENSE_DOCUMENT"
+      ],
+      "title": "EvidenceSource",
+      "type": "string"
+    },
+    "FeedbackCategory": {
+      "enum": [
+        "identity_voice",
+        "thai_dialogue",
+        "subtitles",
+        "motivation",
+        "continuity_props",
+        "pacing",
+        "sound",
+        "other"
+      ],
+      "title": "FeedbackCategory",
+      "type": "string"
+    },
+    "ManagementActionKind": {
+      "enum": [
+        "TITLE_EDIT",
+        "CAPTION_EDIT",
+        "DESCRIPTION_EDIT",
+        "HASHTAG_EDIT",
+        "COVER_CHANGE",
+        "LINK_UPDATE",
+        "PUBLIC_REPLY",
+        "DM_SEND",
+        "MODERATE_HIDE",
+        "MODERATE_DELETE",
+        "MODERATE_REPORT",
+        "NO_ACTION"
+      ],
+      "title": "ManagementActionKind",
+      "type": "string"
+    },
+    "ManagementPolicy": {
+      "additionalProperties": false,
+      "description": "The mutable-metadata/community scope Gate 2 approval binds by hash.",
+      "properties": {
+        "accept_contracts_sponsors_refunds": {
+          "default": false,
+          "title": "Accept Contracts Sponsors Refunds",
+          "type": "boolean"
+        },
+        "allowed_actions": {
+          "items": {
+            "$ref": "#/$defs/ManagementActionKind"
+          },
+          "title": "Allowed Actions",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "automatic_account_bans": {
+          "default": false,
+          "title": "Automatic Account Bans",
+          "type": "boolean"
+        },
+        "cold_outbound_dms": {
+          "default": false,
+          "title": "Cold Outbound Dms",
+          "type": "boolean"
+        },
+        "dm_keywords": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Dm Keywords",
+          "type": "array"
+        },
+        "max_dms_per_conversation": {
+          "default": 3,
+          "minimum": 0,
+          "title": "Max Dms Per Conversation",
+          "type": "integer"
+        },
+        "max_replies_per_post_per_day": {
+          "default": 50,
+          "minimum": 0,
+          "title": "Max Replies Per Post Per Day",
+          "type": "integer"
+        },
+        "max_substantive_edits_first_7_days": {
+          "default": 2,
+          "minimum": 0,
+          "title": "Max Substantive Edits First 7 Days",
+          "type": "integer"
+        },
+        "metadata_cooldown_hours": {
+          "default": 24,
+          "minimum": 1,
+          "title": "Metadata Cooldown Hours",
+          "type": "integer"
+        },
+        "moderation_policy_id": {
+          "default": "moderate-clear-spam-scams-threats-v1",
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Moderation Policy Id",
+          "type": "string"
+        },
+        "remove_ordinary_criticism": {
+          "default": false,
+          "title": "Remove Ordinary Criticism",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allowed_actions"
+      ],
+      "title": "ManagementPolicy",
+      "type": "object"
+    },
+    "MediaRef": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "role": {
+          "description": "master/variant/cover/caption/hook/contact_sheet/voice_anchor",
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "sha256",
+        "role"
+      ],
+      "title": "MediaRef",
+      "type": "object"
+    },
+    "MemberPrice": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Amount Micro Usd",
+          "type": "integer"
+        },
+        "currency": {
+          "default": "USD",
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "interval": {
+          "default": "month",
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Interval",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount_micro_usd"
+      ],
+      "title": "MemberPrice",
+      "type": "object"
+    },
+    "MembershipCatalogEntry": {
+      "additionalProperties": false,
+      "description": "Truthful public/early-access state for one episode (MD-016).",
+      "properties": {
+        "approval_event_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Event Id"
+        },
+        "catalog_version": {
+          "minimum": 1,
+          "title": "Catalog Version",
+          "type": "integer"
+        },
+        "entitlement_verified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entitlement Verified At"
+        },
+        "entry_id": {
+          "format": "uuid",
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "episode_number": {
+          "minimum": 1,
+          "title": "Episode Number",
+          "type": "integer"
+        },
+        "free_release": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScheduleInstant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Announced free date; cannot silently move"
+        },
+        "media_finished_and_approved": {
+          "title": "Media Finished And Approved",
+          "type": "boolean"
+        },
+        "member_post_id": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Member Post Id"
+        },
+        "member_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemberPrice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "member_provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MembershipProviderKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "member_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Member Url"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "public_state": {
+          "$ref": "#/$defs/CatalogPublicState"
+        },
+        "public_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Public Url"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "season_id": {
+          "format": "uuid",
+          "title": "Season Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry_id",
+        "season_id",
+        "episode_id",
+        "episode_number",
+        "catalog_version",
+        "public_state",
+        "media_finished_and_approved",
+        "provenance"
+      ],
+      "title": "MembershipCatalogEntry",
+      "type": "object"
+    },
+    "MembershipProviderKind": {
+      "enum": [
+        "PATREON",
+        "BUY_ME_A_COFFEE"
+      ],
+      "title": "MembershipProviderKind",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "QAFinding": {
+      "additionalProperties": false,
+      "description": "Timecoded finding. Unchecked coverage can never be a PASS.",
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "check_family": {
+          "$ref": "#/$defs/CheckFamily"
+        },
+        "check_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "confidence_bp": {
+          "anyOf": [
+            {
+              "description": "0..10000",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Bp"
+        },
+        "coverage": {
+          "$ref": "#/$defs/CoverageStatus"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
+        "finding_id": {
+          "format": "uuid",
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed"
+        },
+        "outcome": {
+          "$ref": "#/$defs/QAOutcome"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "repair_dependency_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Repair Dependency Ids",
+          "type": "array"
+        },
+        "repair_targets": {
+          "items": {
+            "$ref": "#/$defs/RepairTarget"
+          },
+          "title": "Repair Targets",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source_pass": {
+          "$ref": "#/$defs/QAPass"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "finding_id",
+        "episode_id",
+        "asset_id",
+        "start_ms",
+        "end_ms",
+        "check_id",
+        "check_family",
+        "source_pass",
+        "severity",
+        "coverage",
+        "outcome",
+        "provenance"
+      ],
+      "title": "QAFinding",
+      "type": "object"
+    },
+    "QAOutcome": {
+      "enum": [
+        "PASS",
+        "REPAIRABLE",
+        "BLOCKED",
+        "UNKNOWN"
+      ],
+      "title": "QAOutcome",
+      "type": "string"
+    },
+    "QAPass": {
+      "enum": [
+        "TECHNICAL",
+        "PASS_A_OBSERVATION",
+        "PASS_B_COMPARISON",
+        "HUMAN_FEEDBACK"
+      ],
+      "title": "QAPass",
+      "type": "string"
+    },
+    "QASummary": {
+      "additionalProperties": false,
+      "properties": {
+        "blocking_finding_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Blocking Finding Ids",
+          "type": "array"
+        },
+        "finding_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Finding Count",
+          "type": "integer"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "unknown_coverage_check_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Unknown Coverage Check Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "provenance"
+      ],
+      "title": "QASummary",
+      "type": "object"
+    },
+    "ReleasePackage": {
+      "additionalProperties": false,
+      "description": "What Gate 2 reviews. ``package_hash`` covers every immutable field.",
+      "properties": {
+        "caption_track_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Caption Track Ids",
+          "type": "array"
+        },
+        "cast_package_asset_ids": {
+          "description": "Episode one: contact sheet, voice anchors, outfits/sets",
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Cast Package Asset Ids",
+          "type": "array"
+        },
+        "cost": {
+          "$ref": "#/$defs/CostSummary"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "episode_number": {
+          "minimum": 1,
+          "title": "Episode Number",
+          "type": "integer"
+        },
+        "gate_blockers": {
+          "description": "Reasons Gate 2 approval is disabled (empty = enabled)",
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Gate Blockers",
+          "type": "array"
+        },
+        "hook_experiment_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hook Experiment Id"
+        },
+        "management_policy_hash": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Management Policy Hash",
+          "type": "string"
+        },
+        "media": {
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          },
+          "minItems": 1,
+          "title": "Media",
+          "type": "array"
+        },
+        "package_hash": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Hash",
+          "type": "string"
+        },
+        "package_id": {
+          "format": "uuid",
+          "title": "Package Id",
+          "type": "string"
+        },
+        "qa": {
+          "$ref": "#/$defs/QASummary"
+        },
+        "release_scope": {
+          "items": {
+            "$ref": "#/$defs/ReleaseSlotPlan"
+          },
+          "minItems": 1,
+          "title": "Release Scope",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "season_id": {
+          "format": "uuid",
+          "title": "Season Id",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "package_id",
+        "episode_id",
+        "season_id",
+        "episode_number",
+        "version",
+        "media",
+        "caption_track_ids",
+        "release_scope",
+        "management_policy_hash",
+        "qa",
+        "cost",
+        "package_hash"
+      ],
+      "title": "ReleasePackage",
+      "type": "object"
+    },
+    "ReleaseSlotKey": {
+      "additionalProperties": false,
+      "description": "Unique publication slot: (series, episode, part, locale, platform, account, slot).",
+      "properties": {
+        "account_ref": {
+          "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+          "title": "Account Ref",
+          "type": "string"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "locale": {
+          "description": "e.g. th-TH",
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+          "title": "Locale",
+          "type": "string"
+        },
+        "part": {
+          "description": "0 = full episode; 1..n = parts",
+          "minimum": 0,
+          "title": "Part",
+          "type": "integer"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "release_slot": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Release Slot",
+          "type": "string"
+        },
+        "series_id": {
+          "format": "uuid",
+          "title": "Series Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "series_id",
+        "episode_id",
+        "part",
+        "locale",
+        "platform",
+        "account_ref",
+        "release_slot"
+      ],
+      "title": "ReleaseSlotKey",
+      "type": "object"
+    },
+    "ReleaseSlotPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "capability_id": {
+          "format": "uuid",
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "capability_version": {
+          "minimum": 1,
+          "title": "Capability Version",
+          "type": "integer"
+        },
+        "depends_on": {
+          "description": "dedupe_keys that must be PUBLISHED_VERIFIED first",
+          "items": {
+            "description": "Lowercase SHA-256 hex",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "disclosures": {
+          "items": {
+            "$ref": "#/$defs/DisclosureKind"
+          },
+          "minItems": 1,
+          "title": "Disclosures",
+          "type": "array"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleInstant"
+        },
+        "slot": {
+          "$ref": "#/$defs/ReleaseSlotKey"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        }
+      },
+      "required": [
+        "slot",
+        "slot_kind",
+        "required",
+        "asset_id",
+        "asset_sha256",
+        "schedule",
+        "disclosures",
+        "capability_id",
+        "capability_version"
+      ],
+      "title": "ReleaseSlotPlan",
+      "type": "object"
+    },
+    "RepairTarget": {
+      "enum": [
+        "CAPTION",
+        "LINE",
+        "SHOT",
+        "EDIT",
+        "AUDIO_MIX",
+        "SCRIPT"
+      ],
+      "title": "RepairTarget",
+      "type": "string"
+    },
+    "ReviewMediaLink": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "review_path": {
+          "description": "Owner-scoped private path; not a public URL",
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Review Path",
+          "type": "string"
+        },
+        "role": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Role",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "role",
+        "sha256",
+        "review_path"
+      ],
+      "title": "ReviewMediaLink",
+      "type": "object"
+    },
+    "ScheduleInstant": {
+      "additionalProperties": false,
+      "description": "A schedule point: IANA zone + local wall time + the concrete UTC instant.\n\nValidation rejects nonexistent local times (DST gaps) and ambiguous local times\n(DST overlaps) unless ``fold`` is given, and requires ``utc_instant`` to equal\nthe conversion, so a DST change can never silently move an announced time.",
+      "properties": {
+        "fold": {
+          "anyOf": [
+            {
+              "enum": [
+                0,
+                1
+              ],
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fold"
+        },
+        "iana_zone": {
+          "title": "Iana Zone",
+          "type": "string"
+        },
+        "local_time": {
+          "description": "Wall-clock time in iana_zone, ISO 'YYYY-MM-DDTHH:MM[:SS]' without offset",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?$",
+          "title": "Local Time",
+          "type": "string"
+        },
+        "utc_instant": {
+          "format": "date-time",
+          "title": "Utc Instant",
+          "type": "string"
+        }
+      },
+      "required": [
+        "iana_zone",
+        "local_time",
+        "utc_instant"
+      ],
+      "title": "ScheduleInstant",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "CRITICAL",
+        "MAJOR",
+        "MINOR",
+        "INFO"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "SlotKind": {
+      "enum": [
+        "FULL_EPISODE",
+        "PART",
+        "PROMO_CUT",
+        "HOOK"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:EpisodeReviewView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "catalog_entry": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MembershipCatalogEntry"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CostSummary"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/CoverageWindow"
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "episode_number": {
+      "title": "Episode Number",
+      "type": "integer"
+    },
+    "feedback_categories": {
+      "items": {
+        "$ref": "#/$defs/FeedbackCategory"
+      },
+      "title": "Feedback Categories",
+      "type": "array"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/QAFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "gate_blockers": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Gate Blockers",
+      "type": "array"
+    },
+    "gate_enabled": {
+      "title": "Gate Enabled",
+      "type": "boolean"
+    },
+    "management_policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ManagementPolicy"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "media": {
+      "items": {
+        "$ref": "#/$defs/ReviewMediaLink"
+      },
+      "title": "Media",
+      "type": "array"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EpisodeOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "package": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReleasePackage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "revision": {
+      "description": "Optimistic revision",
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "#/$defs/EpisodeState"
+    }
+  },
+  "required": [
+    "episode_id",
+    "episode_number",
+    "state",
+    "revision",
+    "gate_enabled"
+  ],
+  "title": "EpisodeReviewView",
+  "type": "object"
+}

@@ -1,0 +1,313 @@
+{
+  "$defs": {
+    "CheckFamily": {
+      "enum": [
+        "TECHNICAL",
+        "AUDIO",
+        "ASR",
+        "CAPTION",
+        "VISUAL_IDENTITY",
+        "TEMPORAL",
+        "NARRATIVE",
+        "LOCALIZATION",
+        "POLICY"
+      ],
+      "title": "CheckFamily",
+      "type": "string"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "CHECKED",
+        "PARTIAL",
+        "UNSAMPLED",
+        "UNAVAILABLE"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "CoverageWindow": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "check_family": {
+          "$ref": "#/$defs/CheckFamily"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        }
+      },
+      "required": [
+        "asset_id",
+        "check_family",
+        "start_ms",
+        "end_ms",
+        "status"
+      ],
+      "title": "CoverageWindow",
+      "type": "object"
+    },
+    "Observation": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "confidence_bp": {
+          "anyOf": [
+            {
+              "description": "0..10000",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Bp"
+        },
+        "description": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "observation_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Id"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "observation_id",
+        "asset_id",
+        "start_ms",
+        "end_ms",
+        "description"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence_bp": {
+          "anyOf": [
+            {
+              "description": "0..10000",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Bp"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "speaker_label": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speaker Label"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "text": {
+          "maxLength": 2000,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_ms",
+        "end_ms",
+        "text"
+      ],
+      "title": "TranscriptSegment",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ObservationReport",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Frozen Pass A output. Persisted (immutable) with input hashes before Pass B.",
+  "properties": {
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/CoverageWindow"
+      },
+      "minItems": 1,
+      "title": "Coverage",
+      "type": "array"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "frozen_at": {
+      "format": "date-time",
+      "title": "Frozen At",
+      "type": "string"
+    },
+    "media_sha256": {
+      "items": {
+        "description": "Lowercase SHA-256 hex",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Media Sha256",
+      "type": "array"
+    },
+    "model_config_ref": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Model Config Ref",
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "report_id": {
+      "format": "uuid",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "request_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "transcript": {
+      "items": {
+        "$ref": "#/$defs/TranscriptSegment"
+      },
+      "title": "Transcript",
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_id",
+    "request_id",
+    "request_sha256",
+    "episode_id",
+    "media_sha256",
+    "coverage",
+    "model_config_ref",
+    "provenance",
+    "frozen_at"
+  ],
+  "title": "ObservationReport",
+  "type": "object"
+}

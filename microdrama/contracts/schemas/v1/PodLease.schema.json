@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "LeaseState": {
+      "enum": [
+        "CLAIMED",
+        "ACTIVE",
+        "TRANSFERRING",
+        "RELEASED",
+        "EXPIRED",
+        "ORPHANED"
+      ],
+      "title": "LeaseState",
+      "type": "string"
+    },
+    "PodState": {
+      "enum": [
+        "REQUESTED",
+        "CREATING",
+        "RUNNING",
+        "RELEASING",
+        "STOPPED",
+        "TERMINATED",
+        "UNKNOWN"
+      ],
+      "title": "PodState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:PodLease",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Ownership of a GPU pod by exactly one episode/job at a time (pilot rule).",
+  "properties": {
+    "accrued_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Paid interval already allocated (each interval once)",
+      "title": "Accrued Until"
+    },
+    "client_token": {
+      "description": "Idempotent create token used for reconciliation",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "gpu_type": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Gpu Type",
+      "type": "string"
+    },
+    "heartbeat_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Heartbeat At"
+    },
+    "hourly_price_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Hourly Price Micro Usd",
+      "type": "integer"
+    },
+    "lease_expires_at": {
+      "format": "date-time",
+      "title": "Lease Expires At",
+      "type": "string"
+    },
+    "lease_id": {
+      "format": "uuid",
+      "title": "Lease Id",
+      "type": "string"
+    },
+    "lease_state": {
+      "$ref": "#/$defs/LeaseState"
+    },
+    "owned_tag": {
+      "description": "Pipeline ownership tag; janitor only touches these",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Owned Tag",
+      "type": "string"
+    },
+    "owner_episode_id": {
+      "format": "uuid",
+      "title": "Owner Episode Id",
+      "type": "string"
+    },
+    "owner_job_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Job Id"
+    },
+    "pod_id": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Unknown until create is confirmed",
+      "title": "Pod Id"
+    },
+    "pod_state": {
+      "$ref": "#/$defs/PodState"
+    },
+    "provider": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "reservation_id": {
+      "format": "uuid",
+      "title": "Reservation Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "lease_id",
+    "provider",
+    "owned_tag",
+    "client_token",
+    "owner_episode_id",
+    "reservation_id",
+    "lease_state",
+    "pod_state",
+    "gpu_type",
+    "hourly_price_micro_usd",
+    "lease_expires_at",
+    "created_at"
+  ],
+  "title": "PodLease",
+  "type": "object"
+}

@@ -1,0 +1,246 @@
+{
+  "$defs": {
+    "EpisodeQualification": {
+      "additionalProperties": false,
+      "properties": {
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "episode_number": {
+          "minimum": 1,
+          "title": "Episode Number",
+          "type": "integer"
+        },
+        "failed_attempt_cost_micro_usd": {
+          "default": 0,
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Failed Attempt Cost Micro Usd",
+          "type": "integer"
+        },
+        "human_review_minutes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Review Minutes"
+        },
+        "management_window_ends_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Management Window Ends At"
+        },
+        "management_window_status": {
+          "$ref": "#/$defs/QualificationStatus"
+        },
+        "manual_interventions": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Manual Interventions",
+          "type": "integer"
+        },
+        "production_qualifies": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "None = still pending",
+          "title": "Production Qualifies"
+        },
+        "production_reasons": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Production Reasons",
+          "type": "array"
+        },
+        "published_minutes_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Published Minutes Ms",
+          "type": "integer"
+        },
+        "variable_cost_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Variable Cost Micro Usd",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "episode_id",
+        "episode_number",
+        "production_qualifies",
+        "management_window_status",
+        "variable_cost_micro_usd"
+      ],
+      "title": "EpisodeQualification",
+      "type": "object"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "QualificationStatus": {
+      "enum": [
+        "QUALIFIED",
+        "NOT_QUALIFIED",
+        "PENDING"
+      ],
+      "title": "QualificationStatus",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:QualificationResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Rolling ten-episode qualification (IMP-08). One success is never enough.",
+  "properties": {
+    "consecutive_qualifying_production": {
+      "minimum": 0,
+      "title": "Consecutive Qualifying Production",
+      "type": "integer"
+    },
+    "effective_cost_per_published_minute_micro_usd": {
+      "anyOf": [
+        {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Cost Per Published Minute Micro Usd"
+    },
+    "effective_cost_per_successful_episode_micro_usd": {
+      "anyOf": [
+        {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Cost Per Successful Episode Micro Usd"
+    },
+    "episodes": {
+      "items": {
+        "$ref": "#/$defs/EpisodeQualification"
+      },
+      "title": "Episodes",
+      "type": "array"
+    },
+    "evaluated_at": {
+      "format": "date-time",
+      "title": "Evaluated At",
+      "type": "string"
+    },
+    "fixed_costs_reported_separately": {
+      "default": true,
+      "title": "Fixed Costs Reported Separately",
+      "type": "boolean"
+    },
+    "management_status": {
+      "$ref": "#/$defs/QualificationStatus"
+    },
+    "production_status": {
+      "$ref": "#/$defs/QualificationStatus"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "required_consecutive": {
+      "default": 10,
+      "maximum": 10,
+      "minimum": 10,
+      "title": "Required Consecutive",
+      "type": "integer"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    },
+    "streak_resets": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Streak Resets",
+      "type": "array"
+    },
+    "successful_episodes": {
+      "minimum": 0,
+      "title": "Successful Episodes",
+      "type": "integer"
+    },
+    "total_variable_spend_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Total Variable Spend Micro Usd",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "season_id",
+    "evaluated_at",
+    "consecutive_qualifying_production",
+    "production_status",
+    "management_status",
+    "total_variable_spend_micro_usd",
+    "successful_episodes",
+    "provenance"
+  ],
+  "title": "QualificationResult",
+  "type": "object"
+}

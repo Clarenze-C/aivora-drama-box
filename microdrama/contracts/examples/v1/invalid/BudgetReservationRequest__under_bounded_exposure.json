@@ -1,0 +1,33 @@
+{
+  "category": "GPU_GENERATION",
+  "ceilings": {
+    "max_duration_ms": 4000,
+    "max_height": null,
+    "max_input_tokens": null,
+    "max_output_tokens": null,
+    "max_units": 600,
+    "max_width": null,
+    "timeout_ms": 600000
+  },
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "expires_at": "2026-10-20T01:00:00Z",
+  "is_shutdown_or_cleanup": false,
+  "job_id": "1e964beb-c389-52aa-9012-c7e7368e69ec",
+  "operation_kind": "gpu.render_shot",
+  "price": {
+    "as_of": "2026-10-20T00:00:00Z",
+    "currency": "USD",
+    "price_table_version": "fake-prices-v1",
+    "source": "FAKE_SYNTHETIC",
+    "unit": "GPU_SECOND",
+    "unit_price_micro_usd": 250
+  },
+  "provider": "fake-runpod",
+  "queue": "production",
+  "request_id": "ff761987-4b57-53a8-abaa-816f9bbbd28e",
+  "schema_version": "1.0",
+  "scope_kind": "EPISODE",
+  "season_id": null,
+  "semantic_key": "render.shot:ep1:sh1:attempt1",
+  "worst_case_micro_usd": 1
+}

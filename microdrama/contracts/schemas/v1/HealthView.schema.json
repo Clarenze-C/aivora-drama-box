@@ -1,0 +1,31 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:HealthView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "execution_mode": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Execution Mode",
+      "type": "string"
+    },
+    "status": {
+      "const": "ok",
+      "default": "ok",
+      "title": "Status",
+      "type": "string"
+    },
+    "version": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "execution_mode"
+  ],
+  "title": "HealthView",
+  "type": "object"
+}

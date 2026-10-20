@@ -1,0 +1,75 @@
+{
+  "caption_track_ids": [
+    "9dea611d-05b5-54db-a58d-5be4aec421a1",
+    "13f3fa60-45e2-5a00-a6fa-2e0169b24c02"
+  ],
+  "cast_package_asset_ids": [],
+  "cost": {
+    "accrued_micro_usd": 0,
+    "episode_cap_micro_usd": 10000000,
+    "remaining_micro_usd": 5900000,
+    "reserved_outstanding_micro_usd": 0,
+    "settled_micro_usd": 4100000,
+    "synthetic_fake_micro_usd": 4100000
+  },
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "episode_number": 1,
+  "gate_blockers": [],
+  "hook_experiment_id": "c43a046e-936e-57fd-a3a8-5ad1e686dc91",
+  "management_policy_hash": "3baf0ca0753062c9c6cae100c24cf27c75d3207289dd4164f3a4fd4e07960309",
+  "media": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "role": "master",
+      "sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755"
+    },
+    {
+      "asset_id": "9e4e3788-e27b-51f4-9b61-e36ad4c165ec",
+      "role": "contact_sheet",
+      "sha256": "1636a61797be3fe8daa9ed3311d6754f57954c11bac4ab56f4be716edf3efca7"
+    }
+  ],
+  "package_hash": "f7cb9ae801be7907098f779df33f4cec9393ed76eb7fa087756fa1db1215054d",
+  "package_id": "4900c0de-87b3-5e0a-8631-b594ecdf5f71",
+  "qa": {
+    "blocking_finding_ids": [],
+    "finding_count": 0,
+    "provenance": "FAKE_SYNTHETIC",
+    "unknown_coverage_check_ids": [
+      "temporal.lip_sync"
+    ]
+  },
+  "release_scope": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+      "capability_id": "1e3bc301-9f3c-5ef9-818c-84880d0f9d4f",
+      "capability_version": 1,
+      "depends_on": [],
+      "disclosures": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE"
+      ],
+      "required": true,
+      "schedule": {
+        "fold": null,
+        "iana_zone": "Asia/Bangkok",
+        "local_time": "2026-10-27T19:30:00",
+        "utc_instant": "2026-10-27T12:30:00Z"
+      },
+      "slot": {
+        "account_ref": "acct:youtube-main",
+        "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+        "locale": "th-TH",
+        "part": 0,
+        "platform": "YOUTUBE",
+        "release_slot": "full",
+        "series_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6"
+      },
+      "slot_kind": "FULL_EPISODE"
+    }
+  ],
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "version": 1
+}

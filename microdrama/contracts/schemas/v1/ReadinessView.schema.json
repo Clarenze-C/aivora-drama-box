@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "ComponentState": {
+      "enum": [
+        "OK",
+        "UNAVAILABLE",
+        "NOT_CONFIGURED"
+      ],
+      "title": "ComponentState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ReadinessView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "config": {
+      "$ref": "#/$defs/ComponentState"
+    },
+    "database": {
+      "$ref": "#/$defs/ComponentState"
+    },
+    "object_store": {
+      "$ref": "#/$defs/ComponentState"
+    },
+    "queue": {
+      "$ref": "#/$defs/ComponentState"
+    },
+    "ready": {
+      "title": "Ready",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ready",
+    "database",
+    "queue",
+    "config",
+    "object_store"
+  ],
+  "title": "ReadinessView",
+  "type": "object"
+}

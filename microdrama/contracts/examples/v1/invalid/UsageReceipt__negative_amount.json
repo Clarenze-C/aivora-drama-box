@@ -1,0 +1,21 @@
+{
+  "amount_micro_usd": -5,
+  "category": "GPU_GENERATION",
+  "cost_basis": "SYNTHETIC_FAKE",
+  "currency": "USD",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "interval_end": "2026-10-20T00:06:30Z",
+  "interval_start": "2026-10-20T00:00:00Z",
+  "job_id": null,
+  "kind": "SETTLEMENT",
+  "observed_at": "2026-10-20T00:06:40Z",
+  "provenance": "FAKE_SYNTHETIC",
+  "provider": "fake-runpod",
+  "provider_receipt_id": "fake-usage-0001",
+  "receipt_id": "f009b052-559d-5743-914f-a152a1a0e688",
+  "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
+  "schema_version": "1.0",
+  "season_id": null,
+  "unit": "GPU_SECOND",
+  "units": 390
+}

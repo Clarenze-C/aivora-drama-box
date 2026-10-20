@@ -1,0 +1,29 @@
+{
+  "approved_scope_hash": "9279a7bb2155f7eeae2d063c39c866ec3c2b46a7d232770615f9a359cf613bd5",
+  "canon_version": 0,
+  "cliffhanger": "Nok sets a deadline for Friday.",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "episode_number": 1,
+  "featured_character_ids": [
+    "a",
+    "b",
+    "c",
+    "d"
+  ],
+  "location_ids": [
+    "stall",
+    "shophouse-room"
+  ],
+  "planned_beats": [
+    "Reopening",
+    "Ledger discovery",
+    "Collector arrives"
+  ],
+  "planned_reveals": [],
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "synopsis": "Fon reopens the stall and finds a ledger page showing a 50,000 baht debt.",
+  "target_duration_ms": 240000,
+  "title_en": "The Debt Nobody Mentioned",
+  "title_th": "หนี้ที่ไม่มีใครบอก"
+}

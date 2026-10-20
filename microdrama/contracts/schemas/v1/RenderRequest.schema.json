@@ -1,0 +1,202 @@
+{
+  "$defs": {
+    "ControlKind": {
+      "description": "Generation controls. Required controls can never be silently dropped.",
+      "enum": [
+        "TEXT_PROMPT",
+        "FIRST_FRAME",
+        "LAST_FRAME",
+        "CHARACTER_REFERENCE",
+        "WARDROBE_REFERENCE",
+        "LOCATION_REFERENCE",
+        "STYLE_REFERENCE",
+        "VOICE_REFERENCE",
+        "AUDIO_DRIVEN_LIPSYNC",
+        "CAMERA_MOTION",
+        "SEED"
+      ],
+      "title": "ControlKind",
+      "type": "string"
+    },
+    "RenderTier": {
+      "enum": [
+        "fast_four_step",
+        "quality_eight_step",
+        "compatible_baseline"
+      ],
+      "title": "RenderTier",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:RenderRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One paid shot-generation attempt. Required controls cannot be dropped.",
+  "properties": {
+    "attempt_number": {
+      "minimum": 1,
+      "title": "Attempt Number",
+      "type": "integer"
+    },
+    "audio_asset_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Audio Asset Id"
+    },
+    "duration_ms": {
+      "description": "Integer milliseconds > 0",
+      "exclusiveMinimum": 0,
+      "title": "Duration Ms",
+      "type": "integer"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "episode_number": {
+      "minimum": 1,
+      "title": "Episode Number",
+      "type": "integer"
+    },
+    "fps": {
+      "minimum": 1,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "height": {
+      "minimum": 1,
+      "title": "Height",
+      "type": "integer"
+    },
+    "identity_lock_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Identity Lock Id"
+    },
+    "manifest_version": {
+      "minimum": 1,
+      "title": "Manifest Version",
+      "type": "integer"
+    },
+    "negative_prompt_text": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Negative Prompt Text",
+      "type": "string"
+    },
+    "preset_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Preset Id",
+      "type": "string"
+    },
+    "prompt_text": {
+      "description": "Data passed to the graph, never executed",
+      "maxLength": 4000,
+      "title": "Prompt Text",
+      "type": "string"
+    },
+    "reference_asset_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Reference Asset Ids",
+      "type": "array"
+    },
+    "render_id": {
+      "format": "uuid",
+      "title": "Render Id",
+      "type": "string"
+    },
+    "required_controls": {
+      "items": {
+        "$ref": "#/$defs/ControlKind"
+      },
+      "minItems": 1,
+      "title": "Required Controls",
+      "type": "array"
+    },
+    "reservation_id": {
+      "format": "uuid",
+      "title": "Reservation Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seed": {
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "semantic_key": {
+      "maxLength": 400,
+      "minLength": 3,
+      "pattern": "^[A-Za-z0-9._:/\\-|=]+$",
+      "title": "Semantic Key",
+      "type": "string"
+    },
+    "shot_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Shot Id",
+      "type": "string"
+    },
+    "tier": {
+      "$ref": "#/$defs/RenderTier"
+    },
+    "width": {
+      "minimum": 1,
+      "title": "Width",
+      "type": "integer"
+    },
+    "workflow_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Workflow Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "render_id",
+    "semantic_key",
+    "episode_id",
+    "episode_number",
+    "shot_id",
+    "manifest_version",
+    "attempt_number",
+    "preset_id",
+    "tier",
+    "required_controls",
+    "workflow_sha256",
+    "seed",
+    "width",
+    "height",
+    "fps",
+    "duration_ms",
+    "reservation_id",
+    "prompt_text"
+  ],
+  "title": "RenderRequest",
+  "type": "object"
+}

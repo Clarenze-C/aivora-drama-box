@@ -1,0 +1,269 @@
+{
+  "$defs": {
+    "CropSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "minimum": 1,
+          "title": "Height",
+          "type": "integer"
+        },
+        "width": {
+          "minimum": 1,
+          "title": "Width",
+          "type": "integer"
+        },
+        "x": {
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "CropSpec",
+      "type": "object"
+    },
+    "EdlClip": {
+      "additionalProperties": false,
+      "properties": {
+        "clip_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Clip Id",
+          "type": "string"
+        },
+        "crop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CropSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dialogue_line_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Dialogue Line Ids",
+          "type": "array"
+        },
+        "gain_millibel": {
+          "default": 0,
+          "maximum": 1200,
+          "minimum": -6000,
+          "title": "Gain Millibel",
+          "type": "integer"
+        },
+        "source_asset_id": {
+          "format": "uuid",
+          "title": "Source Asset Id",
+          "type": "string"
+        },
+        "source_in_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Source In Ms",
+          "type": "integer"
+        },
+        "source_out_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Source Out Ms",
+          "type": "integer"
+        },
+        "timeline_in_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Timeline In Ms",
+          "type": "integer"
+        },
+        "track": {
+          "$ref": "#/$defs/TrackKind"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/TransitionKind",
+          "default": "CUT"
+        },
+        "transition_ms": {
+          "default": 0,
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Transition Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "clip_id",
+        "track",
+        "source_asset_id",
+        "source_in_ms",
+        "source_out_ms",
+        "timeline_in_ms"
+      ],
+      "title": "EdlClip",
+      "type": "object"
+    },
+    "OutputFormat": {
+      "additionalProperties": false,
+      "properties": {
+        "channels": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Channels",
+          "type": "integer"
+        },
+        "fps_den": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Fps Den",
+          "type": "integer"
+        },
+        "fps_num": {
+          "minimum": 1,
+          "title": "Fps Num",
+          "type": "integer"
+        },
+        "height": {
+          "minimum": 1,
+          "title": "Height",
+          "type": "integer"
+        },
+        "sample_rate_hz": {
+          "default": 48000,
+          "minimum": 1,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        },
+        "width": {
+          "minimum": 1,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "fps_num"
+      ],
+      "title": "OutputFormat",
+      "type": "object"
+    },
+    "SlotKind": {
+      "enum": [
+        "FULL_EPISODE",
+        "PART",
+        "PROMO_CUT",
+        "HOOK"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    },
+    "TrackKind": {
+      "enum": [
+        "VIDEO",
+        "DIALOGUE",
+        "AMBIENCE",
+        "MUSIC",
+        "EFFECTS"
+      ],
+      "title": "TrackKind",
+      "type": "string"
+    },
+    "TransitionKind": {
+      "enum": [
+        "CUT",
+        "CROSSFADE",
+        "FADE_FROM_BLACK",
+        "FADE_TO_BLACK"
+      ],
+      "title": "TransitionKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:EditDecisionList",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Explicit source/timeline cuts. Script text is never turned into shell commands.",
+  "properties": {
+    "burn_in_caption_track_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Burn In Caption Track Id"
+    },
+    "caption_track_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Caption Track Ids",
+      "type": "array"
+    },
+    "clips": {
+      "items": {
+        "$ref": "#/$defs/EdlClip"
+      },
+      "minItems": 1,
+      "title": "Clips",
+      "type": "array"
+    },
+    "edl_id": {
+      "format": "uuid",
+      "title": "Edl Id",
+      "type": "string"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "output": {
+      "$ref": "#/$defs/OutputFormat"
+    },
+    "purpose": {
+      "$ref": "#/$defs/SlotKind"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "edl_id",
+    "episode_id",
+    "version",
+    "purpose",
+    "output",
+    "clips"
+  ],
+  "title": "EditDecisionList",
+  "type": "object"
+}

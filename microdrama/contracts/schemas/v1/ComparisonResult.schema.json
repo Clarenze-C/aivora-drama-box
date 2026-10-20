@@ -1,0 +1,546 @@
+{
+  "$defs": {
+    "BudgetCategory": {
+      "enum": [
+        "RESEARCH_SCRIPT_PROMPTS_METADATA",
+        "REFERENCES_DIALOGUE",
+        "GPU_GENERATION",
+        "QA_CAPTIONS",
+        "CPU_STORAGE_TRANSFER",
+        "METERED_MANAGEMENT",
+        "RECOVERY_HEADROOM"
+      ],
+      "title": "BudgetCategory",
+      "type": "string"
+    },
+    "CheckFamily": {
+      "enum": [
+        "TECHNICAL",
+        "AUDIO",
+        "ASR",
+        "CAPTION",
+        "VISUAL_IDENTITY",
+        "TEMPORAL",
+        "NARRATIVE",
+        "LOCALIZATION",
+        "POLICY"
+      ],
+      "title": "CheckFamily",
+      "type": "string"
+    },
+    "CostBasis": {
+      "description": "How an amount was established. Only PROVIDER_REPORTED/BILLED are measured.",
+      "enum": [
+        "SYNTHETIC_FAKE",
+        "ESTIMATED",
+        "PROVIDER_REPORTED",
+        "BILLED"
+      ],
+      "title": "CostBasis",
+      "type": "string"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "CHECKED",
+        "PARTIAL",
+        "UNSAMPLED",
+        "UNAVAILABLE"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Pointer to evidence. A hash proves integrity/identity, not truth or rights.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "recorded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recorded At"
+        },
+        "ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        }
+      },
+      "required": [
+        "source",
+        "ref"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "EvidenceSource": {
+      "enum": [
+        "FAKE_FIXTURE",
+        "OFFICIAL_DOCUMENTATION",
+        "CONTROLLED_ACCOUNT_TEST",
+        "MEASURED_BENCHMARK",
+        "LICENSE_DOCUMENT"
+      ],
+      "title": "EvidenceSource",
+      "type": "string"
+    },
+    "PriceUnit": {
+      "enum": [
+        "REQUEST",
+        "INPUT_TOKEN_1K",
+        "OUTPUT_TOKEN_1K",
+        "AUDIO_SECOND",
+        "VIDEO_SECOND",
+        "GPU_SECOND",
+        "IMAGE",
+        "CHARACTER_1K",
+        "GIGABYTE"
+      ],
+      "title": "PriceUnit",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "QAFinding": {
+      "additionalProperties": false,
+      "description": "Timecoded finding. Unchecked coverage can never be a PASS.",
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "check_family": {
+          "$ref": "#/$defs/CheckFamily"
+        },
+        "check_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "confidence_bp": {
+          "anyOf": [
+            {
+              "description": "0..10000",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Bp"
+        },
+        "coverage": {
+          "$ref": "#/$defs/CoverageStatus"
+        },
+        "end_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "episode_id": {
+          "format": "uuid",
+          "title": "Episode Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
+        "finding_id": {
+          "format": "uuid",
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed"
+        },
+        "outcome": {
+          "$ref": "#/$defs/QAOutcome"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "repair_dependency_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Repair Dependency Ids",
+          "type": "array"
+        },
+        "repair_targets": {
+          "items": {
+            "$ref": "#/$defs/RepairTarget"
+          },
+          "title": "Repair Targets",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "source_pass": {
+          "$ref": "#/$defs/QAPass"
+        },
+        "start_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "finding_id",
+        "episode_id",
+        "asset_id",
+        "start_ms",
+        "end_ms",
+        "check_id",
+        "check_family",
+        "source_pass",
+        "severity",
+        "coverage",
+        "outcome",
+        "provenance"
+      ],
+      "title": "QAFinding",
+      "type": "object"
+    },
+    "QAOutcome": {
+      "enum": [
+        "PASS",
+        "REPAIRABLE",
+        "BLOCKED",
+        "UNKNOWN"
+      ],
+      "title": "QAOutcome",
+      "type": "string"
+    },
+    "QAPass": {
+      "enum": [
+        "TECHNICAL",
+        "PASS_A_OBSERVATION",
+        "PASS_B_COMPARISON",
+        "HUMAN_FEEDBACK"
+      ],
+      "title": "QAPass",
+      "type": "string"
+    },
+    "ReceiptKind": {
+      "enum": [
+        "ACCRUAL",
+        "SETTLEMENT",
+        "CREDIT",
+        "ADJUSTMENT"
+      ],
+      "title": "ReceiptKind",
+      "type": "string"
+    },
+    "RepairTarget": {
+      "enum": [
+        "CAPTION",
+        "LINE",
+        "SHOT",
+        "EDIT",
+        "AUDIO_MIX",
+        "SCRIPT"
+      ],
+      "title": "RepairTarget",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "CRITICAL",
+        "MAJOR",
+        "MINOR",
+        "INFO"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "UsageReceipt": {
+      "additionalProperties": false,
+      "description": "Observed usage. Fakes emit SYNTHETIC_FAKE; only PROVIDER_REPORTED/BILLED are measured.",
+      "properties": {
+        "amount_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Amount Micro Usd",
+          "type": "integer"
+        },
+        "category": {
+          "$ref": "#/$defs/BudgetCategory"
+        },
+        "cost_basis": {
+          "$ref": "#/$defs/CostBasis"
+        },
+        "currency": {
+          "default": "USD",
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "episode_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Id"
+        },
+        "interval_end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval End"
+        },
+        "interval_start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval Start"
+        },
+        "job_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Job Id"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReceiptKind"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "provider": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "provider_receipt_id": {
+          "description": "Provider-side dedupe key",
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Provider Receipt Id",
+          "type": "string"
+        },
+        "receipt_id": {
+          "format": "uuid",
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "reservation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reservation Id"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "description": "Unsupported/stale versions are rejected",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "season_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Season Id"
+        },
+        "unit": {
+          "$ref": "#/$defs/PriceUnit"
+        },
+        "units": {
+          "minimum": 0,
+          "title": "Units",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "provider",
+        "provider_receipt_id",
+        "kind",
+        "cost_basis",
+        "category",
+        "amount_micro_usd",
+        "units",
+        "unit",
+        "observed_at",
+        "provenance"
+      ],
+      "title": "UsageReceipt",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ComparisonResult",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/QAFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "usage": {
+      "items": {
+        "$ref": "#/$defs/UsageReceipt"
+      },
+      "title": "Usage",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "provenance"
+  ],
+  "title": "ComparisonResult",
+  "type": "object"
+}

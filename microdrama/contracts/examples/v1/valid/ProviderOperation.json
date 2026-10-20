@@ -1,0 +1,15 @@
+{
+  "attempt": 1,
+  "client_token": "render-sh1-a1",
+  "deadline_at": "2026-10-20T00:10:00Z",
+  "external_id": "fake-prompt-0001",
+  "job_id": "1e964beb-c389-52aa-9012-c7e7368e69ec",
+  "operation_id": "d17b2edf-68d7-5728-8f0d-51c64eb4853b",
+  "operation_kind": "comfy.queue_prompt",
+  "provider": "fake-comfy",
+  "request_sha256": "e10dcce162ea73eab242495f581d70748e5b7851bf430c0287260bfeef87ed70",
+  "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
+  "schema_version": "1.0",
+  "state": "SUBMITTED",
+  "submitted_at": "2026-10-20T00:00:00Z"
+}

@@ -1,0 +1,30 @@
+{
+  "attempt_number": 4,
+  "audio_asset_id": "4fee2c4a-c6fd-5bbb-b91e-f25c634ea994",
+  "duration_ms": 4000,
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "episode_number": 1,
+  "fps": 24,
+  "height": 1280,
+  "identity_lock_id": null,
+  "manifest_version": 1,
+  "negative_prompt_text": "",
+  "preset_id": "fake-quality-8step",
+  "prompt_text": "Medium close-up of Fon reading a ledger at a street food stall at dusk.",
+  "reference_asset_ids": [
+    "c3bcd991-5a5b-57d9-bf58-ace7aa00e2a1"
+  ],
+  "render_id": "c1ac201b-36c7-5d38-8300-df1aa27df597",
+  "required_controls": [
+    "CHARACTER_REFERENCE",
+    "FIRST_FRAME"
+  ],
+  "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
+  "schema_version": "1.0",
+  "seed": 1234,
+  "semantic_key": "render.shot:ep1:sh1:attempt1",
+  "shot_id": "sh1",
+  "tier": "quality_eight_step",
+  "width": 720,
+  "workflow_sha256": "85b3b0db6446410d9294258e9594dda7801083b7a60265a340822b1a6a9e6988"
+}

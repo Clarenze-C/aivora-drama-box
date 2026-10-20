@@ -1,0 +1,28 @@
+{
+  "approval_event_id": "93e94673-46ae-5784-b41d-fc0c9af4861f",
+  "created_at": "2026-10-20T00:00:00Z",
+  "lock_id": "6c82e1e2-e21b-5eed-a6a8-d55b9598ddf4",
+  "locked_assets": [
+    {
+      "asset_id": "c3bcd991-5a5b-57d9-bf58-ace7aa00e2a1",
+      "asset_kind": "FACE",
+      "asset_version": 1,
+      "character_id": "fon",
+      "content_sha256": "05d188a8dcfe26065a3c8030d4f0030f338fa2d58f76cd9500e071f557e87e10",
+      "label": "Fon face anchor"
+    },
+    {
+      "asset_id": "d50ea27e-7384-58dc-b82b-59be51835959",
+      "asset_kind": "VOICE",
+      "asset_version": 1,
+      "character_id": "fon",
+      "content_sha256": "1b9a58e5a4ed5641b4aae985de77ff65939935810822e35a388fd2233ac705a9",
+      "label": "Fon voice anchor"
+    }
+  ],
+  "release_package_hash": "86507ed091e685696d9e41f2bc7a6a861b8f059f1f4b2cdd5f4ed7327e1321ac",
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "source_episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "version": 1
+}

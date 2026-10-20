@@ -1,0 +1,77 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:PodCreateRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "client_token": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "container_image": {
+      "description": "Pinned image reference (digest when live)",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Container Image",
+      "type": "string"
+    },
+    "gpu_type_allowlist": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Gpu Type Allowlist",
+      "type": "array"
+    },
+    "max_hourly_price_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Max Hourly Price Micro Usd",
+      "type": "integer"
+    },
+    "min_host_ram_gb": {
+      "minimum": 1,
+      "title": "Min Host Ram Gb",
+      "type": "integer"
+    },
+    "name": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "owned_tag": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Owned Tag",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "volume_gb": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Volume Gb",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "client_token",
+    "name",
+    "owned_tag",
+    "gpu_type_allowlist",
+    "max_hourly_price_micro_usd",
+    "min_host_ram_gb",
+    "container_image"
+  ],
+  "title": "PodCreateRequest",
+  "type": "object"
+}

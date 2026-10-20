@@ -1,0 +1,28 @@
+{
+  "account_ref": "acct:tiktok-main",
+  "country": null,
+  "definitions_version": "fake-tiktok-metrics-v1",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "external_post_id": "fake-video-0001",
+  "metrics": {
+    "avg_watch_ms": {
+      "definition": "fake.average_watch_time",
+      "denominator": null,
+      "value": null
+    },
+    "views": {
+      "definition": "fake.video_views",
+      "denominator": null,
+      "value": 1200
+    }
+  },
+  "observed_at": "2026-10-21T00:00:00Z",
+  "platform": "TIKTOK",
+  "platform_post_id": "1dfa9e1c-503e-54ff-91d8-176a19249aed",
+  "provenance": "FAKE_SYNTHETIC",
+  "sample_count": null,
+  "schema_version": "1.0",
+  "snapshot_id": "ff16eed0-4df0-566f-99b4-1db5085d85c6",
+  "traffic": "ORGANIC",
+  "window": "H24"
+}

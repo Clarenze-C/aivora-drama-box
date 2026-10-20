@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "CostLine": {
+      "additionalProperties": false,
+      "properties": {
+        "amount_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Amount Micro Usd",
+          "type": "integer"
+        },
+        "category": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Category",
+          "type": "string"
+        },
+        "cost_basis": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Cost Basis",
+          "type": "string"
+        },
+        "kind": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Kind",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "receipt_id": {
+          "format": "uuid",
+          "title": "Receipt Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "category",
+        "amount_micro_usd",
+        "cost_basis",
+        "kind",
+        "observed_at"
+      ],
+      "title": "CostLine",
+      "type": "object"
+    },
+    "CostSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "accrued_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Accrued Micro Usd",
+          "type": "integer"
+        },
+        "episode_cap_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Episode Cap Micro Usd",
+          "type": "integer"
+        },
+        "remaining_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Remaining Micro Usd",
+          "type": "integer"
+        },
+        "reserved_outstanding_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Reserved Outstanding Micro Usd",
+          "type": "integer"
+        },
+        "settled_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Settled Micro Usd",
+          "type": "integer"
+        },
+        "synthetic_fake_micro_usd": {
+          "default": 0,
+          "description": "Portion from fake providers (not real money)",
+          "minimum": 0,
+          "title": "Synthetic Fake Micro Usd",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "episode_cap_micro_usd",
+        "settled_micro_usd",
+        "accrued_micro_usd",
+        "reserved_outstanding_micro_usd",
+        "remaining_micro_usd"
+      ],
+      "title": "CostSummary",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:CostView",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "lines": {
+      "items": {
+        "$ref": "#/$defs/CostLine"
+      },
+      "title": "Lines",
+      "type": "array"
+    },
+    "overruns": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Overruns",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/CostSummary"
+    },
+    "unknowns": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Unknowns",
+      "type": "array"
+    }
+  },
+  "required": [
+    "episode_id",
+    "summary"
+  ],
+  "title": "CostView",
+  "type": "object"
+}

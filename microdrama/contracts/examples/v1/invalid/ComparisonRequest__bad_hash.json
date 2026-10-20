@@ -1,0 +1,18 @@
+{
+  "acceptance_criteria": [
+    "amounts spoken match script",
+    "speakers match script"
+  ],
+  "canon_sha256": "b35ff7b1aa4058c5d6002f4558b537e84fbfecf3092b881e0cb0556817f55165",
+  "canon_version": 1,
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "identity_lock_id": null,
+  "observation_report_id": "59edb1b8-5666-51cf-aa4c-f243f07b1ec8",
+  "observation_report_sha256": "not-a-hash",
+  "request_id": "ce50bc01-d481-5749-8a21-218a07ebb01a",
+  "reservation_id": null,
+  "schema_version": "1.0",
+  "script_id": "938cea0d-e838-52a7-9ad7-1d25fa31d216",
+  "script_sha256": "add5afa37555124fb7c696364ef1c3f5078ed87d38875485ccbdb520c59a6047",
+  "script_version": 1
+}

@@ -1,0 +1,78 @@
+{
+  "burn_in_caption_track_id": null,
+  "caption_track_ids": [
+    "9dea611d-05b5-54db-a58d-5be4aec421a1",
+    "13f3fa60-45e2-5a00-a6fa-2e0169b24c02"
+  ],
+  "clips": [
+    {
+      "clip_id": "v1",
+      "crop": null,
+      "dialogue_line_ids": [
+        "s1-l1"
+      ],
+      "gain_millibel": 0,
+      "source_asset_id": "2887cccd-5c15-505a-a6dd-0501bd10b846",
+      "source_in_ms": 0,
+      "source_out_ms": 0,
+      "timeline_in_ms": 0,
+      "track": "VIDEO",
+      "transition_in": "CUT",
+      "transition_ms": 0
+    },
+    {
+      "clip_id": "v2",
+      "crop": null,
+      "dialogue_line_ids": [],
+      "gain_millibel": 0,
+      "source_asset_id": "52a04f9d-5534-579a-ba9e-f3773beb5ed9",
+      "source_in_ms": 0,
+      "source_out_ms": 3000,
+      "timeline_in_ms": 4000,
+      "track": "VIDEO",
+      "transition_in": "CUT",
+      "transition_ms": 0
+    },
+    {
+      "clip_id": "d1",
+      "crop": null,
+      "dialogue_line_ids": [
+        "s1-l1"
+      ],
+      "gain_millibel": 0,
+      "source_asset_id": "4fee2c4a-c6fd-5bbb-b91e-f25c634ea994",
+      "source_in_ms": 0,
+      "source_out_ms": 3200,
+      "timeline_in_ms": 400,
+      "track": "DIALOGUE",
+      "transition_in": "CUT",
+      "transition_ms": 0
+    },
+    {
+      "clip_id": "a1",
+      "crop": null,
+      "dialogue_line_ids": [],
+      "gain_millibel": -1800,
+      "source_asset_id": "9d649307-c208-5ce5-a799-d0edf913d4e7",
+      "source_in_ms": 0,
+      "source_out_ms": 7000,
+      "timeline_in_ms": 0,
+      "track": "AMBIENCE",
+      "transition_in": "CUT",
+      "transition_ms": 0
+    }
+  ],
+  "edl_id": "a2ce20ce-04b0-500b-836c-e737381ac0a9",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "output": {
+    "channels": 2,
+    "fps_den": 1,
+    "fps_num": 24,
+    "height": 1280,
+    "sample_rate_hz": 48000,
+    "width": 720
+  },
+  "purpose": "FULL_EPISODE",
+  "schema_version": "1.0",
+  "version": 1
+}

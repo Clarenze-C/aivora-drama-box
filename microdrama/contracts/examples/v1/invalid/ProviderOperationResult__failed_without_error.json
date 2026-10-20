@@ -1,0 +1,22 @@
+{
+  "error_code": null,
+  "external_id": "fake-prompt-0001",
+  "operation_id": "d17b2edf-68d7-5728-8f0d-51c64eb4853b",
+  "outputs": [
+    {
+      "complete": true,
+      "media_type": "video/mp4",
+      "name": "sh1_00001.mp4",
+      "provider_ref": "output/sh1_00001.mp4",
+      "sha256": null,
+      "size_bytes": null
+    }
+  ],
+  "provenance": "FAKE_SYNTHETIC",
+  "raw_response_key": null,
+  "retry_after_ms": null,
+  "schema_version": "1.0",
+  "state": "FAILED",
+  "transient": false,
+  "usage": []
+}

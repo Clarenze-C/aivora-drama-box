@@ -1,0 +1,336 @@
+{
+  "$defs": {
+    "ControlKind": {
+      "description": "Generation controls. Required controls can never be silently dropped.",
+      "enum": [
+        "TEXT_PROMPT",
+        "FIRST_FRAME",
+        "LAST_FRAME",
+        "CHARACTER_REFERENCE",
+        "WARDROBE_REFERENCE",
+        "LOCATION_REFERENCE",
+        "STYLE_REFERENCE",
+        "VOICE_REFERENCE",
+        "AUDIO_DRIVEN_LIPSYNC",
+        "CAMERA_MOTION",
+        "SEED"
+      ],
+      "title": "ControlKind",
+      "type": "string"
+    },
+    "DialogueComplexity": {
+      "enum": [
+        "NONE",
+        "SINGLE_SPEAKER",
+        "TWO_SPEAKER"
+      ],
+      "title": "DialogueComplexity",
+      "type": "string"
+    },
+    "FallbackEdit": {
+      "enum": [
+        "CUT_TO_REACTION",
+        "HOLD_PREVIOUS_FRAME",
+        "INSERT_STILL_WITH_AUDIO",
+        "WIDE_SHOT_OVER_DIALOGUE",
+        "COMPOSITE_TEXT_INSERT"
+      ],
+      "title": "FallbackEdit",
+      "type": "string"
+    },
+    "Level": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "Level",
+      "type": "string"
+    },
+    "RenderTier": {
+      "enum": [
+        "fast_four_step",
+        "quality_eight_step",
+        "compatible_baseline"
+      ],
+      "title": "RenderTier",
+      "type": "string"
+    },
+    "Shot": {
+      "additionalProperties": false,
+      "description": "One generated unit. Carries every directing-playbook/routing field (SPEC §7).",
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "coverage_role": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Coverage Role",
+          "type": "string"
+        },
+        "depends_on_shot_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Depends On Shot Ids",
+          "type": "array"
+        },
+        "dialogue_complexity": {
+          "$ref": "#/$defs/DialogueComplexity"
+        },
+        "dramatic_importance": {
+          "$ref": "#/$defs/Level"
+        },
+        "eyelines": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Eyelines",
+          "type": "string"
+        },
+        "fallback_edit": {
+          "$ref": "#/$defs/FallbackEdit"
+        },
+        "framing": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Framing",
+          "type": "string"
+        },
+        "line_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Line Ids",
+          "type": "array"
+        },
+        "location_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Location Id",
+          "type": "string"
+        },
+        "outfit_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Outfit Ids",
+          "type": "array"
+        },
+        "preferred_render_tier": {
+          "$ref": "#/$defs/RenderTier"
+        },
+        "prop_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Prop Ids",
+          "type": "array"
+        },
+        "purpose": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "reference_lock_version": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Identity lock version this shot must use (None = provisional)",
+          "title": "Reference Lock Version"
+        },
+        "required_identity_controls": {
+          "items": {
+            "$ref": "#/$defs/ControlKind"
+          },
+          "minItems": 1,
+          "title": "Required Identity Controls",
+          "type": "array"
+        },
+        "required_reference_asset_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Required Reference Asset Ids",
+          "type": "array"
+        },
+        "scene_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "shot_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Shot Id",
+          "type": "string"
+        },
+        "shot_pattern_id": {
+          "$ref": "#/$defs/ShotPattern"
+        },
+        "sound": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Sound",
+          "type": "string"
+        },
+        "speaker_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Speaker Ids",
+          "type": "array"
+        },
+        "target_duration_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Target Duration Ms",
+          "type": "integer"
+        },
+        "temporal_risk": {
+          "$ref": "#/$defs/Level"
+        },
+        "voice_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "title": "Voice Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "shot_id",
+        "sequence",
+        "scene_id",
+        "shot_pattern_id",
+        "coverage_role",
+        "purpose",
+        "dramatic_importance",
+        "dialogue_complexity",
+        "temporal_risk",
+        "required_identity_controls",
+        "preferred_render_tier",
+        "fallback_edit",
+        "target_duration_ms",
+        "framing",
+        "eyelines",
+        "location_id",
+        "sound",
+        "acceptance_criteria"
+      ],
+      "title": "Shot",
+      "type": "object"
+    },
+    "ShotPattern": {
+      "enum": [
+        "confrontation_v1",
+        "revelation_v1",
+        "quiet_confession_v1",
+        "comic_reaction_v1",
+        "practical_prop_action_v1",
+        "cliffhanger_v1"
+      ],
+      "title": "ShotPattern",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:ShotManifest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "episode_number": {
+      "minimum": 1,
+      "title": "Episode Number",
+      "type": "integer"
+    },
+    "identity_lock_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Identity Lock Id"
+    },
+    "manifest_id": {
+      "format": "uuid",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_id": {
+      "format": "uuid",
+      "title": "Script Id",
+      "type": "string"
+    },
+    "script_version": {
+      "minimum": 1,
+      "title": "Script Version",
+      "type": "integer"
+    },
+    "shots": {
+      "items": {
+        "$ref": "#/$defs/Shot"
+      },
+      "minItems": 1,
+      "title": "Shots",
+      "type": "array"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "manifest_id",
+    "episode_id",
+    "episode_number",
+    "script_id",
+    "script_version",
+    "version",
+    "shots"
+  ],
+  "title": "ShotManifest",
+  "type": "object"
+}

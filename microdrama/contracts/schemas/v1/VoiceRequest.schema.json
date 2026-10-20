@@ -1,0 +1,81 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:VoiceRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "client_token": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "line_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Line Id",
+      "type": "string"
+    },
+    "locale": {
+      "default": "th-TH",
+      "description": "e.g. th-TH",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+      "title": "Locale",
+      "type": "string"
+    },
+    "max_characters": {
+      "default": 1000,
+      "minimum": 1,
+      "title": "Max Characters",
+      "type": "integer"
+    },
+    "model_config_ref": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Model Config Ref",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reservation_id": {
+      "format": "uuid",
+      "title": "Reservation Id",
+      "type": "string"
+    },
+    "rights_route_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Rights Route Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "text_th": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Text Th",
+      "type": "string"
+    },
+    "voice_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Voice Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "model_config_ref",
+    "rights_route_id",
+    "voice_id",
+    "line_id",
+    "text_th",
+    "client_token",
+    "reservation_id"
+  ],
+  "title": "VoiceRequest",
+  "type": "object"
+}

@@ -1,0 +1,51 @@
+{
+  "coverage": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "check_family": "ASR",
+      "end_ms": 240000,
+      "note": null,
+      "start_ms": 0,
+      "status": "CHECKED"
+    },
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "check_family": "TEMPORAL",
+      "end_ms": 240000,
+      "note": "no lip-sync detector configured",
+      "start_ms": 0,
+      "status": "UNAVAILABLE"
+    }
+  ],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "frozen_at": "2026-10-20T00:00:00Z",
+  "media_sha256": [
+    "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755"
+  ],
+  "model_config_ref": "fake-observer-v1",
+  "observations": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "confidence_bp": 7000,
+      "description": "A woman says an amount: ห้าหมื่นบาท.",
+      "end_ms": 3600,
+      "observation_id": "o1",
+      "question_id": "q-amounts",
+      "start_ms": 400
+    }
+  ],
+  "provenance": "FAKE_SYNTHETIC",
+  "report_id": "59edb1b8-5666-51cf-aa4c-f243f07b1ec8",
+  "request_id": "5e619c21-67e1-5c39-93ff-629e1a5227e0",
+  "request_sha256": "373d00877456e6d6ab0b05c025846e02bea0db400725452888ad4bb855120457",
+  "schema_version": "1.0",
+  "transcript": [
+    {
+      "confidence_bp": 8200,
+      "end_ms": 3600,
+      "speaker_label": "speaker_1",
+      "start_ms": 400,
+      "text": "ลุงเล็ก หนี้ห้าหมื่นบาทนี่คืออะไรคะ"
+    }
+  ]
+}

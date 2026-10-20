@@ -1,0 +1,80 @@
+{
+  "$id": "urn:microdrama:contracts:1.0.0:ASRRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "format": "uuid",
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "asset_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Asset Sha256",
+      "type": "string"
+    },
+    "client_token": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Client Token",
+      "type": "string"
+    },
+    "locale": {
+      "default": "th-TH",
+      "description": "e.g. th-TH",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+      "title": "Locale",
+      "type": "string"
+    },
+    "model_config_ref": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Model Config Ref",
+      "type": "string"
+    },
+    "request_id": {
+      "format": "uuid",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reservation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reservation Id"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "vocabulary": {
+      "description": "Neutral terms only; logged",
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Vocabulary",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_id",
+    "asset_id",
+    "asset_sha256",
+    "model_config_ref",
+    "client_token"
+  ],
+  "title": "ASRRequest",
+  "type": "object"
+}

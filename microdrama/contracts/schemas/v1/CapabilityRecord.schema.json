@@ -1,0 +1,319 @@
+{
+  "$defs": {
+    "CapabilityLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "aspect_ratios": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Aspect Ratios",
+          "type": "array"
+        },
+        "daily_post_quota": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daily Post Quota"
+        },
+        "max_duration_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Duration Ms"
+        },
+        "max_file_bytes": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max File Bytes"
+        },
+        "min_duration_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Duration Ms"
+        },
+        "video_codecs": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Video Codecs",
+          "type": "array"
+        }
+      },
+      "title": "CapabilityLimits",
+      "type": "object"
+    },
+    "CapabilityOperation": {
+      "enum": [
+        "UPLOAD_FULL_VIDEO",
+        "UPLOAD_SHORT",
+        "SCHEDULE",
+        "STATUS",
+        "READBACK",
+        "AI_DISCLOSURE",
+        "SPONSOR_DISCLOSURE",
+        "CAPTIONS_UPLOAD",
+        "LOCALIZED_METADATA",
+        "METADATA_UPDATE",
+        "COVER_UPDATE",
+        "INSIGHTS",
+        "COMMENT_READ",
+        "COMMENT_REPLY",
+        "COMMENT_MODERATE",
+        "DM_SEND",
+        "WEBHOOKS"
+      ],
+      "title": "CapabilityOperation",
+      "type": "string"
+    },
+    "CapabilitySupport": {
+      "enum": [
+        "SUPPORTED_TESTED",
+        "SUPPORTED_DOCUMENTED",
+        "UNSUPPORTED",
+        "UNKNOWN"
+      ],
+      "title": "CapabilitySupport",
+      "type": "string"
+    },
+    "DisclosureKind": {
+      "enum": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE",
+        "SPONSORED",
+        "MEMBER_OFFER"
+      ],
+      "title": "DisclosureKind",
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Pointer to evidence. A hash proves integrity/identity, not truth or rights.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "recorded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recorded At"
+        },
+        "ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        }
+      },
+      "required": [
+        "source",
+        "ref"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "EvidenceSource": {
+      "enum": [
+        "FAKE_FIXTURE",
+        "OFFICIAL_DOCUMENTATION",
+        "CONTROLLED_ACCOUNT_TEST",
+        "MEASURED_BENCHMARK",
+        "LICENSE_DOCUMENT"
+      ],
+      "title": "EvidenceSource",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "TIKTOK",
+        "YOUTUBE",
+        "FACEBOOK",
+        "INSTAGRAM"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:CapabilityRecord",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Per account/provider route. Research-date claims are not live evidence.",
+  "properties": {
+    "account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Account Ref",
+      "type": "string"
+    },
+    "account_type": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Account Type",
+      "type": "string"
+    },
+    "capability_id": {
+      "format": "uuid",
+      "title": "Capability Id",
+      "type": "string"
+    },
+    "dm_window_hours": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dm Window Hours"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "limits": {
+      "$ref": "#/$defs/CapabilityLimits"
+    },
+    "operations": {
+      "additionalProperties": {
+        "$ref": "#/$defs/CapabilitySupport"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/CapabilityOperation"
+      },
+      "title": "Operations",
+      "type": "object"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "provider_route": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Provider Route",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "supported_disclosures": {
+      "items": {
+        "$ref": "#/$defs/DisclosureKind"
+      },
+      "title": "Supported Disclosures",
+      "type": "array"
+    },
+    "verified_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verified At"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "capability_id",
+    "version",
+    "platform",
+    "provider_route",
+    "account_ref",
+    "account_type",
+    "operations"
+  ],
+  "title": "CapabilityRecord",
+  "type": "object"
+}

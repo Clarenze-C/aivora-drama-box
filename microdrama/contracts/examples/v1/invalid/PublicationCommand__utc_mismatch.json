@@ -1,0 +1,44 @@
+{
+  "approval_event_id": "93e94673-46ae-5784-b41d-fc0c9af4861f",
+  "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+  "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+  "capability_id": "1e3bc301-9f3c-5ef9-818c-84880d0f9d4f",
+  "capability_version": 1,
+  "client_token": "pub-ep1-youtube-full",
+  "command_id": "423247cb-c6c4-5595-a817-be8158ba4780",
+  "metadata": {
+    "caption": "",
+    "catalog_version": 1,
+    "cover_asset_id": null,
+    "description": "Original AI-assisted Thai micro-drama.",
+    "disclosures": [
+      "AI_GENERATED_CONTENT"
+    ],
+    "hashtags": [
+      "#ละครสั้น"
+    ],
+    "links": [],
+    "locale": "th-TH",
+    "title": "หนี้ที่ไม่มีใครบอก | EP1"
+  },
+  "metadata_version_id": "af2d12ad-acf1-5166-b8b3-ac180c27d858",
+  "release_package_hash": "86507ed091e685696d9e41f2bc7a6a861b8f059f1f4b2cdd5f4ed7327e1321ac",
+  "release_package_id": "4900c0de-87b3-5e0a-8631-b594ecdf5f71",
+  "schedule": {
+    "fold": null,
+    "iana_zone": "Asia/Bangkok",
+    "local_time": "2026-10-27T19:30:00",
+    "utc_instant": "2026-10-27T19:30:00Z"
+  },
+  "schema_version": "1.0",
+  "slot": {
+    "account_ref": "acct:youtube-main",
+    "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+    "locale": "th-TH",
+    "part": 0,
+    "platform": "YOUTUBE",
+    "release_slot": "full",
+    "series_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6"
+  },
+  "slot_kind": "FULL_EPISODE"
+}

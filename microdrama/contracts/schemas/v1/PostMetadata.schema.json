@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "DisclosureKind": {
+      "enum": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE",
+        "SPONSORED",
+        "MEMBER_OFFER"
+      ],
+      "title": "DisclosureKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:PostMetadata",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "caption": {
+      "default": "",
+      "maxLength": 5000,
+      "title": "Caption",
+      "type": "string"
+    },
+    "catalog_version": {
+      "minimum": 1,
+      "title": "Catalog Version",
+      "type": "integer"
+    },
+    "cover_asset_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cover Asset Id"
+    },
+    "description": {
+      "default": "",
+      "maxLength": 5000,
+      "title": "Description",
+      "type": "string"
+    },
+    "disclosures": {
+      "items": {
+        "$ref": "#/$defs/DisclosureKind"
+      },
+      "minItems": 1,
+      "title": "Disclosures",
+      "type": "array"
+    },
+    "hashtags": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 30,
+      "title": "Hashtags",
+      "type": "array"
+    },
+    "links": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "locale": {
+      "description": "e.g. th-TH",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+      "title": "Locale",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "locale",
+    "title",
+    "disclosures",
+    "catalog_version"
+  ],
+  "title": "PostMetadata",
+  "type": "object"
+}

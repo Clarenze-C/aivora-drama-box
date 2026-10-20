@@ -1,0 +1,297 @@
+{
+  "$defs": {
+    "CheckFamily": {
+      "enum": [
+        "TECHNICAL",
+        "AUDIO",
+        "ASR",
+        "CAPTION",
+        "VISUAL_IDENTITY",
+        "TEMPORAL",
+        "NARRATIVE",
+        "LOCALIZATION",
+        "POLICY"
+      ],
+      "title": "CheckFamily",
+      "type": "string"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "CHECKED",
+        "PARTIAL",
+        "UNSAMPLED",
+        "UNAVAILABLE"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Pointer to evidence. A hash proves integrity/identity, not truth or rights.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "recorded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recorded At"
+        },
+        "ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        }
+      },
+      "required": [
+        "source",
+        "ref"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "EvidenceSource": {
+      "enum": [
+        "FAKE_FIXTURE",
+        "OFFICIAL_DOCUMENTATION",
+        "CONTROLLED_ACCOUNT_TEST",
+        "MEASURED_BENCHMARK",
+        "LICENSE_DOCUMENT"
+      ],
+      "title": "EvidenceSource",
+      "type": "string"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    },
+    "QAOutcome": {
+      "enum": [
+        "PASS",
+        "REPAIRABLE",
+        "BLOCKED",
+        "UNKNOWN"
+      ],
+      "title": "QAOutcome",
+      "type": "string"
+    },
+    "QAPass": {
+      "enum": [
+        "TECHNICAL",
+        "PASS_A_OBSERVATION",
+        "PASS_B_COMPARISON",
+        "HUMAN_FEEDBACK"
+      ],
+      "title": "QAPass",
+      "type": "string"
+    },
+    "RepairTarget": {
+      "enum": [
+        "CAPTION",
+        "LINE",
+        "SHOT",
+        "EDIT",
+        "AUDIO_MIX",
+        "SCRIPT"
+      ],
+      "title": "RepairTarget",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "CRITICAL",
+        "MAJOR",
+        "MINOR",
+        "INFO"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:QAFinding",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Timecoded finding. Unchecked coverage can never be a PASS.",
+  "properties": {
+    "asset_id": {
+      "format": "uuid",
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "check_family": {
+      "$ref": "#/$defs/CheckFamily"
+    },
+    "check_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Check Id",
+      "type": "string"
+    },
+    "confidence_bp": {
+      "anyOf": [
+        {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence Bp"
+    },
+    "coverage": {
+      "$ref": "#/$defs/CoverageStatus"
+    },
+    "end_ms": {
+      "description": "Integer milliseconds",
+      "minimum": 0,
+      "title": "End Ms",
+      "type": "integer"
+    },
+    "episode_id": {
+      "format": "uuid",
+      "title": "Episode Id",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "expected": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected"
+    },
+    "finding_id": {
+      "format": "uuid",
+      "title": "Finding Id",
+      "type": "string"
+    },
+    "observed": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observed"
+    },
+    "outcome": {
+      "$ref": "#/$defs/QAOutcome"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "repair_dependency_ids": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Repair Dependency Ids",
+      "type": "array"
+    },
+    "repair_targets": {
+      "items": {
+        "$ref": "#/$defs/RepairTarget"
+      },
+      "title": "Repair Targets",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "source_pass": {
+      "$ref": "#/$defs/QAPass"
+    },
+    "start_ms": {
+      "description": "Integer milliseconds",
+      "minimum": 0,
+      "title": "Start Ms",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "finding_id",
+    "episode_id",
+    "asset_id",
+    "start_ms",
+    "end_ms",
+    "check_id",
+    "check_family",
+    "source_pass",
+    "severity",
+    "coverage",
+    "outcome",
+    "provenance"
+  ],
+  "title": "QAFinding",
+  "type": "object"
+}

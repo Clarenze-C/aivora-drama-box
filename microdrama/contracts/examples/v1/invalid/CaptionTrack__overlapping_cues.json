@@ -1,0 +1,27 @@
+{
+  "cues": [
+    {
+      "cue_id": "c1",
+      "end_ms": 3600,
+      "line_id": "s1-l1",
+      "start_ms": 400,
+      "text": "Uncle Lek, what is this fifty-thousand-baht debt?"
+    },
+    {
+      "cue_id": "c2",
+      "end_ms": 6300,
+      "line_id": "s1-l2",
+      "start_ms": 1000,
+      "text": "Your mother didn't want you to know."
+    }
+  ],
+  "derived_from_audio_sha256": [
+    "7801c08e125df50b6b12cfe18a009123bd319e9c275f221135b94f32bf7ed5ee"
+  ],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "locale": "en-US",
+  "schema_version": "1.0",
+  "timing_source": "ACTUAL_AUDIO_ALIGNMENT",
+  "track_id": "13f3fa60-45e2-5a00-a6fa-2e0169b24c02",
+  "version": 1
+}

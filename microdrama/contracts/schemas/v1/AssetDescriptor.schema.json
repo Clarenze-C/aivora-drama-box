@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "AssetKind": {
+      "enum": [
+        "VIDEO",
+        "AUDIO",
+        "IMAGE",
+        "CAPTION",
+        "EDL",
+        "TRANSCRIPT",
+        "REPORT",
+        "CONTACT_SHEET",
+        "OTHER"
+      ],
+      "title": "AssetKind",
+      "type": "string"
+    },
+    "AssetState": {
+      "enum": [
+        "PROVISIONAL",
+        "ACCEPTED",
+        "FAILED",
+        "LOCKED",
+        "SUPERSEDED"
+      ],
+      "title": "AssetState",
+      "type": "string"
+    },
+    "MediaInfo": {
+      "additionalProperties": false,
+      "description": "Facts measured from the actual file (ffprobe), not from what was requested.",
+      "properties": {
+        "audio_codec": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audio Codec"
+        },
+        "channels": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channels"
+        },
+        "duration_ms": {
+          "description": "Integer milliseconds",
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "fps_den": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fps Den"
+        },
+        "fps_num": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fps Num"
+        },
+        "has_audio": {
+          "title": "Has Audio",
+          "type": "boolean"
+        },
+        "has_video": {
+          "title": "Has Video",
+          "type": "boolean"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
+        },
+        "sample_rate_hz": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Rate Hz"
+        },
+        "video_codec": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Video Codec"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "duration_ms",
+        "has_video",
+        "has_audio"
+      ],
+      "title": "MediaInfo",
+      "type": "object"
+    },
+    "Provenance": {
+      "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
+      "enum": [
+        "FAKE_SYNTHETIC",
+        "LIVE_PROVIDER",
+        "DERIVED_LOCAL",
+        "ORIGINAL_FIXTURE",
+        "LICENSED"
+      ],
+      "title": "Provenance",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.0.0:AssetDescriptor",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "format": "uuid",
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "asset_kind": {
+      "$ref": "#/$defs/AssetKind"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "episode_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Episode Id"
+    },
+    "license_refs": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "License Refs",
+      "type": "array"
+    },
+    "lineage": {
+      "description": "Source asset IDs",
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Lineage",
+      "type": "array"
+    },
+    "media": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MediaInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "media_type": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Media Type",
+      "type": "string"
+    },
+    "object_key": {
+      "description": "Private object-store key; relative, no '..' segments",
+      "maxLength": 512,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._\\-/]+$",
+      "title": "Object Key",
+      "type": "string"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Season Id"
+    },
+    "sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "size_bytes": {
+      "minimum": 0,
+      "title": "Size Bytes",
+      "type": "integer"
+    },
+    "state": {
+      "$ref": "#/$defs/AssetState"
+    },
+    "version": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "asset_id",
+    "asset_kind",
+    "object_key",
+    "sha256",
+    "size_bytes",
+    "media_type",
+    "state",
+    "provenance",
+    "created_at"
+  ],
+  "title": "AssetDescriptor",
+  "type": "object"
+}
