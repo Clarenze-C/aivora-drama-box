@@ -1306,13 +1306,19 @@ class TestRound4Hardening:
             tx.execute("UPDATE hook_exposures SET cohort = 'c2' WHERE id = %s", (exposure,))
         with pytest.raises(Conflict), db.transaction() as tx:
             tx.execute("DELETE FROM hook_exposures WHERE id = %s", (exposure,))
-        post = uuid.uuid4()
         with (
             db.transaction() as tx
-        ):  # publishing fills platform_post_id once (FK not enforced here)
+        ):  # publishing fills platform_post_id once (FK to platform_posts)
+            ids = _post(tx)
+            _slot(tx, *ids, dedupe=canonical_hash({"hook": str(exposure)}), token=f"tok-{exposure}")
+            post = tx.fetchval(
+                "SELECT id FROM platform_posts WHERE client_token = %s", (f"tok-{exposure}",)
+            )
             tx.execute(
                 "UPDATE hook_exposures SET platform_post_id = %s WHERE id = %s", (post, exposure)
             )
+        with pytest.raises(Conflict), db.transaction() as tx:  # the id is part of the ledger
+            tx.execute("UPDATE hook_exposures SET id = %s WHERE id = %s", (uuid.uuid4(), exposure))
         with pytest.raises(Conflict), db.transaction() as tx:
             tx.execute(
                 "UPDATE hook_exposures SET platform_post_id = %s WHERE id = %s",
@@ -1379,6 +1385,50 @@ class TestRound4Hardening:
     def test_preset_measurements_must_be_numbers(
         self, db: Database, measured: dict
     ) -> None:  # N-15
+        with pytest.raises(Conflict), db.transaction() as tx:
+            insert_row(
+                tx,
+                "preset_registry",
+                {
+                    "id": uuid.uuid4(),
+                    "preset_id": f"p-{uuid.uuid4().hex[:6]}",
+                    "version": 1,
+                    "tier": "fast_four_step",
+                    "workflow_sha256": H,
+                    "record": jsonb({"measured": measured}),
+                    "enabled": True,
+                    "evidence": jsonb([{"source": "MEASURED_BENCHMARK", "ref": "b"}]),
+                },
+            )
+
+
+class TestRound5Hardening:
+    def test_sequence_identity_is_fixed(self, db: Database) -> None:  # R5-3
+        with db.transaction() as tx:
+            aggregate = uuid.uuid4()
+            tx.execute(
+                "INSERT INTO aggregate_sequences (aggregate_id, aggregate_type, last_sequence) "
+                "VALUES (%s, 'episode', 1)",
+                (aggregate,),
+            )
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute(
+                "UPDATE aggregate_sequences SET aggregate_type = 'season' WHERE aggregate_id = %s",
+                (aggregate,),
+            )
+
+    @pytest.mark.parametrize(
+        "bad", [{"cost_per_accepted_shot_micro_usd": -1}, {"critical_quality_pass_bp": 20000}]
+    )
+    def test_preset_measurements_within_contract_ranges(
+        self, db: Database, bad: dict
+    ) -> None:  # R5-4
+        measured = {
+            "sample_count": 3,
+            "critical_quality_pass_bp": 7000,
+            "cost_per_accepted_shot_micro_usd": 1,
+            **bad,
+        }
         with pytest.raises(Conflict), db.transaction() as tx:
             insert_row(
                 tx,

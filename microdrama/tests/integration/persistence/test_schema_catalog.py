@@ -43,7 +43,7 @@ def _has(triggers: list[dict], table: str, bit: int, functions: set[str]) -> boo
         and t["tgtype"] & TRIGGER_BEFORE
         and t["tgtype"] & bit
         and t["proname"] in functions
-        and t["tgenabled"] != "D"
+        and t["tgenabled"] in ("O", "A")  # replica-only ('R') or disabled ('D') guards do not count
         for t in triggers
     )
 
@@ -78,4 +78,4 @@ def test_every_table_refuses_non_integer_numbers(db: Database) -> None:
 
 def test_no_guard_trigger_is_disabled(db: Database) -> None:
     _, triggers = _catalog(db)
-    assert [t["tgname"] for t in triggers if t["tgenabled"] == "D"] == []
+    assert [t["tgname"] for t in triggers if t["tgenabled"] not in ("O", "A")] == []
