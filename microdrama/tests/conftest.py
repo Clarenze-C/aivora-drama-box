@@ -9,6 +9,10 @@ Database fixtures:
 - ``migrated_template_dsn`` (session): a database with every migration applied.
 - ``db_dsn`` (function): a brand-new database cloned from that template.
 - ``db`` (function): an open ``persistence.Database`` pool on ``db_dsn``.
+
+Every test runs under the offline network guard (``testing.network_guard``): any
+Python-level connection to a non-loopback host, or through a configured proxy,
+raises ``NetworkBlocked``. Loopback stays allowed for the isolated test servers.
 """
 
 from __future__ import annotations
@@ -24,7 +28,14 @@ from psycopg.conninfo import make_conninfo
 from microdrama.config import Settings
 from microdrama.contracts.enums import ExecutionMode
 from microdrama.persistence import Database, FilesystemObjectStore, migrate
+from microdrama.testing.media import FixtureTruthRegistry, seeded_defect_suite
+from microdrama.testing.network_guard import install as install_network_guard
 from microdrama.testing.services import EphemeralPostgres, EphemeralRedis
+
+
+@pytest.fixture(autouse=True)
+def _offline_network_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_network_guard(monkeypatch)
 
 
 @pytest.fixture(scope="session")
@@ -108,3 +119,14 @@ def offline_settings(tmp_path) -> Settings:
     return Settings(
         execution_mode=ExecutionMode.OFFLINE_MOCK, object_store_root=tmp_path / "objects"
     )
+
+
+@pytest.fixture(scope="session")
+def fixture_truth() -> FixtureTruthRegistry:
+    return FixtureTruthRegistry()
+
+
+@pytest.fixture(scope="session")
+def defect_suite(tmp_path_factory, fixture_truth: FixtureTruthRegistry):
+    """Seeded-defect media fixtures (T007), generated once per session with ffmpeg."""
+    return seeded_defect_suite(tmp_path_factory.mktemp("defect-suite"), fixture_truth)
