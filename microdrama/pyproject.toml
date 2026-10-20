@@ -40,6 +40,8 @@ markers = [
     "ffmpeg: needs local ffmpeg/ffprobe binaries",
     "slow: slower fault/concurrency scenarios",
 ]
+# Starlette 1.9 suggests httpx2 for its TestClient; the pinned httpx 0.28.1 works.
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
 
 [tool.ruff]
 line-length = 100

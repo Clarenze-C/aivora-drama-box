@@ -109,6 +109,10 @@ full transitive freeze is in `requirements.lock`.
 | ruff | 0.17.1 | PyPI |
 | jsonschema (contract tests) | 4.26.0 | PyPI |
 
+Note: Starlette 1.9 prints a deprecation notice recommending `httpx2` for its test
+client; the pinned httpx 0.28.1 works and that single notice is filtered in
+`pyproject.toml`.
+
 ## Folder layout (SPEC §3)
 
 ```text
