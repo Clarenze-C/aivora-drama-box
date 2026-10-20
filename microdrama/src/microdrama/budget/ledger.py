@@ -314,7 +314,16 @@ class Ledger:
             self.move(category, settled=amount)
             return
         if reservation.state in (ReservationState.SETTLED, ReservationState.RELEASED):
-            # Late usage on a closed reservation is still spend: recorded as settled, never dropped.
+            # Only ADJUSTMENT may follow a close: it is late billing and is added to settled. A
+            # restated SETTLEMENT or a new ACCRUAL would be a second final amount, so it is refused
+            # before anything is written (summing both would double count).
+            if receipt.kind is not ReceiptKind.ADJUSTMENT:
+                raise Conflict(
+                    "restatements and late billing must be ADJUSTMENT receipts",
+                    reservation_id=str(reservation.id),
+                    state=reservation.state.value,
+                    kind=receipt.kind.value,
+                )
             self.move(category, settled=amount)
             reservation.settled += amount
             self.mark_reservation(reservation)

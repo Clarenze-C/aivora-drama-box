@@ -10,7 +10,9 @@ import pytest
 from budget_support import (
     CAP,
     QA,
+    RECOVERY,
     RESEARCH,
+    SHUTDOWN,
     T0,
     World,
     fake_receipt,
@@ -144,58 +146,102 @@ def test_research_allocation_is_refused_across_seasons_and_for_unknown_episodes(
         )
 
 
-def test_research_allocation_into_an_episode_is_subject_to_the_overrun_rule(
+def test_research_share_beyond_the_episode_allowance_is_refused_and_writes_nothing(
     world: World, check_consistent
 ) -> None:
+    """V-4: an attribution must keep committed + share + shutdown reserve within the cap. Observed
+    GPU spend of 8,800,000 leaves 950,000 of room, so a 1,000,000 share is refused. Nothing is written,
+    and the error names the residue that stays on the research account."""
     season = world.episode().season_id
     target = world.episode(season=season, number=7)
     envelope = world.research(season, envelope=10_000_000)
-    world.service.reserve(
-        request_for(key="near.cap.gpu", episode_id=target.episode_id, worst=4_750_000)
+    world.service.record_usage(
+        fake_receipt(
+            provider_receipt_id="research.squeeze",
+            kind=ReceiptKind.ACCRUAL,
+            amount=8_800_000,
+            episode_id=target.episode_id,
+            observed_at=T0,
+        )
     )
-    source = world.service.record_usage(
+    world.service.record_usage(
+        fake_receipt(
+            provider_receipt_id="research.pool",
+            kind=ReceiptKind.ACCRUAL,
+            amount=1_000_000,
+            category=RESEARCH,
+            season_id=season,
+            observed_at=T0,
+        )
+    )
+    with pytest.raises(BudgetExhausted) as refused:
+        world.service.allocate_research_cost(
+            season_id=season, episode_ids=[target.episode_id], basis="attribution"
+        )
+    details = refused.value.details
+    assert details["limit"] == "episode_allowance"
+    assert details["unattributed_micro_usd"] == 1_000_000
+    assert details["share_micro_usd"] == 1_000_000
+    assert world.count("SELECT count(*) FROM cost_allocations") == 0
+    assert world.counters(target.account_id)["settled"] == 8_800_000
+    assert world.counters(envelope)["settled"] == 1_000_000  # the residue stays on research
+    check_consistent(target.account_id)
+    check_consistent(envelope)
+
+
+def test_research_share_beyond_the_research_allocation_is_refused_without_spill(
+    world: World, check_consistent
+) -> None:
+    """V-4: RESEARCH committed + share must stay within the RESEARCH allocation (1,000,000 by default).
+    Plenty of cap room exists, so the refusal is the category limit, and recovery is not drawn on."""
+    season = world.episode().season_id
+    target = world.episode(season=season, number=7)
+    envelope = world.research(season, envelope=2_000_000)
+    world.service.record_usage(
         fake_receipt(
             provider_receipt_id="research.big",
             kind=ReceiptKind.ACCRUAL,
-            amount=6_000_000,
+            amount=1_100_000,
+            category=RESEARCH,
+            season_id=season,
+            observed_at=T0,
+        )
+    )
+    with pytest.raises(BudgetExhausted) as refused:
+        world.service.allocate_research_cost(
+            season_id=season, episode_ids=[target.episode_id], basis="too big"
+        )
+    assert refused.value.details["limit"] == "research_allocation"
+    assert world.category(target.account_id, RECOVERY)["allocated"] == 2_500_000
+    assert world.count("SELECT count(*) FROM cost_allocations") == 0
+    assert world.counters(envelope)["settled"] == 1_100_000
+    check_consistent(target.account_id)
+    check_consistent(envelope)
+
+
+def test_research_attribution_that_fits_is_written_for_every_episode(
+    world: World, check_consistent
+) -> None:
+    season = world.episode().season_id
+    episodes = [world.episode(season=season, number=n) for n in (2, 3)]
+    world.research(season, envelope=2_000_000)
+    world.service.record_usage(
+        fake_receipt(
+            provider_receipt_id="research.fits",
+            kind=ReceiptKind.ACCRUAL,
+            amount=600_000,
             category=RESEARCH,
             season_id=season,
             observed_at=T0,
         )
     )
     allocated = world.service.allocate_research_cost(
-        season_id=season, episode_ids=[target.episode_id], basis="attributed"
+        season_id=season, episode_ids=[ep.episode_id for ep in episodes], basis="fits"
     )
-    assert [a.amount_micro_usd for a in allocated] == [6_000_000]
-    counters = world.counters(target.account_id)
-    assert counters["committed"] == 10_750_000 and counters["overrun"] == 750_000
-    assert counters["blocked"] is True
-    with pytest.raises(BudgetExhausted):
-        world.service.reserve(
-            request_for(key="after.overrun", episode_id=target.episode_id, worst=1)
-        )
-    assert world.counters(envelope)["settled"] == 6_000_000  # the envelope keeps the spend
-    with db_overrun_charge(world, target.account_id) as charge_id:
-        assert charge_id == source.charge_id
-    check_consistent(target.account_id)
-    check_consistent(envelope)
-
-
-def db_overrun_charge(world: World, account_id):
-    """Context manager returning the charge id that the recorded overrun points at."""
-
-    class _Lookup:
-        def __enter__(self):
-            with world.db.transaction() as tx:
-                self.value = tx.fetchval(
-                    "SELECT charge_id FROM cost_overruns WHERE account_id = %s", (account_id,)
-                )
-            return self.value
-
-        def __exit__(self, *exc):
-            return False
-
-    return _Lookup()
+    assert [a.amount_micro_usd for a in allocated] == [300_000, 300_000]
+    for ep in episodes:
+        assert world.category(ep.account_id, RESEARCH)["settled"] == 300_000
+        check_consistent(ep.account_id)
 
 
 def test_summary_and_cost_view_explain_every_line_and_flag_unknowns(
@@ -255,7 +301,8 @@ def test_summary_and_cost_view_explain_every_line_and_flag_unknowns(
     assert summary.settled_micro_usd == 400_000
     assert summary.accrued_micro_usd == 200_000  # the expired QA worst case, awaiting settlement
     assert summary.reserved_outstanding_micro_usd == 50_000
-    assert summary.remaining_micro_usd == CAP - 650_000
+    assert summary.shutdown_reserve_micro_usd == SHUTDOWN
+    assert summary.remaining_micro_usd == CAP - 650_000 - SHUTDOWN
     assert summary.synthetic_fake_micro_usd == 400_000  # every receipt here is synthetic
 
     view = svc.cost_view(ep.episode_id)

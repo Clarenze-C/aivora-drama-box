@@ -8,7 +8,7 @@ import pickle
 from pathlib import Path
 
 import pytest
-from registry_support import live_settings, mock_settings
+from registry_support import count, live_settings, mock_settings
 
 from microdrama.contracts.errors import (
     CapabilityUnavailable,
@@ -25,6 +25,7 @@ from microdrama.core.registry import (
     assert_no_secrets,
     redactor,
 )
+from microdrama.core.registry.credentials import ENV_LOCATOR_PREFIX
 from microdrama.persistence import Database
 
 VALUE = "mdtest-sup3r-secret-7f3a9c21d4e8b06a55c1"
@@ -128,17 +129,35 @@ def test_a_valid_environment_name_registers(db: Database) -> None:
 @pytest.mark.parametrize(
     "locator",
     [
-        "sk-live-9f8e7d6c5b4a3210fedcba98",  # a token shape, lower case
-        "MICRODRAMA_KEY=abcdef",  # name=value
-        "KEY:abcdef",  # colon
-        "MY KEY",  # whitespace
-        "lower_case_name",  # not an environment variable name
-        "A" * 65,  # longer than 64 characters
-        "SK_LIVE_0123456789ABCDEFGHIJKLMNOP",  # opaque upper-case token
+        # V-11 probes: secret-shaped words that carry no MICRODRAMA_ prefix.
+        "SUPERSECRETPASS",
+        "HUNTER2PASSWORD",
+        "ABCDEFGHIJKLMNOPQRS",
+        # Other short or all-caps values without the prefix.
+        "PASSWORD",
+        "TOKEN",
+        "API_KEY",
+        "OPENAI_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        # Malformed prefixes.
+        "MICRODRAMA",
+        "MICRODRAMA_",
+        "MICRODRAMA-KEY",
+        "microdrama_key",
+        "XMICRODRAMA_KEY",
+        # Other value shapes.
+        "sk-live-9f8e7d6c5b4a3210fedcba98",
+        "MICRODRAMA_KEY=abcdef",
+        "MICRODRAMA_KEY:abcdef",
+        "MICRODRAMA KEY",
+        "A" * 65,
+        "MICRODRAMA_" + "A" * 60,  # 71 characters: longer than the 64 allowed
+        # Passes the prefix, but the token-shaped segment is still refused (defence in depth).
+        "MICRODRAMA_0123456789ABCDEFGHIJKLMNOP",
         "",
     ],
 )
-def test_an_env_locator_that_looks_like_a_value_is_refused_without_echo(
+def test_an_env_locator_outside_the_prefix_convention_is_refused_without_echo(
     db: Database, locator: str
 ) -> None:
     store = CredentialStore(db, mock_settings(), environ={})
@@ -146,9 +165,34 @@ def test_an_env_locator_that_looks_like_a_value_is_refused_without_echo(
         store.register(
             ref=REF, purpose="voice API", provider="fake-voice", store="ENV", locator=locator
         )
+    # The public convention text ("MICRODRAMA_") may appear in the message; the value may not.
+    public_text = ENV_LOCATOR_PREFIX
     if locator:
-        assert locator not in caught.value.message
+        assert locator not in caught.value.message.replace(public_text, "")
         assert locator not in str(caught.value.details)
+        assert locator not in str(caught.value).replace(public_text, "")
+    assert count(db, "SELECT count(*) FROM credential_refs") == 0
+
+
+@pytest.mark.db
+@pytest.mark.parametrize(
+    "name",
+    [
+        ENV_LOCATOR_PREFIX + "X",
+        ENV_LOCATOR_PREFIX + "0",
+        "MICRODRAMA_TEST_KEY",
+        "MICRODRAMA_REVIEW_SESSION_HMAC_V2",
+        ENV_NAME,
+    ],
+)
+def test_a_name_under_the_microdrama_prefix_registers(db: Database, name: str) -> None:
+    store = CredentialStore(db, mock_settings(), environ={})
+    store.register(ref=REF, purpose="voice API", provider="fake-voice", store="ENV", locator=name)
+    assert count(db, "SELECT count(*) FROM credential_refs WHERE locator = %s", (name,)) == 1
+
+
+def test_the_env_prefix_is_the_documented_module_constant() -> None:
+    assert ENV_LOCATOR_PREFIX == "MICRODRAMA_"
 
 
 @pytest.mark.db

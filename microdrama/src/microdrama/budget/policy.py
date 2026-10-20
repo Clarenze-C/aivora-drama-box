@@ -7,7 +7,12 @@ row lock, so a refused request never changes accounting state.
 from __future__ import annotations
 
 from microdrama.config import Settings
-from microdrama.contracts.cost import BudgetReservationRequest, UsageReceipt
+from microdrama.contracts.cost import (
+    CLEANUP_CATEGORIES,
+    BudgetReservationRequest,
+    UsageReceipt,
+    exposure_units,
+)
 from microdrama.contracts.enums import (
     BudgetCategory,
     CostBasis,
@@ -42,6 +47,25 @@ def check_queue_may_reserve(queue: QueueName, category: BudgetCategory) -> None:
         )
 
 
+def shutdown_grant(queue: QueueName, category: BudgetCategory, requested: bool) -> bool:
+    """The one rule for shutdown/cleanup privileges (defence in depth behind the contract).
+
+    Returns True when the request may draw on the shutdown reserve and bypass the blocked-account
+    flag: only production shutdown/cleanup in GPU, recovery or storage categories. Any other
+    request that asks for it is refused with PolicyDenied. The result is used for both the reserve
+    floor and the blocked-account bypass, so the two can never disagree.
+    """
+    if not requested:
+        return False
+    if queue is QueueName.PRODUCTION and category in CLEANUP_CATEGORIES:
+        return True
+    raise PolicyDenied(
+        "only production GPU, recovery or storage shutdown/cleanup may use the shutdown reserve",
+        queue=queue.value,
+        category=category.value,
+    )
+
+
 def spill_allowed(queue: QueueName, category: BudgetCategory) -> bool:
     """Only production may borrow shortfalls from recovery headroom (never into recovery)."""
     return queue is QueueName.PRODUCTION and category is not RECOVERY_HEADROOM
@@ -62,6 +86,21 @@ def check_price_admissible(request: BudgetReservationRequest, settings: Settings
         raise UnknownPrice(
             "price is not in USD and no FX rate is available; paid dispatch blocked",
             currency=price.currency,
+        )
+    try:
+        units = exposure_units(price.unit, request.ceilings)
+    except ValueError as exc:
+        # Missing token or duration ceiling: the maximum exposure is uncertain.
+        raise UnknownPrice(
+            "maximum exposure is uncertain for this price unit; paid dispatch blocked",
+            unit=price.unit.value,
+            reason=str(exc),
+        ) from exc
+    if request.worst_case_micro_usd < price.unit_price_micro_usd * units:
+        raise UnknownPrice(
+            "worst-case exposure is below unit price x the units its ceilings allow",
+            unit=price.unit.value,
+            bound_micro_usd=price.unit_price_micro_usd * units,
         )
     if (
         price.source is PriceSource.FAKE_SYNTHETIC

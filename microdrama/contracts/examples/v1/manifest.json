@@ -35,17 +35,41 @@
     "model": "AssetDescriptor",
     "reason": "measured media facts required"
   },
+  "examples/v1/invalid/BudgetReservationRequest__community_cleanup_flag.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "only production GPU/recovery/storage cleanup may use the shutdown reserve"
+  },
   "examples/v1/invalid/BudgetReservationRequest__float_money.json": {
     "expect": "invalid",
     "json_schema_rejects": true,
     "model": "BudgetReservationRequest",
     "reason": "money must be integer micro-USD"
   },
+  "examples/v1/invalid/BudgetReservationRequest__gpu_time_beyond_reserved_units.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "GPU-second exposure is bounded by the timeout, not by max_units alone"
+  },
   "examples/v1/invalid/BudgetReservationRequest__no_timeout.json": {
     "expect": "invalid",
     "json_schema_rejects": true,
     "model": "BudgetReservationRequest",
     "reason": "timeout ceiling required"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__token_ceiling_beyond_reserved_units.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "1,000,000 output tokens cannot be held for a 600-unit reservation"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__token_price_without_token_ceiling.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "token pricing needs the matching token ceiling (uncertain exposure)"
   },
   "examples/v1/invalid/BudgetReservationRequest__under_bounded_exposure.json": {
     "expect": "invalid",
@@ -58,6 +82,12 @@
     "json_schema_rejects": false,
     "model": "CapabilityRecord",
     "reason": "enabled needs evidence"
+  },
+  "examples/v1/invalid/CapabilityRecord__tested_claim_from_documentation.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "CapabilityRecord",
+    "reason": "SUPPORTED_TESTED needs a controlled account test, not documentation"
   },
   "examples/v1/invalid/CaptionTrack__actual_timing_without_audio.json": {
     "expect": "invalid",
@@ -600,7 +630,7 @@
     "model": "QualificationResult"
   },
   "examples/v1/valid/ReleasePackage.json": {
-    "canonical_sha256": "5795538d81ef3fbdb323146092667d50729dd4e0857e6985dd24c3ab7fffcc76",
+    "canonical_sha256": "d4f1962c3cd056b1ac6f5d7fdbc87f4b82fb011f3fd09080a4f4ababb1f59945",
     "expect": "valid",
     "model": "ReleasePackage"
   },

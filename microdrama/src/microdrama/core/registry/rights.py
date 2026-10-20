@@ -32,8 +32,8 @@ from microdrama.core.registry._common import (
     ensure_provenance,
     has_real_evidence,
     label,
-    refuse_real_evidence_on_fake,
     require_aware,
+    require_real_evidence_provenance,
 )
 from microdrama.persistence.db import Database, Tx, insert_row, jsonb
 
@@ -74,7 +74,7 @@ class RightsRegistry:
         """
         provenance = ensure_provenance(source_provenance)
         name = label(record.rights_route_id, record.subject_ref)
-        refuse_real_evidence_on_fake(provenance, record.evidence, what=f"rights {name}")
+        require_real_evidence_provenance(provenance, record.evidence, what=f"rights {name}")
         if record.recorded_at > self._clock.now():
             raise SchemaInvalid("rights record is dated in the future")
         params = (record.rights_route_id, record.subject_kind.value, record.subject_ref)

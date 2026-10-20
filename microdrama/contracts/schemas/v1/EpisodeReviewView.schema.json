@@ -41,7 +41,7 @@
           "type": "integer"
         },
         "remaining_micro_usd": {
-          "description": "Integer micro-USD (no floats)",
+          "description": "Headroom for paid dispatch: cap - committed - shutdown reserve, never < 0",
           "minimum": 0,
           "title": "Remaining Micro Usd",
           "type": "integer"
@@ -56,6 +56,13 @@
           "description": "Integer micro-USD (no floats)",
           "minimum": 0,
           "title": "Settled Micro Usd",
+          "type": "integer"
+        },
+        "shutdown_reserve_micro_usd": {
+          "default": 0,
+          "description": "Protected shutdown/cleanup reserve, shown separately",
+          "minimum": 0,
+          "title": "Shutdown Reserve Micro Usd",
           "type": "integer"
         },
         "synthetic_fake_micro_usd": {
@@ -1168,7 +1175,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.2.1:EpisodeReviewView",
+  "$id": "urn:microdrama:contracts:1.3.0:EpisodeReviewView",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

@@ -141,7 +141,9 @@ def test_reservation_holds_exact_worst_case_in_account_and_category(
     assert counters["reserved"] == 700_000 and counters["committed"] == 700_000
     assert world.category(ep.account_id, GPU)["reserved"] == 700_000
     assert world.reservation_state(reserved.id)["state"] == "ACTIVE"
-    assert world.service.summary(ep.episode_id).remaining_micro_usd == CAP - 700_000
+    summary = world.service.summary(ep.episode_id)
+    assert summary.shutdown_reserve_micro_usd == SHUTDOWN
+    assert summary.remaining_micro_usd == CAP - 700_000 - SHUTDOWN
     check_consistent(ep.account_id)
 
 

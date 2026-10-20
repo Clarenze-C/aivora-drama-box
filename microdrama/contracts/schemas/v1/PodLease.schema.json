@@ -26,7 +26,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.2.1:PodLease",
+  "$id": "urn:microdrama:contracts:1.3.0:PodLease",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Ownership of a GPU pod by exactly one episode/job at a time (pilot rule).",

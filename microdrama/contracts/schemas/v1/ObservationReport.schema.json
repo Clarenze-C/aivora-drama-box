@@ -217,7 +217,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.2.1:ObservationReport",
+  "$id": "urn:microdrama:contracts:1.3.0:ObservationReport",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Frozen Pass A output. Persisted (immutable) with input hashes before Pass B.",

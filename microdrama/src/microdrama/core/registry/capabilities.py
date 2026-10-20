@@ -11,13 +11,14 @@ from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from microdrama.config import Settings
 from microdrama.contracts.enums import (
     CapabilityOperation,
     CapabilitySupport,
     DisclosureKind,
+    EvidenceSource,
     Platform,
     Provenance,
 )
@@ -31,7 +32,8 @@ from microdrama.core.registry._common import (
     deterministic_uuid,
     ensure_provenance,
     has_real_evidence,
-    refuse_real_evidence_on_fake,
+    has_source,
+    require_real_evidence_provenance,
 )
 from microdrama.persistence.db import Database, Tx, insert_row, jsonb
 
@@ -72,7 +74,7 @@ class CapabilityRegistry:
         """
         provenance = ensure_provenance(source_provenance)
         name = f"{record.platform.value}/{record.account_ref}/{record.provider_route}"
-        refuse_real_evidence_on_fake(provenance, record.evidence, what=f"capability {name}")
+        require_real_evidence_provenance(provenance, record.evidence, what=f"capability {name}")
         if record.verified_at is not None and record.verified_at > self._clock.now():
             raise SchemaInvalid("capability verified_at is in the future")
         with self._db.transaction() as tx:
@@ -125,7 +127,13 @@ class CapabilityRegistry:
                 f"{len(rows)} provider routes are current for this account; name provider_route",
                 routes=[row["provider_route"] for row in rows],
             )
-        return CapabilityRecord.model_validate(rows[0]["record"])
+        stored = _stored_record(rows[0])
+        if stored is None:
+            raise Conflict(
+                "stored capability record fails contract validation; reconcile before use",
+                version=rows[0]["version"],
+            )
+        return stored
 
     def evaluate(
         self,
@@ -163,17 +171,34 @@ class CapabilityRegistry:
                 blockers=[f"{scope}: {len(rows)} provider routes are current; name provider_route"],
             )
         row = rows[0]
-        record = CapabilityRecord.model_validate(row["record"])
+        record = _stored_record(row)
+        if record is None:
+            # A tampered or corrupt row fails closed: it is a blocker, never an exception.
+            return CapabilityDecision(
+                available=False,
+                blockers=[
+                    f"{scope}: stored record fails contract validation; reconcile before use"
+                ],
+                record_version=row["version"],
+            )
+        offline = self._settings.is_offline_mock
         name = f"{scope} ({record.provider_route} v{record.version})"
         blockers: list[str] = []
         if not row["enabled"]:
             blockers.append(f"{name}: disabled")
-        if not self._settings.is_offline_mock and not has_real_evidence(record.evidence):
+        if not offline and not has_real_evidence(record.evidence):
             blockers.append(f"fake evidence only: {record.provider_route}/{account}")
         for op in ops:
             support = record.support(op)
             if support is not CapabilitySupport.SUPPORTED_TESTED:
                 blockers.append(f"{name}: {op.value} blocked, support is {_SUPPORT_TEXT[support]}")
+            elif not offline and not has_source(
+                record.evidence, EvidenceSource.CONTROLLED_ACCOUNT_TEST
+            ):
+                # V-10: SUPPORTED_TESTED is only a label unless a controlled account tested it.
+                blockers.append(
+                    f"{name}: {op.value} blocked, SUPPORTED_TESTED lacks controlled-account evidence"
+                )
         for kind in wanted:
             if kind not in record.supported_disclosures:
                 blockers.append(f"{name}: disclosure {kind.value} is not supported")
@@ -208,6 +233,14 @@ class CapabilityRegistry:
                 record_version=decision.record_version,
             )
         return decision
+
+
+def _stored_record(row: dict[str, Any]) -> CapabilityRecord | None:
+    """The stored contract record, or None when the row no longer validates (tamper or damage)."""
+    try:
+        return CapabilityRecord.model_validate(row["record"])
+    except ValidationError:
+        return None
 
 
 def _enum[E: StrEnum](kind: type[E], value: object, what: str) -> E:

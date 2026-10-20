@@ -147,3 +147,35 @@ def test_integer_split_is_exact_and_remainder_goes_first(amount: int, parts: int
 
 def test_split_matches_the_documented_example() -> None:
     assert split_first_takes_remainder(1_000_001, 3) == [333_335, 333_333, 333_333]
+
+
+@pytest.mark.parametrize(
+    ("queue", "category"),
+    [
+        (QueueName.PRODUCTION, GPU),
+        (QueueName.PRODUCTION, RECOVERY),
+        (QueueName.PRODUCTION, CPU),
+    ],
+)
+def test_shutdown_grant_is_given_to_production_cleanup_only(
+    queue: QueueName, category: BudgetCategory
+) -> None:
+    assert policy.shutdown_grant(queue, category, requested=True) is True
+    assert policy.shutdown_grant(queue, category, requested=False) is False
+
+
+@pytest.mark.parametrize(
+    ("queue", "category"),
+    [
+        (QueueName.PRODUCTION, QA),
+        (QueueName.PRODUCTION, METERED),
+        (QueueName.PUBLICATION, CPU),
+        (QueueName.COMMUNITY, METERED),
+    ],
+)
+def test_shutdown_grant_refuses_every_other_queue_and_category(
+    queue: QueueName, category: BudgetCategory
+) -> None:
+    assert policy.shutdown_grant(queue, category, requested=False) is False
+    with pytest.raises(PolicyDenied):
+        policy.shutdown_grant(queue, category, requested=True)

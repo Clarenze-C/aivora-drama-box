@@ -229,7 +229,7 @@ ROUTES: tuple[RouteSpec, ...] = (
         None,
         SeasonProposalSummary,
         (200,),
-        "List versioned proposals (no secrets)",
+        "List versioned proposals (no secrets); the body is a JSON array of the response model",
     ),
     RouteSpec(
         "GET",

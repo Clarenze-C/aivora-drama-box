@@ -263,10 +263,21 @@ def test_unreserved_usage_is_spend_and_late_billing_after_settlement_is_counted(
             **_receipt_kwargs(world, res, ep.episode_id),
         )
     )
+    # A second *final* amount is a restatement: refused, nothing written (V-5).
+    with pytest.raises(Conflict):
+        svc.record_usage(
+            fake_receipt(
+                provider_receipt_id="late.second.final",
+                kind=ReceiptKind.SETTLEMENT,
+                amount=50_000,
+                **_receipt_kwargs(world, res, ep.episode_id),
+            )
+        )
+    assert world.counters(ep.account_id)["settled"] == 900_000  # unchanged by the refusal
     svc.record_usage(
         fake_receipt(
-            provider_receipt_id="late.second.final",
-            kind=ReceiptKind.SETTLEMENT,
+            provider_receipt_id="late.second.adjust",
+            kind=ReceiptKind.ADJUSTMENT,
             amount=50_000,
             **_receipt_kwargs(world, res, ep.episode_id),
         )

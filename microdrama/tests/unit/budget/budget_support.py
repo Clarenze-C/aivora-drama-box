@@ -102,7 +102,7 @@ def request_for(
         provider=provider,
         operation_kind=operation_kind,
         price=price,
-        ceilings=ExposureCeilings(timeout_ms=600_000, max_units=1),
+        ceilings=ExposureCeilings(timeout_ms=1_000, max_units=1),
         worst_case_micro_usd=worst,
         is_shutdown_or_cleanup=cleanup,
         expires_at=expires_at,
@@ -306,6 +306,40 @@ class World:
         return lease_id
 
 
+def fill_to_cap_minus_shutdown(world: World, ep: Episode) -> dict[str, Any]:
+    """Committed spend of exactly cap - shutdown reserve (9,750,000), with recovery left at the
+    shutdown reserve. Keys: gpu (4.75M, spilled), ref, qa, res, cpu, met (community), gpu2 (2.25M,
+    spilled to exactly the shutdown reserve)."""
+    svc = world.service
+    episode = ep.episode_id
+    out: dict[str, Any] = {}
+    out["gpu"] = svc.reserve(request_for(key="fill.gpu", episode_id=episode, worst=2_500_000))
+    out["ref"] = svc.reserve(
+        request_for(key="fill.ref", episode_id=episode, worst=1_500_000, category=REFERENCES)
+    )
+    out["qa"] = svc.reserve(
+        request_for(key="fill.qa", episode_id=episode, worst=1_000_000, category=QA)
+    )
+    out["res"] = svc.reserve(
+        request_for(key="fill.res", episode_id=episode, worst=1_000_000, category=RESEARCH)
+    )
+    out["cpu"] = svc.reserve(
+        request_for(key="fill.cpu", episode_id=episode, worst=500_000, category=CPU)
+    )
+    out["met"] = svc.reserve(
+        request_for(
+            key="fill.met",
+            episode_id=episode,
+            worst=1_000_000,
+            category=METERED,
+            queue=QueueName.COMMUNITY,
+        )
+    )
+    out["gpu2"] = svc.reserve(request_for(key="fill.gpu2", episode_id=episode, worst=2_250_000))
+    assert world.counters(ep.account_id)["committed"] == CAP - SHUTDOWN
+    return out
+
+
 def assert_consistent(db: Database, account_id: uuid.UUID) -> dict[str, int]:
     """Recompute every counter from the rows and assert it matches the stored value.
 
@@ -323,7 +357,7 @@ def assert_consistent(db: Database, account_id: uuid.UUID) -> dict[str, int]:
             "SELECT * FROM reservations WHERE account_id = %s", (account_id,)
         )
         charges = tx.fetchall(
-            "SELECT kind, reservation_id, category, amount_micro_usd FROM charges "
+            "SELECT id, kind, reservation_id, category, amount_micro_usd, created_at FROM charges "
             "WHERE account_id = %s",
             (account_id,),
         )
@@ -344,12 +378,40 @@ def assert_consistent(db: Database, account_id: uuid.UUID) -> dict[str, int]:
             usage[charge["reservation_id"]] = (
                 usage.get(charge["reservation_id"], 0) + charge["amount_micro_usd"]
             )
+    by_reservation: dict[Any, list[Any]] = {}
+    for charge in charges:
+        if charge["reservation_id"] is not None:
+            by_reservation.setdefault(charge["reservation_id"], []).append(charge)
     expected: dict[str, list[int]] = {c.value: [0, 0, 0] for c in BudgetCategory}
     credits = 0
     for res in reservations:
         cat = res["category"]
         used = usage.get(res["id"], 0)
         worst = res["reserved_micro_usd"]
+        # Settled amount derived from the reservation's own charges (V-13): a SETTLED reservation
+        # holds its one SETTLEMENT plus the ADJUSTMENTs applied after it (late billing); a RELEASED
+        # reservation holds only late ADJUSTMENTs; an open reservation has none.
+        mine = by_reservation.get(res["id"], [])
+        if res["state"] == "SETTLED":
+            settlements = [c for c in mine if c["kind"] == "SETTLEMENT"]
+            assert len(settlements) == 1, (
+                f"settled reservation {res['id']}: {len(settlements)} finals"
+            )
+            final = settlements[0]
+            late = sum(
+                c["amount_micro_usd"]
+                for c in mine
+                if c["kind"] == "ADJUSTMENT" and c["created_at"] > final["created_at"]
+            )
+            derived_settled = final["amount_micro_usd"] + late
+        elif res["state"] == "RELEASED":
+            derived_settled = sum(c["amount_micro_usd"] for c in mine if c["kind"] == "ADJUSTMENT")
+        else:
+            derived_settled = 0
+        assert res["settled_micro_usd"] == derived_settled, (
+            f"reservation {res['id']} ({res['state']}): settled {res['settled_micro_usd']} "
+            f"!= derived from charges {derived_settled}"
+        )
         if res["state"] == "ACTIVE":
             # The hold is consumed by usage; usage beyond the hold is accrued in full.
             assert res["accrued_micro_usd"] == used, (
@@ -369,7 +431,7 @@ def assert_consistent(db: Database, account_id: uuid.UUID) -> dict[str, int]:
             expected[cat][1] += counted
         elif res["state"] == "RELEASED":
             assert res["accrued_micro_usd"] == 0, f"released reservation {res['id']} has usage"
-        expected[cat][2] += res["settled_micro_usd"]
+        expected[cat][2] += derived_settled
     for charge in charges:
         if charge["kind"] == "CREDIT":
             credits += charge["amount_micro_usd"]

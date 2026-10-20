@@ -166,6 +166,14 @@ class BudgetService:
       reserve() refuses new work and replays of earlier reservations (see reserve()).
     - Non-USD receipts are refused with UnknownPrice and are NOT recorded (there is no FX). Operators
       must treat such a refusal as unrecorded real spend (see record_usage()).
+    - Research attribution order: the orchestrator (T029) attributes research right after opening
+      the episode accounts and before any paid work (see allocate_research_cost()).
+    - Shutdown/cleanup privilege: only production GPU, recovery or storage requests may use the
+      shutdown reserve or bypass the blocked flag. Any other request that asks for it is refused
+      with PolicyDenied (see reserve()).
+    - Late billing after a close: only ADJUSTMENT receipts may arrive on a SETTLED or RELEASED
+      reservation. A SETTLEMENT or ACCRUAL there is refused with Conflict and nothing is written.
+    - Release with provider work in flight is refused with Conflict (see release()).
     """
 
     def __init__(self, db: Database, clock: Clock, ids: IdGenerator, settings: Settings) -> None:
@@ -323,7 +331,11 @@ class BudgetService:
         if request.scope_kind is BudgetScopeKind.SEASON_RESEARCH and request.episode_id is not None:
             raise SchemaInvalid("season research reservations must not name an episode")
         request_hash = canonical_hash(request)
-        cleanup = request.is_shutdown_or_cleanup
+        # One rule for both the shutdown floor and the blocked-account bypass (PolicyDenied when the
+        # flag is set outside production GPU/recovery/storage categories).
+        cleanup = policy.shutdown_grant(
+            request.queue, request.category, request.is_shutdown_or_cleanup
+        )
         with self._db.transaction() as tx:
             if request.scope_kind is BudgetScopeKind.EPISODE:
                 account_id = episode_account_id(tx, request.episode_id)
@@ -442,8 +454,13 @@ class BudgetService:
 
         The stripped reason is persisted as ``closed_reason``. It must be non-empty, at most 500
         characters and a single line (SchemaInvalid otherwise). A RELEASED reservation is terminal:
-        its state and reason never change again, though late usage may still add to its settled
+        its state and reason never change again. Late ADJUSTMENT usage may still add to its settled
         amount.
+
+        Refused with Conflict while any provider operation on the reservation is PENDING_SUBMIT,
+        SUBMITTED, RUNNING or UNKNOWN, or while usage has accrued. Release again after those
+        operations are terminal. The core lane must not create a provider operation for a reservation
+        that is no longer ACTIVE; this check is only as strong as that guard.
         """
         cleaned = _closed_reason(reason)
         with self._db.transaction() as tx:
@@ -457,16 +474,33 @@ class BudgetService:
                 raise Conflict(
                     "usage was accrued against this reservation; it must be settled, not released"
                 )
+            in_flight = tx.fetchall(
+                "SELECT id, state FROM provider_operations WHERE reservation_id = %s "
+                "AND state IN ('PENDING_SUBMIT', 'SUBMITTED', 'RUNNING', 'UNKNOWN') "
+                "ORDER BY id LIMIT 5",
+                (reservation_id,),
+            )
+            if in_flight:
+                raise Conflict(
+                    "provider work is still in flight on this reservation; release only after "
+                    "every operation is terminal",
+                    reservation_id=str(reservation_id),
+                    operations=[str(row["id"]) for row in in_flight],
+                    states=[row["state"] for row in in_flight],
+                )
             ledger = self._ledger(tx, acct, cats)
             ledger.release(res, reason=cleaned)
             ledger.flush()
             return _as_reservation(res)
 
-    def expire_stale(self, now: datetime | None = None) -> int:
-        """Expire ACTIVE reservations past their expiry; their exposure stays counted as spent."""
-        when = now if now is not None else self._now()
-        if when.tzinfo is None or when.utcoffset() is None:
-            raise SchemaInvalid("expire_stale needs a timezone-aware instant")
+    def expire_stale(self) -> int:
+        """Expire ACTIVE reservations whose ``expires_at`` the injected clock has passed.
+
+        Takes no instant from the caller: the time comes only from the clock given to the service,
+        so the sweep and every other accounting step agree on "now". Expired exposure stays counted
+        as spent until a settlement reconciles it.
+        """
+        when = self._now()
         expired_total = 0
         with self._db.transaction() as tx:
             rows = tx.fetchall(
@@ -497,6 +531,11 @@ class BudgetService:
 
     def record_usage(self, receipt: UsageReceipt) -> ChargeResult:
         """Record one usage receipt. Replays are idempotent; overruns are recorded, never hidden.
+
+        Late billing: on a SETTLED or RELEASED reservation only ADJUSTMENT is accepted (added to
+        settled). A SETTLEMENT or ACCRUAL there is refused with Conflict and nothing is written. The
+        provider adapter must send late billing as ADJUSTMENT and must never drop a Conflict, because
+        the spend is still real.
 
         Refusals (nothing is recorded): UnknownPrice for a non-USD receipt. There is no FX, so the
         spend must be investigated by operators, not dropped. PolicyDenied for a synthetic receipt
@@ -729,6 +768,22 @@ class BudgetService:
         ) != (lease_id, provider, pod_id, start, end):
             raise Conflict("receipt was already recorded without this pod interval attribution")
 
+    @staticmethod
+    def _insert_charge(tx: Tx, values: dict) -> None:
+        """Insert a charge with ``created_at = clock_timestamp()`` taken at insert time.
+
+        Inserts happen under the account lock, so for one account ``created_at`` orders the charges in
+        the order they were applied. The invariant checker relies on that order to tell usage that
+        arrived while a reservation was open from late billing after it closed.
+        """
+        columns = list(values)
+        placeholders = ", ".join(["%s"] * len(columns))
+        tx.execute(
+            f"INSERT INTO charges ({', '.join(columns)}, created_at) "
+            f"VALUES ({placeholders}, clock_timestamp())",
+            list(values.values()),
+        )
+
     def _post_charge(
         self,
         tx: Tx,
@@ -742,9 +797,8 @@ class BudgetService:
         account = ledger.account
         charge_id = self._new_id()
         ledger.apply_receipt(receipt, reservation)
-        insert_row(
+        self._insert_charge(
             tx,
-            "charges",
             {
                 "id": charge_id,
                 "account_id": account.id,
@@ -866,6 +920,14 @@ class BudgetService:
         charges are skipped, so a rerun changes nothing. Only unreserved charges and reservation
         settlements are attributable. Late ACCRUAL/ADJUSTMENT usage on a closed reservation stays on
         the research account and is not attributed.
+
+        Each share must fit the episode and the RESEARCH category, with no spill from recovery:
+        - committed + share + shutdown reserve must stay within the episode cap, and
+        - RESEARCH committed + share must stay within the RESEARCH allocation.
+        A share that does not fit refuses the whole call with BudgetExhausted and writes nothing.
+        The unattributed residue stays on the research account; the error names it. The orchestrator
+        (T029) must attribute research right after opening the episode accounts and before any paid
+        work, so the shares fit the empty allowance.
         """
         episodes = list(episode_ids)
         if not episodes:
@@ -893,6 +955,7 @@ class BudgetService:
                 for account_id, (acct, cats) in locked.items()
             }
             sources = tx.fetchall(_RESEARCH_SOURCE_SQL, (research_id,))
+            residue = sum(source["amount_micro_usd"] for source in sources)
             for source in sources:
                 shares = split_first_takes_remainder(source["amount_micro_usd"], len(episodes))
                 for episode_id, share in zip(episodes, shares, strict=True):
@@ -900,6 +963,9 @@ class BudgetService:
                         continue
                     target_id = target_ids[episode_id]
                     ledger = ledgers[target_id]
+                    self._check_research_share(
+                        ledger, episode_id=episode_id, share=share, residue=residue
+                    )
                     insert_row(
                         tx,
                         "cost_allocations",
@@ -913,7 +979,6 @@ class BudgetService:
                         },
                     )
                     ledger.move(_RESEARCH, settled=share)
-                    ledger.check_overrun(charge_id=source["id"], profile=None)
                     results.append(
                         ResearchAllocation(
                             source_charge_id=source["id"],
@@ -925,6 +990,38 @@ class BudgetService:
             for ledger in ledgers.values():
                 ledger.flush()
         return results
+
+    @staticmethod
+    def _check_research_share(
+        ledger: Ledger, *, episode_id: UUID, share: int, residue: int
+    ) -> None:
+        """Refuse a research share that would exceed the episode cap or the RESEARCH allocation."""
+        acct = ledger.account
+        research = ledger.categories[_RESEARCH]
+        details = {
+            "episode_id": str(episode_id),
+            "share_micro_usd": share,
+            "unattributed_micro_usd": residue,
+            "cap_micro_usd": acct.cap,
+            "shutdown_reserve_micro_usd": acct.shutdown_reserve,
+            "committed_micro_usd": acct.committed,
+            "research_allocated_micro_usd": research.allocated,
+            "research_committed_micro_usd": research.committed,
+        }
+        if acct.committed + share + acct.shutdown_reserve > acct.cap:
+            raise BudgetExhausted(
+                "research share does not fit the episode allowance (cap less shutdown reserve); "
+                "the residue stays on the research account",
+                limit="episode_allowance",
+                **details,
+            )
+        if research.committed + share > research.allocated:
+            raise BudgetExhausted(
+                "research share exceeds the RESEARCH allocation (no spill); the residue stays on "
+                "the research account",
+                limit="research_allocation",
+                **details,
+            )
 
     # --- reports -----------------------------------------------------------------------
 

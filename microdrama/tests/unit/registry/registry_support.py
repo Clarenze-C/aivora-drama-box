@@ -6,6 +6,8 @@ account and preset names are synthetic.
 
 from __future__ import annotations
 
+import copy
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,7 +30,7 @@ from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.primitives import EvidenceRef
 from microdrama.contracts.registries import PresetMeasurements, PresetRecord, RightsRecord
 from microdrama.contracts.release import CapabilityRecord
-from microdrama.persistence.db import Database
+from microdrama.persistence.db import Database, jsonb
 from microdrama.testing.fakes.common import FakeClock
 
 T0 = datetime(2026, 10, 20, 0, 0, tzinfo=UTC)
@@ -90,6 +92,20 @@ def real_license(ref: str = "licence:th-voice-0001") -> EvidenceRef:
 
 def real_benchmark(ref: str = "benchmark:unit-run-1") -> EvidenceRef:
     return EvidenceRef(source=EvidenceSource.MEASURED_BENCHMARK, ref=ref)
+
+
+def controlled_evidence(ref: str = "controlled-test-42") -> EvidenceRef:
+    """Evidence that a controlled authorised account tested the operations (contract 1.3.0)."""
+    return EvidenceRef(source=EvidenceSource.CONTROLLED_ACCOUNT_TEST, ref=ref)
+
+
+def documentation_only_operations() -> dict[CapabilityOperation, CapabilitySupport]:
+    """Every tested default operation downgraded to documentation: valid without evidence."""
+    return {
+        op: CapabilitySupport.SUPPORTED_DOCUMENTED
+        for op, support in DEFAULT_CAP_OPERATIONS.items()
+        if support is CapabilitySupport.SUPPORTED_TESTED
+    }
 
 
 def rights(
@@ -204,6 +220,45 @@ def preset(
     )
 
 
+def tamper_stored_capability(
+    db: Database,
+    *,
+    capability_id: UUID,
+    version: int,
+    edit: Callable[[dict[str, Any]], None],
+    sync_sources: bool = True,
+) -> None:
+    """Simulate an owner-level SQL edit of a stored capability row (test databases only).
+
+    ``edit`` changes the stored ``record`` JSON in place. ``evidence_sources`` is rewritten from the
+    edited evidence when ``sync_sources`` is true, which is what a careful tamperer would do; set it
+    to false to leave the two columns inconsistent. ``session_replication_role = replica`` skips the
+    immutability and integer triggers for this transaction only; the schema is not altered.
+    """
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT record FROM capability_registry WHERE capability_id = %s AND version = %s",
+            (capability_id, version),
+        )
+    assert row is not None
+    record = copy.deepcopy(row["record"])
+    edit(record)
+    with db.transaction() as tx:
+        tx.execute("SET LOCAL session_replication_role = replica")
+        if sync_sources:
+            tx.execute(
+                "UPDATE capability_registry SET record = %s, evidence_sources = %s "
+                "WHERE capability_id = %s AND version = %s",
+                (jsonb(record), jsonb(record["evidence"]), capability_id, version),
+            )
+        else:
+            tx.execute(
+                "UPDATE capability_registry SET record = %s "
+                "WHERE capability_id = %s AND version = %s",
+                (jsonb(record), capability_id, version),
+            )
+
+
 def count(db: Database, sql: str, params: tuple[Any, ...] = ()) -> int:
     with db.transaction(readonly=True) as tx:
         return int(tx.fetchval(sql, params))
@@ -247,7 +302,9 @@ __all__ = [
     "VOICE_REF",
     "all_registry_rows_text",
     "capability",
+    "controlled_evidence",
     "count",
+    "documentation_only_operations",
     "fixed_clock",
     "live_settings",
     "mock_settings",
@@ -256,5 +313,6 @@ __all__ = [
     "real_license",
     "rights",
     "switch_runtime_mode",
+    "tamper_stored_capability",
     "uid",
 ]

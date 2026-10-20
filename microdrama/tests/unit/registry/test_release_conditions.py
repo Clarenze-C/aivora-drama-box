@@ -211,9 +211,12 @@ def test_fake_rights_and_routes_block_with_live_settings_even_when_qa_is_green(
     _clear_rights(db)
     _clear_capability(db)
     blockers = _release(db, qa_all_green=True, settings=live_settings())
+    name = f"capability TIKTOK/{ACCOUNT} ({CAP_ROUTE} v1)"
     assert blockers == [
         f"fake evidence only: {ROUTE}/{VOICE_REF}",
         f"fake evidence only: {CAP_ROUTE}/{ACCOUNT}",
+        f"{name}: SCHEDULE blocked, SUPPORTED_TESTED lacks controlled-account evidence",
+        f"{name}: UPLOAD_SHORT blocked, SUPPORTED_TESTED lacks controlled-account evidence",
     ]
 
 

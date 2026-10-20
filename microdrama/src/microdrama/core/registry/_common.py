@@ -80,18 +80,37 @@ def has_real_evidence(evidence: Iterable[EvidenceRef | Mapping[str, Any]]) -> bo
     return any(name in _REAL_VALUES for name in evidence_sources(evidence))
 
 
-def refuse_real_evidence_on_fake(
+# Provenances whose data may carry a real (non-fixture) evidence source. Anything else is refused.
+LIVE_EVIDENCE_PROVENANCES: frozenset[Provenance] = frozenset(
+    {Provenance.LIVE_PROVIDER, Provenance.LICENSED}
+)
+
+
+def require_real_evidence_provenance(
     provenance: Provenance, evidence: Iterable[EvidenceRef], *, what: str
 ) -> None:
-    """D3: fake-synthetic data may never be recorded with a real evidence source."""
-    if provenance is not Provenance.FAKE_SYNTHETIC:
+    """Application gate for real evidence labels (D3, V-9).
+
+    A real source (OFFICIAL_DOCUMENTATION, CONTROLLED_ACCOUNT_TEST, MEASURED_BENCHMARK,
+    LICENSE_DOCUMENT) is accepted only with LIVE_PROVIDER or LICENSED provenance. Every other
+    provenance is refused, including ORIGINAL_FIXTURE and DERIVED_LOCAL. FAKE_FIXTURE evidence is
+    not restricted here because it never counts outside OFFLINE_MOCK. The database trusts the
+    label it is given, so this gate is the only check on it.
+    """
+    if provenance in LIVE_EVIDENCE_PROVENANCES:
         return
     claimed = sorted({name for name in evidence_sources(evidence) if name in _REAL_VALUES})
     if claimed:
         raise PolicyDenied(
-            f"{what}: fake-synthetic data cannot carry real evidence ({', '.join(claimed)})",
+            f"{what}: {provenance.value} data cannot carry real evidence "
+            f"({', '.join(claimed)}); only LIVE_PROVIDER or LICENSED may",
             evidence_sources=claimed,
+            source_provenance=provenance.value,
         )
+
+
+def has_source(evidence: Iterable[EvidenceRef | Mapping[str, Any]], source: EvidenceSource) -> bool:
+    return any(name == source.value for name in evidence_sources(evidence))
 
 
 def require_aware(value: object, what: str) -> datetime:
@@ -154,6 +173,8 @@ __all__ = [
     "evidence_sources",
     "has_real_evidence",
     "label",
-    "refuse_real_evidence_on_fake",
+    "require_real_evidence_provenance",
+    "has_source",
+    "LIVE_EVIDENCE_PROVENANCES",
     "require_aware",
 ]

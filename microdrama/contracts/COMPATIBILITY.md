@@ -1,4 +1,4 @@
-# Contract v1.0.0 — conventions and compatibility notes (guardian-owned)
+# Contract v1.3.0 — conventions and compatibility notes (guardian-owned)
 
 Frozen 2026-10-20 by the integrator/contract guardian (task T002). Python source
 of truth: `src/microdrama/contracts/`. Generated artifacts in this folder are
@@ -92,6 +92,17 @@ them by hand.
   closed (`closed_reason`): the caller's reason for RELEASED, a fixed reason for EXPIRED and
   SETTLED. A RELEASED reservation keeps its state and reason.
 
+- **Review lane decisions (M1, T008).** `GET /seasons/proposals` returns a JSON array of
+  `SeasonProposalSummary`. A Gate 2 REVISE sends the episode back to the most upstream stage any
+  of its feedback categories needs (not the earliest timecode). Gate 2 also blocks when the
+  package's management-policy hash differs from the approved season scope. A material change
+  after a Gate 2 APPROVE is refused: the state tables have no RELEASE_APPROVED →
+  AWAITING_FINAL_REVIEW edge, so an approved package cannot be superseded in this build. A
+  post-approval recut needs a future contract change (a human-only return edge, or a HELD path
+  that cancels unscheduled slots), and until then T020 must submit only the approved package's
+  hashes. The login form has no CSRF token, because no session exists yet; it relies on
+  `SameSite=Strict` cookies (single-owner deployment).
+
 ## Changing a contract
 
 A worker that needs a missing field **stops** and returns a contract-change
@@ -106,6 +117,21 @@ below and notifies affected lanes.
 
 ## Change log
 
+- **1.3.0** (2026-10-20, guardian, M1 validator findings V-1, V-3, V-10, V-12): stricter
+  validation plus one additive field. `BudgetReservationRequest`: the worst case must cover
+  `unit_price × exposure_units(unit, ceilings)`, where token prices need the matching token
+  ceiling, media-second prices need `max_duration_ms`, GPU seconds are bounded by
+  `timeout_ms`, and the result is never below `max_units` (missing ceiling = uncertain
+  exposure = invalid). `is_shutdown_or_cleanup` is valid only on the production queue for
+  GPU_GENERATION, RECOVERY_HEADROOM or CPU_STORAGE_TRANSFER (`cost.CLEANUP_CATEGORIES`).
+  `CapabilityRecord`: any SUPPORTED_TESTED operation needs CONTROLLED_ACCOUNT_TEST evidence
+  (FAKE_FIXTURE for mock fixtures; `release.TESTED_EVIDENCE_SOURCES`); documentation alone is
+  never a test. `CostSummary` gains `shutdown_reserve_micro_usd` (default 0), and
+  `remaining_micro_usd` is defined as headroom for paid dispatch (cap − committed − shutdown
+  reserve, never below 0). The narrowing ships as a minor bump for the same reason as 1.2.0:
+  no payload has been persisted outside tests; `schema_version` stays `"1.0"`. Impacted lanes:
+  T005 and T006 (tests updated in their fix round), T008 (cost display), and every later
+  lane that reserves money.
 - **1.2.1** (2026-10-20, guardian, M0 re-validation N-2): the token-like path rule no longer
   refuses long readable lowercase hyphenated slugs; opaque segments (hex, base64url, mixed
   case, underscores) of 32+ characters are still refused. Loosening only; no payload that was

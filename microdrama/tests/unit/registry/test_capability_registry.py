@@ -10,14 +10,17 @@ import pytest
 from registry_support import (
     ACCOUNT,
     CAP_ROUTE,
+    FAKE_EVIDENCE,
     T0,
     capability,
+    controlled_evidence,
     count,
+    documentation_only_operations,
     fixed_clock,
     live_settings,
     mock_settings,
-    real_benchmark,
     switch_runtime_mode,
+    tamper_stored_capability,
 )
 
 from microdrama.contracts.enums import (
@@ -156,7 +159,8 @@ def test_an_operation_absent_from_the_record_is_unknown(db: Database) -> None:
 def test_a_disabled_record_blocks(db: Database) -> None:
     registry = _registry(db)
     registry.record(
-        capability(enabled=False, verified_at=None), source_provenance=Provenance.FAKE_SYNTHETIC
+        capability(enabled=False, verified_at=None, evidence=[FAKE_EVIDENCE]),
+        source_provenance=Provenance.FAKE_SYNTHETIC,
     )
     decision = _evaluate(registry)
     assert decision.available is False
@@ -289,13 +293,18 @@ def test_fake_only_evidence_blocks_outside_mock_only(db: Database) -> None:
     assert _evaluate(_registry(db, mock_settings())).available is True
     live = _evaluate(_registry(db, live_settings()))
     assert live.available is False
-    assert live.blockers == [f"fake evidence only: {CAP_ROUTE}/{ACCOUNT}"]
+    name = f"capability TIKTOK/{ACCOUNT} ({CAP_ROUTE} v1)"
+    assert live.blockers == [
+        f"fake evidence only: {CAP_ROUTE}/{ACCOUNT}",
+        f"{name}: SCHEDULE blocked, SUPPORTED_TESTED lacks controlled-account evidence",
+        f"{name}: UPLOAD_SHORT blocked, SUPPORTED_TESTED lacks controlled-account evidence",
+    ]
 
 
 def test_real_evidence_is_available_with_live_settings(db: Database) -> None:
     registry = _registry(db, live_settings())
     registry.record(
-        capability(evidence=[real_benchmark()]), source_provenance=Provenance.LIVE_PROVIDER
+        capability(evidence=[controlled_evidence()]), source_provenance=Provenance.LIVE_PROVIDER
     )
     assert _evaluate(registry).available is True
 
@@ -304,7 +313,8 @@ def test_d3_refuses_a_real_source_label_on_fake_provenance(db: Database) -> None
     registry = _registry(db)
     with pytest.raises(PolicyDenied):
         registry.record(
-            capability(evidence=[real_benchmark()]), source_provenance=Provenance.FAKE_SYNTHETIC
+            capability(evidence=[controlled_evidence()]),
+            source_provenance=Provenance.FAKE_SYNTHETIC,
         )
     assert count(db, "SELECT count(*) FROM capability_registry") == 0
 
@@ -335,8 +345,131 @@ def test_a_live_database_accepts_an_enabled_route_with_real_evidence(db: Databas
 def test_a_disabled_route_without_evidence_is_stored_and_blocked(db: Database) -> None:
     registry = _registry(db)
     registry.record(
-        capability(enabled=False, verified_at=None, evidence=[]),
+        capability(
+            enabled=False,
+            verified_at=None,
+            evidence=[],
+            operations=documentation_only_operations(),
+        ),
         source_provenance=Provenance.FAKE_SYNTHETIC,
     )
-    assert _evaluate(registry).available is False
+    decision = _evaluate(registry)
+    assert decision.available is False
+    assert decision.blockers[0].endswith("(fake-tiktok-route v1): disabled")
     assert count(db, "SELECT count(*) FROM capability_registry WHERE enabled") == 0
+
+
+# --- V-10: SUPPORTED_TESTED is only a label unless a controlled account tested it -----------
+
+NAME = f"capability TIKTOK/{ACCOUNT} ({CAP_ROUTE} v1)"
+
+
+def test_a_tested_label_on_fixture_evidence_is_blocked_outside_mock(db: Database) -> None:
+    _registry(db).record(capability(), source_provenance=Provenance.FAKE_SYNTHETIC)
+    live = _evaluate(_registry(db, live_settings()))
+    assert live.available is False
+    tested_blockers = [b for b in live.blockers if "SUPPORTED_TESTED lacks" in b]
+    assert tested_blockers == [
+        f"{NAME}: SCHEDULE blocked, SUPPORTED_TESTED lacks controlled-account evidence",
+        f"{NAME}: UPLOAD_SHORT blocked, SUPPORTED_TESTED lacks controlled-account evidence",
+    ]
+    # Distinct from the documentation-only wording.
+    assert all("documented" not in blocker for blocker in live.blockers)
+
+
+def test_controlled_evidence_satisfies_the_tested_requirement_outside_mock(db: Database) -> None:
+    registry = _registry(db, live_settings())
+    registry.record(
+        capability(evidence=[controlled_evidence(), FAKE_EVIDENCE]),
+        source_provenance=Provenance.LIVE_PROVIDER,
+    )
+    assert _evaluate(registry).available is True
+
+
+def test_a_tested_label_that_is_not_required_is_not_checked(db: Database) -> None:
+    """Only the operations a caller requires are gated by the label rule."""
+    _registry(db).record(capability(), source_provenance=Provenance.FAKE_SYNTHETIC)
+    live = _registry(db, live_settings()).evaluate(
+        platform=Platform.TIKTOK,
+        account_ref=ACCOUNT,
+        required={CapabilityOperation.READBACK},
+    )
+    # READBACK is SUPPORTED_TESTED in the default record; it is still gated, because it is required.
+    assert any("READBACK blocked, SUPPORTED_TESTED lacks" in b for b in live.blockers)
+    not_required = _registry(db, live_settings()).evaluate(
+        platform=Platform.TIKTOK,
+        account_ref=ACCOUNT,
+        required={CapabilityOperation.INSIGHTS},
+    )
+    assert not any("SUPPORTED_TESTED lacks" in b for b in not_required.blockers)
+
+
+def test_a_stored_row_tampered_to_drop_controlled_evidence_is_blocked_outside_mock(
+    db: Database,
+) -> None:
+    registry = _registry(db)
+    original = capability(evidence=[controlled_evidence(), FAKE_EVIDENCE])
+    registry.record(original, source_provenance=Provenance.LIVE_PROVIDER)
+    assert _evaluate(_registry(db, live_settings())).available is True
+
+    # An owner-level SQL edit removes the controlled-account evidence from the stored record.
+    tamper_stored_capability(
+        db,
+        capability_id=original.capability_id,
+        version=1,
+        edit=lambda record: record.update(
+            evidence=[
+                item for item in record["evidence"] if item["source"] != "CONTROLLED_ACCOUNT_TEST"
+            ]
+        ),
+    )
+
+    stored = registry.current(Platform.TIKTOK, ACCOUNT)
+    assert stored is not None
+    assert [item.source for item in stored.evidence] == [EvidenceSource.FAKE_FIXTURE]
+    live = _evaluate(_registry(db, live_settings()))
+    assert live.available is False
+    assert (
+        f"{NAME}: SCHEDULE blocked, SUPPORTED_TESTED lacks controlled-account evidence"
+        in live.blockers
+    )
+    # Fixtures still count in OFFLINE_MOCK, so the same tampered row remains usable there.
+    assert _evaluate(_registry(db, mock_settings())).available is True
+
+
+def test_the_database_refuses_to_clear_all_evidence_of_an_enabled_row(db: Database) -> None:
+    """Defence in depth: the CHECK on capability_registry refuses an enabled row with no
+    evidence_sources, even under the replica role that skips triggers."""
+    original = capability(evidence=[controlled_evidence()])
+    _registry(db).record(original, source_provenance=Provenance.LIVE_PROVIDER)
+    with pytest.raises(Conflict):
+        tamper_stored_capability(
+            db,
+            capability_id=original.capability_id,
+            version=1,
+            edit=lambda record: record.update(evidence=[]),
+        )
+
+
+def test_a_stored_row_tampered_to_no_evidence_fails_closed(db: Database) -> None:
+    registry = _registry(db)
+    original = capability(evidence=[controlled_evidence()])
+    registry.record(original, source_provenance=Provenance.LIVE_PROVIDER)
+    tamper_stored_capability(
+        db,
+        capability_id=original.capability_id,
+        version=1,
+        edit=lambda record: record.update(evidence=[]),
+        sync_sources=False,  # the record's evidence is emptied; the evidence_sources column is not
+    )
+    expected = [
+        f"capability TIKTOK/{ACCOUNT}: stored record fails contract validation; "
+        "reconcile before use"
+    ]
+    for settings in (mock_settings(), live_settings()):
+        decision = _evaluate(_registry(db, settings))
+        assert decision.available is False
+        assert decision.blockers == expected
+        assert decision.record_version == 1
+    with pytest.raises(Conflict):
+        registry.current(Platform.TIKTOK, ACCOUNT)

@@ -274,7 +274,7 @@ def test_released_reservation_is_terminal_except_late_settled_amount(
     late = svc.record_usage(
         fake_receipt(
             provider_receipt_id="reason.terminal.late",
-            kind=ReceiptKind.SETTLEMENT,
+            kind=ReceiptKind.ADJUSTMENT,  # late billing after a release is an ADJUSTMENT (V-5)
             amount=100_000,
             reservation=res,
             episode_id=ep.episode_id,

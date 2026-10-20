@@ -9,6 +9,9 @@ control: a preset that lacks any requested control is simply not returned.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
+
+from pydantic import ValidationError
 
 from microdrama.config import Settings
 from microdrama.contracts.enums import ControlKind, Provenance
@@ -20,7 +23,7 @@ from microdrama.core.registry._common import (
     deterministic_uuid,
     ensure_provenance,
     has_real_evidence,
-    refuse_real_evidence_on_fake,
+    require_real_evidence_provenance,
 )
 from microdrama.persistence.db import Database, insert_row, jsonb
 
@@ -41,7 +44,9 @@ class PresetRegistry:
         name a real evidence source.
         """
         provenance = ensure_provenance(source_provenance)
-        refuse_real_evidence_on_fake(provenance, preset.evidence, what=f"preset {preset.preset_id}")
+        require_real_evidence_provenance(
+            provenance, preset.evidence, what=f"preset {preset.preset_id}"
+        )
         with self._db.transaction() as tx:
             latest = tx.fetchval(
                 "SELECT max(version) FROM preset_registry WHERE preset_id = %s",
@@ -79,19 +84,20 @@ class PresetRegistry:
         clean_id = _clean_preset_id(preset_id)
         with self._db.transaction(readonly=True) as tx:
             row = tx.fetchone(
-                "SELECT record FROM preset_registry WHERE preset_id = %s AND current",
+                "SELECT preset_id, record FROM preset_registry WHERE preset_id = %s AND current",
                 (clean_id,),
             )
-        return None if row is None else PresetRecord.model_validate(row["record"])
+        return None if row is None else _stored_preset(row)
 
     def enabled(self) -> list[PresetRecord]:
         """Current, enabled presets, sorted by id. Outside OFFLINE_MOCK, fake-only ones are
         excluded."""
         with self._db.transaction(readonly=True) as tx:
             rows = tx.fetchall(
-                "SELECT record FROM preset_registry WHERE current AND enabled ORDER BY preset_id"
+                "SELECT preset_id, record FROM preset_registry "
+                "WHERE current AND enabled ORDER BY preset_id"
             )
-        presets = [PresetRecord.model_validate(row["record"]) for row in rows]
+        presets = [_stored_preset(row) for row in rows]
         if self._settings.is_offline_mock:
             return presets
         return [preset for preset in presets if has_real_evidence(preset.evidence)]
@@ -102,6 +108,18 @@ class PresetRegistry:
         return [
             preset for preset in self.enabled() if required.issubset(set(preset.supported_controls))
         ]
+
+
+def _stored_preset(row: dict[str, Any]) -> PresetRecord:
+    """Decode a stored preset. A row that no longer validates raises: it is never silently
+    skipped, because a skipped enabled preset would hide the damage."""
+    try:
+        return PresetRecord.model_validate(row["record"])
+    except ValidationError:
+        raise Conflict(
+            f"stored preset record for {row['preset_id']} fails contract validation",
+            preset_id=row["preset_id"],
+        ) from None
 
 
 def _clean_preset_id(value: object) -> str:

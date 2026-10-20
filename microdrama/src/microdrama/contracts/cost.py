@@ -62,6 +62,48 @@ class ExposureCeilings(ContractModel):
     max_height: PositiveInt | None = None
 
 
+_TOKEN_UNITS = {
+    PriceUnit.INPUT_TOKEN_1K: "max_input_tokens",
+    PriceUnit.OUTPUT_TOKEN_1K: "max_output_tokens",
+}
+_MEDIA_SECOND_UNITS = frozenset({PriceUnit.AUDIO_SECOND, PriceUnit.VIDEO_SECOND})
+
+# Categories whose shutdown/cleanup work may use the protected shutdown reserve (production only).
+CLEANUP_CATEGORIES: frozenset[BudgetCategory] = frozenset(
+    {
+        BudgetCategory.GPU_GENERATION,
+        BudgetCategory.RECOVERY_HEADROOM,
+        BudgetCategory.CPU_STORAGE_TRANSFER,
+    }
+)
+
+
+def _ceil_div(value: int, divisor: int) -> int:
+    return -(-value // divisor)
+
+
+def exposure_units(unit: PriceUnit, ceilings: ExposureCeilings) -> int:
+    """Billable units the ceilings allow for this price unit (the worst case, never less).
+
+    Token prices need the matching token ceiling and media-second prices need
+    ``max_duration_ms``: without them the maximum exposure is uncertain and the request is
+    invalid. GPU time is bounded by the timeout. The result is never below ``max_units``.
+    """
+    derived = 0
+    if unit in _TOKEN_UNITS:
+        tokens = getattr(ceilings, _TOKEN_UNITS[unit])
+        if tokens is None:
+            raise ValueError(f"{unit.value} pricing needs ceilings.{_TOKEN_UNITS[unit]}")
+        derived = _ceil_div(tokens, 1000)
+    elif unit in _MEDIA_SECOND_UNITS:
+        if ceilings.max_duration_ms is None:
+            raise ValueError(f"{unit.value} pricing needs ceilings.max_duration_ms")
+        derived = _ceil_div(ceilings.max_duration_ms, 1000)
+    elif unit is PriceUnit.GPU_SECOND:
+        derived = _ceil_div(ceilings.timeout_ms, 1000)
+    return max(ceilings.max_units, derived)
+
+
 class BudgetReservationRequest(VersionedPayload):
     """Ask the budget service to reserve worst-case exposure before paid dispatch.
 
@@ -83,7 +125,9 @@ class BudgetReservationRequest(VersionedPayload):
     ceilings: ExposureCeilings
     worst_case_micro_usd: MicroUSD
     is_shutdown_or_cleanup: bool = Field(
-        default=False, description="Only shutdown/cleanup may draw on the shutdown reserve"
+        default=False,
+        description="Only production GPU/recovery/storage shutdown or cleanup may draw on the "
+        "shutdown reserve",
     )
     expires_at: UtcDateTime
 
@@ -94,9 +138,20 @@ class BudgetReservationRequest(VersionedPayload):
         if self.scope_kind is BudgetScopeKind.SEASON_RESEARCH and self.season_id is None:
             raise ValueError("season research reservations must name season_id")
         if self.price is not None and self.price.currency == "USD":
-            computed = self.price.unit_price_micro_usd * self.ceilings.max_units
+            computed = self.price.unit_price_micro_usd * exposure_units(
+                self.price.unit, self.ceilings
+            )
             if self.worst_case_micro_usd < computed:
-                raise ValueError("worst_case_micro_usd is below unit_price x max_units")
+                raise ValueError(
+                    "worst_case_micro_usd is below unit_price x the units its ceilings allow"
+                )
+        if self.is_shutdown_or_cleanup and (
+            self.queue is not QueueName.PRODUCTION or self.category not in CLEANUP_CATEGORIES
+        ):
+            raise ValueError(
+                "only production GPU/recovery/storage shutdown or cleanup may draw on the "
+                "shutdown reserve"
+            )
         return self
 
 

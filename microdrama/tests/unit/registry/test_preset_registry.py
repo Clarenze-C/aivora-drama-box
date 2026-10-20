@@ -156,3 +156,23 @@ def test_a_live_database_refuses_an_enabled_fake_preset(db: Database) -> None:
     with pytest.raises(Unauthorized):
         _registry(db, live_settings()).record(preset(), source_provenance=Provenance.FAKE_SYNTHETIC)
     assert count(db, "SELECT count(*) FROM preset_registry") == 0
+
+
+def test_a_tampered_preset_row_that_fails_validation_raises_on_read(db: Database) -> None:
+    """An enabled preset whose stored rights route was cleared by SQL no longer validates. Reads
+    raise a typed Conflict; the damaged preset is never silently skipped or selected."""
+    registry = _registry(db)
+    registry.record(preset(), source_provenance=Provenance.FAKE_SYNTHETIC)
+    with db.transaction() as tx:
+        tx.execute("SET LOCAL session_replication_role = replica")
+        tx.execute(
+            "UPDATE preset_registry SET record = jsonb_set(record, '{rights_route_id}', 'null'::jsonb) "
+            "WHERE preset_id = %s",
+            (PRESET_ID,),
+        )
+    with pytest.raises(Conflict):
+        registry.get(PRESET_ID)
+    with pytest.raises(Conflict):
+        registry.enabled()
+    with pytest.raises(Conflict):
+        registry.compatible({TEXT})

@@ -33,12 +33,14 @@ def _synthetic_fake_micro_usd(tx: Tx, account_id: UUID) -> int:
 
 def _summary(account: AccountRow, synthetic: int) -> CostSummary:
     committed = account.committed
+    # Headroom for paid dispatch: the shutdown reserve is protected, so it is not "remaining".
     return CostSummary(
         episode_cap_micro_usd=account.cap,
         settled_micro_usd=account.settled,
         accrued_micro_usd=account.accrued,
         reserved_outstanding_micro_usd=account.reserved,
-        remaining_micro_usd=max(account.cap - committed, 0),
+        remaining_micro_usd=max(account.cap - committed - account.shutdown_reserve, 0),
+        shutdown_reserve_micro_usd=account.shutdown_reserve,
         synthetic_fake_micro_usd=synthetic,
     )
 

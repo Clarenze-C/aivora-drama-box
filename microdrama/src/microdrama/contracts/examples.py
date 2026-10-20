@@ -1349,6 +1349,46 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             m(budget_reservation_request, _del("ceilings.timeout_ms")),
         ),
         (
+            "BudgetReservationRequest",
+            "gpu_time_beyond_reserved_units",
+            "GPU-second exposure is bounded by the timeout, not by max_units alone",
+            m(
+                budget_reservation_request,
+                _many(_set("ceilings.max_units", 1), _set("ceilings.timeout_ms", 3_600_000)),
+            ),
+        ),
+        (
+            "BudgetReservationRequest",
+            "token_price_without_token_ceiling",
+            "token pricing needs the matching token ceiling (uncertain exposure)",
+            m(budget_reservation_request, _set("price.unit", "OUTPUT_TOKEN_1K")),
+        ),
+        (
+            "BudgetReservationRequest",
+            "token_ceiling_beyond_reserved_units",
+            "1,000,000 output tokens cannot be held for a 600-unit reservation",
+            m(
+                budget_reservation_request,
+                _many(
+                    _set("price.unit", "OUTPUT_TOKEN_1K"),
+                    _set("ceilings.max_output_tokens", 1_000_000),
+                ),
+            ),
+        ),
+        (
+            "BudgetReservationRequest",
+            "community_cleanup_flag",
+            "only production GPU/recovery/storage cleanup may use the shutdown reserve",
+            m(
+                budget_reservation_request,
+                _many(
+                    _set("queue", "community"),
+                    _set("category", "METERED_MANAGEMENT"),
+                    _set("is_shutdown_or_cleanup", True),
+                ),
+            ),
+        ),
+        (
             "UsageReceipt",
             "fake_claims_billed",
             "fake usage cannot claim measured cost",
@@ -1567,6 +1607,15 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             "enabled_without_evidence",
             "enabled needs evidence",
             m(capability_record, _set("evidence", [])),
+        ),
+        (
+            "CapabilityRecord",
+            "tested_claim_from_documentation",
+            "SUPPORTED_TESTED needs a controlled account test, not documentation",
+            m(
+                capability_record,
+                _set("evidence", [{"source": "OFFICIAL_DOCUMENTATION", "ref": "docs:upload-api"}]),
+            ),
         ),
         (
             "ManagementAction",

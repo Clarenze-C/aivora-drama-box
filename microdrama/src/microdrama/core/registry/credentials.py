@@ -26,7 +26,11 @@ from microdrama.contracts.errors import (
 from microdrama.persistence.db import Database
 
 _REF = re.compile(r"^credref:[a-z0-9][a-z0-9._\-]{1,120}$")
-_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+# Every ENV locator is a variable NAME under this prefix. A value (a token, a password) cannot
+# look like such a name, so a secret pasted into a locator field is refused.
+ENV_LOCATOR_PREFIX = "MICRODRAMA_"
+_MAX_ENV_LOCATOR = 64
+_ENV_NAME = re.compile(rf"^{re.escape(ENV_LOCATOR_PREFIX)}[A-Z0-9_]+$")
 _PATH = re.compile(r"^/?[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*$")
 _MAX_PATH_LOCATOR = 256
 _MAX_TEXT = 200
@@ -233,10 +237,15 @@ def _check_locator(kind: CredentialStoreKind, locator: object) -> None:
         raise SchemaInvalid("credential locator is required")
     # Messages below never repeat the locator: it may be the secret itself.
     if kind is CredentialStoreKind.ENV:
-        if not _ENV_NAME.fullmatch(locator) or _looks_opaque(locator):
+        if (
+            not _ENV_NAME.fullmatch(locator)
+            or len(locator) > _MAX_ENV_LOCATOR
+            or _looks_opaque(locator)  # defence in depth: token-shaped names are refused too
+        ):
             raise SchemaInvalid(
-                "ENV locator must be an environment variable NAME (A-Z, 0-9, underscore; "
-                "max 64 characters), never a value"
+                f"ENV locator must be an environment variable NAME starting with "
+                f"{ENV_LOCATOR_PREFIX} (A-Z, 0-9, underscore; max {_MAX_ENV_LOCATOR} characters), "
+                "never a value"
             )
         return
     path_ok = (

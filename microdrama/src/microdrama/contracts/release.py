@@ -118,7 +118,12 @@ class CostSummary(ContractModel):
     settled_micro_usd: MicroUSD
     accrued_micro_usd: MicroUSD
     reserved_outstanding_micro_usd: MicroUSD
-    remaining_micro_usd: MicroUSD
+    remaining_micro_usd: MicroUSD = Field(
+        description="Headroom for paid dispatch: cap - committed - shutdown reserve, never < 0"
+    )
+    shutdown_reserve_micro_usd: MicroUSD = Field(
+        default=0, description="Protected shutdown/cleanup reserve, shown separately"
+    )
     synthetic_fake_micro_usd: MicroUSD = Field(
         default=0, description="Portion from fake providers (not real money)"
     )
@@ -252,6 +257,12 @@ class CapabilityLimits(ContractModel):
     daily_post_quota: Count | None = None
 
 
+# Evidence that can back a SUPPORTED_TESTED claim (FAKE_FIXTURE only ever counts in OFFLINE_MOCK).
+TESTED_EVIDENCE_SOURCES = frozenset(
+    {EvidenceSource.CONTROLLED_ACCOUNT_TEST, EvidenceSource.FAKE_FIXTURE}
+)
+
+
 class CapabilityRecord(VersionedPayload):
     """Per account/provider route. Research-date claims are not live evidence."""
 
@@ -276,6 +287,12 @@ class CapabilityRecord(VersionedPayload):
                 raise ValueError("an enabled capability needs evidence")
             if self.verified_at is None:
                 raise ValueError("an enabled capability needs verified_at")
+        tested = any(s is CapabilitySupport.SUPPORTED_TESTED for s in self.operations.values())
+        if tested and not any(e.source in TESTED_EVIDENCE_SOURCES for e in self.evidence):
+            raise ValueError(
+                "SUPPORTED_TESTED operations need CONTROLLED_ACCOUNT_TEST evidence "
+                "(FAKE_FIXTURE for mock fixtures); documentation alone is not a test"
+            )
         return self
 
     def support(self, op: CapabilityOperation) -> CapabilitySupport:
