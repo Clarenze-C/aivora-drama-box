@@ -35,8 +35,22 @@ def web(world: World, offline_settings) -> TestClient:
     return _client(world, offline_settings)
 
 
+def login_token(client: TestClient) -> str:
+    """Open the sign-in page; return its pre-session token (cookie and form value must agree)."""
+    page = client.get("/auth/login")
+    assert page.status_code == 200
+    cookie = client.cookies.get("md_login_csrf")
+    assert cookie, "the sign-in page sets its token cookie"
+    field = re.search(r'name="login_csrf" value="([^"]+)"', page.text)
+    assert field and field.group(1) == cookie
+    return cookie
+
+
 def sign_in(client: TestClient) -> str:
-    response = client.post("/auth/login", data={"username": "review.owner", "password": PASSWORD})
+    response = client.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": login_token(client)},
+    )
     assert response.status_code == 303, response.text
     csrf = client.cookies.get("md_csrf")
     assert csrf
@@ -82,8 +96,10 @@ def test_login_page_renders_without_a_session(web: TestClient) -> None:
 
 
 def test_a_wrong_password_is_401_and_gives_no_session(web: TestClient) -> None:
+    token = login_token(web)
     response = web.post(
-        "/auth/login", data={"username": "review.owner", "password": "wrong-password-x"}
+        "/auth/login",
+        data={"username": "review.owner", "password": "wrong-password-x", "login_csrf": token},
     )
     assert response.status_code == 401
     assert "Invalid username or password." in response.text
@@ -93,7 +109,18 @@ def test_a_wrong_password_is_401_and_gives_no_session(web: TestClient) -> None:
 def test_sign_in_sets_hardened_cookies(world: World, offline_settings) -> None:
     world.auth.create_owner("review.secure", PASSWORD)
     secure = _client(world, offline_settings, cookie_secure=True)
-    response = secure.post("/auth/login", data={"username": "review.secure", "password": PASSWORD})
+    page = secure.get("/auth/login")
+    token_cookie = next(
+        c for c in page.headers.get_list("set-cookie") if c.startswith("md_login_csrf=")
+    )
+    token = token_cookie.split(";", 1)[0].split("=", 1)[1]
+    # A Secure cookie is not sent back over plain http in the test client, so the pair is sent
+    # explicitly; the cookie attributes themselves are what this test checks.
+    response = secure.post(
+        "/auth/login",
+        data={"username": "review.secure", "password": PASSWORD, "login_csrf": token},
+        headers={"Cookie": f"md_login_csrf={token}"},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/ui/seasons"
     cookies = response.headers.get_list("set-cookie")
@@ -502,3 +529,119 @@ def test_an_unreadable_stored_caption_is_flagged_not_rendered(
     page = web.get(f"/ui/episodes/{episode_id}")
     assert page.status_code == 200
     assert "This stored track cannot be read; it is not releasable." in page.text
+
+
+# --- sign-in forms carry a pre-session token (V-28: login CSRF) ----------------------------
+
+
+def test_the_sign_in_token_cookie_is_short_lived_and_scoped(web: TestClient) -> None:
+    response = web.get("/auth/login")
+    cookie = next(
+        c for c in response.headers.get_list("set-cookie") if c.startswith("md_login_csrf=")
+    )
+    assert "HttpOnly" in cookie
+    assert "samesite=strict" in cookie.lower()
+    assert "Max-Age=900" in cookie
+    assert "Path=/auth" in cookie
+    assert "Secure" not in cookie, "cookie_secure=False in this client"
+
+
+def test_the_sign_in_token_is_secure_when_cookies_are_secure(
+    world: World, offline_settings
+) -> None:
+    secure = _client(world, offline_settings, cookie_secure=True)
+    response = secure.get("/auth/login")
+    cookie = next(
+        c for c in response.headers.get_list("set-cookie") if c.startswith("md_login_csrf=")
+    )
+    assert "Secure" in cookie and "HttpOnly" in cookie
+
+
+def test_a_sign_in_without_the_form_token_is_403_and_never_reaches_the_password(
+    web: TestClient, world: World
+) -> None:
+    login_token(web)  # a real cookie is present, but the form does not echo it
+    before = world.count("SELECT COUNT(*) FROM human_sessions")
+    response = web.post("/auth/login", data={"username": "review.owner", "password": PASSWORD})
+    assert response.status_code == 403
+    assert response.json()["code"] == "UNAUTHORIZED"
+    assert "md_session" not in response.headers.get("set-cookie", "")
+    assert world.count("SELECT COUNT(*) FROM human_sessions") == before
+
+
+def test_a_cross_site_form_without_the_cookie_is_403(web: TestClient, world: World) -> None:
+    """The attacker's page can post the form field but cannot read or send the cookie."""
+    token = login_token(web)
+    web.cookies.clear()  # the browser withholds the SameSite=Strict cookie cross-site
+    before = world.count("SELECT COUNT(*) FROM human_sessions")
+    response = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert response.status_code == 403
+    assert world.count("SELECT COUNT(*) FROM human_sessions") == before
+
+
+def test_a_forged_form_token_is_403_even_with_a_real_cookie(web: TestClient, world: World) -> None:
+    login_token(web)
+    before = world.count("SELECT COUNT(*) FROM human_sessions")
+    response = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": "forged-value"},
+    )
+    assert response.status_code == 403
+    assert world.count("SELECT COUNT(*) FROM human_sessions") == before
+
+
+def test_a_matching_pair_signs_in_and_clears_the_token(web: TestClient) -> None:
+    token = login_token(web)
+    response = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/ui/seasons"
+    cleared = next(
+        c for c in response.headers.get_list("set-cookie") if c.startswith("md_login_csrf=")
+    )
+    assert "Max-Age=0" in cleared or "expires=" in cleared.lower()
+    assert web.get("/ui/seasons").status_code == 200
+
+
+def test_a_wrong_password_renews_the_token(web: TestClient) -> None:
+    old = login_token(web)
+    response = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": "wrong-password-x", "login_csrf": old},
+    )
+    assert response.status_code == 401
+    renewed = (
+        next(c for c in response.headers.get_list("set-cookie") if c.startswith("md_login_csrf="))
+        .split(";", 1)[0]
+        .split("=", 1)[1]
+    )
+    assert renewed and renewed != old
+    assert f'value="{renewed}"' in response.text
+    # The old token no longer matches the page the browser now holds.
+    stale = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": old},
+    )
+    assert stale.status_code == 403
+
+
+def test_the_page_shows_each_finding_with_its_cycle_and_gate_effect(
+    web: TestClient, world: World
+) -> None:
+    sign_in(web)
+    _season, episode_id, _package = world.ready_episode()
+    old = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
+    world.row_exec("UPDATE episodes SET qa_cycle = 2 WHERE id = %s", (episode_id,))
+    page = web.get(f"/ui/episodes/{episode_id}").text
+    assert 'data-testid="findings"' in page
+    row = page[page.index(f'data-finding="{old}"') :]
+    row = row[: row.index("</tr>")]
+    assert "<td>1</td>" in row, "the cycle the finding was raised in"
+    assert '<span class="bad">yes</span>' in row, "it still blocks Gate 2"
+    assert f"({old}) from QA cycle 1" in page, "the blocker names the cycle too"
+    assert 'data-testid="approve-form"' not in page

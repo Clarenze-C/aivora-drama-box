@@ -578,3 +578,55 @@ def test_the_database_refuses_an_approval_over_an_estimated_caption(world: World
             correlation_id=uuid.uuid4(),
         )
     assert world.approvals(episode_id) == []
+
+
+def test_an_unresolved_critical_from_cycle_one_refuses_the_cycle_two_approval(world: World) -> None:
+    """V-26 probe: CRITICAL at cycle 1 -> REVISE -> cycle-2 package READY -> APPROVE is refused
+    until the finding is resolved, and then the approval goes through."""
+    from microdrama.contracts.season import TimecodedFeedback
+
+    season_id, episode_id, first = world.ready_episode()
+    finding = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
+    human = world.human()
+
+    # REVISE is allowed while the CRITICAL is open (a blocked preview can still be revised).
+    world.service.decide_episode(
+        human,
+        episode_id,
+        world.gate2_command(
+            episode_id,
+            first,
+            REVISE,
+            feedback=[
+                TimecodedFeedback(
+                    category=FeedbackCategory.SUBTITLES,
+                    start_ms=1_000,
+                    end_ms=2_000,
+                    comment="caption term is wrong",
+                )
+            ],
+        ),
+    )
+    assert world.row("SELECT qa_cycle FROM episodes WHERE id = %s", (episode_id,))["qa_cycle"] == 2
+    advance(world, episode_id, EpisodeState.AI_REVIEW, EpisodeState.AWAITING_FINAL_REVIEW)
+
+    recut = world.asset(season_id=season_id, episode_id=episode_id, data=b"cycle two cut")
+    second = world.package(season_id=season_id, episode_id=episode_id, master=recut, version=2)
+    world.store_package(second)
+
+    with pytest.raises(GateNotReady) as refused:
+        world.service.decide_episode(human, episode_id, world.gate2_command(episode_id, second))
+    assert any(
+        f"({finding}) from QA cycle 1" in blocker for blocker in refused.value.details["blockers"]
+    )
+    assert world.episode_state(episode_id)[0] == "AWAITING_FINAL_REVIEW"
+    assert world.approvals(episode_id) and all(
+        row["action"] == "REVISE" for row in world.approvals(episode_id)
+    ), "only the earlier REVISE was recorded"
+
+    world.row_exec("UPDATE qa_findings SET resolution = 'RESOLVED' WHERE id = %s", (finding,))
+    result = world.service.decide_episode(
+        human, episode_id, world.gate2_command(episode_id, second)
+    )
+    assert result.status_code == 202
+    assert world.episode_state(episode_id)[0] == "RELEASE_APPROVED"

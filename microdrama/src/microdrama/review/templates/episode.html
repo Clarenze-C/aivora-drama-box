@@ -96,14 +96,17 @@
 <section data-testid="qa">
   <h2>QA findings and coverage</h2>
   <p class="hint">UNKNOWN is not a pass. Unsampled or unavailable checks are listed below and never counted as passing. No aggregate score is shown.</p>
-  {% if v.findings %}
-  <div class="scroll"><table>
-    <thead><tr><th>Check</th><th>Family</th><th>Severity</th><th>Coverage</th><th>Outcome</th><th>Window</th><th>Observed / expected</th></tr></thead>
+  {% if page.finding_rows %}
+  <div class="scroll"><table data-testid="findings">
+    <thead><tr><th>QA cycle</th><th>Check</th><th>Family</th><th>Severity</th><th>Coverage</th><th>Outcome</th><th>Resolution</th><th>Blocks Gate 2</th><th>Window</th><th>Observed / expected</th></tr></thead>
     <tbody>
-    {% for f in v.findings %}
-      <tr>
+    {% for row in page.finding_rows %}{% set f = row.finding %}
+      <tr data-finding="{{ row.finding_id }}">
+        <td>{{ row.qa_cycle }}</td>
         <td>{{ f.check_id }}</td><td>{{ f.check_family | label }}</td><td>{{ f.severity | label }}</td>
         <td>{{ f.coverage | label }}</td><td{% if f.outcome == 'UNKNOWN' %} class="warn"{% endif %}>{{ f.outcome | label }}</td>
+        <td>{{ row.resolution | label }}</td>
+        <td>{% if row.blocks_gate %}<span class="bad">yes</span>{% else %}no{% endif %}</td>
         <td>{{ f.start_ms | timecode }} to {{ f.end_ms | timecode }}</td>
         <td>{{ f.observed or '' }}{% if f.expected %} / {{ f.expected }}{% endif %}</td>
       </tr>
@@ -111,7 +114,7 @@
     </tbody>
   </table></div>
   {% else %}
-  <p class="muted">No QA findings are recorded for the current QA cycle.</p>
+  <p class="muted">No QA findings are recorded for this episode.</p>
   {% endif %}
 
   <h3 style="font-size:15px">Not checked (UNKNOWN)</h3>

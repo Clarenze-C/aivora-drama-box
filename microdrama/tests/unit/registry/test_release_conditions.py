@@ -13,6 +13,7 @@ from registry_support import (
     T0,
     VOICE_REF,
     capability,
+    controlled_evidence,
     fixed_clock,
     live_settings,
     mock_settings,
@@ -238,6 +239,61 @@ def test_real_rights_and_a_real_route_release_with_live_settings(db: Database) -
 def test_a_release_names_at_least_one_destination(db: Database) -> None:
     with pytest.raises(SchemaInvalid):
         _release(db, destinations=[], qa_all_green=True)
+
+
+def _youtube(required: bool) -> DestinationRequirement:
+    return DestinationRequirement(
+        platform=Platform.YOUTUBE,
+        account_ref=YOUTUBE_ACCOUNT,
+        required_ops=frozenset({CapabilityOperation.UPLOAD_FULL_VIDEO}),
+        disclosures=AI,
+        required=required,
+    )
+
+
+@pytest.mark.parametrize("with_optional_route", [False, True], ids=["no-route", "clear-route"])
+def test_a_release_with_only_optional_destinations_is_refused(
+    db: Database, with_optional_route: bool
+) -> None:
+    """V-25: optional destinations cannot clear a release on their own, even with real rights and
+    a clear optional route, because the only required destination is missing."""
+    RightsRegistry(db, fixed_clock(), live_settings()).record(
+        rights(evidence=[real_license()]), source_provenance=Provenance.LICENSED
+    )
+    if with_optional_route:
+        CapabilityRegistry(db, fixed_clock(), live_settings()).record(
+            capability(
+                platform=Platform.YOUTUBE,
+                account=YOUTUBE_ACCOUNT,
+                route="fake-youtube-route",
+                evidence=[controlled_evidence()],
+            ),
+            source_provenance=Provenance.LIVE_PROVIDER,
+        )
+    with pytest.raises(SchemaInvalid, match="at least one required destination"):
+        _release(db, destinations=[_youtube(False)], qa_all_green=True, settings=live_settings())
+
+
+def test_a_required_destination_with_a_clear_optional_one_releases(db: Database) -> None:
+    _clear_rights(db)
+    _clear_capability(db)
+    CapabilityRegistry(db, fixed_clock(), mock_settings()).record(
+        capability(platform=Platform.YOUTUBE, account=YOUTUBE_ACCOUNT, route="fake-youtube-route"),
+        source_provenance=Provenance.FAKE_SYNTHETIC,
+    )
+    assert _release(db, destinations=[TIKTOK, _youtube(False)], qa_all_green=True) == []
+
+
+def test_a_required_destination_blocks_on_its_own_merits_beside_a_clear_optional_one(
+    db: Database,
+) -> None:
+    _clear_rights(db)
+    CapabilityRegistry(db, fixed_clock(), mock_settings()).record(
+        capability(platform=Platform.YOUTUBE, account=YOUTUBE_ACCOUNT, route="fake-youtube-route"),
+        source_provenance=Provenance.FAKE_SYNTHETIC,
+    )
+    blockers = _release(db, destinations=[TIKTOK, _youtube(False)], qa_all_green=True)
+    assert blockers == [f"capability TIKTOK/{ACCOUNT}: no current record"]
 
 
 def test_qa_must_be_a_boolean(db: Database) -> None:

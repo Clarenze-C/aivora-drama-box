@@ -142,11 +142,51 @@ def test_findings_that_do_not_block(world: World, kwargs) -> None:
     assert blockers_of(world, episode_id) == []
 
 
-def test_critical_finding_of_a_previous_cycle_is_ignored_after_revision(world: World) -> None:
-    _season_id, episode_id, _package = world.ready_episode()
+def test_an_unresolved_critical_from_an_earlier_cycle_still_blocks(world: World) -> None:
+    """V-26: a REVISE moves the QA cycle on, but the open CRITICAL it raised does not lapse."""
+    _season, episode_id, _package = world.ready_episode()
+    finding = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
     world.row_exec("UPDATE episodes SET qa_cycle = 2 WHERE id = %s", (episode_id,))
-    world.qa_finding(episode_id, qa_cycle=1)
+    assert blockers_of(world, episode_id) == [
+        f"open CRITICAL REPAIRABLE QA finding caption.critical_term_match ({finding}) "
+        "from QA cycle 1"
+    ]
+
+
+@pytest.mark.parametrize("resolution", ["RESOLVED", "SUPERSEDED"])
+def test_only_resolved_or_superseded_releases_an_earlier_cycle_finding(
+    world: World, resolution: str
+) -> None:
+    _season, episode_id, _package = world.ready_episode()
+    finding = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
+    world.row_exec("UPDATE episodes SET qa_cycle = 2 WHERE id = %s", (episode_id,))
+    world.row_exec("UPDATE qa_findings SET resolution = %s WHERE id = %s", (resolution, finding))
     assert blockers_of(world, episode_id) == []
+
+
+def test_accepted_unknown_does_not_release_a_critical(world: World) -> None:
+    _season, episode_id, _package = world.ready_episode()
+    finding = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
+    world.row_exec(
+        "UPDATE qa_findings SET resolution = 'ACCEPTED_UNKNOWN' WHERE id = %s", (finding,)
+    )
+    blockers = blockers_of(world, episode_id)
+    assert len(blockers) == 1
+    assert "unreleased CRITICAL REPAIRABLE QA finding" in blockers[0]
+    assert "(resolution ACCEPTED_UNKNOWN)" in blockers[0]
+
+
+def test_a_finding_resolved_in_cycle_one_does_not_hide_a_new_cycle_two_critical(
+    world: World,
+) -> None:
+    _season, episode_id, _package = world.ready_episode()
+    old = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
+    world.row_exec("UPDATE qa_findings SET resolution = 'RESOLVED' WHERE id = %s", (old,))
+    world.row_exec("UPDATE episodes SET qa_cycle = 2 WHERE id = %s", (episode_id,))
+    new = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=2)
+    assert blockers_of(world, episode_id) == [
+        f"open CRITICAL REPAIRABLE QA finding caption.critical_term_match ({new}) from QA cycle 2"
+    ]
 
 
 def test_unregistered_asset_in_the_package_blocks(world: World) -> None:

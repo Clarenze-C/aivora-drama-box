@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from microdrama.budget import BudgetService
 from microdrama.contracts.enums import (
@@ -73,6 +73,8 @@ from microdrama.persistence.db import Database, Tx, update_with_revision
 from microdrama.review.gate_conditions import (
     ReleaseConditionsFn,
     approved_scope,
+    episode_findings,
+    finding_blocks,
     gate2_blockers,
 )
 from microdrama.review.packages import (
@@ -113,6 +115,20 @@ _ACTUAL_AUDIO = "ACTUAL_AUDIO_ALIGNMENT"
 _TIMECODE = re.compile(r"^(?:(\d{1,2}):)?(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?$")
 
 
+class QaFindingRow(BaseModel):
+    """One QA finding with the QA cycle it was raised in and whether it blocks Gate 2 (V-26).
+
+    The page and the JSON route both come from ``ReviewService.qa_finding_rows``; the episode JSON
+    ``findings`` are the same rows' ``finding`` values, so the sets always agree.
+    """
+
+    finding_id: UUID
+    qa_cycle: int
+    resolution: str
+    blocks_gate: bool
+    finding: QAFinding
+
+
 @dataclass(frozen=True)
 class CaptionPreview:
     track_id: UUID
@@ -144,6 +160,7 @@ class EpisodePage:
     media_types: dict[str, str]
     hook_candidates: tuple[dict[str, Any], ...]
     can_decide: bool
+    finding_rows: tuple[QaFindingRow, ...]
 
 
 def parse_timecode(text: str) -> int:
@@ -493,20 +510,33 @@ class ReviewService:
         )
         return episode, stored, blockers
 
+    @staticmethod
+    def _finding_rows(tx: Tx, episode_id: UUID) -> list[QaFindingRow]:
+        return [
+            QaFindingRow(
+                finding_id=row["id"],
+                qa_cycle=row["qa_cycle"],
+                resolution=row["resolution"],
+                blocks_gate=finding_blocks(row["severity"], row["outcome"], row["resolution"]),
+                finding=QAFinding.model_validate(row["body"]),
+            )
+            for row in episode_findings(tx, episode_id)
+        ]
+
+    def qa_finding_rows(self, episode_id: UUID) -> list[QaFindingRow]:
+        """Every QA finding of the episode, all cycles, with its cycle and gate effect."""
+        with self._db.transaction(readonly=True) as tx:
+            if tx.fetchone("SELECT id FROM episodes WHERE id = %s", (episode_id,)) is None:
+                raise NotFound(f"episode {episode_id} not found")
+            return self._finding_rows(tx, episode_id)
+
     def episode_review(self, episode_id: UUID) -> EpisodeReviewView:
         """The Gate 2 review: package, media, QA with every unknown, cost, policy and blockers."""
         with self._db.transaction() as tx:
             episode, stored, blockers = self._review_state(tx, episode_id)
             package = stored.package if stored is not None else None
             media, _types = self._media_links(tx, package)
-            findings = [
-                QAFinding.model_validate(row["body"])
-                for row in tx.fetchall(
-                    "SELECT body FROM qa_findings WHERE episode_id = %s AND qa_cycle = %s "
-                    "ORDER BY created_at, id",
-                    (episode_id, episode["qa_cycle"]),
-                )
-            ]
+            finding_rows = self._finding_rows(tx, episode_id)
             coverage = self._coverage(tx, episode_id)
             approved = approved_scope(tx, episode["season_id"])
         return EpisodeReviewView(
@@ -519,7 +549,7 @@ class ReviewService:
             gate_enabled=not blockers,
             gate_blockers=blockers,
             media=media,
-            findings=findings,
+            findings=[row.finding for row in finding_rows],
             coverage=coverage,
             cost=self._cost(episode_id),
             management_policy=approved.management_policy if approved is not None else None,
@@ -578,6 +608,7 @@ class ReviewService:
                         }
                         for c in experiment.candidates
                     ]
+            finding_rows = tuple(self._finding_rows(tx, episode_id))
         can_decide = (
             view.state is EpisodeState.AWAITING_FINAL_REVIEW
             and view.outcome is None
@@ -590,6 +621,7 @@ class ReviewService:
             media_types=media_types,
             hook_candidates=tuple(hooks),
             can_decide=can_decide,
+            finding_rows=finding_rows,
         )
 
     def media_file(self, asset_id: UUID) -> MediaFile:

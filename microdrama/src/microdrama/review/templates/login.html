@@ -2,10 +2,11 @@
 {% block content %}
 <section>
   <form method="post" action="/auth/login">
+    <input type="hidden" name="login_csrf" value="{{ login_csrf }}">
     <label>Username <input name="username" autocomplete="username" required maxlength="64" value="{{ username or '' }}"></label>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
     <button type="submit">Sign in</button>
   </form>
-  <p class="hint">Review sessions are HttpOnly, SameSite=Strict cookies that expire server-side. Decisions need a live session and a CSRF token.</p>
+  <p class="hint">Review sessions are HttpOnly, SameSite=Strict cookies that expire server-side. Decisions need a live session and a CSRF token. This form also needs its own token, so a cross-site page cannot submit it.</p>
 </section>
 {% endblock %}

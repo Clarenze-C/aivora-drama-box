@@ -59,9 +59,19 @@ def evaluate_release_conditions(
     at: datetime,
     qa_all_green: bool,
 ) -> list[str]:
-    """Every blocker for a release, in a stable order: rights, destinations, then QA."""
+    """Every blocker for a release, in a stable order: rights, destinations, then QA.
+
+    A release must name at least one required destination. Optional destinations hold only
+    themselves, so a release made only of optional destinations would clear with nothing
+    required; that is refused as a schema error rather than returned as an empty list.
+    """
     if not destinations:
         raise SchemaInvalid("a release names at least one destination")
+    if not any(destination.required for destination in destinations):
+        raise SchemaInvalid(
+            "a release needs at least one required destination; optional destinations "
+            "cannot clear a release on their own"
+        )
     if not isinstance(qa_all_green, bool):
         raise SchemaInvalid("qa_all_green must be a boolean")
     subjects = list(rights_subjects)

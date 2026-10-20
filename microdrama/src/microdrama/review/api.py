@@ -14,6 +14,8 @@ idempotency key, 409 for stale or conflicting decisions, 422 for invalid input, 
 principals and CSRF failures, 401 without a session.
 """
 
+import hmac
+import secrets
 from collections.abc import Callable
 from typing import Annotated, Any
 from uuid import UUID
@@ -24,7 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import ValidationError
 
 from microdrama.contracts.enums import FeedbackCategory, SeasonState
-from microdrama.contracts.errors import MicrodramaError, Unauthenticated
+from microdrama.contracts.errors import MicrodramaError, Unauthenticated, Unauthorized
 from microdrama.contracts.principals import Principal
 from microdrama.contracts.routes import EpisodeReviewView, SeasonProposalSummary, SeasonView
 from microdrama.contracts.season import ApprovalCommand
@@ -38,9 +40,13 @@ from microdrama.review.forms import (
     validation_message,
 )
 from microdrama.review.render import render
-from microdrama.review.service import EpisodePage, ReviewService
+from microdrama.review.service import EpisodePage, QaFindingRow, ReviewService
 
 CSRF_COOKIE = "md_csrf"
+# Pre-session double-submit token for the sign-in form (V-28): the cookie and the form field carry
+# the same random value, so a cross-site form cannot log the owner into an attacker's account.
+LOGIN_CSRF_COOKIE = "md_login_csrf"
+LOGIN_CSRF_TTL_SECONDS = 900
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store, private",
     "X-Content-Type-Options": "nosniff",
@@ -77,7 +83,11 @@ def _review_principal(human_session: Dependency, auth: AuthService) -> Dependenc
 
     async def review_principal(request: Request) -> Principal:
         if request.headers.get("authorization") is not None:
-            return await service_principal(request)
+            principal = await service_principal(request)
+            # Refused here, before FastAPI parses the request body: a worker's bad body is 403.
+            if not principal.is_human_owner:
+                raise Unauthorized("only a human owner may use the review API")
+            return principal
         return await human_session(request)
 
     return review_principal
@@ -112,6 +122,40 @@ def _set_session_cookies(response: Response, tokens: Any, *, secure: bool) -> No
         secure=secure,
         path="/",
     )
+
+
+def _login_page(
+    token: str,
+    *,
+    secure: bool,
+    error: dict[str, str] | None = None,
+    username: str = "",
+    status: int = 200,
+) -> HTMLResponse:
+    """The sign-in page: the form carries ``token`` and the cookie holds the same value."""
+    response = _html(
+        render(
+            "login.html",
+            title="Sign in",
+            heading="Sign in",
+            signed_in=False,
+            csrf=None,
+            error=error,
+            username=username,
+            login_csrf=token,
+        ),
+        status=status,
+    )
+    response.set_cookie(
+        LOGIN_CSRF_COOKIE,
+        token,
+        max_age=LOGIN_CSRF_TTL_SECONDS,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        path="/auth",
+    )
+    return response
 
 
 def _page_context(
@@ -182,38 +226,36 @@ def build_router(
 
     @router.get("/auth/login", response_class=HTMLResponse)
     def login_page() -> HTMLResponse:
-        return _html(
-            render(
-                "login.html",
-                title="Sign in",
-                heading="Sign in",
-                signed_in=False,
-                csrf=None,
-                error=None,
-                username="",
-            )
-        )
+        return _login_page(secrets.token_urlsafe(32), secure=cookie_secure)
 
     @router.post("/auth/login", response_model=None)
     def login_submit(
+        request: Request,
         username: Annotated[str, Form(max_length=64)],
         password: Annotated[str, Form(max_length=512)],
+        login_csrf: Annotated[str | None, Form(max_length=128)] = None,
     ) -> Response:
+        cookie_token = request.cookies.get(LOGIN_CSRF_COOKIE)
+        if not cookie_token or not login_csrf or not hmac.compare_digest(cookie_token, login_csrf):
+            # Checked before any password is verified: a forged or missing token never reaches auth.
+            raise Unauthorized(
+                "sign-in form token is missing or does not match; open the page again"
+            )
         try:
             tokens = auth.login(username, password)
         except Unauthenticated:
-            body = render(
-                "login.html",
-                title="Sign in",
-                heading="Sign in",
-                signed_in=False,
-                csrf=None,
+            return _login_page(
+                secrets.token_urlsafe(32),
+                secure=cookie_secure,
                 error={"code": "UNAUTHENTICATED", "message": "Invalid username or password."},
                 username=username,
+                status=401,
             )
-            return _html(body, status=401)
         response = RedirectResponse("/ui/seasons", status_code=303, headers=dict(_SECURITY_HEADERS))
         _set_session_cookies(response, tokens, secure=cookie_secure)
+        response.delete_cookie(
+            LOGIN_CSRF_COOKIE, path="/auth", secure=cookie_secure, httponly=True, samesite="strict"
+        )
         return response
 
     @router.post("/auth/logout", response_model=None)
@@ -316,6 +358,14 @@ def build_router(
         return RedirectResponse(
             f"/ui/episodes/{eid}", status_code=303, headers=dict(_SECURITY_HEADERS)
         )
+
+    @router.get("/ui/episodes/{episode_id}/qa-findings", response_model=list[QaFindingRow])
+    def episode_qa_findings(
+        episode_id: UUID, principal: Annotated[Principal, Depends(review_principal)]
+    ) -> list[QaFindingRow]:
+        """Every QA finding of the episode with its QA cycle; the same rows as the review page."""
+        require_human_owner(principal)
+        return service.qa_finding_rows(episode_id)
 
     @router.get("/ui/media/{asset_id}", response_model=None)
     def media(

@@ -9,8 +9,10 @@ from review_support import World
 from microdrama.api.app import AppComponents, create_app
 from microdrama.contracts.enums import (
     ApprovalAction,
+    CoverageStatus,
     FeedbackCategory,
     PrincipalKind,
+    QAOutcome,
     RuntimeRole,
     Severity,
 )
@@ -307,3 +309,85 @@ def test_a_decision_request_must_name_the_route_entity(api, world: World) -> Non
     )
     assert response.status_code == 422
     assert response.json()["code"] == "SCHEMA_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("kind", "role"),
+    [
+        (PrincipalKind.SERVICE_WORKER, None),
+        (PrincipalKind.SCHEDULER, None),
+        (PrincipalKind.RUNTIME_MODEL, RuntimeRole.CRITIC),
+        (PrincipalKind.PROVIDER_WEBHOOK, None),
+    ],
+)
+def test_a_non_human_with_an_invalid_body_is_403_not_422(api, world: World, kind, role) -> None:
+    """The principal is refused before the body is validated (V-29)."""
+    client, csrf, _ = api
+    headers = {**_bearer(world, kind, role), "X-CSRF-Token": csrf}
+    season_id, _scope = world.season(approved=False)
+    _s, episode_id, _package = world.ready_episode()
+    for path in (f"/seasons/{season_id}/approval", f"/episodes/{episode_id}/review"):
+        response = client.post(path, json={}, headers=headers)
+        assert response.status_code == 403, path
+        assert response.json()["code"] == "UNAUTHORIZED"
+        assert response.json()["code"] != "SCHEMA_INVALID"
+    assert world.approvals(episode_id) == []
+
+
+def test_a_request_without_a_session_is_401_even_with_an_invalid_body(api, world: World) -> None:
+    client, _csrf, _ = api
+    client.cookies.clear()
+    season_id, _scope = world.season(approved=False)
+    response = client.post(f"/seasons/{season_id}/approval", json={})
+    assert response.status_code == 401
+
+
+def test_a_human_with_an_invalid_body_still_gets_422(api, world: World) -> None:
+    client, csrf, _ = api
+    season_id, _scope = world.season(approved=False)
+    response = client.post(
+        f"/seasons/{season_id}/approval", json={}, headers={"X-CSRF-Token": csrf}
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "SCHEMA_INVALID"
+
+
+def test_the_json_findings_and_the_qa_route_carry_the_same_set_with_cycles(
+    api, world: World
+) -> None:
+    """V-26: every cycle's findings appear, each with its cycle and whether it blocks Gate 2."""
+    client, _csrf, _ = api
+    _s, episode_id, _package = world.ready_episode()
+    old_critical = world.qa_finding(episode_id, severity=Severity.CRITICAL, qa_cycle=1)
+    world.row_exec("UPDATE episodes SET qa_cycle = 2 WHERE id = %s", (episode_id,))
+    new_pass = world.qa_finding(
+        episode_id,
+        severity=Severity.CRITICAL,
+        outcome=QAOutcome.PASS,
+        coverage=CoverageStatus.CHECKED,
+        qa_cycle=2,
+    )
+
+    review = client.get(f"/episodes/{episode_id}/review").json()
+    rows = client.get(f"/ui/episodes/{episode_id}/qa-findings")
+    assert rows.status_code == 200
+    rows = rows.json()
+
+    assert [str(old_critical), str(new_pass)] == [r["finding_id"] for r in rows]
+    assert [r["qa_cycle"] for r in rows] == [1, 2]
+    assert [r["blocks_gate"] for r in rows] == [True, False]
+    assert len(review["findings"]) == len(rows) == 2
+    assert [f["check_id"] for f in review["findings"]] == [r["finding"]["check_id"] for r in rows]
+    assert any(f"({old_critical}) from QA cycle 1" in b for b in review["gate_blockers"])
+
+
+def test_the_qa_findings_route_is_owner_only(api, world: World) -> None:
+    client, _csrf, _ = api
+    _s, episode_id, _package = world.ready_episode()
+    client.cookies.clear()
+    assert client.get(f"/ui/episodes/{episode_id}/qa-findings").status_code == 401
+    token = world.auth.issue_service_credential("worker:qa-reader", PrincipalKind.SERVICE_WORKER)
+    response = client.get(
+        f"/ui/episodes/{episode_id}/qa-findings", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 403

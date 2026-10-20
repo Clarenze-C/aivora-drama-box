@@ -38,11 +38,33 @@ from microdrama.review.packages import PackageStatus, StoredPackage, current_pac
 ReleaseConditionsFn = Callable[[Tx, dict[str, Any], ReleasePackage], list[str]]
 
 OPTIONAL_PREFIX = "optional:"
+# Only these resolutions release a finding. OPEN and ACCEPTED_UNKNOWN keep blocking the gate.
+RELEASING_RESOLUTIONS = frozenset({"RESOLVED", "SUPERSEDED"})
 _LIVE_LEASES = (LeaseState.CLAIMED.value, LeaseState.ACTIVE.value, LeaseState.TRANSFERRING.value)
 # A lease that lost its owner can still have a running, billing pod. It blocks Gate 2 until its stop
 # is verified (SPEC §5 rule 8: no GPU during a human wait; §6 orphan cleanup).
 _UNVERIFIED_STOP_LEASES = (LeaseState.ORPHANED.value, LeaseState.EXPIRED.value)
 _ACTUAL = CaptionTimingSource.ACTUAL_AUDIO_ALIGNMENT.value
+
+
+def finding_blocks(severity: str, outcome: str, resolution: str) -> bool:
+    """Whether a QA finding blocks Gate 2, whatever QA cycle it was raised in (V-26).
+
+    Mirrors ``QAFinding.blocks_release``: a PASS never blocks, a CRITICAL severity or a BLOCKED
+    outcome does. Only a RESOLVED or SUPERSEDED resolution releases the finding.
+    """
+    if resolution in RELEASING_RESOLUTIONS or outcome == "PASS":
+        return False
+    return severity == "CRITICAL" or outcome == "BLOCKED"
+
+
+def episode_findings(tx: Tx, episode_id: UUID) -> list[dict[str, Any]]:
+    """Every QA finding of the episode across all QA cycles, oldest cycle first."""
+    return tx.fetchall(
+        "SELECT id, qa_cycle, check_id, severity, outcome, resolution, body, created_at "
+        "FROM qa_findings WHERE episode_id = %s ORDER BY qa_cycle, created_at, id",
+        (episode_id,),
+    )
 
 
 def not_configured_release_conditions(
@@ -126,16 +148,16 @@ def gate2_blockers(
         blockers.append(
             f"{len(content.qa.blocking_finding_ids)} blocking QA finding(s) in the package"
         )
-    for finding in tx.fetchall(
-        "SELECT id, check_id, severity, outcome FROM qa_findings "
-        "WHERE episode_id = %s AND qa_cycle = %s AND resolution = 'OPEN' AND outcome <> 'PASS' "
-        "AND (severity = 'CRITICAL' OR outcome = 'BLOCKED') ORDER BY created_at, id",
-        (episode_id, episode_row["qa_cycle"]),
-    ):
-        blockers.append(
-            f"open {finding['severity']} {finding['outcome']} QA finding {finding['check_id']} "
-            f"({finding['id']})"
-        )
+    for finding in episode_findings(tx, episode_id):
+        if finding_blocks(finding["severity"], finding["outcome"], finding["resolution"]):
+            state = "open" if finding["resolution"] == "OPEN" else "unreleased"
+            suffix = (
+                "" if finding["resolution"] == "OPEN" else f" (resolution {finding['resolution']})"
+            )
+            blockers.append(
+                f"{state} {finding['severity']} {finding['outcome']} QA finding "
+                f"{finding['check_id']} ({finding['id']}) from QA cycle {finding['qa_cycle']}{suffix}"
+            )
 
     for text in release_conditions_fn(tx, dict(episode_row), content):
         if not text.startswith(OPTIONAL_PREFIX):
@@ -205,6 +227,9 @@ def gate2_blockers(
 
 __all__ = [
     "OPTIONAL_PREFIX",
+    "RELEASING_RESOLUTIONS",
+    "episode_findings",
+    "finding_blocks",
     "ReleaseConditionsFn",
     "approved_policy_hash",
     "approved_scope",
