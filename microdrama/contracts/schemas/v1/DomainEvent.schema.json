@@ -1,5 +1,5 @@
 {
-  "$id": "urn:microdrama:contracts:1.2.0:DomainEvent",
+  "$id": "urn:microdrama:contracts:1.2.1:DomainEvent",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

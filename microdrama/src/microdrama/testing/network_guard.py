@@ -8,8 +8,9 @@ refusal happens before the original call runs:
   (hostnames other than ``localhost`` are refused *without* any DNS lookup);
 - datagrams: ``socket.socket.sendto`` and ``sendmsg`` whenever they carry an address (a send on
   an already-connected socket has no address and was checked when it connected);
-- name resolution: ``socket.getaddrinfo``, ``gethostbyname``, ``gethostbyname_ex`` and
-  ``getnameinfo`` (anything except loopback names/addresses; nothing is ever resolved);
+- name resolution: ``socket.getaddrinfo``, ``gethostbyname``, ``gethostbyname_ex``,
+  ``gethostbyaddr`` (so ``getfqdn`` too) and ``getnameinfo`` (anything except loopback
+  names/addresses; nothing is ever resolved);
 - configured proxies: a destination equal to an ``HTTP(S)_PROXY``/``ALL_PROXY`` endpoint in the
   environment is refused even when it is loopback, because a loopback proxy can forward out.
 
@@ -140,6 +141,7 @@ def _patches(*, allow_loopback: bool) -> list[_Patch]:
     original_getaddrinfo = socket.getaddrinfo
     original_gethostbyname = socket.gethostbyname
     original_gethostbyname_ex = socket.gethostbyname_ex
+    original_gethostbyaddr = socket.gethostbyaddr
     original_getnameinfo = socket.getnameinfo
 
     def connect(self: socket.socket, address: Any) -> None:
@@ -181,6 +183,11 @@ def _patches(*, allow_loopback: bool) -> list[_Patch]:
         _check_host(hostname, allow_loopback=allow_loopback, operation="gethostbyname_ex")
         return original_gethostbyname_ex(hostname)
 
+    def gethostbyaddr(ip_address: Any) -> Any:
+        # Reverse DNS (PTR): the argument is the address or name being looked up.
+        _check_host(ip_address, allow_loopback=allow_loopback, operation="gethostbyaddr")
+        return original_gethostbyaddr(ip_address)
+
     def getnameinfo(sockaddr: Any, flags: int) -> Any:
         # Reverse lookup: the host part is an address that must not leave the machine.
         host = sockaddr[0] if isinstance(sockaddr, tuple) and sockaddr else None
@@ -196,6 +203,7 @@ def _patches(*, allow_loopback: bool) -> list[_Patch]:
         (socket, "getaddrinfo", getaddrinfo),
         (socket, "gethostbyname", gethostbyname),
         (socket, "gethostbyname_ex", gethostbyname_ex),
+        (socket, "gethostbyaddr", gethostbyaddr),
         (socket, "getnameinfo", getnameinfo),
     ]
 

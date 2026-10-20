@@ -302,7 +302,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.2.0:SourceSearchResult",
+  "$id": "urn:microdrama:contracts:1.2.1:SourceSearchResult",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

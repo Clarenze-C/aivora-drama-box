@@ -175,3 +175,23 @@ def test_publish_verification_and_readback_links_follow_url_rules() -> None:
         provenance=Provenance.FAKE_SYNTHETIC,
     )
     assert ok.verified_fields == ["exists"]
+
+
+def test_links_refuse_tokens_but_allow_readable_slugs() -> None:
+    import secrets
+
+    from microdrama.contracts.examples import membership_catalog_entry
+
+    base = membership_catalog_entry()
+    slug = "https://members.fake.invalid/posts/thai-micro-drama-episode-one-the-long-finale-season"
+    assert base.model_copy(update={"member_url": slug}).model_validate(
+        {**base.model_dump(mode="json"), "member_url": slug}
+    )
+    for token_url in (
+        f"https://members.fake.invalid/watch/{secrets.token_hex(20)}",
+        f"https://members.fake.invalid/watch/{secrets.token_urlsafe(32)}A1",
+        "https://user:pass@members.fake.invalid/posts/2",
+        "https://members.fake.invalid/posts/2?token=abc",
+    ):
+        with pytest.raises(ValidationError):
+            type(base).model_validate({**base.model_dump(mode="json"), "member_url": token_url})

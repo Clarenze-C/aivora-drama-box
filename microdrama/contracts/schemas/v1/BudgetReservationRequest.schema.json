@@ -188,7 +188,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.2.0:BudgetReservationRequest",
+  "$id": "urn:microdrama:contracts:1.2.1:BudgetReservationRequest",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Ask the budget service to reserve worst-case exposure before paid dispatch.\n\n``price`` is None when the price is unknown; the budget service must then\nrefuse with ``UnknownPrice`` (never assume zero).",

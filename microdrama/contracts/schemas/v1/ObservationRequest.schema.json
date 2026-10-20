@@ -94,7 +94,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.2.0:ObservationRequest",
+  "$id": "urn:microdrama:contracts:1.2.1:ObservationRequest",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Pass A input: actual media + neutral questions only.",

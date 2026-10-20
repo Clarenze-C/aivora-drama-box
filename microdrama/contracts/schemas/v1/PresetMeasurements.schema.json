@@ -1,5 +1,5 @@
 {
-  "$id": "urn:microdrama:contracts:1.2.0:PresetMeasurements",
+  "$id": "urn:microdrama:contracts:1.2.1:PresetMeasurements",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Measured on the intended settings. Text-only speed results never qualify.",

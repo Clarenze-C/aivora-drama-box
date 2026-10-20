@@ -34,22 +34,29 @@ them by hand.
   but cannot express cross-field rules, and JSON Schema treats `3.0` as an integer, so it
   cannot reject integral floats. Each invalid example's manifest entry says whether the
   JSON Schema alone rejects it.
-- **Fake-evidence records (V-4, accepted with mitigation).** `CapabilityRecord`,
-  `RightsRecord` and `PresetRecord` backed only by `FAKE_FIXTURE` evidence may be
-  enabled/ELIGIBLE *as mock fixtures*; the offline mock pipeline cannot run without them.
-  The registries (T006) must treat such records as UNKNOWN/disabled in every non-OFFLINE_MOCK
-  mode. T030 verifies this from behaviour.
+- **Fake-evidence records (V-4, structural since 0008).** `CapabilityRecord`, `RightsRecord`
+  and `PresetRecord` backed only by `FAKE_FIXTURE` evidence may be enabled/ELIGIBLE *as mock
+  fixtures*; the offline mock pipeline cannot run without them. Migration 0008 adds the
+  database's own `md_runtime_mode`: in any live mode the database refuses enabled/ELIGIBLE
+  fake-only rows, and it cannot be switched out of OFFLINE_MOCK while such rows are active.
+  The registries (T006) additionally treat them as UNKNOWN/disabled outside OFFLINE_MOCK.
 - **Package hash scope (V-14, rejected with mitigation).** `package_hash` covers media,
   captions, release scope, management-policy hash and the QA summary, but not `gate_blockers`
   or `cost`. Blockers are derived state, recomputed at decision time by the review service.
   Migration 0007 lets an APPROVED package bind only an approval with matching hashes and an
-  empty blocker list.
+  empty blocker list. Migration 0008 enforces the decision-time half: a Gate 2 APPROVE can
+  only be *recorded* against a READY package of that episode with no blockers (REVISE/REJECT
+  need READY or BLOCKED), so clearing blockers later cannot launder an earlier decision.
 - **Feedback repair rounds (V-20, no change).** SPEC §5 rule 5 bounds human-requested
-  revisions by remaining budget, not by a round count; only automatic final-QA repair is
-  capped at two rounds.
-- **Caption timing in the package (V-22).** The Gate 2 conditions (T008) must block when any
-  package caption track's `caption_tracks.timing_source` is not `ACTUAL_AUDIO_ALIGNMENT` or
-  its state is not CURRENT.
+  revisions by remaining budget, not by a round count; the SPEC §9 "two final repair rounds"
+  default is read as covering *automatic* final-QA repair only (SPEC.md itself is not edited
+  in this build). T019 must reserve funds for every revision before executing it, so the
+  episode budget is the hard bound.
+- **Caption timing in the package (V-22).** Migration 0008 refuses a Gate 2 APPROVE while any
+  current caption track of the episode is not `ACTUAL_AUDIO_ALIGNMENT`, or any track listed in
+  the package is missing/not CURRENT; and a caption track used by an APPROVED package cannot
+  leave CURRENT until that package is SUPERSEDED (a recut returns to the same Gate 2). T008
+  shows these as gate blockers; T020 re-checks before submitting.
 - **Float literals (V-12 residual).** The persistence layer refuses float bind parameters.
   A float *literal* written into SQL source would still be cast by PostgreSQL; code review
   catches those, and no DB check can see the pre-cast value.
@@ -68,6 +75,10 @@ below and notifies affected lanes.
 
 ## Change log
 
+- **1.2.1** (2026-10-20, guardian, M0 re-validation N-2): the token-like path rule no longer
+  refuses long readable lowercase hyphenated slugs; opaque segments (hex, base64url, mixed
+  case, underscores) of 32+ characters are still refused. Loosening only; no payload that was
+  valid becomes invalid.
 - **1.2.0** (2026-10-20, guardian, M0 validator findings, before any consumer lane started):
   stricter validation only — `PostReadback.links` follow the fake/live URL rule (V-5);
   `QualificationResult` derives the streak from the episode list, a manual fix resets it and
@@ -88,7 +99,8 @@ below and notifies affected lanes.
   (writer) and T014 (reader) would otherwise define incompatible local schemas. No existing
   field changed; `schema_version` stays `"1.0"`; all 1.0.0 payloads remain valid. Impacted
   lanes: T006, T014, T031 (none had started).
-- **1.0.0** (2026-10-20, T002): initial freeze — 29 SPEC §4.2 payloads with valid
+- **1.0.0** (2026-10-20, T002): initial freeze — the 28 SPEC §4.2 payloads plus
+  `ProviderOperationResult` (29 core payloads) with valid
   and invalid examples, 38 supporting provider/job/view models, money/time/hash/
   error/state conventions, provider submit/status/reconcile interfaces, route
   and job signatures.

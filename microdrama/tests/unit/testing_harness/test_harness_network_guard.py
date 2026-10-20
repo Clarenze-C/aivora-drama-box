@@ -215,6 +215,26 @@ def test_allow_loopback_false_blocks_loopback(loopback_server: int) -> None:
         httpx.get(f"http://127.0.0.1:{loopback_server}/", timeout=5)
 
 
+def test_gethostbyaddr_public_address_is_refused_without_reaching_the_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(socket, "gethostbyaddr", _spy(calls))
+    with block_network():
+        with pytest.raises(NetworkBlocked):
+            socket.gethostbyaddr("8.8.8.8")  # reverse DNS (PTR) of a public address
+        with pytest.raises(NetworkBlocked):
+            socket.gethostbyaddr("api.example.com")  # a name is refused, never resolved
+        with pytest.raises(NetworkBlocked):
+            socket.getfqdn("8.8.8.8")  # getfqdn is built on gethostbyaddr
+    assert calls == []
+
+
+def test_loopback_gethostbyaddr_still_works() -> None:
+    with block_network():
+        assert socket.gethostbyaddr("127.0.0.1")[2] == ["127.0.0.1"]
+
+
 _UNSET = object()
 _ENTRY_POINTS: tuple[tuple[object, str], ...] = (
     (socket.socket, "connect"),
@@ -225,6 +245,7 @@ _ENTRY_POINTS: tuple[tuple[object, str], ...] = (
     (socket, "getaddrinfo"),
     (socket, "gethostbyname"),
     (socket, "gethostbyname_ex"),
+    (socket, "gethostbyaddr"),
     (socket, "getnameinfo"),
 )
 

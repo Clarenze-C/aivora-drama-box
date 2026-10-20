@@ -49,10 +49,27 @@ class IsolationLevel(StrEnum):
     SERIALIZABLE = "SERIALIZABLE"
 
 
+def _contains_float(value: Any) -> bool:
+    if isinstance(value, float):
+        return True
+    if isinstance(value, Jsonb):
+        return _contains_float(value.obj)
+    if isinstance(value, Mapping):
+        return any(_contains_float(v) for v in value.values())
+    if isinstance(value, list | tuple | set | frozenset):
+        return any(_contains_float(v) for v in value)
+    return False
+
+
 def jsonb(value: Any) -> Jsonb:
-    """Adapt a model/dict/list for a jsonb column using its JSON-mode dump."""
+    """Adapt a model/dict/list for a jsonb column using its JSON-mode dump.
+
+    Floats are refused at any depth: money inside JSON documents is integer micro-USD too.
+    """
     if isinstance(value, BaseModel):
         value = value.model_dump(mode="json")
+    if _contains_float(value):
+        raise SchemaInvalid("floats are not allowed in stored JSON documents (use integers)")
     return Jsonb(value)
 
 
@@ -86,7 +103,7 @@ def reject_float_params(params: Sequence[Any] | Mapping[str, Any] | None) -> Non
         return
     values = params.values() if isinstance(params, Mapping) else params
     for value in values:
-        if isinstance(value, float):
+        if _contains_float(value):
             raise SchemaInvalid(
                 "float bind parameters are not allowed (use integer micro-USD / ms)"
             )

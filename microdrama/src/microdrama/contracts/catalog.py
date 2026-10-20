@@ -35,7 +35,15 @@ from microdrama.contracts.release import check_url_provenance
 _SECRET_QUERY_KEYS = {"token", "access_token", "auth", "key", "signature", "sig", "secret", "code"}
 
 
-_TOKEN_LIKE = re.compile(r"^[A-Za-z0-9_\-]{32,}$")
+def _token_like(segment: str) -> bool:
+    """Long opaque segments (hex, base64url, mixed case) look like tokens; long readable
+    lowercase hyphenated slugs do not."""
+    if len(segment) < 32 or not re.fullmatch(r"[A-Za-z0-9_\-]+", segment):
+        return False
+    has_digit = any(c.isdigit() for c in segment)
+    has_letter = any(c.isalpha() for c in segment)
+    opaque = "-" not in segment or any(c.isupper() for c in segment) or "_" in segment
+    return has_digit and has_letter and opaque
 
 
 def _no_secret_in_link(url: str) -> None:
@@ -45,7 +53,7 @@ def _no_secret_in_link(url: str) -> None:
         raise ValueError("public links cannot carry playback tokens or secrets")
     if parts.username or parts.password:
         raise ValueError("public links cannot carry credentials")
-    if any(_TOKEN_LIKE.match(segment) for segment in parts.path.split("/")):
+    if any(_token_like(segment) for segment in parts.path.split("/")):
         raise ValueError("public links cannot carry token-like path segments")
 
 
