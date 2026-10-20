@@ -1,341 +1,481 @@
 {
   "examples/v1/invalid/ApprovalCommand__float_revision.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ApprovalCommand",
     "reason": "integers only"
   },
   "examples/v1/invalid/ApprovalCommand__gate1_revise.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ApprovalCommand",
     "reason": "Gate 1 has no Revise"
   },
   "examples/v1/invalid/ApprovalCommand__gate2_approve_without_media.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ApprovalCommand",
     "reason": "Gate 2 approval must bind media hashes"
   },
   "examples/v1/invalid/ApprovalCommand__series_feedback_without_explicit_scope.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ApprovalCommand",
     "reason": "no inferred globalization"
   },
   "examples/v1/invalid/AssetDescriptor__path_traversal_key.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "AssetDescriptor",
     "reason": "private relative keys only"
   },
   "examples/v1/invalid/AssetDescriptor__video_without_media_info.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "AssetDescriptor",
     "reason": "measured media facts required"
   },
   "examples/v1/invalid/BudgetReservationRequest__float_money.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "BudgetReservationRequest",
     "reason": "money must be integer micro-USD"
   },
   "examples/v1/invalid/BudgetReservationRequest__no_timeout.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "BudgetReservationRequest",
     "reason": "timeout ceiling required"
   },
   "examples/v1/invalid/BudgetReservationRequest__under_bounded_exposure.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "BudgetReservationRequest",
     "reason": "worst case below price x units"
   },
   "examples/v1/invalid/CapabilityRecord__enabled_without_evidence.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "CapabilityRecord",
     "reason": "enabled needs evidence"
   },
   "examples/v1/invalid/CaptionTrack__actual_timing_without_audio.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "CaptionTrack",
     "reason": "must name aligned audio"
   },
   "examples/v1/invalid/CaptionTrack__overlapping_cues.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "CaptionTrack",
     "reason": "cues ordered, non-overlapping"
   },
   "examples/v1/invalid/ComparisonRequest__bad_hash.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "ComparisonRequest",
     "reason": "sha256 hex"
   },
   "examples/v1/invalid/DomainEvent__bad_event_type.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "DomainEvent",
     "reason": "dotted lowercase type"
   },
   "examples/v1/invalid/DomainEvent__oversized_payload.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "DomainEvent",
     "reason": "bounded payload"
   },
   "examples/v1/invalid/EditDecisionList__inverted_source_range.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "EditDecisionList",
     "reason": "out > in"
   },
   "examples/v1/invalid/EditDecisionList__overlapping_video.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "EditDecisionList",
     "reason": "video clips cannot overlap"
   },
   "examples/v1/invalid/EpisodePlan__four_featured_speakers.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "EpisodePlan",
     "reason": "max three featured speaking characters"
   },
   "examples/v1/invalid/HookExperiment__hook_too_long.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "HookExperiment",
     "reason": "20-40 s"
   },
   "examples/v1/invalid/HookExperiment__new_render_jobs.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "HookExperiment",
     "reason": "no new video renders for hooks"
   },
   "examples/v1/invalid/HookExperiment__two_candidates.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "HookExperiment",
     "reason": "exactly three candidates"
   },
   "examples/v1/invalid/IdentityLock__empty_lock.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "IdentityLock",
     "reason": "lock must include assets"
   },
   "examples/v1/invalid/ManagementAction__reply_without_content.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ManagementAction",
     "reason": "replies need content"
   },
   "examples/v1/invalid/ManagementAction__suppressed_without_reason.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ManagementAction",
     "reason": "suppression must be explained"
   },
   "examples/v1/invalid/MembershipCatalogEntry__early_access_unapproved.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "MembershipCatalogEntry",
     "reason": "cannot sell unapproved media"
   },
   "examples/v1/invalid/MembershipCatalogEntry__fake_with_real_url.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "MembershipCatalogEntry",
     "reason": "fakes only report .invalid URLs"
   },
   "examples/v1/invalid/MembershipCatalogEntry__token_in_link.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "MembershipCatalogEntry",
     "reason": "no secret playback token in links"
   },
+  "examples/v1/invalid/MembershipCatalogEntry__token_in_path.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "MembershipCatalogEntry",
+    "reason": "no token-like path segments in links"
+  },
   "examples/v1/invalid/MetricSnapshot__float_metric.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "MetricSnapshot",
     "reason": "integers or null only"
   },
   "examples/v1/invalid/ObservationReport__no_coverage.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "ObservationReport",
     "reason": "coverage must be explicit"
   },
   "examples/v1/invalid/ObservationRequest__includes_expected_dialogue.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "ObservationRequest",
     "reason": "Pass A excludes expected dialogue"
   },
   "examples/v1/invalid/ObservationRequest__includes_intended_script.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "ObservationRequest",
     "reason": "Pass A excludes intended script"
   },
   "examples/v1/invalid/PodLease__float_price.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "PodLease",
     "reason": "integer micro-USD"
   },
+  "examples/v1/invalid/PostReadback__fake_real_link.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PostReadback",
+    "reason": "fake readbacks may only report .invalid links"
+  },
+  "examples/v1/invalid/PresetRecord__dialogue_preset_thai_unknown.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PresetRecord",
+    "reason": "enabled dialogue presets need measured Thai support"
+  },
   "examples/v1/invalid/PresetRecord__enabled_unmeasured.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "PresetRecord",
     "reason": "presets stay disabled until measured"
   },
   "examples/v1/invalid/PresetRecord__enabled_without_rights.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "PresetRecord",
     "reason": "enabled preset needs a rights route"
   },
   "examples/v1/invalid/PresetRecord__reference_preset_measured_text_only.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "PresetRecord",
     "reason": "text-only speed cannot certify reference workflows"
   },
+  "examples/v1/invalid/PresetRecord__zero_quality_enabled.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PresetRecord",
+    "reason": "enabled presets need non-zero measured quality"
+  },
+  "examples/v1/invalid/Principal__model_with_approval_scope.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "Principal",
+    "reason": "non-human principals cannot hold approval scopes"
+  },
   "examples/v1/invalid/ProviderOperationResult__failed_without_error.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ProviderOperationResult",
     "reason": "typed failure"
   },
   "examples/v1/invalid/ProviderOperation__missing_client_token.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "ProviderOperation",
     "reason": "idempotent token required"
   },
   "examples/v1/invalid/PublicationCommand__dst_ambiguous_without_fold.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "PublicationCommand",
     "reason": "ambiguous local time needs fold"
   },
   "examples/v1/invalid/PublicationCommand__dst_gap_schedule.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "PublicationCommand",
     "reason": "nonexistent local time"
   },
   "examples/v1/invalid/PublicationCommand__utc_mismatch.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "PublicationCommand",
     "reason": "utc_instant must match zone conversion"
   },
+  "examples/v1/invalid/PublishResult__verified_without_coverage.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PublishResult",
+    "reason": "verified publication must name verified fields"
+  },
   "examples/v1/invalid/QAFinding__partial_pass.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "QAFinding",
     "reason": "PASS requires CHECKED"
   },
   "examples/v1/invalid/QAFinding__unsampled_pass.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "QAFinding",
     "reason": "unsampled coverage is UNKNOWN, never PASS"
   },
+  "examples/v1/invalid/QualificationResult__management_qualified_without_windows.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "QualificationResult",
+    "reason": "ten corresponding management windows required"
+  },
+  "examples/v1/invalid/QualificationResult__manual_fix_counted_in_streak.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "QualificationResult",
+    "reason": "a manual technical fix resets the streak"
+  },
   "examples/v1/invalid/QualificationResult__qualified_after_one.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "QualificationResult",
     "reason": "ten consecutive episodes required"
   },
   "examples/v1/invalid/QualificationResult__required_not_ten.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "QualificationResult",
     "reason": "requirement fixed at ten"
   },
+  "examples/v1/invalid/QualificationResult__streak_not_derived.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "QualificationResult",
+    "reason": "consecutive count must equal the trailing streak"
+  },
   "examples/v1/invalid/ReleasePackage__episode1_without_cast_package.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ReleasePackage",
     "reason": "IMP-01 cast package"
   },
   "examples/v1/invalid/ReleasePackage__missing_ai_disclosure.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ReleasePackage",
     "reason": "MD-015"
   },
   "examples/v1/invalid/ReleasePackage__tampered_hash.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ReleasePackage",
     "reason": "package hash must match content"
   },
   "examples/v1/invalid/RenderRequest__fourth_attempt.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RenderRequest",
     "reason": "max three paid attempts"
   },
   "examples/v1/invalid/RenderRequest__later_episode_without_lock.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RenderRequest",
     "reason": "IMP-01"
   },
   "examples/v1/invalid/RenderRequest__unknown_control.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "RenderRequest",
     "reason": "unknown control"
   },
   "examples/v1/invalid/RepairPlan__over_budget.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RepairPlan",
     "reason": "cannot exceed remaining budget"
   },
   "examples/v1/invalid/RepairPlan__shot_rerender_without_attempt.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RepairPlan",
     "reason": "tier promotion consumes ordinary attempt"
   },
   "examples/v1/invalid/RepairPlan__third_qa_round.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RepairPlan",
     "reason": "max two automatic repair rounds"
   },
   "examples/v1/invalid/RightsRecord__bad_territory.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RightsRecord",
     "reason": "ISO alpha-2 or WORLDWIDE"
   },
+  "examples/v1/invalid/RightsRecord__eligible_already_expired.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RightsRecord",
+    "reason": "expired records cannot be ELIGIBLE"
+  },
   "examples/v1/invalid/RightsRecord__eligible_without_evidence.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RightsRecord",
     "reason": "eligibility needs evidence"
   },
   "examples/v1/invalid/RightsRecord__unknown_marked_eligible.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "RightsRecord",
     "reason": "unknown commercial use cannot be ELIGIBLE"
   },
   "examples/v1/invalid/Script__duplicate_line_id.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "Script",
     "reason": "line ids unique"
   },
   "examples/v1/invalid/SeasonScope__cap_above_ten_dollars.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "SeasonScope",
     "reason": "cap > US$10"
   },
+  "examples/v1/invalid/SeasonScope__constraint_above_enforced_limit.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "SeasonScope",
+    "reason": "scope limits above the enforced hard limits are rejected, not ignored"
+  },
   "examples/v1/invalid/SeasonScope__episode_too_long.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "SeasonScope",
     "reason": "MD-002 max 300 s"
   },
   "examples/v1/invalid/SeasonScope__paid_ads.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "SeasonScope",
     "reason": "MD-018 paid ads zero"
   },
   "examples/v1/invalid/SeasonScope__stale_schema_version.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "SeasonScope",
     "reason": "unsupported schema version"
   },
   "examples/v1/invalid/SeasonScope__unknown_field.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "SeasonScope",
     "reason": "closed schema rejects unknown fields"
   },
   "examples/v1/invalid/ShotManifest__later_episode_without_lock.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ShotManifest",
     "reason": "IMP-01 identity lock required"
   },
   "examples/v1/invalid/ShotManifest__shot_over_15s.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ShotManifest",
     "reason": "15 s unit"
   },
   "examples/v1/invalid/ShotManifest__three_speakers_in_shot.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "ShotManifest",
     "reason": "max two speakers per shot"
   },
   "examples/v1/invalid/ShotManifest__unknown_control.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "ShotManifest",
     "reason": "unknown controls cannot be silently discarded"
   },
   "examples/v1/invalid/UsageReceipt__fake_claims_billed.json": {
     "expect": "invalid",
+    "json_schema_rejects": false,
     "model": "UsageReceipt",
     "reason": "fake usage cannot claim measured cost"
   },
+  "examples/v1/invalid/UsageReceipt__fixture_with_billed_cost.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "UsageReceipt",
+    "reason": "measured cost bases only from live providers"
+  },
   "examples/v1/invalid/UsageReceipt__negative_amount.json": {
     "expect": "invalid",
+    "json_schema_rejects": true,
     "model": "UsageReceipt",
     "reason": "non-negative micro-USD"
   },

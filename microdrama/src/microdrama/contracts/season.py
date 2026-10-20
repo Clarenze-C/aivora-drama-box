@@ -73,11 +73,17 @@ class CharacterBrief(ContractModel):
 
 
 class CreativeConstraints(ContractModel):
-    max_active_locations_per_episode: PositiveInt = DEFAULT_LIMITS.max_active_locations
-    max_featured_speaking_characters_per_episode: PositiveInt = (
-        DEFAULT_LIMITS.max_featured_speaking_characters
-    )
-    max_speakers_per_shot: PositiveInt = DEFAULT_LIMITS.max_speakers_per_shot
+    # Bounded by the hard limits EpisodePlan/Script/Shot actually enforce; a larger value
+    # would be silently ignored, so it is rejected instead (SPEC §2.1).
+    max_active_locations_per_episode: Annotated[
+        int, Field(ge=1, le=DEFAULT_LIMITS.max_active_locations, strict=True)
+    ] = DEFAULT_LIMITS.max_active_locations
+    max_featured_speaking_characters_per_episode: Annotated[
+        int, Field(ge=1, le=DEFAULT_LIMITS.max_featured_speaking_characters, strict=True)
+    ] = DEFAULT_LIMITS.max_featured_speaking_characters
+    max_speakers_per_shot: Annotated[
+        int, Field(ge=1, le=DEFAULT_LIMITS.max_speakers_per_shot, strict=True)
+    ] = DEFAULT_LIMITS.max_speakers_per_shot
     original_fiction_only: bool = True
     retain_thai_performances: bool = True
     content_rules: list[ShortText] = Field(default_factory=list)

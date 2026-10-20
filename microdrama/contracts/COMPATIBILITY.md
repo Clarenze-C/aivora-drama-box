@@ -27,6 +27,33 @@ them by hand.
 | Jobs | `jobs.JOB_SPECS` lists job types, queues and input models; owners export handlers; only the integrator registers. The janitor is an independent process, not a queue job. | `jobs.py` |
 | Providers | All external boundaries implement the protocols in `providers.py`/`infra.py` (submit/status/reconcile, `client_token`, owned tags). | `providers.py` |
 
+## Recorded guardian decisions (M0 validation)
+
+- **Validation layers.** The Pydantic models are the canonical validators. The published
+  JSON Schemas enforce structure (closed objects, enums, patterns, required fields, ranges)
+  but cannot express cross-field rules, and JSON Schema treats `3.0` as an integer, so it
+  cannot reject integral floats. Each invalid example's manifest entry says whether the
+  JSON Schema alone rejects it.
+- **Fake-evidence records (V-4, accepted with mitigation).** `CapabilityRecord`,
+  `RightsRecord` and `PresetRecord` backed only by `FAKE_FIXTURE` evidence may be
+  enabled/ELIGIBLE *as mock fixtures*; the offline mock pipeline cannot run without them.
+  The registries (T006) must treat such records as UNKNOWN/disabled in every non-OFFLINE_MOCK
+  mode. T030 verifies this from behaviour.
+- **Package hash scope (V-14, rejected with mitigation).** `package_hash` covers media,
+  captions, release scope, management-policy hash and the QA summary, but not `gate_blockers`
+  or `cost`. Blockers are derived state, recomputed at decision time by the review service.
+  Migration 0007 lets an APPROVED package bind only an approval with matching hashes and an
+  empty blocker list.
+- **Feedback repair rounds (V-20, no change).** SPEC §5 rule 5 bounds human-requested
+  revisions by remaining budget, not by a round count; only automatic final-QA repair is
+  capped at two rounds.
+- **Caption timing in the package (V-22).** The Gate 2 conditions (T008) must block when any
+  package caption track's `caption_tracks.timing_source` is not `ACTUAL_AUDIO_ALIGNMENT` or
+  its state is not CURRENT.
+- **Float literals (V-12 residual).** The persistence layer refuses float bind parameters.
+  A float *literal* written into SQL source would still be cast by PostgreSQL; code review
+  catches those, and no DB check can see the pre-cast value.
+
 ## Changing a contract
 
 A worker that needs a missing field **stops** and returns a contract-change
@@ -41,6 +68,20 @@ below and notifies affected lanes.
 
 ## Change log
 
+- **1.2.0** (2026-10-20, guardian, M0 validator findings, before any consumer lane started):
+  stricter validation only — `PostReadback.links` follow the fake/live URL rule (V-5);
+  `QualificationResult` derives the streak from the episode list, a manual fix resets it and
+  management QUALIFIED needs ten qualified windows (V-6); enabled dialogue presets need
+  measured Thai support and non-zero measured quality (V-7); `PUBLISHED_VERIFIED` must name
+  verified fields (V-16); an already-expired record cannot be ELIGIBLE (V-17); non-human
+  principals cannot hold approve/approval/gate/reject/revise scopes (V-18); measured cost
+  bases only from `LIVE_PROVIDER` provenance (V-19); links may not carry credentials or
+  token-like path segments (V-21); `CreativeConstraints` limits are bounded by the enforced
+  hard limits instead of being silently ignored (V-25). Narrowing changes are normally a
+  major bump; they ship as 1.2.0 because no consumer had produced or persisted payloads yet
+  (only test examples), and `schema_version` stays `"1.0"`. The build now records
+  `json_schema_rejects` for every invalid example and requires the published schemas to
+  reject the structural cases in `build.SCHEMA_MUST_REJECT` (V-13).
 - **1.1.0** (2026-10-20, guardian, before M1 dispatch): additive — `RightsRecord`,
   `PresetRecord`, `PresetMeasurements` (`registries.py`) and enums `RightsSubjectKind`,
   `RightsStatus`. Reason: SPEC §4.1 rights/preset registries had no shared type, so T006

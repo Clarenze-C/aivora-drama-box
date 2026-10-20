@@ -1,4 +1,4 @@
 """Canonical contracts (SPEC §4). Python source of truth for ``microdrama/contracts/``."""
 
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 SCHEMA_VERSION = "1.0"

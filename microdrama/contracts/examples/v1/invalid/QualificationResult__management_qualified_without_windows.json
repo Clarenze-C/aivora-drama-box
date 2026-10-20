@@ -1,0 +1,32 @@
+{
+  "consecutive_qualifying_production": 1,
+  "effective_cost_per_published_minute_micro_usd": null,
+  "effective_cost_per_successful_episode_micro_usd": 4100000,
+  "episodes": [
+    {
+      "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+      "episode_number": 1,
+      "failed_attempt_cost_micro_usd": 0,
+      "human_review_minutes": null,
+      "management_window_ends_at": "2026-11-03T00:00:00Z",
+      "management_window_status": "PENDING",
+      "manual_interventions": 0,
+      "production_qualifies": true,
+      "production_reasons": [],
+      "published_minutes_ms": 0,
+      "variable_cost_micro_usd": 4100000
+    }
+  ],
+  "evaluated_at": "2026-10-28T00:00:00Z",
+  "fixed_costs_reported_separately": true,
+  "management_status": "QUALIFIED",
+  "production_status": "NOT_QUALIFIED",
+  "provenance": "FAKE_SYNTHETIC",
+  "required_consecutive": 10,
+  "run_id": "bdb893a9-e739-5709-be22-d2183f11a7d7",
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "streak_resets": [],
+  "successful_episodes": 1,
+  "total_variable_spend_micro_usd": 4100000
+}

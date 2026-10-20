@@ -9,6 +9,9 @@ from pydantic import Field, model_validator
 from microdrama.contracts.enums import PrincipalKind, RuntimeRole
 from microdrama.contracts.primitives import ContractModel, ShortText, SortedStrSet
 
+# Scope names containing these words are reserved for human owners.
+HUMAN_ONLY_SCOPE_WORDS = ("approve", "approval", "gate", "reject", "revise")
+
 
 class Principal(ContractModel):
     """Who is acting. Only HUMAN_OWNER principals carry a human session.
@@ -35,6 +38,12 @@ class Principal(ContractModel):
                 raise ValueError("non-human principals cannot carry a human session")
         if self.kind is PrincipalKind.RUNTIME_MODEL and self.runtime_role is None:
             raise ValueError("runtime model principals must declare their runtime_role")
+        if self.kind is not PrincipalKind.HUMAN_OWNER:
+            reserved = sorted(
+                s for s in self.scopes if any(w in s.lower() for w in HUMAN_ONLY_SCOPE_WORDS)
+            )
+            if reserved:
+                raise ValueError(f"non-human principals cannot hold human-only scopes: {reserved}")
         return self
 
     @property

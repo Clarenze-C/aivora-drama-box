@@ -10,6 +10,7 @@ import pytest
 from microdrama.contracts.errors import (
     Conflict,
     DuplicateSemanticKey,
+    SchemaInvalid,
     StaleRevision,
     Unauthorized,
 )
@@ -331,114 +332,431 @@ class TestGpuLeases:
             interval(tx, 5, 15)  # overlap would double-count
 
 
-def _post(tx: Tx, *, slot: str = "full", dedupe: str | None = None) -> None:
-    owner = seed_owner(tx)
-    session = seed_human_session(tx, owner)
-    season = seed_season(tx)
-    episode = seed_episode(tx, season)
-    approval = _approval(
-        tx,
-        owner,
-        session,
-        gate="EPISODE_FINAL",
-        entity_id=episode,
-        media_hashes=jsonb([H]),
-        management_policy_hash=H,
-        release_scope_hash=H,
-    )
-    package = insert_row(
-        tx,
-        "release_packages",
-        {
-            "id": uuid.uuid4(),
-            "episode_id": episode,
-            "version": 1,
-            "package_hash": canonical_hash({"p": str(episode)}),
-            "body": jsonb({}),
-            "media_hashes": jsonb([H]),
-            "management_policy_hash": H,
-            "release_scope_hash": H,
-            "status": "APPROVED",
-            "approval_event_id": approval["id"],
-        },
-    )
-    asset = insert_row(
+def _asset(tx: Tx, *, sha: str = H) -> uuid.UUID:
+    asset_id = uuid.uuid4()
+    key = f"k/{asset_id.hex}"
+    insert_row(
         tx,
         "assets",
         {
-            "id": uuid.uuid4(),
+            "id": asset_id,
             "asset_kind": "OTHER",
-            "object_key": f"k/{uuid.uuid4().hex}",
-            "sha256": H,
+            "object_key": key,
+            "sha256": sha,
             "size_bytes": 1,
             "media_type": "application/octet-stream",
             "state": "ACCEPTED",
             "provenance": "FAKE_SYNTHETIC",
-            "descriptor": jsonb({}),
+            "descriptor": jsonb({"asset_id": str(asset_id), "sha256": sha, "object_key": key}),
         },
     )
-    return season, episode, package["id"], approval["id"], asset["id"]
+    return asset_id
+
+
+def _package(
+    tx: Tx, episode: uuid.UUID, *, version: int = 1, status: str = "READY"
+) -> tuple[uuid.UUID, str]:
+    package_id = uuid.uuid4()
+    package_hash = canonical_hash({"p": str(episode), "v": version})
+    insert_row(
+        tx,
+        "release_packages",
+        {
+            "id": package_id,
+            "episode_id": episode,
+            "version": version,
+            "package_hash": package_hash,
+            "body": jsonb({}),
+            "media_hashes": jsonb([H]),
+            "management_policy_hash": H,
+            "release_scope_hash": H,
+            "status": status,
+            "gate_blockers": jsonb(["blocked for test"] if status == "BLOCKED" else []),
+        },
+    )
+    return package_id, package_hash
+
+
+def _gate2(
+    tx: Tx,
+    episode: uuid.UUID,
+    package_hash: str,
+    *,
+    revision: int = 1,
+    action: str = "APPROVE",
+    **extra,
+):
+    owner = seed_owner(tx)
+    session = seed_human_session(tx, owner)
+    values = dict(media_hashes=jsonb([H]), management_policy_hash=H, release_scope_hash=H)
+    if action == "REVISE":
+        values["feedback"] = jsonb([{"category": "pacing"}])
+    values.update(extra)
+    return _approval(
+        tx,
+        owner,
+        session,
+        gate="EPISODE_FINAL",
+        action=action,
+        entity_id=episode,
+        revision=revision,
+        package_hash=package_hash,
+        **values,
+    )["id"]
+
+
+def _approve_package(tx: Tx, package_id: uuid.UUID, approval_id: uuid.UUID) -> None:
+    tx.execute(
+        "UPDATE release_packages SET status = 'APPROVED', approval_event_id = %s WHERE id = %s",
+        (approval_id, package_id),
+    )
+
+
+def _post(tx: Tx):
+    season = seed_season(tx)
+    episode = seed_episode(tx, season)
+    package_id, package_hash = _package(tx, episode)
+    approval = _gate2(tx, episode, package_hash)
+    _approve_package(tx, package_id, approval)
+    return season, episode, package_id, approval, _asset(tx)
+
+
+def _slot(
+    tx: Tx, season, episode, package, approval, asset, *, dedupe: str, token: str, sha: str = H
+) -> None:
+    insert_row(
+        tx,
+        "platform_posts",
+        {
+            "id": uuid.uuid4(),
+            "series_id": season,
+            "episode_id": episode,
+            "part": 0,
+            "locale": "th-TH",
+            "platform": "YOUTUBE",
+            "account_ref": "acct:yt",
+            "release_slot": "full",
+            "dedupe_key": dedupe,
+            "slot_kind": "FULL_EPISODE",
+            "required": True,
+            "release_package_id": package,
+            "approval_event_id": approval,
+            "asset_id": asset,
+            "asset_sha256": sha,
+            "state": "SCHEDULED",
+            "iana_zone": "Asia/Bangkok",
+            "local_time": "2026-10-27T19:30:00",
+            "scheduled_utc": T0,
+            "client_token": token,
+        },
+    )
 
 
 class TestPublicationSlots:
     def test_duplicate_slot_rejected(self, db: Database) -> None:
         with db.transaction() as tx:
-            season, episode, package, approval, asset = _post(tx)
-
-        def slot(tx: Tx, dedupe: str, token: str) -> None:
-            insert_row(
-                tx,
-                "platform_posts",
-                {
-                    "id": uuid.uuid4(),
-                    "series_id": season,
-                    "episode_id": episode,
-                    "part": 0,
-                    "locale": "th-TH",
-                    "platform": "YOUTUBE",
-                    "account_ref": "acct:yt",
-                    "release_slot": "full",
-                    "dedupe_key": dedupe,
-                    "slot_kind": "FULL_EPISODE",
-                    "required": True,
-                    "release_package_id": package,
-                    "approval_event_id": approval,
-                    "asset_id": asset,
-                    "asset_sha256": H,
-                    "state": "SCHEDULED",
-                    "iana_zone": "Asia/Bangkok",
-                    "local_time": "2026-10-27T19:30:00",
-                    "scheduled_utc": T0,
-                    "client_token": token,
-                },
-            )
-
+            ids = _post(tx)
         with db.transaction() as tx:
-            slot(tx, canonical_hash({"slot": 1}), "tok-1")
+            _slot(tx, *ids, dedupe=canonical_hash({"slot": 1}), token="tok-1")
         # Same SPEC slot tuple, even with a different dedupe key/token, is rejected.
         with pytest.raises(DuplicateSemanticKey), db.transaction() as tx:
-            slot(tx, canonical_hash({"slot": 2}), "tok-2")
+            _slot(tx, *ids, dedupe=canonical_hash({"slot": 2}), token="tok-2")
+
+    def test_slot_hash_must_be_the_assets_hash(self, db: Database) -> None:  # V-10
+        with db.transaction() as tx:
+            ids = _post(tx)
+        with pytest.raises(Conflict), db.transaction() as tx:
+            _slot(tx, *ids, dedupe=canonical_hash({"slot": 3}), token="tok-3", sha="0" * 64)
 
     def test_only_one_approved_package_per_episode(self, db: Database) -> None:
         with db.transaction() as tx:
-            _, episode, _, approval, _ = _post(tx)
+            _, episode, _, _, _ = _post(tx)
+            package_v2, hash_v2 = _package(tx, episode, version=2)
+            approval_v2 = _gate2(tx, episode, hash_v2, revision=2)
         with pytest.raises(DuplicateSemanticKey), db.transaction() as tx:
-            insert_row(
-                tx,
-                "release_packages",
-                {
-                    "id": uuid.uuid4(),
-                    "episode_id": episode,
-                    "version": 2,
-                    "package_hash": canonical_hash({"v": 2}),
-                    "body": jsonb({}),
-                    "media_hashes": jsonb([H]),
-                    "management_policy_hash": H,
-                    "release_scope_hash": H,
-                    "status": "APPROVED",
-                    "approval_event_id": approval,
-                },
+            _approve_package(tx, package_v2, approval_v2)
+
+
+class TestReleasePackageBinding:  # V-3
+    def test_cannot_insert_already_approved(self, db: Database) -> None:
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+        with pytest.raises(Conflict), db.transaction() as tx:
+            _package(tx, episode, status="APPROVED")
+
+    def test_blocked_package_cannot_jump_to_approved(self, db: Database) -> None:
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            package_id, package_hash = _package(tx, episode, status="BLOCKED")
+            approval = _gate2(tx, episode, package_hash)
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute(
+                "UPDATE release_packages SET status='APPROVED', approval_event_id=%s, gate_blockers='[]'::jsonb "
+                "WHERE id=%s",
+                (approval, package_id),
             )
+
+    @pytest.mark.parametrize(
+        "mismatch", ["package_hash", "media", "policy", "scope", "entity", "action"]
+    )
+    def test_approval_must_match_the_package(self, db: Database, mismatch: str) -> None:
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            other_episode = seed_episode(tx, seed_season(tx))
+            package_id, package_hash = _package(tx, episode)
+            other = canonical_hash({"other": mismatch})
+            kwargs = {
+                "package_hash": dict(package_hash=other),
+                "media": dict(media_hashes=jsonb([other])),
+                "policy": dict(management_policy_hash=other),
+                "scope": dict(release_scope_hash=other),
+                "entity": {},
+                "action": {},
+            }[mismatch]
+            target = other_episode if mismatch == "entity" else episode
+            action = "REJECT" if mismatch == "action" else "APPROVE"
+            ph = kwargs.pop("package_hash", package_hash)
+            approval = _gate2(tx, target, ph, action=action, **kwargs)
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            _approve_package(tx, package_id, approval)
+
+    def test_matching_approval_binds_and_cannot_be_rebound(self, db: Database) -> None:
+        with db.transaction() as tx:
+            _, episode, package_id, approval, _ = _post(tx)
+            other_package, other_hash = _package(tx, episode, version=2)
+            other_approval = _gate2(tx, episode, other_hash, revision=2)
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute(
+                "UPDATE release_packages SET approval_event_id=%s WHERE id=%s",
+                (other_approval, package_id),
+            )
+
+    def test_episode_release_states_require_an_approved_package(self, db: Database) -> None:
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx), state="AWAITING_FINAL_REVIEW")
+            package_id, package_hash = _package(tx, episode)
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            tx.execute("UPDATE episodes SET state='RELEASE_APPROVED' WHERE id=%s", (episode,))
+        with db.transaction() as tx:
+            _approve_package(tx, package_id, _gate2(tx, episode, package_hash))
+            tx.execute("UPDATE episodes SET state='RELEASE_APPROVED' WHERE id=%s", (episode,))
+
+
+class TestApprovalBindingHardening:
+    def test_backdated_created_at_cannot_revive_an_expired_session(
+        self, db: Database
+    ) -> None:  # V-1
+        with db.transaction() as tx:
+            owner = seed_owner(tx)
+            session = seed_human_session(
+                tx,
+                owner,
+                created_at=datetime.now(UTC) - timedelta(hours=3),
+                expires_in=timedelta(hours=1),
+            )
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            _approval(
+                tx, owner, session, created_at=datetime.now(UTC) - timedelta(hours=2, minutes=30)
+            )
+
+    def test_recorded_time_is_server_time(self, db: Database) -> None:
+        with db.transaction() as tx:
+            owner = seed_owner(tx)
+            row = _approval(
+                tx,
+                owner,
+                seed_human_session(tx, owner),
+                created_at=datetime(2001, 1, 1, tzinfo=UTC),
+            )
+        assert row["created_at"].year >= 2026
+
+    def test_season_cannot_be_approved_with_a_dangling_or_mismatched_approval(
+        self, db: Database
+    ) -> None:  # V-2
+        with db.transaction() as tx:
+            season = seed_season(tx)
+        scope = canonical_hash({"scope": 1})
+        # The binding trigger refuses before the FK is even checked (both guard this).
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            tx.execute(
+                "UPDATE seasons SET state='SEASON_APPROVED', approved_scope_hash=%s, approved_scope_version=1, "
+                "approval_event_id=%s WHERE id=%s",
+                (scope, uuid.uuid4(), season),
+            )
+        with db.transaction() as tx:
+            owner = seed_owner(tx)
+            wrong = _approval(
+                tx,
+                owner,
+                seed_human_session(tx, owner),
+                entity_id=season,
+                package_hash=canonical_hash({"scope": "other"}),
+            )
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            tx.execute(
+                "UPDATE seasons SET state='SEASON_APPROVED', approved_scope_hash=%s, approved_scope_version=1, "
+                "approval_event_id=%s WHERE id=%s",
+                (scope, wrong["id"], season),
+            )
+
+    def test_seeded_approved_season_is_backed_by_a_real_gate1_event(self, db: Database) -> None:
+        with db.transaction() as tx:
+            season = seed_season(tx, state="SEASON_APPROVED")
+            row = tx.fetchone(
+                "SELECT a.gate_type, a.action, a.entity_id FROM seasons s "
+                "JOIN approval_events a ON a.id = s.approval_event_id WHERE s.id = %s",
+                (season,),
+            )
+        assert row == {"gate_type": "SEASON_CONCEPT", "action": "APPROVE", "entity_id": season}
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "approval_events",
+        "charges",
+        "policy_versions",
+        "qualification_runs",
+        "manual_interventions",
+        "domain_events",
+        "qa_observations",
+    ],
+)
+def test_append_only_tables_refuse_truncate(db: Database, table: str) -> None:  # V-8
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute(f"TRUNCATE {table} CASCADE")
+
+
+def test_asset_descriptor_is_immutable_and_consistent(db: Database) -> None:  # V-9
+    with db.transaction() as tx:
+        asset = _asset(tx)
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute(
+            "UPDATE assets SET descriptor = jsonb_set(descriptor, '{sha256}', '\"ffff\"') WHERE id=%s",
+            (asset,),
+        )
+    with pytest.raises(Conflict), db.transaction() as tx:
+        aid = uuid.uuid4()
+        insert_row(
+            tx,
+            "assets",
+            {
+                "id": aid,
+                "asset_kind": "OTHER",
+                "object_key": "k/x",
+                "sha256": H,
+                "size_bytes": 1,
+                "media_type": "x",
+                "state": "ACCEPTED",
+                "provenance": "FAKE_SYNTHETIC",
+                "descriptor": jsonb(
+                    {"asset_id": str(aid), "sha256": "f" * 64, "object_key": "k/x"}
+                ),
+            },
+        )
+
+
+def test_metered_action_cannot_execute_without_reservation(db: Database) -> None:  # V-11
+    def action(tx: Tx, cost: int) -> None:
+        insert_row(
+            tx,
+            "management_actions",
+            {
+                "id": uuid.uuid4(),
+                "kind": "PUBLIC_REPLY",
+                "platform": "TIKTOK",
+                "account_ref": "acct:tt",
+                "dedupe_key": f"reply:{uuid.uuid4().hex}",
+                "body": jsonb({"estimated_cost_micro_usd": cost}),
+                "policy_hash": H,
+                "catalog_version": 1,
+                "decision": "EXECUTED",
+                "provenance": "FAKE_SYNTHETIC",
+            },
+        )
+
+    with pytest.raises(Conflict), db.transaction() as tx:
+        action(tx, 500)
+    with db.transaction() as tx:
+        action(tx, 0)  # template/fixed-quota actions with no metered cost are allowed
+    with pytest.raises(Conflict), db.transaction() as tx:  # a missing estimate is not zero
+        insert_row(
+            tx,
+            "management_actions",
+            {
+                "id": uuid.uuid4(),
+                "kind": "PUBLIC_REPLY",
+                "platform": "TIKTOK",
+                "account_ref": "acct:tt",
+                "dedupe_key": "reply:no-estimate",
+                "body": jsonb({}),
+                "policy_hash": H,
+                "catalog_version": 1,
+                "decision": "EXECUTED",
+                "provenance": "FAKE_SYNTHETIC",
+            },
+        )
+
+
+def test_enabled_preset_row_needs_a_measurement(db: Database) -> None:
+    def preset(tx: Tx, record: dict) -> None:
+        insert_row(
+            tx,
+            "preset_registry",
+            {
+                "id": uuid.uuid4(),
+                "preset_id": f"p-{uuid.uuid4().hex[:6]}",
+                "version": 1,
+                "tier": "fast_four_step",
+                "workflow_sha256": H,
+                "record": jsonb(record),
+                "enabled": True,
+                "evidence": jsonb([{"source": "MEASURED_BENCHMARK", "ref": "bench:1"}]),
+            },
+        )
+
+    with pytest.raises(Conflict), db.transaction() as tx:
+        preset(tx, {})
+    with db.transaction() as tx:
+        preset(tx, {"measured": {"sample_count": 3}})
+
+
+def test_float_bind_parameters_are_refused(db: Database) -> None:  # V-12
+    with db.transaction() as tx:
+        account_season = seed_season(tx)
+        episode = seed_episode(tx, account_season)
+        account = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
+            "VALUES (%s,'EPISODE',%s,%s,10000000)",
+            (account, account_season, episode),
+        )
+    with pytest.raises(SchemaInvalid), db.transaction() as tx:
+        tx.execute(
+            "UPDATE budget_accounts SET accrued_micro_usd = %s WHERE id = %s", (1.5, account)
+        )
+    with db.transaction() as tx:
+        assert (
+            tx.fetchval("SELECT accrued_micro_usd FROM budget_accounts WHERE id=%s", (account,))
+            == 0
+        )
+
+
+def test_management_qualification_needs_ten(db: Database) -> None:  # V-6
+    with pytest.raises(Conflict), db.transaction() as tx:
+        insert_row(
+            tx,
+            "qualification_runs",
+            {
+                "id": uuid.uuid4(),
+                "season_id": seed_season(tx),
+                "evaluated_at": T0,
+                "production_status": "NOT_QUALIFIED",
+                "management_status": "QUALIFIED",
+                "consecutive": 1,
+                "body": jsonb({}),
+            },
+        )
 
 
 def test_qa_observations_are_immutable_and_findings_cannot_fake_pass(db: Database) -> None:

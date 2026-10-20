@@ -1,0 +1,8 @@
+{
+  "kind": "RUNTIME_MODEL",
+  "principal_id": "critic",
+  "runtime_role": "CRITIC",
+  "scopes": [
+    "gate2:approve"
+  ]
+}

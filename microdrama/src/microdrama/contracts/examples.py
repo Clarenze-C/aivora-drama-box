@@ -1631,6 +1631,108 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             "bounded payload",
             m(domain_event, _set("payload", {"blob": "x" * 20_000})),
         ),
+        # contract 1.2.0 (M0 validator findings V-5/6/7/16/17/18/19/21/25)
+        (
+            "PostReadback",
+            "fake_real_link",
+            "fake readbacks may only report .invalid links",
+            {
+                "external_id": "fake-1",
+                "links": ["https://www.youtube.com/watch?v=REAL"],
+                "provenance": "FAKE_SYNTHETIC",
+            },
+        ),
+        (
+            "QualificationResult",
+            "management_qualified_without_windows",
+            "ten corresponding management windows required",
+            m(qualification_result, _set("management_status", "QUALIFIED")),
+        ),
+        (
+            "QualificationResult",
+            "streak_not_derived",
+            "consecutive count must equal the trailing streak",
+            m(qualification_result, _set("consecutive_qualifying_production", 7)),
+        ),
+        (
+            "QualificationResult",
+            "manual_fix_counted_in_streak",
+            "a manual technical fix resets the streak",
+            m(qualification_result, _set("episodes.0.manual_interventions", 1)),
+        ),
+        (
+            "PresetRecord",
+            "dialogue_preset_thai_unknown",
+            "enabled dialogue presets need measured Thai support",
+            m(
+                preset_record,
+                _set(
+                    "supported_controls",
+                    ["TEXT_PROMPT", "FIRST_FRAME", "CHARACTER_REFERENCE", "VOICE_REFERENCE"],
+                ),
+            ),
+        ),
+        (
+            "PresetRecord",
+            "zero_quality_enabled",
+            "enabled presets need non-zero measured quality",
+            m(preset_record, _set("measured.critical_quality_pass_bp", 0)),
+        ),
+        (
+            "PublishResult",
+            "verified_without_coverage",
+            "verified publication must name verified fields",
+            {
+                "state": "PUBLISHED_VERIFIED",
+                "external_id": "yt-1",
+                "verified_fields": [],
+                "provenance": "FAKE_SYNTHETIC",
+            },
+        ),
+        (
+            "RightsRecord",
+            "eligible_already_expired",
+            "expired records cannot be ELIGIBLE",
+            m(rights_record, _set("expires_at", "2020-01-01T00:00:00Z")),
+        ),
+        (
+            "Principal",
+            "model_with_approval_scope",
+            "non-human principals cannot hold approval scopes",
+            {
+                "principal_id": "critic",
+                "kind": "RUNTIME_MODEL",
+                "runtime_role": "CRITIC",
+                "scopes": ["gate2:approve"],
+            },
+        ),
+        (
+            "UsageReceipt",
+            "fixture_with_billed_cost",
+            "measured cost bases only from live providers",
+            m(
+                usage_receipt,
+                _many(_set("provenance", "ORIGINAL_FIXTURE"), _set("cost_basis", "BILLED")),
+            ),
+        ),
+        (
+            "MembershipCatalogEntry",
+            "token_in_path",
+            "no token-like path segments in links",
+            m(
+                membership_catalog_entry,
+                _set(
+                    "member_url",
+                    "https://members.fake.invalid/watch/abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+                ),
+            ),
+        ),
+        (
+            "SeasonScope",
+            "constraint_above_enforced_limit",
+            "scope limits above the enforced hard limits are rejected, not ignored",
+            m(season_scope, _set("creative_constraints.max_active_locations_per_episode", 5)),
+        ),
         # contract 1.1.0 registry records
         (
             "RightsRecord",

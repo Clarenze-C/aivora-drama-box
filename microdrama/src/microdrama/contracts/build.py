@@ -30,6 +30,38 @@ from microdrama.contracts.registry import ALL_MODELS, CORE_PAYLOADS
 
 ROOT = Path(__file__).resolve().parents[3] / "contracts"
 
+# Invalid examples whose defect is structural (unknown field, enum, pattern, length,
+# required field, range on a non-float value). The published JSON Schema itself must
+# reject these, not only the Pydantic model. Cross-field rules (and integer-vs-float:
+# JSON Schema treats 3.0 as an integer) are enforced by the Pydantic models only; the
+# manifest records `json_schema_rejects` for every invalid example so consumers know.
+SCHEMA_MUST_REJECT = frozenset(
+    {
+        "SeasonScope__unknown_field",
+        "SeasonScope__stale_schema_version",
+        "SeasonScope__constraint_above_enforced_limit",
+        "ShotManifest__unknown_control",
+        "RenderRequest__unknown_control",
+        "BudgetReservationRequest__no_timeout",
+        "UsageReceipt__negative_amount",
+        "ProviderOperation__missing_client_token",
+        "IdentityLock__empty_lock",
+        "HookExperiment__two_candidates",
+        "HookExperiment__new_render_jobs",
+        "ObservationRequest__includes_intended_script",
+        "ObservationRequest__includes_expected_dialogue",
+        "ObservationReport__no_coverage",
+        "ComparisonRequest__bad_hash",
+        "QualificationResult__required_not_ten",
+        "DomainEvent__bad_event_type",
+    }
+)
+
+
+def _schema_rejects(schema: dict, payload: object) -> bool:
+    validator = jsonschema.Draft202012Validator(schema)
+    return any(True for _ in validator.iter_errors(payload))
+
 
 def _dump(obj: object) -> str:
     return json.dumps(obj, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
@@ -60,7 +92,13 @@ def render() -> dict[str, str]:
     for model_name, case, reason, payload in invalid_cases():
         path = f"examples/v1/invalid/{model_name}__{case}.json"
         files[path] = _dump(payload)
-        manifest[path] = {"model": model_name, "expect": "invalid", "reason": reason}
+        schema = json.loads(files[f"schemas/v1/{model_name}.schema.json"])
+        manifest[path] = {
+            "model": model_name,
+            "expect": "invalid",
+            "reason": reason,
+            "json_schema_rejects": _schema_rejects(schema, payload),
+        }
     files["examples/v1/manifest.json"] = _dump(manifest)
     return files
 
@@ -90,6 +128,17 @@ def validate(files: dict[str, str]) -> list[str]:
             except ValidationError:
                 continue
             problems.append(f"{path}: invalid example was ACCEPTED ({entry['reason']})")
+    for path, entry in manifest.items():
+        name = path.rsplit("/", 1)[-1].removesuffix(".json")
+        if name not in SCHEMA_MUST_REJECT:
+            continue
+        schema = json.loads(files[f"schemas/v1/{entry['model']}.schema.json"])
+        if not _schema_rejects(schema, json.loads(files[path])):
+            problems.append(f"{path}: structural defect not rejected by the published JSON Schema")
+    missing = SCHEMA_MUST_REJECT - {
+        p.rsplit("/", 1)[-1].removesuffix(".json") for p in manifest if "/invalid/" in p
+    }
+    problems.extend(f"SCHEMA_MUST_REJECT names unknown example {m}" for m in sorted(missing))
     covered = {e["model"] for e in manifest.values() if e["expect"] == "invalid"}
     for name in CORE_PAYLOADS:
         if name not in covered:

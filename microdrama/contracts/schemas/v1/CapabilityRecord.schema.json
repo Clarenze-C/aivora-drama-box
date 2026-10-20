@@ -205,7 +205,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.1.0:CapabilityRecord",
+  "$id": "urn:microdrama:contracts:1.2.0:CapabilityRecord",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Per account/provider route. Research-date claims are not live evidence.",

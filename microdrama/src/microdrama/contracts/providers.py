@@ -393,6 +393,12 @@ class PostReadback(VersionedPayload):
     unverified_fields: list[Identifier] = Field(default_factory=list)
     provenance: Provenance
 
+    @model_validator(mode="after")
+    def _links(self) -> PostReadback:
+        for link in self.links:
+            check_url_provenance(link, self.provenance)
+        return self
+
 
 class ReconcileResult(VersionedPayload):
     found: bool

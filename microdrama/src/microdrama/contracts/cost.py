@@ -131,6 +131,8 @@ class UsageReceipt(VersionedPayload):
             raise ValueError(
                 "fake provenance must use SYNTHETIC_FAKE cost basis (and only fakes may)"
             )
+        if self.measured and self.provenance is not Provenance.LIVE_PROVIDER:
+            raise ValueError("measured cost bases come only from live providers")
         if (self.interval_start is None) != (self.interval_end is None):
             raise ValueError("interval_start and interval_end go together")
         if self.interval_start and self.interval_end and self.interval_end < self.interval_start:

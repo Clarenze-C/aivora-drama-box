@@ -31,7 +31,7 @@ def test_committed_contracts_match_source() -> None:
 
 def test_version_file() -> None:
     assert (
-        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "1.1.0"
+        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "1.2.0"
     )
 
 
@@ -59,3 +59,12 @@ def test_schemas_are_closed_objects() -> None:
         assert schema.get("additionalProperties") is False, (
             f"{name} schema must reject unknown fields"
         )
+
+
+def test_structural_defects_are_rejected_by_the_published_schemas() -> None:
+    manifest = json.loads(
+        (MODULE_ROOT / "contracts" / "examples" / "v1" / "manifest.json").read_text()
+    )
+    for name in build.SCHEMA_MUST_REJECT:
+        entry = manifest[f"examples/v1/invalid/{name}.json"]
+        assert entry["json_schema_rejects"] is True, name

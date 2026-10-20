@@ -33,6 +33,7 @@ from microdrama.contracts.errors import (
     DuplicateSemanticKey,
     MicrodramaError,
     NotFound,
+    SchemaInvalid,
     ServiceUnavailable,
     StaleRevision,
     Unauthorized,
@@ -78,13 +79,30 @@ def translate_db_error(exc: psycopg.Error) -> MicrodramaError:
     return MicrodramaError(message, **details)
 
 
+def reject_float_params(params: Sequence[Any] | Mapping[str, Any] | None) -> None:
+    """Refuse float bind parameters: PostgreSQL would silently round them into bigint
+    money/ms columns (contract: money is integer micro-USD, time is integer ms)."""
+    if params is None:
+        return
+    values = params.values() if isinstance(params, Mapping) else params
+    for value in values:
+        if isinstance(value, float):
+            raise SchemaInvalid(
+                "float bind parameters are not allowed (use integer micro-USD / ms)"
+            )
+
+
 class Tx:
-    """A live transaction. Thin helper over a psycopg connection with dict rows."""
+    """A live transaction. Thin helper over a psycopg connection with dict rows.
+
+    Every statement's parameters are checked by ``reject_float_params``.
+    """
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self.conn = conn
 
     def execute(self, sql: str, params: Sequence[Any] | Mapping[str, Any] | None = None) -> int:
+        reject_float_params(params)
         with self.conn.cursor() as cur:
             cur.execute(sql, params)
             return cur.rowcount
@@ -92,6 +110,7 @@ class Tx:
     def fetchone(
         self, sql: str, params: Sequence[Any] | Mapping[str, Any] | None = None
     ) -> Row | None:
+        reject_float_params(params)
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, params)
             return cur.fetchone()
@@ -99,6 +118,7 @@ class Tx:
     def fetchall(
         self, sql: str, params: Sequence[Any] | Mapping[str, Any] | None = None
     ) -> list[Row]:
+        reject_float_params(params)
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, params)
             return list(cur.fetchall())

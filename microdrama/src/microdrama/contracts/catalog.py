@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
@@ -34,10 +35,18 @@ from microdrama.contracts.release import check_url_provenance
 _SECRET_QUERY_KEYS = {"token", "access_token", "auth", "key", "signature", "sig", "secret", "code"}
 
 
+_TOKEN_LIKE = re.compile(r"^[A-Za-z0-9_\-]{32,}$")
+
+
 def _no_secret_in_link(url: str) -> None:
-    query = parse_qs(urlparse(url).query)
+    parts = urlparse(url)
+    query = parse_qs(parts.query)
     if _SECRET_QUERY_KEYS & {k.lower() for k in query}:
         raise ValueError("public links cannot carry playback tokens or secrets")
+    if parts.username or parts.password:
+        raise ValueError("public links cannot carry credentials")
+    if any(_TOKEN_LIKE.match(segment) for segment in parts.path.split("/")):
+        raise ValueError("public links cannot carry token-like path segments")
 
 
 class MemberPrice(ContractModel):
@@ -144,11 +153,31 @@ class QualificationResult(VersionedPayload):
 
     @model_validator(mode="after")
     def _rules(self) -> QualificationResult:
+        numbers = [e.episode_number for e in self.episodes]
+        if numbers != sorted(numbers) or len(set(numbers)) != len(numbers):
+            raise ValueError("episodes must be listed once each in episode order")
+        streak = 0
+        for episode in reversed(self.episodes):
+            if episode.production_qualifies is not True or episode.manual_interventions:
+                break
+            streak += 1
+        if self.consecutive_qualifying_production != streak:
+            raise ValueError(
+                "consecutive_qualifying_production must equal the trailing streak of episodes"
+            )
         if (
             self.production_status is QualificationStatus.QUALIFIED
-            and self.consecutive_qualifying_production < self.required_consecutive
+            and streak < self.required_consecutive
         ):
             raise ValueError("production qualification needs ten consecutive qualifying episodes")
+        if self.management_status is QualificationStatus.QUALIFIED:
+            tail = self.episodes[-self.required_consecutive :]
+            if len(tail) < self.required_consecutive or any(
+                e.management_window_status is not QualificationStatus.QUALIFIED for e in tail
+            ):
+                raise ValueError(
+                    "management qualification needs ten corresponding qualified windows"
+                )
         if (
             self.successful_episodes == 0
             and self.effective_cost_per_successful_episode_micro_usd is not None

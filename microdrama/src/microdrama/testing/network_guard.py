@@ -1,20 +1,26 @@
 """Offline network guard for tests (T007).
 
 While a ``block_network()`` block is active, or after ``install(monkeypatch)``, every
-Python-level attempt to reach a non-loopback destination raises ``NetworkBlocked``:
+Python-level attempt to reach a non-loopback destination raises ``NetworkBlocked``. The
+refusal happens before the original call runs:
 
-- ``socket.socket.connect`` and ``connect_ex`` (hostnames other than ``localhost`` are
-  refused *without* any DNS lookup);
-- ``socket.create_connection``;
-- ``socket.getaddrinfo`` (name resolution of anything except loopback names/addresses).
+- connection setup: ``socket.socket.connect``, ``connect_ex`` and ``socket.create_connection``
+  (hostnames other than ``localhost`` are refused *without* any DNS lookup);
+- datagrams: ``socket.socket.sendto`` and ``sendmsg`` whenever they carry an address (a send on
+  an already-connected socket has no address and was checked when it connected);
+- name resolution: ``socket.getaddrinfo``, ``gethostbyname``, ``gethostbyname_ex`` and
+  ``getnameinfo`` (anything except loopback names/addresses; nothing is ever resolved);
+- configured proxies: a destination equal to an ``HTTP(S)_PROXY``/``ALL_PROXY`` endpoint in the
+  environment is refused even when it is loopback, because a loopback proxy can forward out.
 
-Loopback (127.0.0.0/8, ::1, ``localhost``, IPv4-mapped loopback), unspecified bind
-addresses (0.0.0.0, ::) and AF_UNIX sockets remain usable so local test servers work.
+Loopback (127.0.0.0/8, ::1, ``localhost``, IPv4-mapped loopback), unspecified bind addresses
+(0.0.0.0, ::) and AF_UNIX sockets remain usable so local test servers work.
 ``allow_loopback=False`` blocks loopback as well.
 
-Limits, stated plainly: the guard sees Python-level socket calls only. It does not
-police subprocesses (ffmpeg/ffprobe are only ever given local file paths by this
-harness) or C code that resolves names without these entry points.
+Limits, stated plainly: the guard sees Python-level socket calls through the entry points
+listed above only. Subprocesses are not policed (ffmpeg/ffprobe are only ever given local file
+paths by this harness), and C code that resolves names or sends data without these entry
+points is outside the guard.
 """
 
 from __future__ import annotations
@@ -108,17 +114,19 @@ def _check_host(host: object, *, allow_loopback: bool, operation: str) -> None:
         )
 
 
-def _check_socket(sock: socket.socket, address: object, *, allow_loopback: bool) -> None:
+def _check_socket(
+    sock: socket.socket, address: object, *, allow_loopback: bool, operation: str = "connect"
+) -> None:
     if sock.family == socket.AF_UNIX:
         return
     if sock.family in (socket.AF_INET, socket.AF_INET6) and isinstance(address, tuple):
         if address:
-            _check_host(address[0], allow_loopback=allow_loopback, operation="connect")
+            _check_host(address[0], allow_loopback=allow_loopback, operation=operation)
             _check_proxy(address[0], address[1] if len(address) > 1 else None)
             return
     raise NetworkBlocked(
         "network access blocked during offline tests: unsupported socket destination",
-        operation="connect",
+        operation=operation,
         destination=str(address),
     )
 
@@ -126,8 +134,13 @@ def _check_socket(sock: socket.socket, address: object, *, allow_loopback: bool)
 def _patches(*, allow_loopback: bool) -> list[_Patch]:
     original_connect = socket.socket.connect
     original_connect_ex = socket.socket.connect_ex
+    original_sendto = socket.socket.sendto
+    original_sendmsg = socket.socket.sendmsg
     original_create_connection = socket.create_connection
     original_getaddrinfo = socket.getaddrinfo
+    original_gethostbyname = socket.gethostbyname
+    original_gethostbyname_ex = socket.gethostbyname_ex
+    original_getnameinfo = socket.getnameinfo
 
     def connect(self: socket.socket, address: Any) -> None:
         _check_socket(self, address, allow_loopback=allow_loopback)
@@ -136,6 +149,20 @@ def _patches(*, allow_loopback: bool) -> list[_Patch]:
     def connect_ex(self: socket.socket, address: Any) -> int:
         _check_socket(self, address, allow_loopback=allow_loopback)
         return original_connect_ex(self, address)
+
+    def sendto(self: socket.socket, data: Any, *args: Any) -> int:
+        # sendto(data, address) or sendto(data, flags, address): the address is always last.
+        address = args[-1] if args else None
+        if address is not None:
+            _check_socket(self, address, allow_loopback=allow_loopback, operation="sendto")
+        return original_sendto(self, data, *args)
+
+    def sendmsg(self: socket.socket, buffers: Any, *args: Any, **kwargs: Any) -> int:
+        # sendmsg(buffers, ancdata, flags, address); no address means a connected socket.
+        address = kwargs["address"] if "address" in kwargs else (args[2] if len(args) > 2 else None)
+        if address is not None:
+            _check_socket(self, address, allow_loopback=allow_loopback, operation="sendmsg")
+        return original_sendmsg(self, buffers, *args, **kwargs)
 
     def create_connection(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
         _check_host(address[0], allow_loopback=allow_loopback, operation="create_connection")
@@ -146,11 +173,30 @@ def _patches(*, allow_loopback: bool) -> list[_Patch]:
         _check_host(host, allow_loopback=allow_loopback, operation="getaddrinfo")
         return original_getaddrinfo(host, port, *args, **kwargs)
 
+    def gethostbyname(hostname: Any) -> str:
+        _check_host(hostname, allow_loopback=allow_loopback, operation="gethostbyname")
+        return original_gethostbyname(hostname)
+
+    def gethostbyname_ex(hostname: Any) -> Any:
+        _check_host(hostname, allow_loopback=allow_loopback, operation="gethostbyname_ex")
+        return original_gethostbyname_ex(hostname)
+
+    def getnameinfo(sockaddr: Any, flags: int) -> Any:
+        # Reverse lookup: the host part is an address that must not leave the machine.
+        host = sockaddr[0] if isinstance(sockaddr, tuple) and sockaddr else None
+        _check_host(host, allow_loopback=allow_loopback, operation="getnameinfo")
+        return original_getnameinfo(sockaddr, flags)
+
     return [
         (socket.socket, "connect", connect),
         (socket.socket, "connect_ex", connect_ex),
+        (socket.socket, "sendto", sendto),
+        (socket.socket, "sendmsg", sendmsg),
         (socket, "create_connection", create_connection),
         (socket, "getaddrinfo", getaddrinfo),
+        (socket, "gethostbyname", gethostbyname),
+        (socket, "gethostbyname_ex", gethostbyname_ex),
+        (socket, "getnameinfo", getnameinfo),
     ]
 
 

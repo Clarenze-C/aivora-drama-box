@@ -59,6 +59,8 @@ class RightsRecord(VersionedPayload):
                 raise ValueError("ELIGIBLE requires confirmed commercial use and output release")
             if not self.evidence or not self.territories:
                 raise ValueError("ELIGIBLE requires evidence and named territories")
+            if self.expires_at is not None and self.expires_at <= self.recorded_at:
+                raise ValueError("a record that is already expired cannot be ELIGIBLE")
         return self
 
 
@@ -126,4 +128,12 @@ class PresetRecord(VersionedPayload):
             } & set(self.supported_controls)
             if references and not self.measured.measured_with_references:
                 raise ValueError("reference-capable presets must be benchmarked with references")
+            dialogue = {ControlKind.VOICE_REFERENCE, ControlKind.AUDIO_DRIVEN_LIPSYNC}
+            if dialogue & set(self.supported_controls) and self.supports_thai_dialogue is not True:
+                raise ValueError("an enabled dialogue preset needs measured Thai dialogue support")
+            if (
+                self.measured.critical_quality_pass_bp == 0
+                or 0 in self.measured.acceptance_bp_by_shot_class.values()
+            ):
+                raise ValueError("an enabled preset needs non-zero measured quality and acceptance")
         return self

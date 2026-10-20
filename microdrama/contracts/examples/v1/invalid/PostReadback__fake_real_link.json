@@ -1,0 +1,7 @@
+{
+  "external_id": "fake-1",
+  "links": [
+    "https://www.youtube.com/watch?v=REAL"
+  ],
+  "provenance": "FAKE_SYNTHETIC"
+}

@@ -13,6 +13,7 @@ to an unrelated live database.
 | `0004_media_and_qa.sql` | `assets`, `asset_lineage`, `edit_manifests`, `caption_tracks`, `hook_experiments`, `hook_exposures`, `qa_observations` (immutable Pass A), `qa_findings`, `repair_plans` |
 | `0005_distribution_and_analytics.sql` | `release_packages` (one APPROVED per episode), `platform_posts` (SPEC slot key unique), `metadata_versions`, `community_events` (provider dedupe), `management_actions`, `membership_catalog`, `entitlement_links`, `performance_snapshots`, `qualification_runs` |
 | `0006_registries.sql` | `credential_refs` (names/locators only, never secrets), `capability_registry`, `rights_registry`, `preset_registry`, `policy_versions` |
+| `0007_m0_validator_hardening.sql` | approval trigger judges expiry against the server clock and stamps server time; season approval FK + binding to a Gate 1 APPROVE on the scope hash; release-package status machine and binding of APPROVED/REVISED/REJECTED to the matching Gate 2 event (hashes, no blockers); episodes cannot enter release states without an APPROVED package; append-only tables refuse TRUNCATE; asset descriptor immutable and consistent with its columns; slot `asset_sha256` FK to the asset's hash; metered management actions need a reservation; enabled presets carry a measurement; management qualification needs ten |
 
 ## Rules for module lanes
 
@@ -21,11 +22,14 @@ to an unrelated live database.
 2. A state mutation and its outbox event (`domain_events` row) go in the same transaction.
 3. Mutable rows carry `revision`; use `persistence.update_with_revision` (raises
    `StaleRevision`) or an equivalent `WHERE revision = %s` guard.
-4. Constraint failures arrive as contract errors: unique/exclusion →
+4. Gate-related ordering (0007): set the release package to APPROVED (bound to the Gate 2
+   APPROVE) **before** moving the episode to RELEASE_APPROVED; `approval_events.created_at`
+   is always server time. Floats are refused as bind parameters (`SchemaInvalid`).
+5. Constraint failures arrive as contract errors: unique/exclusion →
    `DuplicateSemanticKey` (`details["constraint"]` names it), check/FK → `Conflict`,
    approval without a live human session → `Unauthorized`.
-5. Money columns are `bigint` micro-USD; never write floats.
-6. Need a column/table/index? Stop and send the integrator a migration-change proposal
+6. Money columns are `bigint` micro-USD; never write floats.
+7. Need a column/table/index? Stop and send the integrator a migration-change proposal
    (what, why, downstream impact). New migrations are appended (`0007_...`), never edits
    to applied files.
 

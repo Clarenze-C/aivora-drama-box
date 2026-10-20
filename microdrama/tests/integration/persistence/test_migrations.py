@@ -118,7 +118,7 @@ def test_upgrade_preserves_existing_data(pg_server_dsn: str) -> None:
     with Database(dsn) as db, db.transaction() as tx:
         season_id = seed_season(tx)
         episode_id = seed_episode(tx, season_id)
-    assert migrate(dsn) == ["0003", "0004", "0005", "0006"]
+    assert migrate(dsn) == [m.version for m in discover() if m.version > "0002"]
     with Database(dsn) as db, db.transaction() as tx:
         assert (
             tx.fetchval("SELECT season_id FROM episodes WHERE id = %s", (episode_id,)) == season_id

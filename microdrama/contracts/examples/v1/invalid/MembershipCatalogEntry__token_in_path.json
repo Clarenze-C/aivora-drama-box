@@ -1,0 +1,28 @@
+{
+  "approval_event_id": "ad491ddd-1e35-5425-8bc2-5c80fcaebc0e",
+  "catalog_version": 1,
+  "entitlement_verified_at": null,
+  "entry_id": "f1c7336f-3b13-5456-80b5-5c0e98b7b99e",
+  "episode_id": "843aa50e-0b07-5d43-bae3-5d35acb395fa",
+  "episode_number": 2,
+  "free_release": {
+    "fold": null,
+    "iana_zone": "Asia/Bangkok",
+    "local_time": "2026-10-31T19:30:00",
+    "utc_instant": "2026-10-31T12:30:00Z"
+  },
+  "media_finished_and_approved": true,
+  "member_post_id": "fake-member-post-2",
+  "member_price": {
+    "amount_micro_usd": 3000000,
+    "currency": "USD",
+    "interval": "month"
+  },
+  "member_provider": "PATREON",
+  "member_url": "https://members.fake.invalid/watch/abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+  "provenance": "FAKE_SYNTHETIC",
+  "public_state": "EARLY_ACCESS_MEMBERS",
+  "public_url": null,
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6"
+}

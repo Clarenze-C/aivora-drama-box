@@ -235,8 +235,11 @@ class PublishResult(VersionedPayload):
     @model_validator(mode="after")
     def _url(self) -> PublishResult:
         check_url_provenance(self.url, self.provenance)
-        if self.state is ReleaseState.PUBLISHED_VERIFIED and self.external_id is None:
-            raise ValueError("verified publication needs an external id")
+        if self.state is ReleaseState.PUBLISHED_VERIFIED:
+            if self.external_id is None:
+                raise ValueError("verified publication needs an external id")
+            if not self.verified_fields:
+                raise ValueError("verified publication must name the fields it verified")
         return self
 
 

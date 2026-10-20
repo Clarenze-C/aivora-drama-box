@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -30,7 +31,7 @@ from microdrama.contracts.primitives import (
     ScheduleInstant,
     UtcDateTime,
 )
-from microdrama.contracts.release import PublishResult
+from microdrama.contracts.release import PublishResult, ReleasePackage
 
 money = TypeAdapter(MicroUSD)
 
@@ -125,8 +126,52 @@ def test_fake_usage_is_synthetic_not_measured() -> None:
     assert not receipt.measured
 
 
-def test_gate_readiness_reflects_blockers() -> None:
+def test_blocking_findings_cannot_hide_from_the_gate() -> None:
+    """A package that lists a blocking finding must also list a gate blocker (validated)."""
     pkg = release_package()
-    assert pkg.gate_ready
-    blocked = pkg.model_copy(update={"gate_blockers": ["critical finding unresolved"]})
+    qa = pkg.qa.model_copy(update={"blocking_finding_ids": [uuid.uuid4()]})
+    # Reseal the hash for the changed QA summary so only the blocker rule is exercised.
+    resealed = ReleasePackage.model_construct(**{**pkg.__dict__, "qa": qa}).compute_hash()
+    data = pkg.model_dump(mode="json")
+    data["qa"] = qa.model_dump(mode="json")
+    data["package_hash"] = resealed
+    data["gate_blockers"] = []
+    with pytest.raises(ValidationError, match="blocking findings must appear as gate blockers"):
+        ReleasePackage.model_validate(data)
+    data["gate_blockers"] = ["critical finding unresolved"]
+    blocked = ReleasePackage.model_validate(data)
     assert not blocked.gate_ready
+
+
+def test_qa_summary_change_changes_the_package_hash() -> None:
+    """Approval binds the hash; a different QA outcome is a different package."""
+    pkg = release_package()
+    changed = ReleasePackage.model_construct(
+        **{
+            **pkg.__dict__,
+            "qa": pkg.qa.model_copy(update={"finding_count": pkg.qa.finding_count + 1}),
+        }
+    )
+    assert changed.compute_hash() != pkg.package_hash
+
+
+def test_publish_verification_and_readback_links_follow_url_rules() -> None:
+    from microdrama.contracts.providers import PostReadback
+
+    with pytest.raises(ValidationError):
+        PostReadback(
+            external_id="x",
+            links=["https://www.tiktok.com/@a/video/1"],
+            provenance=Provenance.FAKE_SYNTHETIC,
+        )
+    with pytest.raises(ValidationError):
+        PublishResult(
+            state="PUBLISHED_VERIFIED", external_id="x", provenance=Provenance.FAKE_SYNTHETIC
+        )
+    ok = PublishResult(
+        state="PUBLISHED_VERIFIED",
+        external_id="x",
+        verified_fields=["exists"],
+        provenance=Provenance.FAKE_SYNTHETIC,
+    )
+    assert ok.verified_fields == ["exists"]

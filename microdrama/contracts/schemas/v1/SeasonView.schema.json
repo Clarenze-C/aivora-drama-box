@@ -191,18 +191,21 @@
         },
         "max_active_locations_per_episode": {
           "default": 2,
+          "maximum": 2,
           "minimum": 1,
           "title": "Max Active Locations Per Episode",
           "type": "integer"
         },
         "max_featured_speaking_characters_per_episode": {
           "default": 3,
+          "maximum": 3,
           "minimum": 1,
           "title": "Max Featured Speaking Characters Per Episode",
           "type": "integer"
         },
         "max_speakers_per_shot": {
           "default": 2,
+          "maximum": 2,
           "minimum": 1,
           "title": "Max Speakers Per Shot",
           "type": "integer"
@@ -685,7 +688,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.1.0:SeasonView",
+  "$id": "urn:microdrama:contracts:1.2.0:SeasonView",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

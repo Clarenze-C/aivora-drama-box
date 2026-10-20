@@ -11,7 +11,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.1.0:PostMetadata",
+  "$id": "urn:microdrama:contracts:1.2.0:PostMetadata",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

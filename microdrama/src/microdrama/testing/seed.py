@@ -64,10 +64,38 @@ def seed_human_session(
     return session_id
 
 
+def seed_gate1_approval(tx: Tx, season_id: UUID, scope_hash: str) -> UUID:
+    """A real Gate 1 APPROVE recorded by a live test owner session (no fabricated ids)."""
+    owner_id = seed_owner(tx)
+    session_id = seed_human_session(tx, owner_id)
+    approval_id = uuid.uuid4()
+    payload = {"season_id": str(season_id), "scope_hash": scope_hash}
+    insert_row(
+        tx,
+        "approval_events",
+        {
+            "id": approval_id,
+            "gate_type": "SEASON_CONCEPT",
+            "action": "APPROVE",
+            "entity_type": "season",
+            "entity_id": season_id,
+            "expected_revision": 0,
+            "package_hash": scope_hash,
+            "actor_owner_id": owner_id,
+            "actor_session_id": session_id,
+            "idempotency_key": f"seed-gate1-{approval_id.hex}",
+            "command_hash": canonical_hash(payload),
+        },
+        returning="id",
+    )
+    return approval_id
+
+
 def seed_season(tx: Tx, *, state: str = "PROPOSED", approved_scope_hash: str | None = None) -> UUID:
     season_id = uuid.uuid4()
     approved = state in ("SEASON_APPROVED", "ACTIVE", "COMPLETE")
     scope_hash = approved_scope_hash or canonical_hash(season_scope())
+    approval_id = seed_gate1_approval(tx, season_id, scope_hash) if approved else None
     insert_row(
         tx,
         "seasons",
@@ -78,7 +106,7 @@ def seed_season(tx: Tx, *, state: str = "PROPOSED", approved_scope_hash: str | N
             "title_en": "Test season",
             "approved_scope_version": 1 if approved else None,
             "approved_scope_hash": scope_hash if approved else None,
-            "approval_event_id": uuid.uuid4() if approved else None,
+            "approval_event_id": approval_id,
             "approved_at": now_utc() if approved else None,
         },
         returning="id",

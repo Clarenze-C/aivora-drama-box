@@ -5,7 +5,8 @@ from __future__ import annotations
 import http.server
 import socket
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import httpx
 import pytest
@@ -37,9 +38,23 @@ def loopback_server() -> Iterator[int]:
 _PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 
 
-def test_httpx_to_public_host_is_refused_before_any_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+def _clear_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _PROXY_VARS:
         monkeypatch.delenv(name, raising=False)
+
+
+def _spy(calls: list[tuple[tuple[Any, ...], dict[str, Any]]]) -> Callable[..., int]:
+    """Stand-in for an original call: it records every call that reaches it."""
+
+    def spy(*args: Any, **kwargs: Any) -> int:
+        calls.append((args, kwargs))
+        return 0
+
+    return spy
+
+
+def test_httpx_to_public_host_is_refused_before_any_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_proxies(monkeypatch)
     with block_network(), pytest.raises(NetworkBlocked) as info:
         httpx.get("https://api.example.com/v1/items", timeout=2)
     assert info.value.code == "NETWORK_BLOCKED"
@@ -50,8 +65,7 @@ def test_egress_through_a_configured_proxy_is_refused(
     monkeypatch: pytest.MonkeyPatch, loopback_server: int
 ) -> None:
     # A loopback proxy would otherwise be allowed and could forward to the internet.
-    for name in _PROXY_VARS:
-        monkeypatch.delenv(name, raising=False)
+    _clear_proxies(monkeypatch)
     monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{loopback_server}")
     monkeypatch.setenv("HTTP_PROXY", f"http://127.0.0.1:{loopback_server}")
     with block_network(), pytest.raises(NetworkBlocked) as info:
@@ -82,11 +96,90 @@ def test_resolution_and_create_connection_of_public_names_are_refused() -> None:
             socket.create_connection(("api.example.com", 443), timeout=1)
 
 
-def test_loopback_http_still_works(loopback_server: int) -> None:
+def test_sendto_to_a_public_address_is_refused_before_the_original_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(socket.socket, "sendto", _spy(calls))  # the base the guard wraps
+    with block_network(), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        with pytest.raises(NetworkBlocked):
+            sock.sendto(b"x", ("8.8.8.8", 53))
+        with pytest.raises(NetworkBlocked):
+            sock.sendto(b"x", 0, ("example.com", 53))  # flags form; hostname refused, no lookup
+    assert calls == []
+
+
+def test_sendmsg_to_a_public_address_is_refused_before_the_original_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(socket.socket, "sendmsg", _spy(calls))
+    with block_network(), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        with pytest.raises(NetworkBlocked):
+            sock.sendmsg([b"x"], [], 0, ("8.8.8.8", 53))
+        with pytest.raises(NetworkBlocked):
+            sock.sendmsg([b"x"], [], 0, ("example.com", 53))
+    assert calls == []
+
+
+def test_sendmsg_without_an_address_is_not_a_new_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A send on a connected socket names no address; its destination was checked at connect().
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(socket.socket, "sendmsg", _spy(calls))
+    with block_network(), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        assert sock.sendmsg([b"x"]) == 0
+    assert len(calls) == 1
+
+
+def test_name_lookups_of_public_names_are_refused_without_resolving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    monkeypatch.setattr(socket, "gethostbyname", _spy(calls))
+    monkeypatch.setattr(socket, "gethostbyname_ex", _spy(calls))
+    monkeypatch.setattr(socket, "getnameinfo", _spy(calls))
     with block_network():
-        response = httpx.get(f"http://127.0.0.1:{loopback_server}/", timeout=5)
-    assert response.status_code == 200
-    assert response.text == "local-ok"
+        with pytest.raises(NetworkBlocked):
+            socket.gethostbyname("api.example.com")
+        with pytest.raises(NetworkBlocked):
+            socket.gethostbyname_ex("api.example.com")
+        with pytest.raises(NetworkBlocked):
+            socket.gethostbyname("8.8.8.8")
+        with pytest.raises(NetworkBlocked):
+            socket.getnameinfo(("8.8.8.8", 53), 0)  # reverse lookup of a public address
+    assert calls == []
+
+
+def test_loopback_name_lookups_still_work() -> None:
+    with block_network():
+        assert socket.gethostbyname("127.0.0.1") == "127.0.0.1"
+        assert socket.gethostbyname_ex("127.0.0.1")[2] == ["127.0.0.1"]
+
+
+def test_loopback_udp_sendto_and_sendmsg_still_work() -> None:
+    with (
+        block_network(),
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver,
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender,
+    ):
+        receiver.bind(("127.0.0.1", 0))
+        receiver.settimeout(5)
+        port = receiver.getsockname()[1]
+        assert sender.sendto(b"ping", ("127.0.0.1", port)) == 4
+        assert receiver.recvfrom(16)[0] == b"ping"
+        assert sender.sendmsg([b"pong"], [], 0, ("127.0.0.1", port)) == 4
+        assert receiver.recvfrom(16)[0] == b"pong"
+        assert sender.sendto(b"x", 0, ("127.0.0.1", port)) == 1  # flags form
+
+
+def test_datagram_to_a_configured_proxy_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_proxies(monkeypatch)
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:3128")
+    with block_network(), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        with pytest.raises(NetworkBlocked):
+            sock.sendto(b"x", ("127.0.0.1", 3128))
 
 
 def test_loopback_raw_socket_pair_still_works() -> None:
@@ -101,7 +194,7 @@ def test_loopback_raw_socket_pair_still_works() -> None:
                 assert conn.recv(4) == b"ping"
 
 
-def test_unix_socket_is_allowed(tmp_path) -> None:
+def test_unix_socket_is_allowed(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = str(tmp_path / "guard.sock")
     with block_network(), socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(path)
@@ -110,12 +203,30 @@ def test_unix_socket_is_allowed(tmp_path) -> None:
             client.connect(path)
 
 
+def test_loopback_http_still_works(loopback_server: int) -> None:
+    with block_network():
+        response = httpx.get(f"http://127.0.0.1:{loopback_server}/", timeout=5)
+    assert response.status_code == 200
+    assert response.text == "local-ok"
+
+
 def test_allow_loopback_false_blocks_loopback(loopback_server: int) -> None:
     with block_network(allow_loopback=False), pytest.raises(NetworkBlocked):
         httpx.get(f"http://127.0.0.1:{loopback_server}/", timeout=5)
 
 
 _UNSET = object()
+_ENTRY_POINTS: tuple[tuple[object, str], ...] = (
+    (socket.socket, "connect"),
+    (socket.socket, "connect_ex"),
+    (socket.socket, "sendto"),
+    (socket.socket, "sendmsg"),
+    (socket, "create_connection"),
+    (socket, "getaddrinfo"),
+    (socket, "gethostbyname"),
+    (socket, "gethostbyname_ex"),
+    (socket, "getnameinfo"),
+)
 
 
 def _dict_entry(owner: object, name: str) -> object:
@@ -126,35 +237,29 @@ def _dict_entry(owner: object, name: str) -> object:
 def test_originals_are_restored_on_exit() -> None:
     # The global autouse guard in tests/conftest.py may already be active, so capture whatever
     # is installed now and require the block to restore exactly that, not "unpatched".
-    prior_getaddrinfo = socket.getaddrinfo
-    prior_create = socket.create_connection
-    prior_connect = socket.socket.connect
-    prior_connect_ex = socket.socket.connect_ex
-    prior_connect_entry = _dict_entry(socket.socket, "connect")
-    prior_connect_ex_entry = _dict_entry(socket.socket, "connect_ex")
+    priors = {(owner, name): getattr(owner, name) for owner, name in _ENTRY_POINTS}
+    entries = {(owner, name): _dict_entry(owner, name) for owner, name in _ENTRY_POINTS}
     with block_network():
-        assert socket.getaddrinfo is not prior_getaddrinfo
-        assert socket.socket.connect is not prior_connect
-    assert socket.getaddrinfo is prior_getaddrinfo
-    assert socket.create_connection is prior_create
-    assert socket.socket.connect is prior_connect
-    assert socket.socket.connect_ex is prior_connect_ex
-    assert _dict_entry(socket.socket, "connect") is prior_connect_entry
-    assert _dict_entry(socket.socket, "connect_ex") is prior_connect_ex_entry
+        for (owner, name), prior in priors.items():
+            assert getattr(owner, name) is not prior, name
+    for (owner, name), prior in priors.items():
+        assert getattr(owner, name) is prior, name
+        assert _dict_entry(owner, name) is entries[(owner, name)], name
 
 
 def test_originals_are_restored_when_the_block_raises() -> None:
     prior_connect_entry = _dict_entry(socket.socket, "connect")
+    prior_sendto_entry = _dict_entry(socket.socket, "sendto")
     prior_getaddrinfo = socket.getaddrinfo
     with pytest.raises(RuntimeError), block_network():
         raise RuntimeError("body failed inside the guard")
     assert _dict_entry(socket.socket, "connect") is prior_connect_entry
+    assert _dict_entry(socket.socket, "sendto") is prior_sendto_entry
     assert socket.getaddrinfo is prior_getaddrinfo
 
 
 def test_install_applies_through_monkeypatch_and_undoes(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in _PROXY_VARS:
-        monkeypatch.delenv(name, raising=False)
+    _clear_proxies(monkeypatch)
     install(monkeypatch)
     with pytest.raises(NetworkBlocked):
         httpx.get("https://api.example.com", timeout=2)
@@ -163,12 +268,15 @@ def test_install_applies_through_monkeypatch_and_undoes(monkeypatch: pytest.Monk
 def test_monkeypatch_undo_restores_the_prior_resolver() -> None:
     # Works with or without the global guard: undo must hand back exactly what was there before.
     prior = socket.getaddrinfo
+    prior_sendto = socket.socket.sendto
     patcher = pytest.MonkeyPatch()
     try:
         install(patcher)
         assert socket.getaddrinfo is not prior
+        assert socket.socket.sendto is not prior_sendto
         with pytest.raises(NetworkBlocked):
             socket.getaddrinfo("api.example.com", 443)
     finally:
         patcher.undo()
     assert socket.getaddrinfo is prior
+    assert socket.socket.sendto is prior_sendto

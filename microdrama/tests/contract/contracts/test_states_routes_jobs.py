@@ -128,3 +128,15 @@ def test_principal_rules() -> None:
         principal_id="critic", kind=PrincipalKind.RUNTIME_MODEL, runtime_role=RuntimeRole.CRITIC
     )
     assert not model.is_human_owner
+    for scope in ("gate2:approve", "season:approval", "episode:reject"):
+        with pytest.raises(ValidationError):
+            Principal(
+                principal_id="w", kind=PrincipalKind.SERVICE_WORKER, scopes=frozenset({scope})
+            )
+    human = Principal(
+        principal_id="owner",
+        kind=PrincipalKind.HUMAN_OWNER,
+        session_id=uuid.uuid4(),
+        scopes=frozenset({"gate2:approve"}),
+    )
+    assert human.is_human_owner
