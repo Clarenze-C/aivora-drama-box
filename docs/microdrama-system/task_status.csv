@@ -1,11 +1,11 @@
 task_id,title,status,owner,suggested_role,dependencies,milestone,size,contract_version,started_at,completed_at,evidence,blocker
 T001,Isolated scaffold and reproducible check commands,ACCEPTED,Integrator,Integrator,,M0,M,scaffold,2026-10-20T05:30:00Z,2026-10-20T05:37:25Z,make check passed (30 tests; real PG16 row-lock + loopback isolation); microdrama/evidence/T001.md,
 T002,Canonical schemas/interfaces and fixtures,ACCEPTED,Integrator,Contract guardian,T001,M0,L,1.0.0,2026-10-20T05:40:00Z,2026-10-20T05:56:50Z,"make check passed; contracts 1.0.0: 67 schemas, 30 valid/62 invalid examples, 62 contract tests; microdrama/evidence/T002.md",
-T003,Durable schema/repositories/object-store metadata,TODO,,Integrator / database,T002,M0,L,1.0.0,,,,
+T003,Durable schema/repositories/object-store metadata,ACCEPTED,Integrator,Integrator / database,T002,M0,L,1.0.0,2026-10-20T05:57:38Z,2026-10-20T06:11:35Z,"45 persistence integration tests (fresh/upgrade/restart, constraints, object store, assets); microdrama/evidence/T003.md",
 T004,"Workflow state, outbox, jobs and idempotency",TODO,,Core,T003,M1,L,1.0.0,,,,
 T005,Atomic US$10 budget/usage accounting,TODO,,Cost,T003,M1,L,1.0.0,,,,
 T006,"Config, credential references, rights/capability/preset registries",TODO,,Core / registry,T003,M1,M,1.0.0,,,,
-T007,Deterministic fake-provider/media fixture harness,TODO,,Validator,T002,M0,M,1.0.0,,,,
+T007,Deterministic fake-provider/media fixture harness,IN_PROGRESS,Validator lane (fixtures worker),Validator,T002,M0,M,1.0.0,2026-10-20T05:57:38Z,,,
 T008,Two-gate review APIs/UI and approval binding,TODO,,Review,T004;T005;T006;T007,M1,L,1.0.0,,,,
 T009,Bounded source research/proposals/provenance,TODO,,Story,T005;T006;T007,M2,M,1.0.0,,,,
 T010,Bible/canon/scripts/directing playbook/prompts,TODO,,Story,T004;T009,M2,L,1.0.0,,,,
