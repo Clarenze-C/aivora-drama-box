@@ -1,6 +1,9 @@
 """V-3: every price unit has a bounded worst case. An under-bounded request is refused by the contract
 (typed ValidationError at construction) and, if it is built past the contract (model_construct /
-model_copy), refused by the service with a typed UnknownPrice before anything is written."""
+model_copy), refused by the service with a typed UnknownPrice before anything is written.
+
+Each unit is reserved under a category that fits it (GPU generation is priced per GPU second only,
+so the one GPU_GENERATION case uses GPU_SECOND)."""
 
 from __future__ import annotations
 
@@ -30,6 +33,20 @@ pytestmark = pytest.mark.db
 
 T0 = datetime(2026, 10, 20, tzinfo=UTC)
 UNIT_PRICE = 1_000
+
+# A category that fits each unit. GPU_GENERATION only ever carries GPU_SECOND (contract, 1.4.0).
+_CATEGORY_FOR_UNIT = {
+    PriceUnit.REQUEST: BudgetCategory.QA_CAPTIONS,
+    PriceUnit.INPUT_TOKEN_1K: BudgetCategory.RESEARCH_SCRIPT_PROMPTS_METADATA,
+    PriceUnit.OUTPUT_TOKEN_1K: BudgetCategory.RESEARCH_SCRIPT_PROMPTS_METADATA,
+    PriceUnit.AUDIO_SECOND: BudgetCategory.REFERENCES_DIALOGUE,
+    PriceUnit.VIDEO_SECOND: BudgetCategory.QA_CAPTIONS,
+    PriceUnit.GPU_SECOND: BudgetCategory.GPU_GENERATION,
+    PriceUnit.IMAGE: BudgetCategory.REFERENCES_DIALOGUE,
+    PriceUnit.CHARACTER_1K: BudgetCategory.REFERENCES_DIALOGUE,
+    PriceUnit.GIGABYTE: BudgetCategory.CPU_STORAGE_TRANSFER,
+}
+assert set(_CATEGORY_FOR_UNIT) == set(PriceUnit)
 
 
 def _ceilings(unit: PriceUnit) -> ExposureCeilings:
@@ -62,7 +79,7 @@ def _request(
         semantic_key=f"v3.{unit.value.lower()}.{worst}",
         scope_kind=BudgetScopeKind.EPISODE,
         episode_id=episode_id,
-        category=BudgetCategory.GPU_GENERATION,
+        category=_CATEGORY_FOR_UNIT[unit],
         queue=QueueName.PRODUCTION,
         provider="live-provider",
         operation_kind="generation.call",
@@ -142,3 +159,4 @@ def test_exact_bound_is_admitted(world: World, unit: PriceUnit) -> None:
         _request(unit, worst=_bound(unit, ceilings), ceilings=ceilings, episode_id=ep.episode_id)
     )
     assert reserved.reserved_micro_usd == _bound(unit, ceilings)
+    assert reserved.category is _CATEGORY_FOR_UNIT[unit]

@@ -339,6 +339,7 @@ class Ledger:
                 settled=amount,
             )
             reservation.settled = amount
+            reservation.accrued = 0  # the accrued usage was replaced by the final amount (V-27)
             reservation.state = ReservationState.SETTLED
             reservation.closed_at = self.now
             reservation.closed_reason = (

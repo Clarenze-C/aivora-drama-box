@@ -1,4 +1,4 @@
-# Contract v1.3.0 — conventions and compatibility notes (guardian-owned)
+# Contract v1.4.0 — conventions and compatibility notes (guardian-owned)
 
 Frozen 2026-10-20 by the integrator/contract guardian (task T002). Python source
 of truth: `src/microdrama/contracts/`. Generated artifacts in this folder are
@@ -117,6 +117,22 @@ below and notifies affected lanes.
 
 ## Change log
 
+- **1.4.0** (2026-10-20, guardian, M1 round-2 findings V-19, V-20, V-21, V-22, V-24, V-30):
+  - `BudgetReservationRequest` refuses a zero unit price (a zero is not a known price).
+  - GPU_GENERATION must be priced per GPU_SECOND, so the timeout bounds it.
+  - `is_shutdown_or_cleanup` also requires `operation_kind` in `cost.CLEANUP_OPERATION_KINDS`
+    (`pod.stop`, `pod.terminate`, `storage.cleanup`); a flagged render is refused.
+  - New `cost.UNMETERED_OPERATION_KINDS` (empty): every provider operation needs a reservation
+    until the guardian adds a reviewed unmetered kind.
+  - New `jobs.API_ENQUEUEABLE_JOB_TYPES`, the closed list `POST /internal/jobs` accepts (schedules,
+    webhook ingestion, status polling, analytics). Gate-dependent work, above all `publish.*`
+    scheduling and submission, is enqueued only in-process by the service that owns its
+    precondition.
+  - `JOB_TRANSITIONS` gains QUEUED → NEEDS_RECONCILIATION and RETRY_WAIT → NEEDS_RECONCILIATION,
+    so a quarantined job never emits a fake `job.running`.
+  Stricter validation plus additive constants; `schema_version` stays `"1.0"` (nothing is
+  persisted outside tests). Impacted lanes: T004, T005, and later T012/T013/T020 (operation kinds,
+  pricing).
 - **1.3.0** (2026-10-20, guardian, M1 validator findings V-1, V-3, V-10, V-12): stricter
   validation plus one additive field. `BudgetReservationRequest`: the worst case must cover
   `unit_price × exposure_units(unit, ceilings)`, where token prices need the matching token

@@ -1377,6 +1377,27 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
         ),
         (
             "BudgetReservationRequest",
+            "render_claiming_cleanup",
+            "a render cannot draw on the shutdown reserve by flagging itself as cleanup",
+            m(budget_reservation_request, _set("is_shutdown_or_cleanup", True)),
+        ),
+        (
+            "BudgetReservationRequest",
+            "zero_unit_price",
+            "a zero unit price is not a known price",
+            m(budget_reservation_request, _set("price.unit_price_micro_usd", 0)),
+        ),
+        (
+            "BudgetReservationRequest",
+            "gpu_priced_per_request",
+            "GPU generation must be priced per GPU second so the timeout bounds it",
+            m(
+                budget_reservation_request,
+                _many(_set("price.unit", "REQUEST"), _set("ceilings.max_units", 1)),
+            ),
+        ),
+        (
+            "BudgetReservationRequest",
             "community_cleanup_flag",
             "only production GPU/recovery/storage cleanup may use the shutdown reserve",
             m(

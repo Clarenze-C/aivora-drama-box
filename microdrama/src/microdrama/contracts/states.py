@@ -97,7 +97,9 @@ RELEASE_TRANSITIONS: Mapping[ReleaseState, frozenset[ReleaseState]] = {
 }
 
 JOB_TRANSITIONS: Mapping[JobStatus, frozenset[JobStatus]] = {
-    J.QUEUED: frozenset({J.RUNNING, J.CANCELLED}),
+    # A queued or retry-waiting job that still has in-flight provider work is quarantined
+    # straight to reconciliation; it never pretends to run (V-30).
+    J.QUEUED: frozenset({J.RUNNING, J.CANCELLED, J.NEEDS_RECONCILIATION}),
     J.RUNNING: frozenset(
         {
             J.SUCCEEDED,
@@ -110,7 +112,7 @@ JOB_TRANSITIONS: Mapping[JobStatus, frozenset[JobStatus]] = {
         }
     ),
     J.WAITING_EXTERNAL: frozenset({J.RUNNING, J.NEEDS_RECONCILIATION, J.CANCELLED}),
-    J.RETRY_WAIT: frozenset({J.QUEUED, J.FAILED, J.CANCELLED}),
+    J.RETRY_WAIT: frozenset({J.QUEUED, J.FAILED, J.CANCELLED, J.NEEDS_RECONCILIATION}),
     J.NEEDS_RECONCILIATION: frozenset({J.RUNNING, J.SUCCEEDED, J.FAILED}),
     J.SUCCEEDED: frozenset(),
     J.FAILED: frozenset(),

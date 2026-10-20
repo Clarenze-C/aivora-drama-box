@@ -47,6 +47,12 @@
     "model": "BudgetReservationRequest",
     "reason": "money must be integer micro-USD"
   },
+  "examples/v1/invalid/BudgetReservationRequest__gpu_priced_per_request.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "GPU generation must be priced per GPU second so the timeout bounds it"
+  },
   "examples/v1/invalid/BudgetReservationRequest__gpu_time_beyond_reserved_units.json": {
     "expect": "invalid",
     "json_schema_rejects": false,
@@ -58,6 +64,12 @@
     "json_schema_rejects": true,
     "model": "BudgetReservationRequest",
     "reason": "timeout ceiling required"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__render_claiming_cleanup.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "a render cannot draw on the shutdown reserve by flagging itself as cleanup"
   },
   "examples/v1/invalid/BudgetReservationRequest__token_ceiling_beyond_reserved_units.json": {
     "expect": "invalid",
@@ -76,6 +88,12 @@
     "json_schema_rejects": false,
     "model": "BudgetReservationRequest",
     "reason": "worst case below price x units"
+  },
+  "examples/v1/invalid/BudgetReservationRequest__zero_unit_price.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BudgetReservationRequest",
+    "reason": "a zero unit price is not a known price"
   },
   "examples/v1/invalid/CapabilityRecord__enabled_without_evidence.json": {
     "expect": "invalid",

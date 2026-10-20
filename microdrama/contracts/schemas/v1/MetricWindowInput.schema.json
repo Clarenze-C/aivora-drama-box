@@ -10,7 +10,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.3.0:MetricWindowInput",
+  "$id": "urn:microdrama:contracts:1.4.0:MetricWindowInput",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

@@ -69,6 +69,14 @@ def synthetic_quote(unit_price_micro_usd: int = 1) -> PriceQuote:
     return base.model_copy(update={"unit_price_micro_usd": unit_price_micro_usd})
 
 
+def default_operation_kind(category: BudgetCategory, cleanup: bool) -> str:
+    """A valid operation kind for the category: a cleanup kind for shutdown/cleanup requests (the
+    contract refuses any other kind when the flag is set), otherwise a paid render kind."""
+    if cleanup:
+        return "storage.cleanup" if category is CPU else "pod.stop"
+    return "gpu.render_shot" if category is GPU else "generation.call"
+
+
 def request_for(
     *,
     key: str,
@@ -81,13 +89,16 @@ def request_for(
     expires_at: datetime = T0 + timedelta(hours=1),
     price: Any = "default",
     provider: str = "fake-runpod",
-    operation_kind: str = "gpu.render_shot",
+    operation_kind: str | None = None,
     job_id: uuid.UUID | None = None,
+    ceilings: ExposureCeilings | None = None,
 ) -> BudgetReservationRequest:
     """A valid reservation request. Retries of one logical step reuse the same arguments."""
     research = season_id is not None and episode_id is None
     if not research and episode_id is None:
         episode_id = DEFAULT_EPISODE_ID
+    if operation_kind is None:
+        operation_kind = default_operation_kind(category, cleanup)
     if price == "default":
         price = synthetic_quote()
     return BudgetReservationRequest(
@@ -102,7 +113,7 @@ def request_for(
         provider=provider,
         operation_kind=operation_kind,
         price=price,
-        ceilings=ExposureCeilings(timeout_ms=1_000, max_units=1),
+        ceilings=ceilings or ExposureCeilings(timeout_ms=1_000, max_units=1),
         worst_case_micro_usd=worst,
         is_shutdown_or_cleanup=cleanup,
         expires_at=expires_at,
@@ -392,6 +403,12 @@ def assert_consistent(db: Database, account_id: uuid.UUID) -> dict[str, int]:
         # holds its one SETTLEMENT plus the ADJUSTMENTs applied after it (late billing); a RELEASED
         # reservation holds only late ADJUSTMENTs; an open reservation has none.
         mine = by_reservation.get(res["id"], [])
+        if res["state"] in ("SETTLED", "RELEASED"):
+            # Closed rows hold no accrued usage: a settlement replaces it, a release needs none (V-27).
+            assert res["accrued_micro_usd"] == 0, (
+                f"closed reservation {res['id']} ({res['state']}) keeps accrued "
+                f"{res['accrued_micro_usd']}"
+            )
         if res["state"] == "SETTLED":
             settlements = [c for c in mine if c["kind"] == "SETTLEMENT"]
             assert len(settlements) == 1, (

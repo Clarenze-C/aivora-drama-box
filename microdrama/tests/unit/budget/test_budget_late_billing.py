@@ -12,13 +12,12 @@ import pytest
 from budget_support import GPU, T0, World, fake_receipt, request_for
 
 from microdrama.contracts.cost import ProviderOperation
-from microdrama.contracts.enums import PriceUnit, ProviderOperationState, ReceiptKind
+from microdrama.contracts.enums import ProviderOperationState, ReceiptKind
 from microdrama.contracts.errors import Conflict
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.providers import ImageRequest
 from microdrama.persistence import Database
 from microdrama.testing.fakes import FakeClock, FakeGenerationProvider, SequentialIds
-from microdrama.testing.fakes.common import fake_price_quote
 from microdrama.testing.fakes.generation import GenerationScenario
 
 pytestmark = pytest.mark.db
@@ -175,7 +174,8 @@ def test_t007_late_billing_fake_records_accrual_then_adjustment(
     """The fake's LATE_BILLING scenario: the base usage is an ACCRUAL, and the next status adds an
     ADJUSTMENT. Both land on the open reservation, and neither is refused."""
     ep = world.episode()
-    price = fake_price_quote(PriceUnit.IMAGE)
+    # The fake books image usage in the GPU category, and GPU generation is priced per GPU second
+    # (contract 1.4.0). The worst case of 100,000 covers the 20,000 base and the 10,000 adjustment.
     reservation = world.service.reserve(
         request_for(
             key="v5.fake.late",
@@ -184,7 +184,6 @@ def test_t007_late_billing_fake_records_accrual_then_adjustment(
             category=GPU,
             provider="fake-generation",
             operation_kind="generation.submit",
-            price=price,
         )
     )
     fake = FakeGenerationProvider(

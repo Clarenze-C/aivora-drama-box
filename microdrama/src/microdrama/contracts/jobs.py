@@ -260,4 +260,21 @@ JOB_SPECS_BY_TYPE: dict[str, JobSpec] = {spec.job_type: spec for spec in JOB_SPE
 
 # The janitor is an independently scheduled process, not a queue job, so a blocked
 # queue/worker can never stop orphan-GPU cleanup (SPEC §6, §8).
+# Job types an operator (scheduler/worker credential) may enqueue directly through
+# ``POST /internal/jobs``: schedules, webhook ingestion, status polling and analytics. Every
+# other type (story compilation, rendering, QA, packaging and above all publication) is enqueued
+# only in-process by the service that owns its precondition (a gate approval, a repair plan, a
+# release DAG), so a credential can never start it out of order (V-22).
+API_ENQUEUEABLE_JOB_TYPES: frozenset[str] = frozenset(
+    {
+        "research.collect_and_propose",
+        "publish.poll_status",
+        "publish.reconcile_slot",
+        "community.ingest_event",
+        "membership.sync_catalog",
+        "analytics.snapshot",
+        "analytics.qualification",
+    }
+)
+
 JANITOR_ENTRYPOINT = "microdrama.rendering.janitor:main"

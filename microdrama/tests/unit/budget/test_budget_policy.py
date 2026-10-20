@@ -150,32 +150,43 @@ def test_split_matches_the_documented_example() -> None:
 
 
 @pytest.mark.parametrize(
-    ("queue", "category"),
+    ("category", "operation_kind"),
     [
-        (QueueName.PRODUCTION, GPU),
-        (QueueName.PRODUCTION, RECOVERY),
-        (QueueName.PRODUCTION, CPU),
+        (GPU, "pod.stop"),
+        (GPU, "pod.terminate"),
+        (RECOVERY, "pod.stop"),
+        (CPU, "storage.cleanup"),
+        (RECOVERY, "storage.cleanup"),
     ],
 )
-def test_shutdown_grant_is_given_to_production_cleanup_only(
-    queue: QueueName, category: BudgetCategory
+def test_shutdown_grant_is_given_to_production_cleanup_of_a_matching_category(
+    category: BudgetCategory, operation_kind: str
 ) -> None:
-    assert policy.shutdown_grant(queue, category, requested=True) is True
-    assert policy.shutdown_grant(queue, category, requested=False) is False
+    assert (
+        policy.shutdown_grant(QueueName.PRODUCTION, category, operation_kind, requested=True)
+        is True
+    )
+    assert (
+        policy.shutdown_grant(QueueName.PRODUCTION, category, operation_kind, requested=False)
+        is False
+    )
 
 
 @pytest.mark.parametrize(
-    ("queue", "category"),
+    ("queue", "category", "operation_kind"),
     [
-        (QueueName.PRODUCTION, QA),
-        (QueueName.PRODUCTION, METERED),
-        (QueueName.PUBLICATION, CPU),
-        (QueueName.COMMUNITY, METERED),
+        (QueueName.PRODUCTION, GPU, "gpu.render_shot"),  # a flagged render (V-19)
+        (QueueName.PRODUCTION, GPU, "storage.cleanup"),  # storage cleanup is not a GPU category
+        (QueueName.PRODUCTION, CPU, "pod.stop"),  # pod stops are not CPU work
+        (QueueName.PRODUCTION, QA, "pod.stop"),
+        (QueueName.PRODUCTION, METERED, "pod.stop"),
+        (QueueName.PUBLICATION, CPU, "storage.cleanup"),
+        (QueueName.COMMUNITY, METERED, "pod.stop"),
     ],
 )
-def test_shutdown_grant_refuses_every_other_queue_and_category(
-    queue: QueueName, category: BudgetCategory
+def test_shutdown_grant_refuses_every_other_queue_category_and_operation(
+    queue: QueueName, category: BudgetCategory, operation_kind: str
 ) -> None:
-    assert policy.shutdown_grant(queue, category, requested=False) is False
+    assert policy.shutdown_grant(queue, category, operation_kind, requested=False) is False
     with pytest.raises(PolicyDenied):
-        policy.shutdown_grant(queue, category, requested=True)
+        policy.shutdown_grant(queue, category, operation_kind, requested=True)

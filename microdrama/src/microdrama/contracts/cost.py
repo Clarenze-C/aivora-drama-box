@@ -78,6 +78,17 @@ CLEANUP_CATEGORIES: frozenset[BudgetCategory] = frozenset(
 )
 
 
+# The only operations that may draw on the shutdown reserve: stopping/terminating owned pods and
+# cleaning up storage. A flag on any other operation (for example a render) is refused (V-19).
+CLEANUP_OPERATION_KINDS: frozenset[str] = frozenset(
+    {"pod.stop", "pod.terminate", "storage.cleanup"}
+)
+
+# Provider operation kinds that need no budget reservation. Empty in this build: every provider
+# operation is treated as paid until the guardian adds a reviewed unmetered kind (V-24).
+UNMETERED_OPERATION_KINDS: frozenset[str] = frozenset()
+
+
 def _ceil_div(value: int, divisor: int) -> int:
     return -(-value // divisor)
 
@@ -137,6 +148,14 @@ class BudgetReservationRequest(VersionedPayload):
             raise ValueError("episode reservations must name episode_id")
         if self.scope_kind is BudgetScopeKind.SEASON_RESEARCH and self.season_id is None:
             raise ValueError("season research reservations must name season_id")
+        if self.price is not None and self.price.unit_price_micro_usd == 0:
+            raise ValueError("a zero unit price is not a known price; paid dispatch needs one")
+        if (
+            self.price is not None
+            and self.category is BudgetCategory.GPU_GENERATION
+            and self.price.unit is not PriceUnit.GPU_SECOND
+        ):
+            raise ValueError("GPU generation is priced per GPU_SECOND so the timeout bounds it")
         if self.price is not None and self.price.currency == "USD":
             computed = self.price.unit_price_micro_usd * exposure_units(
                 self.price.unit, self.ceilings
@@ -146,11 +165,13 @@ class BudgetReservationRequest(VersionedPayload):
                     "worst_case_micro_usd is below unit_price x the units its ceilings allow"
                 )
         if self.is_shutdown_or_cleanup and (
-            self.queue is not QueueName.PRODUCTION or self.category not in CLEANUP_CATEGORIES
+            self.queue is not QueueName.PRODUCTION
+            or self.category not in CLEANUP_CATEGORIES
+            or self.operation_kind not in CLEANUP_OPERATION_KINDS
         ):
             raise ValueError(
-                "only production GPU/recovery/storage shutdown or cleanup may draw on the "
-                "shutdown reserve"
+                "only production GPU/recovery/storage shutdown or cleanup operations "
+                f"({', '.join(sorted(CLEANUP_OPERATION_KINDS))}) may draw on the shutdown reserve"
             )
         return self
 

@@ -318,7 +318,10 @@ class BudgetService:
         replay of an earlier reservation. A caller that retries after an overrun must not dispatch.
 
         Cleanup: ``is_shutdown_or_cleanup=True`` bypasses only the blocked flag and the shutdown
-        reserve. It still has to fit under the cap, so after an overrun it is usually refused too.
+        reserve, and only for production ``pod.stop``/``pod.terminate`` in GPU or recovery work and
+        ``storage.cleanup`` in CPU/storage or recovery work (policy.shutdown_grant; PolicyDenied for
+        anything else, including a flagged render). It still has to fit under the cap, so after an
+        overrun it is usually refused too.
         The GPU shutdown path therefore must stop the pod whether or not reserve() succeeds, and
         record the interval through record_gpu_interval(), which is not blocked.
 
@@ -334,7 +337,10 @@ class BudgetService:
         # One rule for both the shutdown floor and the blocked-account bypass (PolicyDenied when the
         # flag is set outside production GPU/recovery/storage categories).
         cleanup = policy.shutdown_grant(
-            request.queue, request.category, request.is_shutdown_or_cleanup
+            request.queue,
+            request.category,
+            request.operation_kind,
+            request.is_shutdown_or_cleanup,
         )
         with self._db.transaction() as tx:
             if request.scope_kind is BudgetScopeKind.EPISODE:
@@ -536,6 +542,9 @@ class BudgetService:
         settled). A SETTLEMENT or ACCRUAL there is refused with Conflict and nothing is written. The
         provider adapter must send late billing as ADJUSTMENT and must never drop a Conflict, because
         the spend is still real.
+
+        An ADJUSTMENT is additive. A provider that restates a final total must send the DIFFERENCE
+        between the new total and what was already recorded as an ADJUSTMENT, never the new total.
 
         Refusals (nothing is recorded): UnknownPrice for a non-USD receipt. There is no FX, so the
         spend must be investigated by operators, not dropped. PolicyDenied for a synthetic receipt

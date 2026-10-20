@@ -9,6 +9,7 @@ from __future__ import annotations
 from microdrama.config import Settings
 from microdrama.contracts.cost import (
     CLEANUP_CATEGORIES,
+    CLEANUP_OPERATION_KINDS,
     BudgetReservationRequest,
     UsageReceipt,
     exposure_units,
@@ -18,6 +19,7 @@ from microdrama.contracts.enums import (
     CostBasis,
     ExecutionMode,
     PriceSource,
+    PriceUnit,
     QueueName,
 )
 from microdrama.contracts.errors import PolicyDenied, UnknownPrice
@@ -47,22 +49,40 @@ def check_queue_may_reserve(queue: QueueName, category: BudgetCategory) -> None:
         )
 
 
-def shutdown_grant(queue: QueueName, category: BudgetCategory, requested: bool) -> bool:
+# Which categories each cleanup operation may draw from (defence in depth behind the contract's
+# CLEANUP_CATEGORIES/CLEANUP_OPERATION_KINDS allow-lists): stopping or terminating an owned pod is
+# GPU or recovery work; storage cleanup is CPU/storage or recovery work. A flagged storage.cleanup on
+# a GPU category, or a flagged render, is refused.
+_CLEANUP_CATEGORIES_BY_KIND: dict[str, frozenset[BudgetCategory]] = {
+    "pod.stop": frozenset({BudgetCategory.GPU_GENERATION, RECOVERY_HEADROOM}),
+    "pod.terminate": frozenset({BudgetCategory.GPU_GENERATION, RECOVERY_HEADROOM}),
+    "storage.cleanup": frozenset({BudgetCategory.CPU_STORAGE_TRANSFER, RECOVERY_HEADROOM}),
+}
+assert frozenset(_CLEANUP_CATEGORIES_BY_KIND) == CLEANUP_OPERATION_KINDS
+assert all(categories <= CLEANUP_CATEGORIES for categories in _CLEANUP_CATEGORIES_BY_KIND.values())
+
+
+def shutdown_grant(
+    queue: QueueName, category: BudgetCategory, operation_kind: str, requested: bool
+) -> bool:
     """The one rule for shutdown/cleanup privileges (defence in depth behind the contract).
 
     Returns True when the request may draw on the shutdown reserve and bypass the blocked-account
-    flag: only production shutdown/cleanup in GPU, recovery or storage categories. Any other
-    request that asks for it is refused with PolicyDenied. The result is used for both the reserve
-    floor and the blocked-account bypass, so the two can never disagree.
+    flag: only a production request whose operation is a known cleanup kind and whose category fits
+    that kind (see ``_CLEANUP_CATEGORIES_BY_KIND``). Any other request that asks for it, including a
+    flagged render, is refused with PolicyDenied. The result drives both the reserve floor and the
+    blocked-account bypass, so the two can never disagree.
     """
     if not requested:
         return False
-    if queue is QueueName.PRODUCTION and category in CLEANUP_CATEGORIES:
+    allowed = _CLEANUP_CATEGORIES_BY_KIND.get(operation_kind)
+    if queue is QueueName.PRODUCTION and allowed is not None and category in allowed:
         return True
     raise PolicyDenied(
-        "only production GPU, recovery or storage shutdown/cleanup may use the shutdown reserve",
+        "only production pod stop/terminate or storage cleanup may use the shutdown reserve",
         queue=queue.value,
         category=category.value,
+        operation_kind=operation_kind,
     )
 
 
@@ -86,6 +106,18 @@ def check_price_admissible(request: BudgetReservationRequest, settings: Settings
         raise UnknownPrice(
             "price is not in USD and no FX rate is available; paid dispatch blocked",
             currency=price.currency,
+        )
+    if price.unit_price_micro_usd == 0:
+        # A zero price is not a known price, however large the ceilings are (V-20).
+        raise UnknownPrice(
+            "zero unit price is not a known price; paid dispatch blocked",
+            unit=price.unit.value,
+        )
+    if request.category is BudgetCategory.GPU_GENERATION and price.unit is not PriceUnit.GPU_SECOND:
+        # GPU generation is bounded by its timeout only when priced per GPU second (V-21).
+        raise UnknownPrice(
+            "GPU generation must be priced per GPU_SECOND so the timeout bounds it",
+            unit=price.unit.value,
         )
     try:
         units = exposure_units(price.unit, request.ceilings)
