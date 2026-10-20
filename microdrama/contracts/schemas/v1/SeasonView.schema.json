@@ -685,7 +685,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.0.0:SeasonView",
+  "$id": "urn:microdrama:contracts:1.1.0:SeasonView",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

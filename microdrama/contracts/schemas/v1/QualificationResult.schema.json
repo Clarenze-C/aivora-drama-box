@@ -121,7 +121,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.0.0:QualificationResult",
+  "$id": "urn:microdrama:contracts:1.1.0:QualificationResult",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Rolling ten-episode qualification (IMP-08). One success is never enough.",

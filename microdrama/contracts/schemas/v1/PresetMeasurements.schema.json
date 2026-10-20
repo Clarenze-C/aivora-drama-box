@@ -1,0 +1,87 @@
+{
+  "$id": "urn:microdrama:contracts:1.1.0:PresetMeasurements",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Measured on the intended settings. Text-only speed results never qualify.",
+  "properties": {
+    "acceptance_bp_by_shot_class": {
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9_.\\-]{0,119}$": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "title": "Acceptance Bp By Shot Class",
+      "type": "object"
+    },
+    "cold_start_ms": {
+      "description": "Integer milliseconds > 0",
+      "exclusiveMinimum": 0,
+      "title": "Cold Start Ms",
+      "type": "integer"
+    },
+    "cost_per_accepted_shot_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Cost Per Accepted Shot Micro Usd",
+      "type": "integer"
+    },
+    "cost_per_retained_second_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Cost Per Retained Second Micro Usd",
+      "type": "integer"
+    },
+    "critical_quality_pass_bp": {
+      "description": "0..10000",
+      "maximum": 10000,
+      "minimum": 0,
+      "title": "Critical Quality Pass Bp",
+      "type": "integer"
+    },
+    "downstream_repair_cost_micro_usd": {
+      "default": 0,
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Downstream Repair Cost Micro Usd",
+      "type": "integer"
+    },
+    "measured_at": {
+      "format": "date-time",
+      "title": "Measured At",
+      "type": "string"
+    },
+    "measured_with_references": {
+      "description": "Benchmarked with the reference controls it claims",
+      "title": "Measured With References",
+      "type": "boolean"
+    },
+    "sample_count": {
+      "minimum": 1,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "warm_full_job_ms": {
+      "description": "Integer milliseconds > 0",
+      "exclusiveMinimum": 0,
+      "title": "Warm Full Job Ms",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sample_count",
+    "cold_start_ms",
+    "warm_full_job_ms",
+    "cost_per_accepted_shot_micro_usd",
+    "cost_per_retained_second_micro_usd",
+    "acceptance_bp_by_shot_class",
+    "critical_quality_pass_bp",
+    "measured_with_references",
+    "measured_at"
+  ],
+  "title": "PresetMeasurements",
+  "type": "object"
+}

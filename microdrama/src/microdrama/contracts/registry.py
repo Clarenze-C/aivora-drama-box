@@ -17,6 +17,7 @@ from microdrama.contracts import (
     season,
 )
 from microdrama.contracts.principals import Principal
+from microdrama.contracts.registries import PresetMeasurements, PresetRecord, RightsRecord
 
 # SPEC §4.2 cross-module payloads (each has valid and invalid examples).
 CORE_PAYLOADS: dict[str, type[BaseModel]] = {
@@ -54,6 +55,9 @@ CORE_PAYLOADS: dict[str, type[BaseModel]] = {
 # Supporting payloads: provider boundaries, job inputs and API views.
 SUPPORTING_PAYLOADS: dict[str, type[BaseModel]] = {
     "Principal": Principal,
+    "RightsRecord": RightsRecord,
+    "PresetRecord": PresetRecord,
+    "PresetMeasurements": PresetMeasurements,
     "PublishResult": release.PublishResult,
     "PostMetadata": release.PostMetadata,
     "SourceQuery": providers.SourceQuery,

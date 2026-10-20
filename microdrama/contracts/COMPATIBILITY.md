@@ -41,6 +41,12 @@ below and notifies affected lanes.
 
 ## Change log
 
+- **1.1.0** (2026-10-20, guardian, before M1 dispatch): additive — `RightsRecord`,
+  `PresetRecord`, `PresetMeasurements` (`registries.py`) and enums `RightsSubjectKind`,
+  `RightsStatus`. Reason: SPEC §4.1 rights/preset registries had no shared type, so T006
+  (writer) and T014 (reader) would otherwise define incompatible local schemas. No existing
+  field changed; `schema_version` stays `"1.0"`; all 1.0.0 payloads remain valid. Impacted
+  lanes: T006, T014, T031 (none had started).
 - **1.0.0** (2026-10-20, T002): initial freeze — 29 SPEC §4.2 payloads with valid
   and invalid examples, 38 supporting provider/job/view models, money/time/hash/
   error/state conventions, provider submit/status/reconcile interfaces, route

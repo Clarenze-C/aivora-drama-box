@@ -1,0 +1,56 @@
+{
+  "attention_backend": "sdpa",
+  "base_model_sha256": null,
+  "enabled": true,
+  "evidence": [
+    {
+      "note": null,
+      "recorded_at": null,
+      "ref": "fixture:fake-benchmark",
+      "sha256": null,
+      "source": "FAKE_FIXTURE"
+    }
+  ],
+  "fps": 24,
+  "frames": 97,
+  "gpu_type": "FAKE-GPU-24GB",
+  "height": 1280,
+  "host_ram_gb": 64,
+  "included_speedups": [],
+  "lora_sha256": [],
+  "max_attempt_cost_micro_usd": null,
+  "measured": {
+    "acceptance_bp_by_shot_class": {
+      "dialogue_two_speaker": 6500,
+      "insert": 9000
+    },
+    "cold_start_ms": 180000,
+    "cost_per_accepted_shot_micro_usd": 120000,
+    "cost_per_retained_second_micro_usd": 30000,
+    "critical_quality_pass_bp": 7000,
+    "downstream_repair_cost_micro_usd": 0,
+    "measured_at": "2026-10-20T00:00:00Z",
+    "measured_with_references": true,
+    "sample_count": 12,
+    "warm_full_job_ms": 95000
+  },
+  "min_vram_gb": 24,
+  "model_mode": "image_to_video",
+  "node_pack_sha256": {},
+  "notes": [],
+  "precision": "bf16",
+  "preset_id": "fake-quality-8step",
+  "rights_route_id": "fake-video-route",
+  "schema_version": "1.0",
+  "steps": 8,
+  "supported_controls": [
+    "TEXT_PROMPT",
+    "FIRST_FRAME",
+    "CHARACTER_REFERENCE"
+  ],
+  "supports_thai_dialogue": null,
+  "tier": "quality_eight_step",
+  "version": 1,
+  "width": 720,
+  "workflow_sha256": "85b3b0db6446410d9294258e9594dda7801083b7a60265a340822b1a6a9e6988"
+}

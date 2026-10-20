@@ -159,6 +159,21 @@
     "model": "PodLease",
     "reason": "integer micro-USD"
   },
+  "examples/v1/invalid/PresetRecord__enabled_unmeasured.json": {
+    "expect": "invalid",
+    "model": "PresetRecord",
+    "reason": "presets stay disabled until measured"
+  },
+  "examples/v1/invalid/PresetRecord__enabled_without_rights.json": {
+    "expect": "invalid",
+    "model": "PresetRecord",
+    "reason": "enabled preset needs a rights route"
+  },
+  "examples/v1/invalid/PresetRecord__reference_preset_measured_text_only.json": {
+    "expect": "invalid",
+    "model": "PresetRecord",
+    "reason": "text-only speed cannot certify reference workflows"
+  },
   "examples/v1/invalid/ProviderOperationResult__failed_without_error.json": {
     "expect": "invalid",
     "model": "ProviderOperationResult",
@@ -248,6 +263,21 @@
     "expect": "invalid",
     "model": "RepairPlan",
     "reason": "max two automatic repair rounds"
+  },
+  "examples/v1/invalid/RightsRecord__bad_territory.json": {
+    "expect": "invalid",
+    "model": "RightsRecord",
+    "reason": "ISO alpha-2 or WORLDWIDE"
+  },
+  "examples/v1/invalid/RightsRecord__eligible_without_evidence.json": {
+    "expect": "invalid",
+    "model": "RightsRecord",
+    "reason": "eligibility needs evidence"
+  },
+  "examples/v1/invalid/RightsRecord__unknown_marked_eligible.json": {
+    "expect": "invalid",
+    "model": "RightsRecord",
+    "reason": "unknown commercial use cannot be ELIGIBLE"
   },
   "examples/v1/invalid/Script__duplicate_line_id.json": {
     "expect": "invalid",
@@ -399,6 +429,11 @@
     "expect": "valid",
     "model": "PodLease"
   },
+  "examples/v1/valid/PresetRecord.json": {
+    "canonical_sha256": "b16d13fd531e97e1944eee125441895dbd88f7d63dd710ce8d99ac01c39611d0",
+    "expect": "valid",
+    "model": "PresetRecord"
+  },
   "examples/v1/valid/ProviderOperation.json": {
     "canonical_sha256": "f1cc92684b330115ed86bd43f4234b59ce43d069e0c9483030e7cd3d9cf71d2f",
     "expect": "valid",
@@ -438,6 +473,11 @@
     "canonical_sha256": "058325c5cbaa3a7592a1386958993814eafc8b804bb5f67bcb281ee6a9f9803c",
     "expect": "valid",
     "model": "RepairPlan"
+  },
+  "examples/v1/valid/RightsRecord.json": {
+    "canonical_sha256": "69e9083bf467917d1ebb69c1a1698e73c9c6c6cdd74d6ee3b0c0baf0020cf312",
+    "expect": "valid",
+    "model": "RightsRecord"
   },
   "examples/v1/valid/Script.json": {
     "canonical_sha256": "add5afa37555124fb7c696364ef1c3f5078ed87d38875485ccbdb520c59a6047",

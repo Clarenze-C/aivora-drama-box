@@ -1,0 +1,418 @@
+{
+  "$defs": {
+    "ControlKind": {
+      "description": "Generation controls. Required controls can never be silently dropped.",
+      "enum": [
+        "TEXT_PROMPT",
+        "FIRST_FRAME",
+        "LAST_FRAME",
+        "CHARACTER_REFERENCE",
+        "WARDROBE_REFERENCE",
+        "LOCATION_REFERENCE",
+        "STYLE_REFERENCE",
+        "VOICE_REFERENCE",
+        "AUDIO_DRIVEN_LIPSYNC",
+        "CAMERA_MOTION",
+        "SEED"
+      ],
+      "title": "ControlKind",
+      "type": "string"
+    },
+    "EvidenceRef": {
+      "additionalProperties": false,
+      "description": "Pointer to evidence. A hash proves integrity/identity, not truth or rights.",
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "recorded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recorded At"
+        },
+        "ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        }
+      },
+      "required": [
+        "source",
+        "ref"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "EvidenceSource": {
+      "enum": [
+        "FAKE_FIXTURE",
+        "OFFICIAL_DOCUMENTATION",
+        "CONTROLLED_ACCOUNT_TEST",
+        "MEASURED_BENCHMARK",
+        "LICENSE_DOCUMENT"
+      ],
+      "title": "EvidenceSource",
+      "type": "string"
+    },
+    "PresetMeasurements": {
+      "additionalProperties": false,
+      "description": "Measured on the intended settings. Text-only speed results never qualify.",
+      "properties": {
+        "acceptance_bp_by_shot_class": {
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9_.\\-]{0,119}$": {
+              "description": "0..10000",
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "title": "Acceptance Bp By Shot Class",
+          "type": "object"
+        },
+        "cold_start_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Cold Start Ms",
+          "type": "integer"
+        },
+        "cost_per_accepted_shot_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Cost Per Accepted Shot Micro Usd",
+          "type": "integer"
+        },
+        "cost_per_retained_second_micro_usd": {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Cost Per Retained Second Micro Usd",
+          "type": "integer"
+        },
+        "critical_quality_pass_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Critical Quality Pass Bp",
+          "type": "integer"
+        },
+        "downstream_repair_cost_micro_usd": {
+          "default": 0,
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "title": "Downstream Repair Cost Micro Usd",
+          "type": "integer"
+        },
+        "measured_at": {
+          "format": "date-time",
+          "title": "Measured At",
+          "type": "string"
+        },
+        "measured_with_references": {
+          "description": "Benchmarked with the reference controls it claims",
+          "title": "Measured With References",
+          "type": "boolean"
+        },
+        "sample_count": {
+          "minimum": 1,
+          "title": "Sample Count",
+          "type": "integer"
+        },
+        "warm_full_job_ms": {
+          "description": "Integer milliseconds > 0",
+          "exclusiveMinimum": 0,
+          "title": "Warm Full Job Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sample_count",
+        "cold_start_ms",
+        "warm_full_job_ms",
+        "cost_per_accepted_shot_micro_usd",
+        "cost_per_retained_second_micro_usd",
+        "acceptance_bp_by_shot_class",
+        "critical_quality_pass_bp",
+        "measured_with_references",
+        "measured_at"
+      ],
+      "title": "PresetMeasurements",
+      "type": "object"
+    },
+    "RenderTier": {
+      "enum": [
+        "fast_four_step",
+        "quality_eight_step",
+        "compatible_baseline"
+      ],
+      "title": "RenderTier",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.1.0:PresetRecord",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attention_backend": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Attention Backend",
+      "type": "string"
+    },
+    "base_model_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Base Model Sha256"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRef"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "fps": {
+      "minimum": 1,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "frames": {
+      "minimum": 1,
+      "title": "Frames",
+      "type": "integer"
+    },
+    "gpu_type": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Gpu Type",
+      "type": "string"
+    },
+    "height": {
+      "minimum": 1,
+      "title": "Height",
+      "type": "integer"
+    },
+    "host_ram_gb": {
+      "minimum": 1,
+      "title": "Host Ram Gb",
+      "type": "integer"
+    },
+    "included_speedups": {
+      "description": "Speedups already in the measurement; never stack again",
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Included Speedups",
+      "type": "array"
+    },
+    "lora_sha256": {
+      "items": {
+        "description": "Lowercase SHA-256 hex",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Lora Sha256",
+      "type": "array"
+    },
+    "max_attempt_cost_micro_usd": {
+      "anyOf": [
+        {
+          "description": "Integer micro-USD (no floats)",
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Attempt Cost Micro Usd"
+    },
+    "measured": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PresetMeasurements"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "min_vram_gb": {
+      "minimum": 1,
+      "title": "Min Vram Gb",
+      "type": "integer"
+    },
+    "model_mode": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Model Mode",
+      "type": "string"
+    },
+    "node_pack_sha256": {
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9_.\\-]{0,119}$": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "title": "Node Pack Sha256",
+      "type": "object"
+    },
+    "notes": {
+      "items": {
+        "maxLength": 500,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+    },
+    "precision": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Precision",
+      "type": "string"
+    },
+    "preset_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Preset Id",
+      "type": "string"
+    },
+    "rights_route_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rights Route Id"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "steps": {
+      "minimum": 1,
+      "title": "Steps",
+      "type": "integer"
+    },
+    "supported_controls": {
+      "items": {
+        "$ref": "#/$defs/ControlKind"
+      },
+      "minItems": 1,
+      "title": "Supported Controls",
+      "type": "array"
+    },
+    "supports_thai_dialogue": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "None = unknown",
+      "title": "Supports Thai Dialogue"
+    },
+    "tier": {
+      "$ref": "#/$defs/RenderTier"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "width": {
+      "minimum": 1,
+      "title": "Width",
+      "type": "integer"
+    },
+    "workflow_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Workflow Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "preset_id",
+    "version",
+    "tier",
+    "workflow_sha256",
+    "model_mode",
+    "gpu_type",
+    "min_vram_gb",
+    "host_ram_gb",
+    "precision",
+    "width",
+    "height",
+    "frames",
+    "fps",
+    "steps",
+    "attention_backend",
+    "supported_controls"
+  ],
+  "title": "PresetRecord",
+  "type": "object"
+}

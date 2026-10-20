@@ -64,7 +64,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.0.0:IdentityLock",
+  "$id": "urn:microdrama:contracts:1.1.0:IdentityLock",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Created atomically by the episode-one Gate 2 approval (SPEC §5 rule 6).",

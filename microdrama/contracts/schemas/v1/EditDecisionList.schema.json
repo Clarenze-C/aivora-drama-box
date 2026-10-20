@@ -193,7 +193,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.0.0:EditDecisionList",
+  "$id": "urn:microdrama:contracts:1.1.0:EditDecisionList",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Explicit source/timeline cuts. Script text is never turned into shell commands.",

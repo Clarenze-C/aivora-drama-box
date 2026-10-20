@@ -1,0 +1,29 @@
+{
+  "commercial_use": null,
+  "evidence": [
+    {
+      "note": null,
+      "recorded_at": null,
+      "ref": "fixture:fake-voice-license",
+      "sha256": null,
+      "source": "FAKE_FIXTURE"
+    }
+  ],
+  "expires_at": "2027-10-20T00:00:00Z",
+  "output_release_allowed": true,
+  "record_id": "8363068e-028d-54cb-842f-2abc0db17163",
+  "recorded_at": "2026-10-20T00:00:00Z",
+  "required_disclosures": [
+    "SYNTHETIC_VOICE"
+  ],
+  "rights_route_id": "fake-voice-route",
+  "schema_version": "1.0",
+  "status": "ELIGIBLE",
+  "subject_kind": "VOICE",
+  "subject_ref": "fake-thai-voice-v1",
+  "territories": [
+    "TH",
+    "US"
+  ],
+  "version": 1
+}

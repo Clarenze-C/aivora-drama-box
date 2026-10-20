@@ -75,6 +75,8 @@ from microdrama.contracts.enums import (
     RenderTier,
     RepairTarget,
     RepairTrigger,
+    RightsStatus,
+    RightsSubjectKind,
     Severity,
     ShotPattern,
     SlotKind,
@@ -109,6 +111,7 @@ from microdrama.contracts.qa import (
     RepairStep,
     TranscriptSegment,
 )
+from microdrama.contracts.registries import PresetMeasurements, PresetRecord, RightsRecord
 from microdrama.contracts.release import (
     CapabilityRecord,
     CostSummary,
@@ -1057,6 +1060,66 @@ def domain_event() -> DomainEvent:
     )
 
 
+def rights_record() -> RightsRecord:
+    return RightsRecord(
+        record_id=uid("rights-voice-fake"),
+        rights_route_id="fake-voice-route",
+        version=1,
+        subject_kind=RightsSubjectKind.VOICE,
+        subject_ref="fake-thai-voice-v1",
+        territories=["TH", "US"],
+        commercial_use=True,
+        output_release_allowed=True,
+        required_disclosures=[DisclosureKind.SYNTHETIC_VOICE],
+        expires_at=T0 + timedelta(days=365),
+        evidence=[
+            EvidenceRef(source=EvidenceSource.FAKE_FIXTURE, ref="fixture:fake-voice-license")
+        ],
+        status=RightsStatus.ELIGIBLE,
+        recorded_at=T0,
+    )
+
+
+def preset_record() -> PresetRecord:
+    return PresetRecord(
+        preset_id="fake-quality-8step",
+        version=1,
+        tier=RenderTier.QUALITY_EIGHT_STEP,
+        workflow_sha256=h("workflow"),
+        model_mode="image_to_video",
+        gpu_type="FAKE-GPU-24GB",
+        min_vram_gb=24,
+        host_ram_gb=64,
+        precision="bf16",
+        width=720,
+        height=1280,
+        frames=97,
+        fps=24,
+        steps=8,
+        attention_backend="sdpa",
+        supported_controls=[
+            ControlKind.TEXT_PROMPT,
+            ControlKind.FIRST_FRAME,
+            ControlKind.CHARACTER_REFERENCE,
+        ],
+        supports_thai_dialogue=None,
+        rights_route_id="fake-video-route",
+        measured=PresetMeasurements(
+            sample_count=12,
+            cold_start_ms=180_000,
+            warm_full_job_ms=95_000,
+            cost_per_accepted_shot_micro_usd=120_000,
+            cost_per_retained_second_micro_usd=30_000,
+            acceptance_bp_by_shot_class={"dialogue_two_speaker": 6_500, "insert": 9_000},
+            critical_quality_pass_bp=7_000,
+            measured_with_references=True,
+            measured_at=T0,
+        ),
+        evidence=[EvidenceRef(source=EvidenceSource.FAKE_FIXTURE, ref="fixture:fake-benchmark")],
+        enabled=True,
+    )
+
+
 VALID_BUILDERS: dict[str, Callable[[], BaseModel]] = {
     "SeasonScope": season_scope,
     "ApprovalCommand": approval_gate1,
@@ -1091,6 +1154,8 @@ VALID_BUILDERS: dict[str, Callable[[], BaseModel]] = {
 
 EXTRA_VALID: dict[str, Callable[[], BaseModel]] = {
     "ApprovalCommand__gate2_revise": approval_gate2_revise,
+    "RightsRecord": rights_record,
+    "PresetRecord": preset_record,
 }
 
 
@@ -1565,6 +1630,43 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             "oversized_payload",
             "bounded payload",
             m(domain_event, _set("payload", {"blob": "x" * 20_000})),
+        ),
+        # contract 1.1.0 registry records
+        (
+            "RightsRecord",
+            "unknown_marked_eligible",
+            "unknown commercial use cannot be ELIGIBLE",
+            m(rights_record, _set("commercial_use", None)),
+        ),
+        (
+            "RightsRecord",
+            "eligible_without_evidence",
+            "eligibility needs evidence",
+            m(rights_record, _set("evidence", [])),
+        ),
+        (
+            "RightsRecord",
+            "bad_territory",
+            "ISO alpha-2 or WORLDWIDE",
+            m(rights_record, _set("territories", ["Thailand"])),
+        ),
+        (
+            "PresetRecord",
+            "enabled_unmeasured",
+            "presets stay disabled until measured",
+            m(preset_record, _set("measured", None)),
+        ),
+        (
+            "PresetRecord",
+            "reference_preset_measured_text_only",
+            "text-only speed cannot certify reference workflows",
+            m(preset_record, _set("measured.measured_with_references", False)),
+        ),
+        (
+            "PresetRecord",
+            "enabled_without_rights",
+            "enabled preset needs a rights route",
+            m(preset_record, _set("rights_route_id", None)),
         ),
     ]
     return cases

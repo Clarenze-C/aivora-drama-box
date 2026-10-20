@@ -17,7 +17,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[3]
 
 def test_every_spec_payload_has_valid_and_invalid_examples() -> None:
     assert set(VALID_BUILDERS) == set(CORE_PAYLOADS)
-    assert {case[0] for case in invalid_cases()} == set(CORE_PAYLOADS)
+    assert {case[0] for case in invalid_cases()} >= set(CORE_PAYLOADS)
     assert len(CORE_PAYLOADS) == 29
 
 
@@ -31,7 +31,7 @@ def test_committed_contracts_match_source() -> None:
 
 def test_version_file() -> None:
     assert (
-        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "1.0.0"
+        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "1.1.0"
     )
 
 

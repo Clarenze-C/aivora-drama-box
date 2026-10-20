@@ -547,3 +547,23 @@ class SourceQuality(StrEnum):
     PUBLIC_COMMENTS = "PUBLIC_COMMENTS"  # qualitative clues only
     UNVERIFIED = "UNVERIFIED"
     FIXTURE = "FIXTURE"  # mock citation; not a real source
+
+
+# --- Registries (contract 1.1.0) ---------------------------------------------------
+
+
+class RightsSubjectKind(StrEnum):
+    MODEL = "MODEL"
+    MODEL_OUTPUT = "MODEL_OUTPUT"
+    VOICE = "VOICE"
+    MUSIC = "MUSIC"
+    FONT = "FONT"
+    REFERENCE = "REFERENCE"
+    STOCK = "STOCK"
+
+
+class RightsStatus(StrEnum):
+    ELIGIBLE = "ELIGIBLE"
+    INELIGIBLE = "INELIGIBLE"
+    UNKNOWN = "UNKNOWN"  # blocks like INELIGIBLE
+    EXPIRED = "EXPIRED"
