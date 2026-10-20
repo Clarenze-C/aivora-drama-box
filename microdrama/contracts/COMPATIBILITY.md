@@ -61,9 +61,22 @@ them by hand.
   heuristic backstop (opaque 32+ character segments, credentials, listed secret query keys).
   It cannot recognise every token shape. T026 must build public/member URLs only from
   verified provider post IDs using a per-provider allow-list of URL shapes, and test it.
-- **Runtime-mode deployment (V-4 residual).** Live deployments must revoke UPDATE on
-  `md_runtime_mode` from application roles. The `/ready` check (T029) must report not-ready
-  when the database's `md_runtime_mode` differs from `Settings.execution_mode`.
+- **Runtime-mode deployment (V-4/N-16 residual).** Every database guard assumes the
+  application role neither owns the tables nor can alter them: a table owner can
+  `DISABLE TRIGGER`. Live deployments must run the application under a role that is not the
+  table owner and has no ALTER/DROP/TRIGGER privilege on the microdrama schema, and that
+  cannot UPDATE `md_runtime_mode`. The `/ready` check (T029) must report not-ready when the
+  database's `md_runtime_mode` differs from `Settings.execution_mode` or when the connected
+  role owns the schema's tables. In the offline test databases the migration owner is the
+  application role; that is accepted for OFFLINE_MOCK only.
+- **Caption checks are decision/transition-time (N-17).** The package's own listed tracks are
+  locked while it is APPROVED (0008/0009). A new, unlisted caption track added to the episode
+  after approval is not part of the approved release. T020 must re-check the listed tracks
+  (CURRENT, ACTUAL_AUDIO_ALIGNMENT) before every submit.
+- **Evidence labels are trusted at the database (D3).** The DB cannot tell a fixture mislabelled
+  as MEASURED_BENCHMARK from a real benchmark. Fakes (T007) are tested to emit only FAKE_FIXTURE
+  evidence, and T006 writers must refuse a non-fake evidence source on any record built from
+  `Provenance.FAKE_SYNTHETIC` data.
 - **Floats (V-12/N-1/N-9).** The persistence layer refuses floats in bind parameters and at
   any depth inside JSON documents. Since migration 0009, a generic row trigger also refuses
   any non-integer number anywhere in a stored row, including JSON bound as text. The original

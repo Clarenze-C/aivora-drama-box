@@ -364,11 +364,37 @@ def _asset(tx: Tx, *, sha: str = H) -> uuid.UUID:
     return asset_id
 
 
+def _current_caption(tx: Tx, episode: uuid.UUID) -> uuid.UUID:
+    """The episode's CURRENT actual-audio-aligned Thai track (created on first use)."""
+    track = tx.fetchval(
+        "SELECT id FROM caption_tracks WHERE episode_id = %s AND locale = 'th-TH' AND state = 'CURRENT'",
+        (episode,),
+    )
+    if track is None:
+        track = uuid.uuid4()
+        insert_row(
+            tx,
+            "caption_tracks",
+            {
+                "id": track,
+                "episode_id": episode,
+                "locale": "th-TH",
+                "version": 1,
+                "timing_source": "ACTUAL_AUDIO_ALIGNMENT",
+                "body": jsonb({}),
+                "body_hash": canonical_hash({"t": str(track)}),
+                "state": "CURRENT",
+            },
+        )
+    return track
+
+
 def _package(
     tx: Tx, episode: uuid.UUID, *, version: int = 1, status: str = "READY"
 ) -> tuple[uuid.UUID, str]:
     package_id = uuid.uuid4()
     package_hash = canonical_hash({"p": str(episode), "v": version})
+    track = _current_caption(tx, episode)
     insert_row(
         tx,
         "release_packages",
@@ -377,7 +403,7 @@ def _package(
             "episode_id": episode,
             "version": version,
             "package_hash": package_hash,
-            "body": jsonb({}),
+            "body": jsonb({"caption_track_ids": [str(track)]}),
             "media_hashes": jsonb([H]),
             "management_policy_hash": H,
             "release_scope_hash": H,
@@ -1173,6 +1199,186 @@ class TestRound3Hardening:
             "cost_per_accepted_shot_micro_usd": 1,
         }
         del measured[missing]
+        with pytest.raises(Conflict), db.transaction() as tx:
+            insert_row(
+                tx,
+                "preset_registry",
+                {
+                    "id": uuid.uuid4(),
+                    "preset_id": f"p-{uuid.uuid4().hex[:6]}",
+                    "version": 1,
+                    "tier": "fast_four_step",
+                    "workflow_sha256": H,
+                    "record": jsonb({"measured": measured}),
+                    "enabled": True,
+                    "evidence": jsonb([{"source": "MEASURED_BENCHMARK", "ref": "b"}]),
+                },
+            )
+
+
+class TestRound4Hardening:
+    def test_caption_helper_is_never_null(self, db: Database) -> None:  # N-11
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            for body in (
+                "{}",
+                '{"caption_track_ids": null}',
+                '{"caption_track_ids": "x"}',
+                '{"caption_track_ids": []}',
+            ):
+                value = tx.fetchval(
+                    "SELECT md_package_captions_releasable(%s, %s::jsonb)", (episode, body)
+                )
+                assert value is False, body
+
+    def test_captionless_package_cannot_be_approved(self, db: Database) -> None:  # N-11
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            package_hash = canonical_hash({"captionless": str(episode)})
+            insert_row(
+                tx,
+                "release_packages",
+                {
+                    "id": uuid.uuid4(),
+                    "episode_id": episode,
+                    "version": 1,
+                    "package_hash": package_hash,
+                    "body": jsonb({}),
+                    "media_hashes": jsonb([H]),
+                    "management_policy_hash": H,
+                    "release_scope_hash": H,
+                    "status": "READY",
+                },
+            )  # body has no caption_track_ids key
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            _gate2(tx, episode, package_hash)
+
+    def test_consumer_dedupe_and_dispatch_records_are_append_only(
+        self, db: Database
+    ) -> None:  # N-12
+        with db.transaction() as tx:
+            event_id = uuid.uuid4()
+            tx.execute(
+                "INSERT INTO domain_events (event_id, event_type, aggregate_type, aggregate_id, sequence, "
+                "correlation_id, occurred_at, payload) VALUES (%s,'x.y','x',%s,1,%s,%s,'{}'::jsonb)",
+                (event_id, uuid.uuid4(), uuid.uuid4(), T0),
+            )
+            tx.execute(
+                "INSERT INTO event_consumptions (consumer, event_id) VALUES ('c', %s)", (event_id,)
+            )
+            tx.execute(
+                "INSERT INTO event_dispatches (event_id, transport) VALUES (%s, 't')", (event_id,)
+            )
+        for sql in (
+            "DELETE FROM event_consumptions",
+            "UPDATE event_consumptions SET consumer = 'd'",
+            "DELETE FROM event_dispatches",
+            "TRUNCATE event_consumptions",
+        ):
+            with pytest.raises(Conflict), db.transaction() as tx:
+                tx.execute(sql)
+
+    def test_hook_exposure_ledger_is_append_only(self, db: Database) -> None:  # N-13
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            experiment = uuid.uuid4()
+            tx.execute(
+                "INSERT INTO hook_experiments (id, episode_id, body, body_hash) VALUES (%s,%s,'{}'::jsonb,%s)",
+                (experiment, episode, H),
+            )
+            exposure = uuid.uuid4()
+            insert_row(
+                tx,
+                "hook_exposures",
+                {
+                    "id": exposure,
+                    "experiment_id": experiment,
+                    "candidate_id": "hook-a",
+                    "platform": "TIKTOK",
+                    "account_ref": "acct:tt",
+                    "release_slot": "promo",
+                    "cohort": "c1",
+                    "scheduled_utc": T0,
+                    "duration_ms": 25000,
+                },
+            )
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute("UPDATE hook_exposures SET cohort = 'c2' WHERE id = %s", (exposure,))
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute("DELETE FROM hook_exposures WHERE id = %s", (exposure,))
+        post = uuid.uuid4()
+        with (
+            db.transaction() as tx
+        ):  # publishing fills platform_post_id once (FK not enforced here)
+            tx.execute(
+                "UPDATE hook_exposures SET platform_post_id = %s WHERE id = %s", (post, exposure)
+            )
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute(
+                "UPDATE hook_exposures SET platform_post_id = %s WHERE id = %s",
+                (uuid.uuid4(), exposure),
+            )
+
+    def test_identity_and_bookkeeping_rows_are_never_deleted(self, db: Database) -> None:  # N-14
+        with db.transaction() as tx:
+            owner = seed_owner(tx)
+            session = seed_human_session(tx, owner)
+            tx.execute(
+                "INSERT INTO service_credentials (id, principal_id, kind, token_hash) "
+                "VALUES (%s, 'worker-1', 'SERVICE_WORKER', %s)",
+                (uuid.uuid4(), H),
+            )
+            aggregate = uuid.uuid4()
+            tx.execute(
+                "INSERT INTO aggregate_sequences (aggregate_id, aggregate_type, last_sequence) "
+                "VALUES (%s, 'x', 5)",
+                (aggregate,),
+            )
+        statements = [
+            ("DELETE FROM human_sessions WHERE id = %s", (session,)),
+            ("DELETE FROM owners WHERE id = %s", (owner,)),
+            ("DELETE FROM service_credentials WHERE principal_id = 'worker-1'", None),
+            ("DELETE FROM aggregate_sequences WHERE aggregate_id = %s", (aggregate,)),
+            (
+                "UPDATE aggregate_sequences SET last_sequence = 2 WHERE aggregate_id = %s",
+                (aggregate,),
+            ),
+            ("DELETE FROM schema_migrations", None),
+            ("UPDATE schema_migrations SET checksum = 'x'", None),
+        ]
+        for sql, params in statements:
+            with pytest.raises(Conflict), db.transaction() as tx:
+                tx.execute(sql, params)
+        with db.transaction() as tx:  # revocation is a state change, which stays allowed
+            tx.execute("UPDATE human_sessions SET revoked_at = now() WHERE id = %s", (session,))
+            tx.execute(
+                "UPDATE aggregate_sequences SET last_sequence = 6 WHERE aggregate_id = %s",
+                (aggregate,),
+            )
+
+    @pytest.mark.parametrize(
+        "measured",
+        [
+            {
+                "sample_count": 3,
+                "critical_quality_pass_bp": 7000,
+                "cost_per_accepted_shot_micro_usd": None,
+            },
+            {
+                "sample_count": 3,
+                "critical_quality_pass_bp": "7000",
+                "cost_per_accepted_shot_micro_usd": 1,
+            },
+            {
+                "sample_count": "3",
+                "critical_quality_pass_bp": 7000,
+                "cost_per_accepted_shot_micro_usd": 1,
+            },
+        ],
+    )
+    def test_preset_measurements_must_be_numbers(
+        self, db: Database, measured: dict
+    ) -> None:  # N-15
         with pytest.raises(Conflict), db.transaction() as tx:
             insert_row(
                 tx,
