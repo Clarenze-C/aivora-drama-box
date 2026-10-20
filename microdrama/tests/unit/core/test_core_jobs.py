@@ -7,7 +7,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from core_support import CRITIC, WEBHOOK, WORKER
+from core_support import CRITIC, WEBHOOK, WORKER, make_reservation
 
 from microdrama.contracts.cost import ProviderOperationResult, ProviderOperationState
 from microdrama.contracts.enums import JobStatus, Provenance, QueueName
@@ -412,6 +412,7 @@ def test_expired_lease_with_an_in_flight_provider_operation_needs_reconciliation
             deadline_at=clock.now() + timedelta(minutes=10),
             job_id=job.id,
             now=clock.now(),
+            reservation_id=make_reservation(db),
         )
         if state is not ProviderOperationState.PENDING_SUBMIT:
             tx.execute(
@@ -529,6 +530,7 @@ def _link_op(db, clock, job_id, token: str, state: S | None):
             deadline_at=clock.now() + timedelta(minutes=10),
             job_id=job_id,
             now=clock.now(),
+            reservation_id=make_reservation(db),
         )
     if state is not None:
         result = ProviderOperationResult(
@@ -776,6 +778,27 @@ def test_claim_never_runs_a_retry_wait_job_with_an_in_flight_operation(db, jobs,
     assert "job.needs_reconciliation" in _job_events(db, result.job_id)
 
 
+def test_quarantining_a_retry_wait_job_emits_no_queued_or_running_event(db, jobs, clock) -> None:
+    """V-30: RETRY_WAIT -> NEEDS_RECONCILIATION is a direct edge. The job is never queued again, never
+    run, and consumes no attempt."""
+    result = _enqueue(db, jobs, "v30-retry-quarantine")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    jobs.finish(claimed.id, worker_id="w", outcome=RetryLater("TRANSIENT", 0), now=clock.now())
+    _link_op(db, clock, result.job_id, "v30-retry-op", S.UNKNOWN)
+    clock.advance(ms=1)
+    assert jobs.claim(QueueName.PRODUCTION, worker_id="w2", lease_ms=LEASE, now=clock.now()) is None
+    types = _job_events(db, result.job_id)
+    assert types == [
+        "job.enqueued",
+        "job.claimed",
+        "job.retry_wait",
+        "job.needs_reconciliation",
+    ]
+    assert not {"job.queued", "job.running"} & set(types)
+    job = jobs.get(result.job_id)
+    assert job.status is JobStatus.NEEDS_RECONCILIATION and job.attempt == 1
+
+
 def test_claim_quarantines_a_queued_job_with_an_in_flight_operation_and_serves_the_next(
     db, jobs, clock
 ) -> None:
@@ -788,10 +811,9 @@ def test_claim_quarantines_a_queued_job_with_an_in_flight_operation_and_serves_t
     assert blocked_job.status is JobStatus.NEEDS_RECONCILIATION and blocked_job.attempt == 0
     assert "PENDING_SUBMIT" in blocked_job.outcome["detail"]
     types = _job_events(db, blocked.job_id)
-    assert types[-2:] == [
-        "job.running",
-        "job.needs_reconciliation",
-    ]  # the quarantine lease, then the move
+    # V-30: a job that never ran is moved directly; it never emits job.running or claims a lease.
+    assert types == ["job.enqueued", "job.needs_reconciliation"]
+    assert "job.running" not in types and "job.claimed" not in types
 
 
 def test_claim_still_polls_a_waiting_job_whose_operation_is_submitted(db, jobs, clock) -> None:
@@ -892,6 +914,7 @@ def test_recovery_skips_a_job_whose_holder_is_recording_an_external_submission(
                     deadline_at=clock.now() + timedelta(minutes=5),
                     job_id=job.id,
                     now=clock.now(),
+                    reservation_id=make_reservation(db),
                 )
                 holding.set()
                 release.wait(timeout=30)

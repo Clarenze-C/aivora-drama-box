@@ -22,6 +22,7 @@ from core_support import (
     gate1,
     gate2,
     make_human,
+    make_reservation,
     ready_package,
 )
 
@@ -218,6 +219,7 @@ def test_uncertain_external_work_is_never_reported_as_success(db: Database) -> N
             deadline_at=T0 + timedelta(minutes=1),
             job_id=claimed.id,
             now=T0,
+            reservation_id=make_reservation(db),
         )
     jobs.finish(claimed.id, worker_id="w", outcome=NeedsReconciliation(detail="no reply"), now=T0)
     assert jobs.get(queued.job_id).status is JobStatus.NEEDS_RECONCILIATION

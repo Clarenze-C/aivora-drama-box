@@ -8,7 +8,7 @@ and a live review session so the database approval triggers see the real thing.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from microdrama.contracts.enums import (
     ApprovalAction,
@@ -203,3 +203,60 @@ def episode_state(db: Database, episode_id) -> tuple[str, str | None, int]:
 def season_row(db: Database, season_id) -> dict:
     with db.transaction(readonly=True) as tx:
         return tx.fetchone("SELECT * FROM seasons WHERE id = %s", (season_id,))
+
+
+# --- budget reservations (every provider operation needs one: contract 1.4.0, V-24) -------------
+
+
+def make_reservation(db: Database, state: str = "ACTIVE", *, expires_hours: int = 1) -> uuid.UUID:
+    """A reservation row in ``state`` on a fresh episode budget account.
+
+    Raw rows: the budget lane owns the real lifecycle. ``closed_reason`` is set for every closed state,
+    as migration 0012 requires.
+    """
+    with db.transaction() as tx:
+        season = seed_season(tx)
+        episode = seed_episode(tx, season)
+        account = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
+            "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
+            (account, season, episode),
+        )
+        reservation = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO reservations (id, account_id, request_id, semantic_key, request_hash, category, "
+            "queue, provider, operation_kind, price, ceilings, reserved_micro_usd, state, expires_at, "
+            "closed_at, closed_reason) VALUES (%s, %s, %s, %s, %s, 'GPU_GENERATION', 'production', "
+            "'fake-runpod', 'pod', %s, %s, 100, %s, %s, %s, %s)",
+            (
+                reservation,
+                account,
+                uuid.uuid4(),
+                f"res:{reservation}",
+                canonical_hash({"reservation": str(reservation)}),
+                jsonb({}),
+                jsonb({}),
+                state,
+                T0 + timedelta(hours=expires_hours),
+                None if state == "ACTIVE" else T0,
+                None if state == "ACTIVE" else f"test fixture: {state.lower()}",
+            ),
+        )
+    return reservation
+
+
+def linked_job(db: Database) -> uuid.UUID:
+    """A real queued job for provider operations to belong to (``job_id`` is required)."""
+    from microdrama.contracts.jobs import EpisodeStepInput
+    from microdrama.core.jobs import JobService
+    from microdrama.testing.fakes import FakeClock, SequentialIds
+
+    jobs = JobService(db, FakeClock(T0), SequentialIds(f"linked-{uuid.uuid4().hex}"))
+    with db.transaction() as tx:
+        return jobs.enqueue(
+            tx,
+            job_type="qa.technical",
+            semantic_key=f"linked:{uuid.uuid4().hex}",
+            payload=EpisodeStepInput(episode_id=uuid.uuid4()),
+        ).job_id

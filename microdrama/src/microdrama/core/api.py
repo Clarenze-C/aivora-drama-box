@@ -3,9 +3,12 @@
 Exported factory only. The integrator registers the router in ``microdrama.api``.
 
 Kind policy (one allow-list each, in ``core.auth``):
-- ``POST /internal/jobs`` and ``GET /internal/jobs/{id}`` admit ``OPERATOR_KINDS``
-  (SERVICE_WORKER, SCHEDULER). Runtime models only propose; provider webhooks enqueue through their
-  own verified ``/webhooks`` route.
+- ``POST /internal/jobs`` admits ``OPERATOR_KINDS`` (SERVICE_WORKER, SCHEDULER) and only the job
+  types in ``contracts.jobs.API_ENQUEUEABLE_JOB_TYPES``. Anything else is 403 POLICY_DENIED before the
+  payload is validated. Gate-dependent jobs (publish.*, render, submission) are enqueued in-process
+  by their owning service. Runtime models only propose; provider webhooks enqueue through their own
+  verified ``/webhooks`` route.
+- ``GET /internal/jobs/{id}`` admits ``OPERATOR_KINDS``.
 - ``GET /episodes/{id}/events`` admits ``OWNER_OR_OPERATOR_KINDS`` (a HUMAN_OWNER session plus the
   operators). The outbox holds approval decisions, so models and webhooks may not read it.
 Any other kind is 403 ``POLICY_DENIED``; authentication failures stay 401.
@@ -20,7 +23,7 @@ from pydantic import ValidationError
 
 from microdrama.contracts.errors import NotFound, PolicyDenied, SchemaInvalid
 from microdrama.contracts.hashing import canonical_hash
-from microdrama.contracts.jobs import JOB_SPECS_BY_TYPE
+from microdrama.contracts.jobs import API_ENQUEUEABLE_JOB_TYPES, JOB_SPECS_BY_TYPE
 from microdrama.contracts.principals import Principal
 from microdrama.contracts.routes import (
     CommandAccepted,
@@ -77,6 +80,13 @@ def build_router(
             action="enqueue jobs directly",
             error=PolicyDenied,
         )
+        # Closed list (contract 1.4.0): gate-dependent work such as publish.* is enqueued only
+        # in-process by the service that owns its precondition. Refused before payload validation.
+        if body.job_type not in API_ENQUEUEABLE_JOB_TYPES:
+            raise PolicyDenied(
+                "this job type cannot be enqueued through the API",
+                job_type=body.job_type,
+            )
         spec = JOB_SPECS_BY_TYPE.get(body.job_type)
         if spec is None:
             raise SchemaInvalid(f"unknown job type {body.job_type!r}")

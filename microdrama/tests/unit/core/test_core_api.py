@@ -60,28 +60,48 @@ def _worker(auth) -> dict[str, str]:
     return _service(auth, f"worker:{uuid.uuid4().hex[:12]}", PrincipalKind.SERVICE_WORKER)
 
 
+# A valid input for every type in contracts.jobs.API_ENQUEUEABLE_JOB_TYPES (contract 1.4.0).
+ALLOWED_PAYLOADS = {
+    "research.collect_and_propose": lambda: {"season_id": str(uuid.uuid4())},
+    "publish.poll_status": lambda: {"platform_post_id": str(uuid.uuid4())},
+    "publish.reconcile_slot": lambda: {"platform_post_id": str(uuid.uuid4())},
+    "community.ingest_event": lambda: {"community_event_id": str(uuid.uuid4())},
+    "membership.sync_catalog": lambda: {"episode_id": str(uuid.uuid4())},
+    "analytics.snapshot": lambda: {"platform_post_id": str(uuid.uuid4()), "window": "H24"},
+    "analytics.qualification": lambda: {"season_id": str(uuid.uuid4())},
+}
+DEFAULT_JOB_TYPE = "community.ingest_event"
+
+
 def _job_body(
     *,
     key="idem-key-0001",
     semantic="qa:ep:cycle1",
-    episode=None,
-    job_type="qa.technical",
+    job_type=DEFAULT_JOB_TYPE,
     payload=None,
 ) -> dict:
+    if payload is None:
+        payload = ALLOWED_PAYLOADS[job_type]() if job_type in ALLOWED_PAYLOADS else {}
     return {
         "schema_version": "1.0",
         "job_type": job_type,
         "semantic_key": semantic,
-        "input": payload if payload is not None else {"episode_id": str(episode or uuid.uuid4())},
+        "input": payload,
         "idempotency_key": key,
     }
+
+
+def test_the_payload_table_covers_exactly_the_enqueueable_list() -> None:
+    from microdrama.contracts.jobs import API_ENQUEUEABLE_JOB_TYPES, JOB_SPECS_BY_TYPE
+
+    assert set(ALLOWED_PAYLOADS) == set(API_ENQUEUEABLE_JOB_TYPES)
+    assert API_ENQUEUEABLE_JOB_TYPES <= set(JOB_SPECS_BY_TYPE)
 
 
 def test_enqueue_is_202_then_replayed_as_200_with_the_same_job(stack) -> None:
     client, auth = stack["client"], stack["auth"]
     worker = _worker(auth)
-    episode = uuid.uuid4()
-    body = _job_body(key="idem-replay-01", episode=episode)
+    body = _job_body(key="idem-replay-01")
     first = client.post("/internal/jobs", json=body, headers=worker)
     assert first.status_code == 202
     assert first.json()["status"] == "QUEUED"
@@ -93,15 +113,12 @@ def test_enqueue_is_202_then_replayed_as_200_with_the_same_job(stack) -> None:
 
 def test_same_key_with_different_content_is_409(stack) -> None:
     client, auth = stack["client"], stack["auth"]
+    worker = _worker(auth)
     client.post(
-        "/internal/jobs",
-        json=_job_body(key="idem-conflict-1", semantic="a:1"),
-        headers=_worker(auth),
+        "/internal/jobs", json=_job_body(key="idem-conflict-1", semantic="a:1"), headers=worker
     )
     response = client.post(
-        "/internal/jobs",
-        json=_job_body(key="idem-conflict-1", semantic="a:2"),
-        headers=_worker(auth),
+        "/internal/jobs", json=_job_body(key="idem-conflict-1", semantic="a:2"), headers=worker
     )
     assert response.status_code == 409
     assert response.json()["code"] == "IDEMPOTENCY_CONFLICT"
@@ -109,16 +126,17 @@ def test_same_key_with_different_content_is_409(stack) -> None:
 
 def test_a_new_key_for_an_identical_semantic_command_is_a_replay_not_a_second_job(stack) -> None:
     client, auth = stack["client"], stack["auth"]
-    episode = uuid.uuid4()
+    worker = _worker(auth)
+    payload = {"community_event_id": str(uuid.uuid4())}
     first = client.post(
         "/internal/jobs",
-        json=_job_body(key="idem-sem-0001", semantic="qa:same", episode=episode),
-        headers=_worker(auth),
+        json=_job_body(key="idem-sem-0001", semantic="qa:same", payload=payload),
+        headers=worker,
     )
     second = client.post(
         "/internal/jobs",
-        json=_job_body(key="idem-sem-0002", semantic="qa:same", episode=episode),
-        headers=_worker(auth),
+        json=_job_body(key="idem-sem-0002", semantic="qa:same", payload=payload),
+        headers=worker,
     )
     assert first.status_code == 202
     assert second.status_code == 200 and second.json()["status"] == "REPLAYED"
@@ -127,46 +145,138 @@ def test_a_new_key_for_an_identical_semantic_command_is_a_replay_not_a_second_jo
 
 def test_same_semantic_key_with_different_input_is_409(stack) -> None:
     client, auth = stack["client"], stack["auth"]
+    worker = _worker(auth)
     client.post(
-        "/internal/jobs",
-        json=_job_body(key="idem-sem-1001", semantic="qa:clash", episode=uuid.uuid4()),
-        headers=_worker(auth),
+        "/internal/jobs", json=_job_body(key="idem-sem-1001", semantic="qa:clash"), headers=worker
     )
     response = client.post(
-        "/internal/jobs",
-        json=_job_body(key="idem-sem-1002", semantic="qa:clash", episode=uuid.uuid4()),
-        headers=_worker(auth),
+        "/internal/jobs", json=_job_body(key="idem-sem-1002", semantic="qa:clash"), headers=worker
     )
     assert response.status_code == 409
     assert response.json()["code"] == "IDEMPOTENCY_CONFLICT"
 
 
 @pytest.mark.parametrize(
-    "bad_body",
+    "job_type, bad_payload",
     [
-        {"job_type": "no.such.job", "payload": None},
-        {"job_type": "qa.technical", "payload": {"episode_id": "not-a-uuid"}},
-        {"job_type": "qa.technical", "payload": {"episode_id": str(uuid.uuid4()), "unexpected": 1}},
-        {"job_type": "qa.technical", "payload": {}},
+        ("publish.poll_status", {"platform_post_id": "not-a-uuid"}),
+        ("analytics.snapshot", {"platform_post_id": str(uuid.uuid4()), "window": "H25"}),
+        ("community.ingest_event", {}),
+        ("community.ingest_event", {"community_event_id": str(uuid.uuid4()), "unexpected": 1}),
     ],
 )
-def test_invalid_jobs_are_422_schema_invalid(stack, bad_body) -> None:
+def test_invalid_input_for_an_allowed_type_is_422_schema_invalid(
+    stack, job_type, bad_payload
+) -> None:
     client, auth = stack["client"], stack["auth"]
-    body = _job_body(job_type=bad_body["job_type"], payload=bad_body["payload"])
-    response = client.post("/internal/jobs", json=body, headers=_worker(auth))
+    response = client.post(
+        "/internal/jobs",
+        json=_job_body(job_type=job_type, payload=bad_payload),
+        headers=_worker(auth),
+    )
     assert response.status_code == 422
     assert response.json()["code"] == "SCHEMA_INVALID"
 
 
-def test_envelope_episode_must_match_the_job_input(stack) -> None:
+def _unlisted_job_types() -> list[str]:
+    from microdrama.contracts.jobs import API_ENQUEUEABLE_JOB_TYPES, JOB_SPECS
+
+    return [spec.job_type for spec in JOB_SPECS if spec.job_type not in API_ENQUEUEABLE_JOB_TYPES]
+
+
+@pytest.mark.parametrize(
+    "principal_kind",
+    [PrincipalKind.SERVICE_WORKER, PrincipalKind.SCHEDULER],
+    ids=["worker", "scheduler"],
+)
+@pytest.mark.parametrize("job_type", _unlisted_job_types() + ["no.such.job"])
+def test_every_unlisted_job_type_is_403_before_its_payload_is_checked(
+    stack, principal_kind, job_type
+) -> None:
+    """V-22: every type outside the closed list is refused before payload validation. The payload
+    deliberately fits no model, so a 422 here would mean validation ran first."""
+    client, auth = stack["client"], stack["auth"]
+    semantic = f"unlisted:{job_type}:{uuid.uuid4().hex[:6]}"
+    body = _job_body(
+        key=f"idem-unl-{uuid.uuid4().hex[:8]}",
+        semantic=semantic,
+        job_type=job_type,
+        payload={"x": 1},
+    )
+    headers = _service(auth, f"op:{uuid.uuid4().hex[:10]}", principal_kind)
+    response = client.post("/internal/jobs", json=body, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["code"] == "POLICY_DENIED"
+    assert "job_id" not in response.json()
+    with stack["db"].transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM jobs WHERE semantic_key = %s", (semantic,)) == 0
+
+
+@pytest.mark.parametrize("job_type", sorted(ALLOWED_PAYLOADS))
+@pytest.mark.parametrize(
+    "principal_kind",
+    [PrincipalKind.SERVICE_WORKER, PrincipalKind.SCHEDULER],
+    ids=["worker", "scheduler"],
+)
+def test_every_listed_job_type_is_accepted_for_operators(stack, job_type, principal_kind) -> None:
+    client, auth = stack["client"], stack["auth"]
+    response = client.post(
+        "/internal/jobs",
+        json=_job_body(key=f"idem-list-{uuid.uuid4().hex[:8]}", job_type=job_type),
+        headers=_service(auth, f"op:{uuid.uuid4().hex[:10]}", principal_kind),
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "QUEUED"
+
+
+def test_a_scheduler_cannot_enqueue_publish_schedule_release_for_an_unapproved_episode(
+    stack,
+) -> None:
+    """The V-22 probe: a SCHEDULER credential asked for publish.schedule_release on an episode in
+    SCRIPTING, with no approval, and got 202. It is now refused; in-process enqueue still works."""
+    from microdrama.contracts.jobs import EpisodeStepInput
+
+    client, auth, db = stack["client"], stack["auth"], stack["db"]
+    with db.transaction() as tx:
+        episode = seed_episode(tx, seed_season(tx), state=EpisodeState.SCRIPTING.value)
+    body = _job_body(
+        key="idem-probe-schedule",
+        semantic=f"publish.schedule_release:{episode}",
+        job_type="publish.schedule_release",
+        payload={"episode_id": str(episode)},
+    )
+    response = client.post(
+        "/internal/jobs",
+        json=body,
+        headers=_service(auth, "scheduler:probe", PrincipalKind.SCHEDULER),
+    )
+    assert response.status_code == 403 and response.json()["code"] == "POLICY_DENIED"
+    with db.transaction() as tx:
+        result = stack["jobs"].enqueue(
+            tx,
+            job_type="publish.schedule_release",
+            semantic_key=f"publish.schedule_release:{episode}:in-process",
+            payload=EpisodeStepInput(episode_id=episode),
+        )
+    assert result.created is True  # the owning service may still enqueue it in-process
+
+
+def test_envelope_episode_must_match_the_allowed_job_input(stack) -> None:
     client, auth = stack["client"], stack["auth"]
     worker = _worker(auth)
     episode = uuid.uuid4()
-    body = _job_body(key="idem-episode-01", payload={"episode_id": str(episode)})
+    payload = {"episode_id": str(episode)}  # membership.sync_catalog carries an episode
+    body = _job_body(key="idem-episode-01", job_type="membership.sync_catalog", payload=payload)
     body["episode_id"] = str(uuid.uuid4())
     assert client.post("/internal/jobs", json=body, headers=worker).status_code == 422
     body["episode_id"] = str(episode)
-    assert client.post("/internal/jobs", json=body, headers=worker).status_code == 202
+    accepted = client.post("/internal/jobs", json=body, headers=worker)
+    assert accepted.status_code == 202
+    with stack["db"].transaction(readonly=True) as tx:
+        linked = tx.fetchval(
+            "SELECT episode_id FROM jobs WHERE id = %s", (accepted.json()["job_id"],)
+        )
+    assert str(linked) == str(episode)
 
 
 def test_malformed_envelope_is_422(stack) -> None:
@@ -248,9 +358,11 @@ def test_job_status_is_readable_by_a_service_and_404s_for_unknown_ids(stack) -> 
     assert status.status_code == 200
     view = status.json()
     assert (
-        view["status"] == "QUEUED" and view["job_type"] == "qa.technical" and view["attempt"] == 0
+        view["status"] == "QUEUED"
+        and view["job_type"] == "community.ingest_event"
+        and view["attempt"] == 0
     )
-    assert view["queue"] == "production"
+    assert view["queue"] == "community"
     assert client.get(f"/internal/jobs/{uuid.uuid4()}", headers=worker).status_code == 404
     assert client.get(f"/internal/jobs/{job_id}").status_code == 401
 

@@ -296,6 +296,38 @@ class TestGpuLeases:
         )
         return lease
 
+    def test_a_provider_operation_needs_its_job_and_reservation(self, db: Database) -> None:  # 0013
+        with db.transaction() as tx:
+            account, _, episode = _account(tx)
+            lease = self._lease(tx, episode, account)
+            reservation = tx.fetchval(
+                "SELECT reservation_id FROM pod_leases WHERE id = %s", (lease,)
+            )
+            job = seed_job(tx, semantic_key=f"render.shot:{lease}")
+
+        def op(tx: Tx, *, job_id, reservation_id) -> None:
+            insert_row(
+                tx,
+                "provider_operations",
+                {
+                    "id": uuid.uuid4(),
+                    "provider": "fake-runpod",
+                    "operation_kind": "pod.create",
+                    "client_token": f"tok-{uuid.uuid4().hex[:8]}",
+                    "request_hash": H,
+                    "state": "PENDING_SUBMIT",
+                    "deadline_at": T0 + timedelta(hours=1),
+                    "job_id": job_id,
+                    "reservation_id": reservation_id,
+                },
+            )
+
+        for job_id, reservation_id in ((None, reservation), (job, None), (None, None)):
+            with pytest.raises(Conflict), db.transaction() as tx:
+                op(tx, job_id=job_id, reservation_id=reservation_id)
+        with db.transaction() as tx:
+            op(tx, job_id=job, reservation_id=reservation)
+
     def test_a_closed_reservation_records_why_it_closed(self, db: Database) -> None:  # 0012
         with db.transaction() as tx:
             account, _, episode = _account(tx)

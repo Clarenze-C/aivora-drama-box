@@ -21,7 +21,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from microdrama.contracts.cost import ProviderOperation, ProviderOperationResult
+from microdrama.contracts.cost import (
+    UNMETERED_OPERATION_KINDS,
+    ProviderOperation,
+    ProviderOperationResult,
+)
 from microdrama.contracts.enums import ProviderOperationState
 from microdrama.contracts.errors import (
     Conflict,
@@ -99,6 +103,45 @@ def load(tx: Tx, operation_id: UUID) -> ProviderOperation:
     return _operation(row)
 
 
+_IN_FLIGHT_VALUES = [
+    ProviderOperationState.PENDING_SUBMIT.value,
+    ProviderOperationState.SUBMITTED.value,
+    ProviderOperationState.RUNNING.value,
+    ProviderOperationState.UNKNOWN.value,
+]
+
+
+def _lock_linked(tx: Tx, job_id: UUID, reservation_id: UUID | None) -> None:
+    """Serialise operation starts per job, then per reservation (always in this order).
+
+    Transaction-level advisory locks: two begins (or a begin and a resubmit) on the same job or the
+    same reservation cannot both pass the in-flight check before either has committed. The
+    reservation row lock taken by begin (shared) still serialises it with budget release.
+    """
+    tx.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"md-job:{job_id}",))
+    if reservation_id is not None:
+        tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"md-reservation:{reservation_id}",),
+        )
+
+
+def _linked_in_flight(
+    tx: Tx, *, job_id: UUID, reservation_id: UUID | None, exclude: UUID
+) -> list[dict[str, Any]]:
+    """Other operations on the same job or reservation that are still in flight (oldest first)."""
+    return tx.fetchall(
+        "SELECT id, state, job_id, reservation_id FROM provider_operations "
+        "WHERE state = ANY(%s) AND (job_id = %s OR reservation_id = %s) AND id <> %s "
+        "ORDER BY created_at, id",
+        (_IN_FLIGHT_VALUES, job_id, reservation_id, exclude),
+    )
+
+
+def _summary(rows: list[dict[str, Any]]) -> str:
+    return ", ".join(f"{row['id']}={row['state']}" for row in rows)
+
+
 def begin(
     tx: Tx,
     *,
@@ -114,9 +157,18 @@ def begin(
 ) -> ProviderOperation:
     """Record an intended external call (idempotent on ``(provider, client_token)``).
 
-    ``job_id`` is required: recovery (``JobService.requeue_expired``, ``claim``, ``finish``) finds
-    in-flight operations through their job, so an operation without one would be invisible to it.
-    ``now`` comes from the caller's injected clock; this module never reads the wall clock.
+    Rules, all enforced before anything is written:
+    - ``job_id`` is required: recovery finds in-flight operations through their job.
+    - ``reservation_id`` is required unless ``operation_kind`` is in ``UNMETERED_OPERATION_KINDS``
+      (empty in this build). Every paid call is budgeted.
+    - The reservation must be ACTIVE. A shared row lock on it serialises this begin with budget
+      release (which takes FOR UPDATE): if begin wins, release sees the operation and refuses; if
+      release wins, begin sees the closed reservation and refuses.
+    - A replay of an existing ``client_token`` returns that operation (the same request is never
+      sent twice). A new operation is refused while any *other* operation linked to the same job or
+      the same reservation is PENDING_SUBMIT, SUBMITTED, RUNNING or UNKNOWN. The only route to a
+      second submission is reconciliation to NOT_FOUND followed by ``resubmit_allowed``. A NOT_FOUND
+      operation on the same job also refuses a new token, so the resubmission keeps its token.
     """
     if job_id is None:
         raise SchemaInvalid("provider operations must be linked to the job that owns them")
@@ -129,13 +181,15 @@ def begin(
             raise SchemaInvalid(f"{name} must be a non-empty string of at most 500 characters")
     if not isinstance(request_hash, str) or len(request_hash) != 64:
         raise SchemaInvalid("request_hash must be a 64-character SHA-256 hex digest")
+    if reservation_id is None and operation_kind not in UNMETERED_OPERATION_KINDS:
+        raise SchemaInvalid(
+            "every provider operation needs a budget reservation; "
+            f"{operation_kind} is not a registered unmetered kind",
+            operation_kind=operation_kind,
+        )
     deadline = _aware(deadline_at, "deadline_at")
     instant = _aware(now, "now")
     if reservation_id is not None:
-        # A shared lock on the reservation serialises this begin with budget release (which takes
-        # FOR UPDATE): if begin wins, release sees this operation in flight and refuses; if release
-        # wins, begin sees the closed reservation and refuses. An operation never starts on a
-        # reservation that is not ACTIVE.
         reservation = tx.fetchone(
             "SELECT state FROM reservations WHERE id = %s FOR SHARE", (reservation_id,)
         )
@@ -148,14 +202,37 @@ def begin(
                 state=reservation["state"],
             )
 
+    _lock_linked(tx, job_id, reservation_id)
     existing = tx.fetchone(
         "SELECT * FROM provider_operations WHERE provider = %s AND client_token = %s",
         (provider, client_token),
     )
-    if existing is not None:
+    if existing is not None:  # a replay: no new external call, whatever else is in flight
         return _same_request(existing, operation_kind, request_hash)
 
     operation_id = uuid.uuid4()
+    blocking = _linked_in_flight(
+        tx, job_id=job_id, reservation_id=reservation_id, exclude=operation_id
+    )
+    if blocking:
+        raise Conflict(
+            "a provider operation on this job or reservation is still in flight; "
+            "reconcile it before starting another",
+            operations=[{"id": str(row["id"]), "state": row["state"]} for row in blocking],
+            summary=_summary(blocking),
+        )
+    not_found = tx.fetchall(
+        "SELECT id, state FROM provider_operations WHERE job_id = %s AND state = 'NOT_FOUND' "
+        "ORDER BY created_at, id",
+        (job_id,),
+    )
+    if not_found:
+        raise Conflict(
+            "this job has a NOT_FOUND provider operation; resubmit it with resubmit_allowed "
+            "(same client token) instead of starting a new one",
+            operations=[{"id": str(row["id"]), "state": row["state"]} for row in not_found],
+            summary=_summary(not_found),
+        )
     inserted = tx.fetchone(
         "INSERT INTO provider_operations (id, provider, operation_kind, client_token, request_hash, "
         "job_id, reservation_id, state, attempt, deadline_at, episode_id, created_at, updated_at) "
@@ -175,12 +252,12 @@ def begin(
             instant,
         ),
     )
-    if inserted is None:  # a concurrent begin with the same token committed first
+    if inserted is None:  # pragma: no cover - the advisory lock makes this unreachable
         existing = tx.fetchone(
             "SELECT * FROM provider_operations WHERE provider = %s AND client_token = %s",
             (provider, client_token),
         )
-        if existing is None:  # pragma: no cover - defensive
+        if existing is None:
             raise Conflict("provider operation changed during begin; retry")
         return _same_request(existing, operation_kind, request_hash)
     _emit(tx, inserted, instant, None, _S.PENDING_SUBMIT.value)
@@ -264,12 +341,28 @@ def resubmit_allowed(
 ) -> ProviderOperation:
     """Re-arm a NOT_FOUND operation for one more submission. UNKNOWN is refused."""
     instant = _aware(now, "now")
+    peek = tx.fetchone(
+        "SELECT job_id, reservation_id FROM provider_operations WHERE id = %s", (operation_id,)
+    )
+    if peek is None:
+        raise NotFound(f"provider operation {operation_id} not found")
+    _lock_linked(tx, peek["job_id"], peek["reservation_id"])
     row = _lock(tx, operation_id)
     current = ProviderOperationState(row["state"])
     if current is not ProviderOperationState.NOT_FOUND:
         raise InvalidTransition(
             f"only a NOT_FOUND operation may be resubmitted; this one is {current.value}",
             state=current.value,
+        )
+    blocking = _linked_in_flight(
+        tx, job_id=row["job_id"], reservation_id=row["reservation_id"], exclude=operation_id
+    )
+    if blocking:
+        raise Conflict(
+            "another provider operation on this job or reservation is in flight; "
+            "reconcile it before resubmitting",
+            operations=[{"id": str(op["id"]), "state": op["state"]} for op in blocking],
+            summary=_summary(blocking),
         )
     changes: dict[str, Any] = {
         "state": ProviderOperationState.PENDING_SUBMIT.value,

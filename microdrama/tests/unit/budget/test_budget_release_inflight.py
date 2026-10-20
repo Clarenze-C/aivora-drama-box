@@ -18,6 +18,7 @@ from microdrama.contracts.errors import BudgetExhausted, Conflict
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.persistence import Database
 from microdrama.persistence.db import insert_row
+from microdrama.testing.seed import seed_job
 
 pytestmark = pytest.mark.db
 
@@ -30,8 +31,10 @@ IN_FLIGHT = [
 
 
 def _operation(db: Database, reservation_id: uuid.UUID, state: ProviderOperationState) -> uuid.UUID:
+    """A provider operation linked to a real job and to the reservation that pays for it (0013)."""
     op_id = uuid.uuid4()
     with db.transaction() as tx:
+        job_id = seed_job(tx, semantic_key=f"v2.job.{op_id.hex}")
         insert_row(
             tx,
             "provider_operations",
@@ -41,6 +44,7 @@ def _operation(db: Database, reservation_id: uuid.UUID, state: ProviderOperation
                 "operation_kind": "gpu.render_shot",
                 "client_token": f"op-{op_id.hex}",
                 "request_hash": canonical_hash({"op": op_id.hex}),
+                "job_id": job_id,
                 "reservation_id": reservation_id,
                 "state": state.value,
                 "deadline_at": T0 + timedelta(hours=1),

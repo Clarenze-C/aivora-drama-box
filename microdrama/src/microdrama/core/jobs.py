@@ -263,9 +263,6 @@ def _finish_plan(
     raise SchemaInvalid(f"unknown job outcome {type(outcome).__name__}")
 
 
-_QUARANTINE_OWNER = "core:quarantine"
-
-
 def _linked_ops(tx: Tx, job_id: UUID, *, in_flight_only: bool) -> list[dict[str, Any]]:
     """Provider operations linked to a job (``provider_operations.job_id``), oldest first."""
     if in_flight_only:
@@ -452,12 +449,12 @@ class JobService:
         now: datetime,
         attempted: str,
     ) -> dict[str, Any]:
-        """Move a job with in-flight provider work to NEEDS_RECONCILIATION instead of running it.
+        """Move a job with in-flight provider work straight to NEEDS_RECONCILIATION.
 
-        RUNNING -> NEEDS_RECONCILIATION is a direct transition. QUEUED and RETRY_WAIT cannot reach
-        it directly in ``JOB_TRANSITIONS``, so they pass through RUNNING under a zero-length
-        quarantine lease that is cleared in the same transaction. No handler runs and no attempt
-        is consumed.
+        The edges QUEUED -> NEEDS_RECONCILIATION, RETRY_WAIT -> NEEDS_RECONCILIATION and
+        RUNNING -> NEEDS_RECONCILIATION are all in ``JOB_TRANSITIONS``. A quarantined job that never
+        ran therefore emits only ``job.needs_reconciliation``: no ``job.running``, no lease, and no
+        attempt consumed. No handler runs.
         """
         detail = (
             f"{attempted} refused: provider operations still in flight "
@@ -469,25 +466,9 @@ class JobService:
             "attempted": attempted,
             "operations": [{"id": str(op["id"]), "state": op["state"]} for op in ops],
         }
-        current = row
-        if JobStatus(current["status"]) is JobStatus.RETRY_WAIT:
-            current = self._move(tx, current, JobStatus.QUEUED, now=now, changes={})
-        if JobStatus(current["status"]) is JobStatus.QUEUED:
-            current = self._move(
-                tx,
-                current,
-                JobStatus.RUNNING,
-                now=now,
-                changes={
-                    "lease_owner": _QUARANTINE_OWNER,
-                    "lease_expires_at": now,
-                    "heartbeat_at": now,
-                },
-                event={"reason": "quarantine before run"},
-            )
         return self._move(
             tx,
-            current,
+            row,
             JobStatus.NEEDS_RECONCILIATION,
             now=now,
             changes={"error_code": "IN_FLIGHT_PROVIDER_OPERATION", "outcome": outcome},

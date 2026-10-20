@@ -7,9 +7,14 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from core_support import WORKER, linked_job, make_reservation
 
-from microdrama.contracts.cost import ProviderOperation, ProviderOperationResult
-from microdrama.contracts.enums import Provenance
+from microdrama.contracts.cost import (
+    UNMETERED_OPERATION_KINDS,
+    ProviderOperation,
+    ProviderOperationResult,
+)
+from microdrama.contracts.enums import JobStatus, Provenance, QueueName
 from microdrama.contracts.enums import ProviderOperationState as S
 from microdrama.contracts.errors import (
     Conflict,
@@ -37,22 +42,6 @@ H = canonical_hash({"request": "render sh1 attempt 1"})
 H2 = canonical_hash({"request": "a different render"})
 
 
-def _linked_job(db: Database) -> uuid.UUID:
-    """A real job for operations to belong to (``job_id`` is required)."""
-    from microdrama.contracts.jobs import EpisodeStepInput
-    from microdrama.core.jobs import JobService
-    from microdrama.testing.fakes import FakeClock, SequentialIds
-
-    jobs = JobService(db, FakeClock(T0), SequentialIds(f"ops-{uuid.uuid4().hex}"))
-    with db.transaction() as tx:
-        return jobs.enqueue(
-            tx,
-            job_type="qa.technical",
-            semantic_key=f"ops:{uuid.uuid4().hex}",
-            payload=EpisodeStepInput(episode_id=uuid.uuid4()),
-        ).job_id
-
-
 def _begin(
     db: Database,
     token: str = "tok-1",
@@ -63,7 +52,7 @@ def _begin(
     job_id=None,
     provider: str = "fake-comfy",
 ):
-    job = job_id or _linked_job(db)
+    job = job_id or linked_job(db)
     with db.transaction() as tx:
         return begin(
             tx,
@@ -74,6 +63,7 @@ def _begin(
             deadline_at=deadline or T0 + timedelta(minutes=10),
             job_id=job,
             now=T0,
+            reservation_id=make_reservation(db),
         )
 
 
@@ -128,10 +118,12 @@ def test_concurrent_begin_with_one_token_creates_exactly_one_operation(db: Datab
     ids: list[uuid.UUID] = []
     lock = threading.Lock()
     barrier = threading.Barrier(6)
+    job = linked_job(db)
+    reservation = make_reservation(db)
 
     def go() -> None:
         barrier.wait()
-        op = _begin(db, "tok-race")
+        op = _begin_on(db, reservation, "tok-race", job)
         with lock:
             ids.append(op.operation_id)
 
@@ -146,7 +138,7 @@ def test_concurrent_begin_with_one_token_creates_exactly_one_operation(db: Datab
 def test_begin_refuses_bad_inputs(db: Database) -> None:
     with pytest.raises(SchemaInvalid):
         _begin(db, "tok-x", request_hash="short")
-    job = _linked_job(db)
+    job = linked_job(db)
     with pytest.raises(SchemaInvalid), db.transaction() as tx:
         begin(
             tx,
@@ -157,6 +149,7 @@ def test_begin_refuses_bad_inputs(db: Database) -> None:
             deadline_at=datetime(2026, 10, 20, 9, 0),  # naive deadline
             job_id=job,
             now=T0,
+            reservation_id=make_reservation(db),
         )
 
 
@@ -336,6 +329,7 @@ def test_begin_requires_a_job_link_as_a_keyword(db: Database) -> None:
             request_hash=H,
             deadline_at=T0 + timedelta(minutes=5),
             now=T0,
+            reservation_id=make_reservation(db),
         )
     with pytest.raises(SchemaInvalid), db.transaction() as tx:
         begin(
@@ -347,6 +341,7 @@ def test_begin_requires_a_job_link_as_a_keyword(db: Database) -> None:
             deadline_at=T0 + timedelta(minutes=5),
             job_id=None,
             now=T0,
+            reservation_id=make_reservation(db),
         )
     with db.transaction(readonly=True) as tx:
         assert tx.fetchval("SELECT count(*) FROM provider_operations") == before
@@ -404,7 +399,7 @@ def test_needs_reconcile_requires_now(db: Database) -> None:
 def test_provider_events_are_stamped_with_the_injected_instant(db: Database) -> None:
     """The outbox time is exactly the instant the caller injected, not the wall clock."""
     injected = datetime(2031, 3, 4, 5, 6, 7, tzinfo=UTC)
-    job = _linked_job(db)
+    job = linked_job(db)
     with db.transaction() as tx:
         op = begin(
             tx,
@@ -415,6 +410,7 @@ def test_provider_events_are_stamped_with_the_injected_instant(db: Database) -> 
             deadline_at=injected + timedelta(minutes=5),
             job_id=job,
             now=injected,
+            reservation_id=make_reservation(db),
         )
     with db.transaction() as tx:
         record_result(
@@ -431,47 +427,10 @@ def test_provider_events_are_stamped_with_the_injected_instant(db: Database) -> 
 # --- reservation gate: an operation never starts on a reservation that is not ACTIVE ----------
 
 
-def _reservation(db: Database, state: str = "ACTIVE") -> uuid.UUID:
-    """A budget reservation in ``state`` (raw rows; the budget lane owns the real lifecycle)."""
-    from microdrama.persistence.db import jsonb
-    from microdrama.testing.seed import seed_episode, seed_season
-
-    with db.transaction() as tx:
-        season = seed_season(tx)
-        episode = seed_episode(tx, season)
-        account = uuid.uuid4()
-        tx.execute(
-            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
-            "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
-            (account, season, episode),
-        )
-        reservation = uuid.uuid4()
-        tx.execute(
-            "INSERT INTO reservations (id, account_id, request_id, semantic_key, request_hash, category, "
-            "queue, provider, operation_kind, price, ceilings, reserved_micro_usd, state, expires_at, closed_at, "
-            "closed_reason) VALUES (%s, %s, %s, %s, %s, 'GPU_GENERATION', 'production', 'fake-runpod', 'pod', %s, %s, "
-            "100, %s, %s, %s, %s)",
-            (
-                reservation,
-                account,
-                uuid.uuid4(),
-                f"res:{reservation}",
-                H,
-                jsonb({}),
-                jsonb({}),
-                state,
-                T0 + timedelta(hours=1),
-                None if state == "ACTIVE" else T0,
-                None if state == "ACTIVE" else f"test fixture: {state.lower()}",
-            ),
-        )
-    return reservation
-
-
 def _begin_on(
     db: Database, reservation: uuid.UUID, token: str, job: uuid.UUID | None = None
 ) -> ProviderOperation:
-    job_id = job or _linked_job(db)
+    job_id = job or linked_job(db)
     with db.transaction() as tx:
         return begin(
             tx,
@@ -488,7 +447,7 @@ def _begin_on(
 
 @pytest.mark.parametrize("state", ["RELEASED", "SETTLED", "EXPIRED"])
 def test_begin_is_refused_on_a_closed_reservation(db: Database, state: str) -> None:
-    reservation = _reservation(db, state)
+    reservation = make_reservation(db, state)
     token = f"closed-{state}-{uuid.uuid4().hex[:6]}"
     with pytest.raises(Conflict, match="not ACTIVE"), db.transaction() as tx:
         begin(
@@ -498,7 +457,7 @@ def test_begin_is_refused_on_a_closed_reservation(db: Database, state: str) -> N
             client_token=token,
             request_hash=H,
             deadline_at=T0 + timedelta(minutes=10),
-            job_id=_linked_job(db),
+            job_id=linked_job(db),
             reservation_id=reservation,
             now=T0,
         )
@@ -512,7 +471,7 @@ def test_begin_is_refused_on_a_closed_reservation(db: Database, state: str) -> N
 
 
 def test_begin_on_an_active_reservation_is_allowed(db: Database) -> None:
-    reservation = _reservation(db)
+    reservation = make_reservation(db)
     op = _begin_on(db, reservation, f"active-{uuid.uuid4().hex[:6]}")
     with db.transaction(readonly=True) as tx:
         assert (
@@ -532,7 +491,7 @@ def test_begin_refuses_an_unknown_reservation(db: Database) -> None:
             client_token=f"ghost-{uuid.uuid4().hex[:6]}",
             request_hash=H,
             deadline_at=T0 + timedelta(minutes=10),
-            job_id=_linked_job(db),
+            job_id=linked_job(db),
             reservation_id=uuid.uuid4(),
             now=T0,
         )
@@ -545,8 +504,8 @@ def test_begin_holds_a_shared_lock_that_blocks_an_exclusive_release_until_it_com
     reservation. After begin commits, the same lock succeeds."""
     from microdrama.contracts.errors import ServiceUnavailable
 
-    reservation = _reservation(db)
-    job = _linked_job(db)
+    reservation = make_reservation(db)
+    job = linked_job(db)
     token = f"shared-{uuid.uuid4().hex[:6]}"
     with db.transaction() as tx:
         begin(
@@ -636,8 +595,8 @@ def test_release_and_begin_race_never_leaves_released_with_an_operation(db: Data
 
     seen: Counter = Counter()
     for _ in range(15):
-        reservation = _reservation(db)
-        job = _linked_job(db)
+        reservation = make_reservation(db)
+        job = linked_job(db)
         results = _race_round(db, reservation, job, f"race-{uuid.uuid4().hex}")
         with db.transaction(readonly=True) as tx:
             state = tx.fetchval("SELECT state FROM reservations WHERE id = %s", (reservation,))
@@ -651,3 +610,313 @@ def test_release_and_begin_race_never_leaves_released_with_an_operation(db: Data
             assert results["release"] == "refused" and results["begin"] == "operation"
         seen[(state, operations)] += 1
     assert sum(seen.values()) == 15
+
+
+# --- V-23: one in-flight provider operation per job or per reservation --------------------
+
+IN_FLIGHT_STATES = [S.PENDING_SUBMIT, S.SUBMITTED, S.RUNNING, S.UNKNOWN]
+
+
+def _record(db: Database, operation_id: uuid.UUID, state: S) -> None:
+    with db.transaction() as tx:
+        record_result(tx, operation_id, _result(operation_id, state), now=T0)
+
+
+def _refused_tokens(db: Database, token: str) -> int:
+    with db.transaction(readonly=True) as tx:
+        return tx.fetchval(
+            "SELECT count(*) FROM provider_operations WHERE client_token = %s", (token,)
+        )
+
+
+@pytest.mark.parametrize("state", IN_FLIGHT_STATES)
+def test_a_new_operation_is_refused_while_another_on_the_same_job_is_in_flight(
+    db: Database, state: S
+) -> None:
+    first = _begin(db, f"v23-job-{state.value}")
+    _force_state(db, first.operation_id, state)
+    with pytest.raises(Conflict, match="still in flight") as refused:
+        _begin(db, f"v23-job-new-{state.value}", job_id=first.job_id)
+    assert refused.value.details["operations"] == [
+        {"id": str(first.operation_id), "state": state.value}
+    ]
+    assert _refused_tokens(db, f"v23-job-new-{state.value}") == 0  # nothing was written
+
+
+@pytest.mark.parametrize("state", IN_FLIGHT_STATES)
+def test_a_new_operation_is_refused_while_another_on_the_same_reservation_is_in_flight(
+    db: Database, state: S
+) -> None:
+    reservation = make_reservation(db)
+    first = _begin_on(db, reservation, f"v23-rsv-{state.value}", linked_job(db))
+    _force_state(db, first.operation_id, state)
+    with pytest.raises(Conflict, match="still in flight") as refused:
+        _begin_on(db, reservation, f"v23-rsv-new-{state.value}", linked_job(db))
+    assert refused.value.details["operations"] == [
+        {"id": str(first.operation_id), "state": state.value}
+    ]
+    assert _refused_tokens(db, f"v23-rsv-new-{state.value}") == 0
+
+
+@pytest.mark.parametrize("terminal", [S.SUCCEEDED, S.FAILED, S.CANCELLED])
+def test_terminal_operations_do_not_block_a_new_one_on_the_same_job(
+    db: Database, terminal: S
+) -> None:
+    job = linked_job(db)
+    first = _begin(db, f"v23-done-{terminal.value}", job_id=job)
+    _force_state(db, first.operation_id, terminal)
+    second = _begin(db, f"v23-next-{terminal.value}", job_id=job)
+    assert second.operation_id != first.operation_id
+    assert second.state is S.PENDING_SUBMIT
+
+
+def test_a_replay_is_never_blocked_by_an_operation_in_flight(db: Database) -> None:
+    job = linked_job(db)
+    old = _begin(db, "v23-replay-old", job_id=job)
+    _force_state(db, old.operation_id, S.SUCCEEDED)
+    in_flight = _begin(db, "v23-replay-new", job_id=job)
+    # the finished token replays cleanly while the new operation is in flight
+    replay = _begin(db, "v23-replay-old", job_id=job)
+    assert replay.operation_id == old.operation_id and replay.state is S.SUCCEEDED
+    # and the in-flight token replays too: no second external call for it
+    again = _begin(db, "v23-replay-new", job_id=job)
+    assert again.operation_id == in_flight.operation_id
+
+
+def test_operations_on_unrelated_jobs_and_reservations_do_not_block_each_other(
+    db: Database,
+) -> None:
+    first = _begin(db, "v23-indep-a")
+    second = _begin(db, "v23-indep-b")
+    assert first.job_id != second.job_id and first.reservation_id != second.reservation_id
+    assert first.state is second.state is S.PENDING_SUBMIT
+
+
+def test_racing_new_tokens_on_one_job_admit_exactly_one_operation(db: Database) -> None:
+    """Six different tokens, one job, one reservation: the advisory locks make exactly one pass the
+    in-flight check. Without them two could both see an empty job and both insert."""
+    import threading
+
+    job = linked_job(db)
+    reservation = make_reservation(db)
+    barrier = threading.Barrier(6)
+    lock = threading.Lock()
+    admitted: list[uuid.UUID] = []
+    refused: list[str] = []
+    errors: list[BaseException] = []
+
+    def go(index: int) -> None:
+        barrier.wait()
+        try:
+            op = _begin_on(db, reservation, f"v23-race-{index}", job)
+            with lock:
+                admitted.append(op.operation_id)
+        except Conflict:
+            with lock:
+                refused.append(f"v23-race-{index}")
+        except BaseException as exc:  # pragma: no cover - reported below
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=go, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert errors == []
+    assert len(admitted) == 1 and len(refused) == 5
+    with db.transaction(readonly=True) as tx:
+        assert (
+            tx.fetchval("SELECT count(*) FROM provider_operations WHERE job_id = %s", (job,)) == 1
+        )
+
+
+def test_resuming_a_reconciled_job_does_not_clear_an_unknown_operation_for_a_new_begin(
+    db: Database,
+) -> None:
+    """RESUME moves the job back to RUNNING, but the UNKNOWN operation is still in flight, so a new
+    submission on that job is refused and the operator must still reconcile it."""
+    from microdrama.contracts.jobs import EpisodeStepInput
+    from microdrama.core.jobs import JobService, NeedsReconciliation
+    from microdrama.testing.fakes import FakeClock, SequentialIds
+
+    jobs = JobService(db, FakeClock(T0), SequentialIds(f"v23-resume-{uuid.uuid4().hex}"))
+    with db.transaction() as tx:
+        queued = jobs.enqueue(
+            tx,
+            job_type="qa.technical",
+            semantic_key=f"v23:resume:{uuid.uuid4().hex}",
+            payload=EpisodeStepInput(episode_id=uuid.uuid4()),
+        )
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w-1", lease_ms=60_000, now=T0)
+    op = _begin(db, "v23-resume-op", job_id=claimed.id)
+    _force_state(db, op.operation_id, S.UNKNOWN)
+    jobs.finish(claimed.id, worker_id="w-1", outcome=NeedsReconciliation(detail="unknown"), now=T0)
+    resumed = jobs.resolve_reconciliation(
+        queued.job_id,
+        resolution="RESUME",
+        evidence="provider lists nothing for this request yet",
+        actor=WORKER,
+        worker_id="w-2",
+        lease_ms=60_000,
+        now=T0,
+    )
+    assert resumed.status is JobStatus.RUNNING
+    with pytest.raises(Conflict, match="still in flight") as refused:
+        _begin(db, "v23-resume-new", job_id=queued.job_id)
+    assert refused.value.details["operations"] == [{"id": str(op.operation_id), "state": "UNKNOWN"}]
+    assert _begin(db, "v23-resume-op", job_id=queued.job_id).operation_id == op.operation_id
+
+
+def test_a_not_found_operation_blocks_a_new_token_until_it_is_resubmitted_and_settled(
+    db: Database,
+) -> None:
+    job = linked_job(db)
+    first = _begin(db, "v23-nf-token", job_id=job)
+    _record(db, first.operation_id, S.UNKNOWN)
+    _record(db, first.operation_id, S.NOT_FOUND)
+    with pytest.raises(Conflict, match="NOT_FOUND") as refused:
+        _begin(db, "v23-nf-new", job_id=job)
+    assert refused.value.details["operations"] == [
+        {"id": str(first.operation_id), "state": "NOT_FOUND"}
+    ]
+    with db.transaction() as tx:
+        resubmitted = resubmit_allowed(tx, first.operation_id, now=T0)
+    assert resubmitted.state is S.PENDING_SUBMIT and resubmitted.client_token == "v23-nf-token"
+    with pytest.raises(Conflict, match="still in flight"):
+        _begin(db, "v23-nf-new", job_id=job)
+    _record(db, first.operation_id, S.SUCCEEDED)
+    settled = _begin(db, "v23-nf-new", job_id=job)
+    assert settled.operation_id != first.operation_id and settled.state is S.PENDING_SUBMIT
+
+
+def test_resubmit_is_refused_while_another_operation_on_the_same_reservation_is_in_flight(
+    db: Database,
+) -> None:
+    reservation = make_reservation(db)
+    first = _begin_on(db, reservation, "v23-rs-first", linked_job(db))
+    _record(db, first.operation_id, S.UNKNOWN)
+    _record(db, first.operation_id, S.NOT_FOUND)
+    other = _begin_on(db, reservation, "v23-rs-other", linked_job(db))  # NOT_FOUND does not block
+    with pytest.raises(Conflict, match="in flight") as refused, db.transaction() as tx:
+        resubmit_allowed(tx, first.operation_id, now=T0)
+    assert refused.value.details["operations"] == [
+        {"id": str(other.operation_id), "state": "PENDING_SUBMIT"}
+    ]
+    assert load_snapshot(db, first.operation_id).state is S.NOT_FOUND
+    _record(db, other.operation_id, S.SUCCEEDED)
+    with db.transaction() as tx:
+        assert resubmit_allowed(tx, first.operation_id, now=T0).state is S.PENDING_SUBMIT
+
+
+# --- V-24: every metered operation is reserved; the unmetered list is empty -------------------
+
+
+def test_begin_without_a_reservation_is_refused_for_a_metered_kind(db: Database) -> None:
+    job = linked_job(db)
+    with pytest.raises(SchemaInvalid, match="budget reservation"), db.transaction() as tx:
+        begin(
+            tx,
+            provider="fake-comfy",
+            operation_kind="comfy.queue_prompt",
+            client_token="v24-no-reservation",
+            request_hash=H,
+            deadline_at=T0 + timedelta(minutes=10),
+            job_id=job,
+            now=T0,
+        )
+    assert _refused_tokens(db, "v24-no-reservation") == 0
+
+
+def test_the_unmetered_kind_list_is_empty_in_this_build() -> None:
+    assert UNMETERED_OPERATION_KINDS == frozenset()
+
+
+def test_a_listed_unmetered_kind_passes_the_application_guard_but_the_database_refuses_it(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two layers. Listing a kind in UNMETERED_OPERATION_KINDS lets begin() past its application
+    guard, but migration 0013's CHECK ``provider_operations_linked`` still refuses the row (Conflict)
+    until a migration relaxes that check for exactly that kind. A metered kind is refused by the
+    application guard first (SchemaInvalid) before any SQL runs."""
+    monkeypatch.setattr(
+        "microdrama.core.provider_ops.UNMETERED_OPERATION_KINDS", frozenset({"status.probe"})
+    )
+    job = linked_job(db)
+    with pytest.raises(Conflict) as refused, db.transaction() as tx:
+        begin(
+            tx,
+            provider="fake-comfy",
+            operation_kind="status.probe",
+            client_token="v24-unmetered",
+            request_hash=H,
+            deadline_at=T0 + timedelta(minutes=10),
+            job_id=job,
+            now=T0,
+        )
+    assert refused.value.details["constraint"] == "provider_operations_linked"
+    assert (
+        _refused_tokens(db, "v24-unmetered") == 0
+    )  # the database refused the row: nothing written
+
+    with (
+        pytest.raises(SchemaInvalid, match="budget reservation") as metered,
+        db.transaction() as tx,
+    ):
+        begin(
+            tx,
+            provider="fake-comfy",
+            operation_kind="comfy.queue_prompt",
+            client_token="v24-still-metered",
+            request_hash=H,
+            deadline_at=T0 + timedelta(minutes=10),
+            job_id=job,
+            now=T0,
+        )
+    assert not isinstance(metered.value, Conflict)  # refused by the application, not the database
+    assert _refused_tokens(db, "v24-still-metered") == 0
+
+
+def test_a_begin_on_a_job_waits_for_an_uncommitted_begin_on_that_job(db: Database) -> None:
+    """Deterministic form of the V-23 race. While the first begin's transaction is open (holding the
+    job's advisory lock, with its operation uncommitted), a second begin on the same job blocks. It
+    is refused once the first commits. Without the lock it would pass the in-flight check unseen."""
+    import threading
+    from contextlib import ExitStack
+
+    job = linked_job(db)
+    reservation = make_reservation(db)
+    outcome: dict[str, object] = {}
+    stack = ExitStack()
+    try:
+        tx_first = stack.enter_context(db.transaction())
+        first = begin(
+            tx_first,
+            provider="fake-runpod",
+            operation_kind="pod",
+            client_token="v23-held-first",
+            request_hash=H,
+            deadline_at=T0 + timedelta(minutes=10),
+            job_id=job,
+            reservation_id=reservation,
+            now=T0,
+        )
+
+        def second() -> None:
+            try:
+                outcome["op"] = _begin_on(db, reservation, "v23-held-second", job)
+            except Conflict as exc:
+                outcome["refused"] = exc
+
+        worker = threading.Thread(target=second)
+        worker.start()
+        worker.join(timeout=0.5)
+        blocked_while_first_is_open = worker.is_alive()
+    finally:
+        stack.close()  # commits the first begin
+    worker.join(timeout=60)
+    assert blocked_while_first_is_open is True
+    assert "op" not in outcome and isinstance(outcome.get("refused"), Conflict)
+    assert outcome["refused"].details["operations"] == [
+        {"id": str(first.operation_id), "state": "PENDING_SUBMIT"}
+    ]

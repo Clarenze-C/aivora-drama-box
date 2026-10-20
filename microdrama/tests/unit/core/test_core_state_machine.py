@@ -21,6 +21,7 @@ from core_support import (
     gate1,
     gate2,
     make_human,
+    make_reservation,
     ready_package,
     season_row,
 )
@@ -1460,6 +1461,7 @@ def _op_for_episode(
             job_id=job,
             episode_id=episode,
             now=clock.now(),
+            reservation_id=make_reservation(db),
         )
     if state is not None:
         result = ProviderOperationResult(

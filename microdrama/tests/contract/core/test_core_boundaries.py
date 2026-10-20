@@ -152,3 +152,20 @@ def test_outbox_dispatch_is_serialised_by_an_advisory_lock_not_skip_locked() -> 
     text = (CORE / "events.py").read_text(encoding="utf-8")
     assert "pg_advisory_xact_lock" in text
     assert "SKIP LOCKED" not in text
+
+
+def test_provider_begin_refuses_an_unreserved_metered_call_before_it_writes() -> None:
+    """V-24: begin refuses a missing reservation for any kind not on the contract's unmetered list,
+    and that check comes before the INSERT."""
+    text = (CORE / "provider_ops.py").read_text(encoding="utf-8")
+    guard = "reservation_id is None and operation_kind not in UNMETERED_OPERATION_KINDS"
+    assert text.count(guard) == 1
+    assert text.index(guard) < text.index("INSERT INTO provider_operations")
+
+
+def test_the_api_enqueue_gate_is_the_contract_allow_list_and_runs_before_the_spec_lookup() -> None:
+    """V-22: the route gates on API_ENQUEUEABLE_JOB_TYPES before it looks at the payload spec."""
+    text = (CORE / "api.py").read_text(encoding="utf-8")
+    gate = "body.job_type not in API_ENQUEUEABLE_JOB_TYPES"
+    assert text.count(gate) == 1
+    assert text.index(gate) < text.index("JOB_SPECS_BY_TYPE.get(body.job_type)")
