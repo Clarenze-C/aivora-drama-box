@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+{% set s = view.scope %}
+<p class="muted">Gate 1: season concept. Approve or reject this proposal; there is no revise at this gate.</p>
+<section>
+  <h2>Concept</h2>
+  <p><strong>{{ s.title_th }}</strong> / {{ s.title_en }}</p>
+  <p>{{ s.logline }}</p>
+  <p>{{ s.premise }}</p>
+  <p class="muted">Originality: {{ s.originality_statement }}</p>
+  <div>
+    <span class="chip">state {{ view.summary.state | label }}</span>
+    <span class="chip">scope v{{ view.summary.scope_version }}</span>
+    <span class="chip">hash {{ view.summary.scope_hash | short(16) }}</span>
+    <span class="chip">revision {{ view.summary.revision }}</span>
+    <span class="chip">research spend {{ view.summary.research_spend_micro_usd | usd }}</span>
+  </div>
+</section>
+
+<section>
+  <h2>Arc</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Ep</th><th>Summary</th><th>Cliffhanger</th></tr></thead>
+    <tbody>
+    {% for beat in s.arc %}
+      <tr><td>{{ beat.episode_number }}</td><td>{{ beat.summary }}</td><td>{{ beat.cliffhanger or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Characters</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Name</th><th>Role</th><th>Voice direction</th></tr></thead>
+    <tbody>
+    {% for c in s.characters %}
+      <tr><td>{{ c.name_th }} / {{ c.name_en }}</td><td>{{ c.role }}{% if c.featured %} (featured){% endif %}</td><td>{{ c.voice_direction }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Destinations, cadence and management policy</h2>
+  <p>
+    {% for d in s.destinations %}<span class="chip">{{ d.platform | label }} {{ d.account_ref }} ({{ d.slot_kind | label }})</span>{% endfor %}
+  </p>
+  <p>Cadence: {{ s.release_cadence.iana_zone }}, weekdays {{ s.release_cadence.weekdays | join(', ') }}, {{ s.release_cadence.local_times | join(', ') }}</p>
+  <p>Allowed management actions:
+    {% for a in s.management_policy.allowed_actions | sort %}<span class="chip">{{ a | label }}</span>{% endfor %}
+  </p>
+  <p class="hint">Metadata cooldown {{ s.management_policy.metadata_cooldown_hours }} h; at most {{ s.management_policy.max_substantive_edits_first_7_days }} substantive edits in the first 7 days.</p>
+</section>
+
+<section>
+  <h2>Cost policy</h2>
+  <p>Episode cap {{ s.cost_policy.episode_cap_micro_usd | usd }}; paid advertising {{ s.cost_policy.paid_advertising_budget_micro_usd | usd }}; automatic cap increase: {{ 'yes' if s.cost_policy.automatic_cap_increase else 'no' }}.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Category</th><th>Allocation</th></tr></thead>
+    <tbody>
+    {% for cat, amount in s.cost_policy.allocation_micro_usd.items() %}
+      <tr><td>{{ cat | label }}</td><td>{{ amount | usd }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Evidence and uncertainty</h2>
+  <ul>{% for ref in view.evidence_refs %}<li>{{ ref }}</li>{% endfor %}</ul>
+  {% if view.summary.uncertainty_notes %}
+  <p class="warn">Uncertain: </p>
+  <ul>{% for note in view.summary.uncertainty_notes %}<li>{{ note }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+
+{% if can_decide %}
+<section data-testid="gate1">
+  <h2>Decision</h2>
+  <form method="post" action="/ui/seasons/{{ view.summary.season_id }}/approval">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="gate" value="SEASON_CONCEPT">
+    <input type="hidden" name="entity_id" value="{{ view.summary.season_id }}">
+    <input type="hidden" name="expected_revision" value="{{ view.summary.revision }}">
+    <input type="hidden" name="package_hash" value="{{ view.summary.scope_hash }}">
+    <input type="hidden" name="idempotency_key" value="{{ keys.approve }}">
+    <label>Note <textarea name="reason" maxlength="2000"></textarea></label>
+    <button type="submit" name="action" value="APPROVE" data-testid="gate1-approve">Approve season concept</button>
+  </form>
+  <form method="post" action="/ui/seasons/{{ view.summary.season_id }}/approval">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="gate" value="SEASON_CONCEPT">
+    <input type="hidden" name="entity_id" value="{{ view.summary.season_id }}">
+    <input type="hidden" name="expected_revision" value="{{ view.summary.revision }}">
+    <input type="hidden" name="package_hash" value="{{ view.summary.scope_hash }}">
+    <input type="hidden" name="idempotency_key" value="{{ keys.reject }}">
+    <label>Reason for rejecting <textarea name="reason" maxlength="2000"></textarea></label>
+    <button type="submit" class="danger" name="action" value="REJECT">Reject</button>
+  </form>
+</section>
+{% else %}
+<section><p class="muted">No decision is open: the season is {{ view.summary.state | label }}.</p></section>
+{% endif %}
+{% endblock %}

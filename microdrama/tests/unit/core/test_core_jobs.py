@@ -7,15 +7,17 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from core_support import CRITIC, WEBHOOK, WORKER
 
-from microdrama.contracts.cost import ProviderOperationState
-from microdrama.contracts.enums import JobStatus, QueueName
+from microdrama.contracts.cost import ProviderOperationResult, ProviderOperationState
+from microdrama.contracts.enums import JobStatus, Provenance, QueueName
 from microdrama.contracts.errors import (
     Conflict,
     IdempotencyConflict,
     InvalidTransition,
     NotFound,
     SchemaInvalid,
+    Unauthorized,
 )
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.jobs import JOB_SPECS_BY_TYPE, EpisodeStepInput, PlatformPostRef
@@ -30,10 +32,12 @@ from microdrama.core.jobs import (
     WaitExternal,
 )
 from microdrama.core.provider_ops import begin as begin_provider_op
+from microdrama.core.provider_ops import record_result
 from microdrama.persistence import Database
 from microdrama.testing.fakes import FakeClock, SequentialIds
 
 pytestmark = pytest.mark.db
+S = ProviderOperationState  # short alias for the provider-operation states used below
 LEASE = 60_000  # 60 s
 H = canonical_hash({"request": "fixture"})
 
@@ -407,6 +411,7 @@ def test_expired_lease_with_an_in_flight_provider_operation_needs_reconciliation
             request_hash=H,
             deadline_at=clock.now() + timedelta(minutes=10),
             job_id=job.id,
+            now=clock.now(),
         )
         if state is not ProviderOperationState.PENDING_SUBMIT:
             tx.execute(
@@ -448,7 +453,9 @@ def test_reconciliation_needs_evidence(db, jobs, evidence: str) -> None:
     job = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE)
     jobs.finish(job.id, worker_id="w", outcome=NeedsReconciliation(detail="ambiguous"))
     with pytest.raises(SchemaInvalid):
-        jobs.resolve_reconciliation(result.job_id, resolution="SUCCEEDED", evidence=evidence)
+        jobs.resolve_reconciliation(
+            result.job_id, resolution="SUCCEEDED", evidence=evidence, actor=WORKER
+        )
 
 
 def test_reconciliation_resolutions_are_explicit_and_evidenced(db, jobs, clock) -> None:
@@ -456,10 +463,10 @@ def test_reconciliation_resolutions_are_explicit_and_evidenced(db, jobs, clock) 
     job = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE)
     jobs.finish(job.id, worker_id="w", outcome=NeedsReconciliation(detail="ambiguous"))
     with pytest.raises(SchemaInvalid):
-        jobs.resolve_reconciliation(result.job_id, resolution="GUESS", evidence="x")
+        jobs.resolve_reconciliation(result.job_id, resolution="GUESS", evidence="x", actor=WORKER)
     with pytest.raises(SchemaInvalid):  # RESUME needs a worker and a lease
         jobs.resolve_reconciliation(
-            result.job_id, resolution="RESUME", evidence="provider lists the upload"
+            result.job_id, resolution="RESUME", evidence="provider lists the upload", actor=WORKER
         )
     resumed = jobs.resolve_reconciliation(
         result.job_id,
@@ -467,30 +474,333 @@ def test_reconciliation_resolutions_are_explicit_and_evidenced(db, jobs, clock) 
         evidence="provider lists the upload",
         worker_id="w-2",
         lease_ms=LEASE,
+        actor=WORKER,
     )
     assert resumed.status is JobStatus.RUNNING and resumed.lease_owner == "w-2"
     assert resumed.attempt == 1  # resuming is not a new attempt
     with pytest.raises(InvalidTransition):  # not reconciling anymore
-        jobs.resolve_reconciliation(result.job_id, resolution="FAILED", evidence="again")
+        jobs.resolve_reconciliation(
+            result.job_id, resolution="FAILED", evidence="again", actor=WORKER
+        )
     done = jobs.finish(result.job_id, worker_id="w-2", outcome=Succeeded(result={"resumed": True}))
     assert done.status is JobStatus.SUCCEEDED
 
 
-def test_reconciled_success_and_failure_are_recorded_with_evidence(db, jobs) -> None:
-    ok = _enqueue(db, jobs, "resolve:ok")
-    bad = _enqueue(db, jobs, "resolve:bad")
-    for _ in range(2):
-        claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE)
-        jobs.finish(claimed.id, worker_id="w", outcome=NeedsReconciliation(detail="unknown"))
+def _reconciling_job(db, jobs, key: str):
+    """A job that finished with NeedsReconciliation and is waiting for an operator."""
+    result = _enqueue(db, jobs, key)
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE)
+    assert claimed.id == result.job_id
+    jobs.finish(claimed.id, worker_id="w", outcome=NeedsReconciliation(detail="unknown"))
+    return result.job_id
+
+
+def test_reconciled_success_and_failure_are_recorded_with_evidence(db, jobs, clock) -> None:
+    ok = _reconciling_job(db, jobs, "resolve:ok")
+    bad = _reconciling_job(db, jobs, "resolve:bad")
+    _link_op(db, clock, ok, "resolve-ok-op", S.SUCCEEDED)
     succeeded = jobs.resolve_reconciliation(
-        ok.job_id, resolution="SUCCEEDED", evidence="provider receipt 7731"
+        ok, resolution="SUCCEEDED", evidence="provider receipt 7731", actor=WORKER, now=clock.now()
     )
     failed = jobs.resolve_reconciliation(
-        bad.job_id, resolution="FAILED", evidence="provider says never accepted"
+        bad,
+        resolution="FAILED",
+        evidence="no provider operation was ever created",
+        actor=WORKER,
+        now=clock.now(),
     )
     assert succeeded.status is JobStatus.SUCCEEDED and succeeded.outcome["reconciled"] is True
     assert succeeded.outcome["evidence"] == "provider receipt 7731"
     assert failed.status is JobStatus.FAILED and failed.error_code == "RECONCILED_FAILED"
+
+
+# --- V-7: reconciliation needs an operator or owner and provider-operation evidence ---------
+
+
+def _link_op(db, clock, job_id, token: str, state: S | None):
+    """Begin a provider operation for ``job_id`` and record ``state`` through record_result."""
+    with db.transaction() as tx:
+        op = begin_provider_op(
+            tx,
+            provider="fake-comfy",
+            operation_kind="comfy.queue_prompt",
+            client_token=token,
+            request_hash=H,
+            deadline_at=clock.now() + timedelta(minutes=10),
+            job_id=job_id,
+            now=clock.now(),
+        )
+    if state is not None:
+        result = ProviderOperationResult(
+            operation_id=op.operation_id,
+            state=state,
+            error_code="FAKE_REJECTED" if state is S.FAILED else None,
+            provenance=Provenance.FAKE_SYNTHETIC,
+        )
+        with db.transaction() as tx:
+            record_result(tx, op.operation_id, result, now=clock.now())
+    return op.operation_id
+
+
+@pytest.mark.parametrize("actor", [CRITIC, WEBHOOK], ids=["model", "webhook"])
+def test_models_and_webhooks_cannot_resolve_a_reconciliation(db, jobs, clock, actor) -> None:
+    job = _reconciling_job(db, jobs, f"v7-refuse-{uuid.uuid4().hex[:6]}")
+    with pytest.raises(Unauthorized):
+        jobs.resolve_reconciliation(
+            job, resolution="FAILED", evidence="x", actor=actor, now=clock.now()
+        )
+    assert jobs.get(job).status is JobStatus.NEEDS_RECONCILIATION
+
+
+def test_resolve_refuses_a_call_without_an_actor(db, jobs, clock) -> None:
+    job = _reconciling_job(db, jobs, "v7-no-actor")
+    with pytest.raises(TypeError):
+        jobs.resolve_reconciliation(job, resolution="FAILED", evidence="x")  # type: ignore[call-arg]
+    assert jobs.get(job).status is JobStatus.NEEDS_RECONCILIATION
+
+
+@pytest.mark.parametrize("state", [S.PENDING_SUBMIT, S.SUBMITTED, S.RUNNING, S.UNKNOWN])
+def test_succeeded_is_refused_while_a_linked_operation_is_in_flight(db, jobs, clock, state) -> None:
+    job = _reconciling_job(db, jobs, f"v7-inflight-{state.value}")
+    _link_op(
+        db,
+        clock,
+        job,
+        f"v7-inflight-op-{state.value}",
+        None if state is S.PENDING_SUBMIT else state,
+    )
+    with pytest.raises(InvalidTransition, match="not all recorded successes"):
+        jobs.resolve_reconciliation(
+            job, resolution="SUCCEEDED", evidence="free text", actor=WORKER, now=clock.now()
+        )
+    after = jobs.get(job)
+    assert after.status is JobStatus.NEEDS_RECONCILIATION
+    assert "job.succeeded" not in _job_events(db, job)
+
+
+@pytest.mark.parametrize("state", [S.FAILED, S.NOT_FOUND])
+def test_succeeded_is_refused_when_a_linked_operation_is_not_a_success(
+    db, jobs, clock, state
+) -> None:
+    job = _reconciling_job(db, jobs, f"v7-notsuccess-{state.value}")
+    _link_op(db, clock, job, f"v7-notsuccess-op-{state.value}", state)
+    with pytest.raises(InvalidTransition, match="not all recorded successes"):
+        jobs.resolve_reconciliation(
+            job, resolution="SUCCEEDED", evidence="x", actor=WORKER, now=clock.now()
+        )
+
+
+def test_succeeded_is_refused_without_any_linked_operation(db, jobs, clock) -> None:
+    job = _reconciling_job(db, jobs, "v7-no-ops")
+    with pytest.raises(InvalidTransition, match="no provider operation is linked"):
+        jobs.resolve_reconciliation(
+            job, resolution="SUCCEEDED", evidence="x", actor=WORKER, now=clock.now()
+        )
+    assert jobs.get(job).status is JobStatus.NEEDS_RECONCILIATION
+
+
+def test_succeeded_is_refused_when_one_of_two_operations_failed(db, jobs, clock) -> None:
+    job = _reconciling_job(db, jobs, "v7-two-ops")
+    _link_op(db, clock, job, "v7-two-ok", S.SUCCEEDED)
+    _link_op(db, clock, job, "v7-two-bad", S.FAILED)
+    with pytest.raises(InvalidTransition, match="not all recorded successes"):
+        jobs.resolve_reconciliation(
+            job, resolution="SUCCEEDED", evidence="x", actor=WORKER, now=clock.now()
+        )
+
+
+def test_succeeded_is_allowed_when_every_linked_operation_is_a_recorded_success(
+    db, jobs, clock
+) -> None:
+    job = _reconciling_job(db, jobs, "v7-all-ok")
+    op = _link_op(db, clock, job, "v7-all-ok-op", S.SUCCEEDED)
+    done = jobs.resolve_reconciliation(
+        job, resolution="SUCCEEDED", evidence="receipt", actor=WORKER, now=clock.now()
+    )
+    assert done.status is JobStatus.SUCCEEDED and done.outcome["operations"] == [str(op)]
+
+
+@pytest.mark.parametrize("state", [S.PENDING_SUBMIT, S.SUBMITTED, S.RUNNING, S.UNKNOWN])
+def test_failed_is_refused_while_an_operation_is_in_flight(db, jobs, clock, state) -> None:
+    job = _reconciling_job(db, jobs, f"v7-failed-{state.value}")
+    _link_op(
+        db, clock, job, f"v7-failed-op-{state.value}", None if state is S.PENDING_SUBMIT else state
+    )
+    with pytest.raises(InvalidTransition, match="in flight"):
+        jobs.resolve_reconciliation(
+            job, resolution="FAILED", evidence="x", actor=WORKER, now=clock.now()
+        )
+
+
+def test_failed_is_allowed_once_linked_operations_are_terminal(db, jobs, clock) -> None:
+    job = _reconciling_job(db, jobs, "v7-failed-terminal")
+    _link_op(db, clock, job, "v7-failed-terminal-op", S.NOT_FOUND)
+    failed = jobs.resolve_reconciliation(
+        job, resolution="FAILED", evidence="provider never accepted", actor=WORKER, now=clock.now()
+    )
+    assert failed.status is JobStatus.FAILED
+
+
+def test_resume_is_allowed_regardless_of_in_flight_operations(db, jobs, clock) -> None:
+    job = _reconciling_job(db, jobs, "v7-resume")
+    _link_op(db, clock, job, "v7-resume-op", None)  # still PENDING_SUBMIT
+    resumed = jobs.resolve_reconciliation(
+        job,
+        resolution="RESUME",
+        evidence="operator confirmed the request never left",
+        actor=WORKER,
+        worker_id="w-2",
+        lease_ms=LEASE,
+        now=clock.now(),
+    )
+    assert resumed.status is JobStatus.RUNNING and resumed.lease_owner == "w-2"
+    # The resumed holder is still bound by the in-flight rules when it finishes.
+    again = jobs.finish(
+        job, worker_id="w-2", outcome=Succeeded(result={"ok": True}), now=clock.now()
+    )
+    assert again.status is JobStatus.NEEDS_RECONCILIATION
+
+
+# --- V-8: finish() and claim() never let work run past an in-flight provider operation ---
+
+
+@pytest.mark.parametrize("state", [S.PENDING_SUBMIT, S.SUBMITTED, S.RUNNING, S.UNKNOWN])
+def test_succeeded_with_an_in_flight_operation_goes_to_reconciliation(
+    db, jobs, clock, state
+) -> None:
+    result = _enqueue(db, jobs, f"v8-succ-{state.value}")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    op = _link_op(
+        db,
+        clock,
+        claimed.id,
+        f"v8-succ-op-{state.value}",
+        None if state is S.PENDING_SUBMIT else state,
+    )
+    job = jobs.finish(
+        claimed.id, worker_id="w", outcome=Succeeded(result={"ok": True}), now=clock.now()
+    )
+    assert (
+        job.status is JobStatus.NEEDS_RECONCILIATION
+        and job.outcome["kind"] == "NEEDS_RECONCILIATION"
+    )
+    assert str(op) in job.outcome["detail"] and state.value in job.outcome["detail"]
+    assert jobs.get(result.job_id).status is JobStatus.NEEDS_RECONCILIATION
+
+
+@pytest.mark.parametrize("state", [S.UNKNOWN, S.PENDING_SUBMIT, S.SUBMITTED, S.RUNNING])
+def test_retry_with_an_in_flight_operation_is_never_reclaimed(db, jobs, clock, state) -> None:
+    """The probe: RetryLater with an UNKNOWN op used to become RETRY_WAIT and be reclaimed,
+    which let the handler resubmit. It now stays out of the queue."""
+    result = _enqueue(db, jobs, f"v8-retry-{state.value}")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    _link_op(
+        db,
+        clock,
+        claimed.id,
+        f"v8-retry-op-{state.value}",
+        None if state is S.PENDING_SUBMIT else state,
+    )
+    job = jobs.finish(
+        claimed.id, worker_id="w", outcome=RetryLater("PROVIDER_TRANSIENT", 0), now=clock.now()
+    )
+    assert job.status is JobStatus.NEEDS_RECONCILIATION
+    clock.advance(ms=1)
+    assert jobs.claim(QueueName.PRODUCTION, worker_id="w2", lease_ms=LEASE, now=clock.now()) is None
+    final = jobs.get(result.job_id)
+    assert final.status is JobStatus.NEEDS_RECONCILIATION and final.attempt == 1
+
+
+def test_failed_with_an_in_flight_operation_goes_to_reconciliation(db, jobs, clock) -> None:
+    result = _enqueue(db, jobs, "v8-failed-inflight")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    _link_op(db, clock, claimed.id, "v8-failed-inflight-op", S.SUBMITTED)
+    job = jobs.finish(
+        claimed.id, worker_id="w", outcome=Failed(error_code="BAD", detail="x"), now=clock.now()
+    )
+    assert job.status is JobStatus.NEEDS_RECONCILIATION
+    assert jobs.get(result.job_id).error_code == "IN_FLIGHT_PROVIDER_OPERATION"
+
+
+@pytest.mark.parametrize("state", [S.SUBMITTED, S.RUNNING])
+def test_wait_external_is_allowed_with_submitted_or_running_operations(
+    db, jobs, clock, state
+) -> None:
+    result = _enqueue(db, jobs, f"v8-wait-ok-{state.value}")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    _link_op(db, clock, claimed.id, f"v8-wait-ok-op-{state.value}", state)
+    job = jobs.finish(claimed.id, worker_id="w", outcome=WaitExternal("prov-7", 0), now=clock.now())
+    assert job.status is JobStatus.WAITING_EXTERNAL and job.external_id == "prov-7"
+    assert result.created
+
+
+@pytest.mark.parametrize("state", [S.PENDING_SUBMIT, S.UNKNOWN])
+def test_wait_external_with_a_pending_or_unknown_operation_goes_to_reconciliation(
+    db, jobs, clock, state
+) -> None:
+    _enqueue(db, jobs, f"v8-wait-bad-{state.value}")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    _link_op(
+        db,
+        clock,
+        claimed.id,
+        f"v8-wait-bad-op-{state.value}",
+        None if state is S.PENDING_SUBMIT else state,
+    )
+    job = jobs.finish(claimed.id, worker_id="w", outcome=WaitExternal("prov-8", 0), now=clock.now())
+    assert job.status is JobStatus.NEEDS_RECONCILIATION
+
+
+def test_success_is_recorded_once_every_linked_operation_is_terminal(db, jobs, clock) -> None:
+    result = _enqueue(db, jobs, "v8-terminal-ok")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    _link_op(db, clock, claimed.id, "v8-terminal-ok-op", S.SUCCEEDED)
+    job = jobs.finish(
+        claimed.id, worker_id="w", outcome=Succeeded(result={"done": True}), now=clock.now()
+    )
+    assert job.status is JobStatus.SUCCEEDED
+    assert jobs.get(result.job_id).outcome == {"kind": "SUCCEEDED", "result": {"done": True}}
+
+
+def test_claim_never_runs_a_retry_wait_job_with_an_in_flight_operation(db, jobs, clock) -> None:
+    result = _enqueue(db, jobs, "v8-claim-retry")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    jobs.finish(claimed.id, worker_id="w", outcome=RetryLater("TRANSIENT", 0), now=clock.now())
+    assert jobs.get(result.job_id).status is JobStatus.RETRY_WAIT
+    # An operation for the job turns up UNKNOWN after the retry was scheduled.
+    _link_op(db, clock, result.job_id, "v8-claim-retry-op", S.UNKNOWN)
+    clock.advance(ms=1)
+    assert jobs.claim(QueueName.PRODUCTION, worker_id="w2", lease_ms=LEASE, now=clock.now()) is None
+    job = jobs.get(result.job_id)
+    assert job.status is JobStatus.NEEDS_RECONCILIATION and job.attempt == 1
+    assert "job.needs_reconciliation" in _job_events(db, result.job_id)
+
+
+def test_claim_quarantines_a_queued_job_with_an_in_flight_operation_and_serves_the_next(
+    db, jobs, clock
+) -> None:
+    blocked = _enqueue(db, jobs, "v8-claim-blocked", priority=100)
+    _link_op(db, clock, blocked.job_id, "v8-claim-blocked-op", None)  # PENDING_SUBMIT
+    runnable = _enqueue(db, jobs, "v8-claim-runnable", priority=200)  # sorts after the blocked job
+    served = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    assert served.id == runnable.job_id
+    blocked_job = jobs.get(blocked.job_id)
+    assert blocked_job.status is JobStatus.NEEDS_RECONCILIATION and blocked_job.attempt == 0
+    assert "PENDING_SUBMIT" in blocked_job.outcome["detail"]
+    types = _job_events(db, blocked.job_id)
+    assert types[-2:] == [
+        "job.running",
+        "job.needs_reconciliation",
+    ]  # the quarantine lease, then the move
+
+
+def test_claim_still_polls_a_waiting_job_whose_operation_is_submitted(db, jobs, clock) -> None:
+    result = _enqueue(db, jobs, "v8-poll-allowed")
+    claimed = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    _link_op(db, clock, claimed.id, "v8-poll-allowed-op", S.SUBMITTED)
+    jobs.finish(claimed.id, worker_id="w", outcome=WaitExternal("prov-poll", 0), now=clock.now())
+    polled = jobs.claim(QueueName.PRODUCTION, worker_id="w", lease_ms=LEASE, now=clock.now())
+    assert polled.id == result.job_id and polled.status is JobStatus.RUNNING and polled.attempt == 1
 
 
 # --- cancel, reads and contexts ---------------------------------------------------------
@@ -581,6 +891,7 @@ def test_recovery_skips_a_job_whose_holder_is_recording_an_external_submission(
                     request_hash=H,
                     deadline_at=clock.now() + timedelta(minutes=5),
                     job_id=job.id,
+                    now=clock.now(),
                 )
                 holding.set()
                 release.wait(timeout=30)

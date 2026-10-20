@@ -17,7 +17,7 @@ Interpretations recorded in the handoff:
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -27,9 +27,11 @@ from microdrama.contracts.enums import (
     EpisodeOutcome,
     EpisodeState,
     GateType,
+    ProviderOperationState,
     SeasonState,
 )
 from microdrama.contracts.errors import (
+    GateNotReady,
     InvalidTransition,
     NotFound,
     SchemaInvalid,
@@ -53,6 +55,18 @@ from microdrama.core.hooks import TransitionGuard
 from microdrama.persistence.db import Tx, update_with_revision
 
 _DETAIL_MAX = 2000
+# Outcomes whose clearance depends on the registries, not only on written evidence.
+_REGISTRY_CHECKED_OUTCOMES = frozenset(
+    {EpisodeOutcome.RIGHTS_UNCLEARED, EpisodeOutcome.CAPABILITY_UNAVAILABLE}
+)
+_IN_FLIGHT_PROVIDER_STATES = (
+    ProviderOperationState.PENDING_SUBMIT.value,
+    ProviderOperationState.SUBMITTED.value,
+    ProviderOperationState.RUNNING.value,
+    ProviderOperationState.UNKNOWN.value,
+)
+# recheck(tx, episode_row) -> blockers still in force (empty = clear).
+Recheck = Callable[[Tx, dict[str, Any]], Sequence[str]]
 
 
 def _aware(value: datetime, name: str) -> datetime:
@@ -387,8 +401,20 @@ def clear_episode_outcome(
     now: datetime,
     correlation_id: UUID,
     evidence: str,
+    recheck: Recheck | None = None,
 ) -> int:
-    """Clear a recoverable outcome with written evidence; return the new revision."""
+    """Clear a recoverable outcome with written evidence; return the new revision.
+
+    Evidence alone is not enough for the outcomes that depend on something outside the episode:
+
+    - RIGHTS_UNCLEARED and CAPABILITY_UNAVAILABLE need ``recheck(tx, episode_row)``, which the
+      integrator wires to the T006 registries. It returns the blockers that still apply. Any blocker
+      raises ``GateNotReady`` with that list. No ``recheck`` raises ``SchemaInvalid``.
+    - NEEDS_RECONCILIATION clears only when no provider operation linked to the episode (its
+      ``episode_id``, or the ``job_id`` of one of its jobs) is PENDING_SUBMIT, SUBMITTED, RUNNING or
+      UNKNOWN.
+    - FAILED_INFRA clears on evidence alone, by an owner or an operator.
+    """
     require_state_actor(actor)  # models and webhooks never write state (first, before any write)
     _aware(now, "now")
     if not isinstance(evidence, str) or not evidence.strip():
@@ -405,6 +431,32 @@ def clear_episode_outcome(
         )
     if cleared not in RECOVERABLE_OUTCOMES:  # pragma: no cover - the tables partition outcomes
         raise InvalidTransition(f"outcome {cleared.value} is not recoverable")
+    if cleared in _REGISTRY_CHECKED_OUTCOMES:
+        if recheck is None or not callable(recheck):
+            raise SchemaInvalid(
+                f"clearing {cleared.value} requires a recheck against the registries",
+                outcome=cleared.value,
+            )
+        blockers = [str(item) for item in recheck(tx, dict(row))]
+        if blockers:
+            raise GateNotReady(
+                f"{cleared.value} cannot be cleared: {len(blockers)} blocker(s) still apply",
+                outcome=cleared.value,
+                blockers=blockers,
+            )
+    if cleared is EpisodeOutcome.NEEDS_RECONCILIATION:
+        in_flight = tx.fetchall(
+            "SELECT id, state FROM provider_operations "
+            "WHERE state = ANY(%s) AND (episode_id = %s OR job_id IN "
+            "(SELECT id FROM jobs WHERE episode_id = %s)) ORDER BY created_at, id",
+            (list(_IN_FLIGHT_PROVIDER_STATES), episode_id, episode_id),
+        )
+        if in_flight:
+            summary = ", ".join(f"{op['id']}={op['state']}" for op in in_flight)
+            raise InvalidTransition(
+                f"NEEDS_RECONCILIATION cannot be cleared while provider operations are in flight ({summary})",
+                outcome=cleared.value,
+            )
 
     updated = update_with_revision(
         tx,

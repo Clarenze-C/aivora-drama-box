@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from core_support import (
@@ -12,6 +13,7 @@ from core_support import (
     T0,
     WEBHOOK,
     WORKER,
+    H,
     approve_package,
     count,
     episode_state,
@@ -1389,3 +1391,223 @@ def test_operators_may_move_an_episode_and_set_and_clear_outcomes(
             evidence="pod reconciled: none exists",
         )
     assert episode_state(db, episode) == ("RENDERING", None, rev)
+
+
+# --- V-6: clearing an outcome needs more than a string -----------------------------------
+# RIGHTS_UNCLEARED and CAPABILITY_UNAVAILABLE need a registry recheck with no blockers.
+# NEEDS_RECONCILIATION needs no in-flight provider operation linked to the episode.
+# FAILED_INFRA clears on evidence alone. Every case is run for both operator kinds.
+
+from microdrama.contracts.cost import ProviderOperationResult  # noqa: E402
+from microdrama.contracts.enums import Provenance, ProviderOperationState  # noqa: E402
+from microdrama.contracts.errors import GateNotReady  # noqa: E402
+from microdrama.contracts.jobs import EpisodeStepInput  # noqa: E402
+from microdrama.core.jobs import JobService  # noqa: E402
+from microdrama.core.provider_ops import begin as begin_op  # noqa: E402
+from microdrama.core.provider_ops import record_result as record_op  # noqa: E402
+from microdrama.testing.fakes import SequentialIds  # noqa: E402
+
+OPERATORS = pytest.mark.parametrize(
+    "operator", [SERVICE_WORKER, SCHEDULER], ids=["worker", "scheduler"]
+)
+REGISTRY_OUTCOMES = pytest.mark.parametrize(
+    "outcome",
+    [EpisodeOutcome.RIGHTS_UNCLEARED, EpisodeOutcome.CAPABILITY_UNAVAILABLE],
+    ids=["rights", "capability"],
+)
+
+
+def _outcome_episode(db: Database, clock, outcome: EpisodeOutcome) -> uuid.UUID:
+    """An episode holding ``outcome`` (set by the scheduler), at revision 1."""
+    with db.transaction() as tx:
+        episode = fresh_episode(tx, state=EpisodeState.RENDERING.value)
+    with db.transaction() as tx:
+        set_episode_outcome(
+            tx,
+            episode_id=episode,
+            outcome=outcome,
+            expected_revision=0,
+            actor=SCHEDULER,
+            now=clock.now(),
+            correlation_id=uuid.uuid4(),
+            detail="set by the scheduler for the test",
+        )
+    return episode
+
+
+def _job_for_episode(db: Database, clock, episode: uuid.UUID) -> uuid.UUID:
+    jobs = JobService(db, clock, SequentialIds(uuid.uuid4().hex))
+    with db.transaction() as tx:
+        return jobs.enqueue(
+            tx,
+            job_type="qa.technical",
+            semantic_key=f"v6:{uuid.uuid4().hex}",
+            payload=EpisodeStepInput(episode_id=episode),
+        ).job_id
+
+
+def _op_for_episode(
+    db, clock, job, *, state: ProviderOperationState | None, episode=None
+) -> uuid.UUID:
+    with db.transaction() as tx:
+        op = begin_op(
+            tx,
+            provider="fake-comfy",
+            operation_kind="comfy.queue_prompt",
+            client_token=f"v6-{uuid.uuid4().hex}",
+            request_hash=H,
+            deadline_at=clock.now() + timedelta(minutes=10),
+            job_id=job,
+            episode_id=episode,
+            now=clock.now(),
+        )
+    if state is not None:
+        result = ProviderOperationResult(
+            operation_id=op.operation_id,
+            state=state,
+            error_code="FAKE_REJECTED" if state is ProviderOperationState.FAILED else None,
+            provenance=Provenance.FAKE_SYNTHETIC,
+        )
+        with db.transaction() as tx:
+            record_op(tx, op.operation_id, result, now=clock.now())
+    return op.operation_id
+
+
+def _clear(db, clock, episode, *, actor, evidence="ok", recheck=None):
+    with db.transaction() as tx:
+        return clear_episode_outcome(
+            tx,
+            episode_id=episode,
+            expected_revision=1,
+            actor=actor,
+            now=clock.now(),
+            correlation_id=uuid.uuid4(),
+            evidence=evidence,
+            recheck=recheck,
+        )
+
+
+@OPERATORS
+@REGISTRY_OUTCOMES
+def test_registry_outcome_without_a_recheck_is_refused_and_nothing_is_written(
+    db, clock, outcome, operator
+) -> None:
+    episode = _outcome_episode(db, clock, outcome)
+    before = _episode_snapshot(db, episode)
+    with pytest.raises(SchemaInvalid, match="recheck"):
+        _clear(db, clock, episode, actor=operator, evidence="ok")  # the evidence-only probe
+    assert _episode_snapshot(db, episode) == before
+
+
+@OPERATORS
+@REGISTRY_OUTCOMES
+def test_registry_outcome_with_blockers_is_gate_not_ready_and_nothing_is_written(
+    db, clock, outcome, operator
+) -> None:
+    episode = _outcome_episode(db, clock, outcome)
+    before = _episode_snapshot(db, episode)
+    blockers = ["voice clone licence expired", "preset not measured"]
+    with pytest.raises(GateNotReady) as err:
+        _clear(db, clock, episode, actor=operator, evidence="ok", recheck=lambda tx, row: blockers)
+    assert err.value.http_status == 409 and err.value.details["blockers"] == blockers
+    assert _episode_snapshot(db, episode) == before
+
+
+@OPERATORS
+@REGISTRY_OUTCOMES
+def test_registry_outcome_clears_when_the_recheck_reports_no_blockers(
+    db, clock, outcome, operator
+) -> None:
+    episode = _outcome_episode(db, clock, outcome)
+    seen: list[tuple[str, dict]] = []
+
+    def clean_recheck(tx, row):
+        seen.append((type(tx).__name__, row))
+        return []
+
+    revision = _clear(
+        db, clock, episode, actor=operator, evidence="registry rows verified", recheck=clean_recheck
+    )
+    assert revision == 2
+    assert episode_state(db, episode) == ("RENDERING", None, 2)
+    ((tx_name, row),) = seen
+    assert tx_name == "Tx" and row["outcome"] == outcome.value  # the recheck saw the locked row
+    with db.transaction(readonly=True) as tx:
+        assert [e.event_type for e in list_events(tx, episode)][-1] == "episode.outcome_cleared"
+
+
+@OPERATORS
+@pytest.mark.parametrize(
+    "state",
+    [
+        ProviderOperationState.PENDING_SUBMIT,
+        ProviderOperationState.SUBMITTED,
+        ProviderOperationState.RUNNING,
+        ProviderOperationState.UNKNOWN,
+    ],
+    ids=["pending", "submitted", "running", "unknown"],
+)
+@pytest.mark.parametrize("linked_by", ["episode_id", "job"])
+def test_needs_reconciliation_is_held_while_a_linked_operation_is_in_flight(
+    db, clock, operator, state, linked_by
+) -> None:
+    episode = _outcome_episode(db, clock, EpisodeOutcome.NEEDS_RECONCILIATION)
+    job = _job_for_episode(db, clock, episode)
+    _op_for_episode(
+        db,
+        clock,
+        job,
+        state=None if state is ProviderOperationState.PENDING_SUBMIT else state,
+        episode=episode if linked_by == "episode_id" else None,
+    )
+    before = _episode_snapshot(db, episode)
+    with pytest.raises(InvalidTransition, match="in flight"):
+        _clear(db, clock, episode, actor=operator, evidence="ok")
+    assert _episode_snapshot(db, episode) == before
+
+
+@OPERATORS
+@pytest.mark.parametrize(
+    "state",
+    [
+        ProviderOperationState.SUCCEEDED,
+        ProviderOperationState.FAILED,
+        ProviderOperationState.NOT_FOUND,
+    ],
+    ids=["succeeded", "failed", "not_found"],
+)
+def test_needs_reconciliation_clears_once_linked_operations_are_settled(
+    db, clock, operator, state
+) -> None:
+    episode = _outcome_episode(db, clock, EpisodeOutcome.NEEDS_RECONCILIATION)
+    _op_for_episode(db, clock, _job_for_episode(db, clock, episode), state=state, episode=episode)
+    assert _clear(db, clock, episode, actor=operator, evidence="provider state reconciled") == 2
+    assert episode_state(db, episode)[1] is None
+
+
+@OPERATORS
+def test_needs_reconciliation_clears_with_no_linked_operation(db, clock, operator) -> None:
+    episode = _outcome_episode(db, clock, EpisodeOutcome.NEEDS_RECONCILIATION)
+    assert _clear(db, clock, episode, actor=operator, evidence="nothing was ever submitted") == 2
+
+
+@OPERATORS
+def test_failed_infra_clears_on_evidence_for_operators(db, clock, operator) -> None:
+    episode = _outcome_episode(db, clock, EpisodeOutcome.FAILED_INFRA)
+    assert _clear(db, clock, episode, actor=operator, evidence="pod reconciled") == 2
+
+
+@OPERATORS
+@pytest.mark.parametrize("evidence", ["", "  "])
+def test_failed_infra_refuses_empty_evidence(db, clock, operator, evidence: str) -> None:
+    episode = _outcome_episode(db, clock, EpisodeOutcome.FAILED_INFRA)
+    with pytest.raises(SchemaInvalid):
+        _clear(db, clock, episode, actor=operator, evidence=evidence)
+    assert episode_state(db, episode)[1] == "FAILED_INFRA"
+
+
+def test_an_owner_may_clear_failed_infra_with_evidence(db, clock) -> None:
+    episode = _outcome_episode(db, clock, EpisodeOutcome.FAILED_INFRA)
+    with db.transaction() as tx:
+        owner = make_human(tx)
+    assert _clear(db, clock, episode, actor=owner, evidence="owner verified the pod is gone") == 2

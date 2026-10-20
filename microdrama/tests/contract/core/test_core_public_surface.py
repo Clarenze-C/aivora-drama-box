@@ -110,7 +110,11 @@ def test_state_machine_signatures_match_the_brief() -> None:
         "now",
         "correlation_id",
         "evidence",
+        "recheck",
     }
+    assert (
+        clear["recheck"].default is None
+    )  # optional at the signature; required for registry outcomes
 
 
 def test_hook_protocols_are_runtime_checkable() -> None:
@@ -166,7 +170,11 @@ def test_job_service_surface() -> None:
     ):
         assert hasattr(jobs.JobService, name), name
     resolve = _params(jobs.JobService.resolve_reconciliation)
-    assert {"resolution", "evidence"} <= set(resolve)
+    assert {"resolution", "evidence", "actor"} <= set(resolve)
+    assert (
+        resolve["actor"].kind.name == "KEYWORD_ONLY"
+        and resolve["actor"].default is inspect.Parameter.empty
+    )
 
 
 def test_provider_operation_and_idempotency_surface() -> None:
@@ -227,3 +235,15 @@ def test_http_dependency_factories_and_router_factory() -> None:
         "service",
     ]
     assert all(_params(build_router)[n].kind.name == "KEYWORD_ONLY" for n in _params(build_router))
+
+
+def test_provider_operation_functions_take_the_injected_clock_and_a_job_link() -> None:
+    begin = _params(provider_ops.begin)
+    assert (
+        begin["job_id"].kind.name == "KEYWORD_ONLY"
+        and begin["job_id"].default is inspect.Parameter.empty
+    )
+    assert begin["now"].default is inspect.Parameter.empty
+    assert _params(provider_ops.record_result)["now"].default is inspect.Parameter.empty
+    assert _params(provider_ops.needs_reconcile)["now"].default is inspect.Parameter.empty
+    assert _params(provider_ops.resubmit_allowed)["now"].default is inspect.Parameter.empty

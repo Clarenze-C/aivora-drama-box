@@ -118,3 +118,37 @@ def test_the_outcome_and_state_writers_are_the_only_state_setters() -> None:
     tree = ast.parse((CORE / "state_machine.py").read_text(encoding="utf-8"))
     defined = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
     assert set(STATE_WRITERS) <= defined
+
+
+def test_only_the_system_clock_reads_the_wall_clock() -> None:
+    """V-18: time comes from the caller's injected clock. Only clock.py may read the wall clock."""
+    reader = re.compile(r"datetime\.now\(|datetime\.utcnow\(|time\.time\(")
+    offenders = [
+        name for name, text in _sources().items() if name != "clock.py" and reader.search(text)
+    ]
+    assert offenders == []
+
+
+def test_provider_operations_take_now_as_a_required_argument() -> None:
+    tree = ast.parse((CORE / "provider_ops.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in {
+            "begin",
+            "record_result",
+            "needs_reconcile",
+            "resubmit_allowed",
+        }:
+            kwonly = {
+                a.arg: d for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+            }
+            assert "now" in kwonly and kwonly["now"] is None, (
+                node.name
+            )  # None default means required
+
+
+def test_outbox_dispatch_is_serialised_by_an_advisory_lock_not_skip_locked() -> None:
+    """V-15: dispatchers take a transaction-level advisory lock; SKIP LOCKED would let a later
+    event of an aggregate publish before an earlier one that another dispatcher holds."""
+    text = (CORE / "events.py").read_text(encoding="utf-8")
+    assert "pg_advisory_xact_lock" in text
+    assert "SKIP LOCKED" not in text

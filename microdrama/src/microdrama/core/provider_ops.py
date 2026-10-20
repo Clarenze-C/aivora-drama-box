@@ -107,12 +107,19 @@ def begin(
     client_token: str,
     request_hash: str,
     deadline_at: datetime,
-    job_id: UUID | None = None,
+    job_id: UUID,
+    now: datetime,
     reservation_id: UUID | None = None,
     episode_id: UUID | None = None,
-    now: datetime | None = None,
 ) -> ProviderOperation:
-    """Record an intended external call (idempotent on ``(provider, client_token)``)."""
+    """Record an intended external call (idempotent on ``(provider, client_token)``).
+
+    ``job_id`` is required: recovery (``JobService.requeue_expired``, ``claim``, ``finish``) finds
+    in-flight operations through their job, so an operation without one would be invisible to it.
+    ``now`` comes from the caller's injected clock; this module never reads the wall clock.
+    """
+    if job_id is None:
+        raise SchemaInvalid("provider operations must be linked to the job that owns them")
     for name, value in (
         ("provider", provider),
         ("operation_kind", operation_kind),
@@ -123,7 +130,23 @@ def begin(
     if not isinstance(request_hash, str) or len(request_hash) != 64:
         raise SchemaInvalid("request_hash must be a 64-character SHA-256 hex digest")
     deadline = _aware(deadline_at, "deadline_at")
-    instant = _aware(now, "now") if now is not None else datetime.now(UTC)
+    instant = _aware(now, "now")
+    if reservation_id is not None:
+        # A shared lock on the reservation serialises this begin with budget release (which takes
+        # FOR UPDATE): if begin wins, release sees this operation in flight and refuses; if release
+        # wins, begin sees the closed reservation and refuses. An operation never starts on a
+        # reservation that is not ACTIVE.
+        reservation = tx.fetchone(
+            "SELECT state FROM reservations WHERE id = %s FOR SHARE", (reservation_id,)
+        )
+        if reservation is None:
+            raise NotFound(f"reservation {reservation_id} not found")
+        if reservation["state"] != "ACTIVE":
+            raise Conflict(
+                "reservation is not ACTIVE",
+                reservation_id=str(reservation_id),
+                state=reservation["state"],
+            )
 
     existing = tx.fetchone(
         "SELECT * FROM provider_operations WHERE provider = %s AND client_token = %s",
@@ -180,14 +203,14 @@ def record_result(
     operation_id: UUID,
     result: ProviderOperationResult,
     *,
-    now: datetime | None = None,
+    now: datetime,
 ) -> ProviderOperation:
     """Record what the provider reported. Persists ``external_id`` as soon as it is known."""
     if not isinstance(result, ProviderOperationResult):
         raise SchemaInvalid("a ProviderOperationResult is required")
     if result.operation_id != operation_id:
         raise SchemaInvalid("result belongs to a different operation")
-    instant = _aware(now, "now") if now is not None else datetime.now(UTC)
+    instant = _aware(now, "now")
     row = _lock(tx, operation_id)
     current = ProviderOperationState(row["state"])
     target = result.state
@@ -217,14 +240,14 @@ def record_result(
     return _operation(updated)
 
 
-def needs_reconcile(op: ProviderOperation, *, now: datetime | None = None) -> bool:
+def needs_reconcile(op: ProviderOperation, *, now: datetime) -> bool:
     """True when the outcome of an external call is unknown and must be reconciled first.
 
     UNKNOWN always qualifies. A call still SUBMITTED or RUNNING past its deadline qualifies. A
     PENDING_SUBMIT call past its deadline also qualifies: the request may have left before the
     crash, so it is treated as ambiguous rather than as never sent.
     """
-    instant = _aware(now, "now") if now is not None else datetime.now(UTC)
+    instant = _aware(now, "now")
     if op.state is ProviderOperationState.UNKNOWN:
         return True
     if op.state in _IN_FLIGHT:
@@ -236,11 +259,11 @@ def resubmit_allowed(
     tx: Tx,
     operation_id: UUID,
     *,
+    now: datetime,
     deadline_at: datetime | None = None,
-    now: datetime | None = None,
 ) -> ProviderOperation:
     """Re-arm a NOT_FOUND operation for one more submission. UNKNOWN is refused."""
-    instant = _aware(now, "now") if now is not None else datetime.now(UTC)
+    instant = _aware(now, "now")
     row = _lock(tx, operation_id)
     current = ProviderOperationState(row["state"])
     if current is not ProviderOperationState.NOT_FOUND:

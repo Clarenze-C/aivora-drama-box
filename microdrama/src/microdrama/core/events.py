@@ -168,14 +168,22 @@ def list_events(tx: Tx, aggregate_id: UUID) -> list[DomainEvent]:
     return [_event_from_row(row) for row in rows]
 
 
+# Transaction-level advisory lock key for the outbox dispatcher (one fixed bigint).
+_DISPATCH_LOCK_KEY = 0x6D645F6F7574  # "md_out"
+
+
 class OutboxDispatcher:
     """Publishes undispatched events in global order; records each dispatch.
 
-    ``dispatch_pending`` runs one transaction: rows are locked with ``FOR UPDATE SKIP LOCKED``
-    so concurrent dispatchers never hold the same event, and each event is re-checked after its
-    lock is acquired (a concurrent dispatcher may have committed it meanwhile). If ``publish``
-    raises, the events already published in the batch are committed and the error is re-raised;
-    the failing event stays pending and is retried on the next call.
+    Dispatchers are serialised: each ``dispatch_pending`` call first takes a transaction-level
+    advisory lock, so a second dispatcher waits until the first commits. Rows are then locked with
+    plain ``FOR UPDATE`` (a skip-locked scan is not used), so no dispatcher can skip an earlier event of an
+    aggregate and publish a later one first. Within an aggregate, ``global_position`` order equals
+    sequence order because a sequence increment is serialised by the aggregate's counter row.
+
+    Each event is re-checked after its turn comes up. If ``publish`` raises, the events already
+    published in the batch are committed and the error is re-raised; the failing event stays pending
+    and is retried on the next call.
     """
 
     def __init__(
@@ -197,10 +205,11 @@ class OutboxDispatcher:
         dispatched = 0
         failure: BaseException | None = None
         with self._db.transaction() as tx:
+            tx.execute("SELECT pg_advisory_xact_lock(%s)", (_DISPATCH_LOCK_KEY,))
             rows = tx.fetchall(
                 "SELECT * FROM domain_events e "
                 "WHERE NOT EXISTS (SELECT 1 FROM event_dispatches d WHERE d.event_id = e.event_id) "
-                "ORDER BY e.global_position LIMIT %s FOR UPDATE SKIP LOCKED",
+                "ORDER BY e.global_position LIMIT %s FOR UPDATE",
                 (limit,),
             )
             for row in rows:

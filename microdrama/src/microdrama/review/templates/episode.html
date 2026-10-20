@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block content %}
+{% macro media_el(m, kind_map) -%}
+{%- set mt = kind_map.get(m.asset_id | string, '') -%}
+{%- if mt.startswith('video/') -%}
+<video controls preload="metadata" playsinline aria-label="{{ m.role | label }}"><source src="{{ m.review_path }}"{% if mt %} type="{{ mt }}"{% endif %}></video>
+{%- elif mt.startswith('image/') -%}
+<img src="{{ m.review_path }}" alt="{{ m.role | label }} {{ m.asset_id }}">
+{%- elif mt.startswith('audio/') -%}
+<audio controls preload="metadata" aria-label="{{ m.role | label }}"><source src="{{ m.review_path }}"{% if mt %} type="{{ mt }}"{% endif %}></audio>
+{%- else -%}
+<a href="{{ m.review_path }}">{{ m.role | label }} file</a>
+{%- endif -%}
+{%- endmacro %}
+{% set v = page.view %}
+{% set pkg = v.package %}
+{% set pkg_hashes = pkg.media_hashes if pkg else [] %}
+{% set video_links = v.media | selectattr('role', 'in', ['master', 'variant', 'hook']) | list %}
+{% set master = v.media | selectattr('role', 'equalto', 'master') | list %}
+{% set captions_links = v.media | selectattr('role', 'equalto', 'caption') | list %}
+{% set covers = v.media | selectattr('role', 'equalto', 'cover') | list %}
+{% set cast = v.media | selectattr('role', 'equalto', 'cast_package') | list %}
+{% set contact = v.media | selectattr('role', 'equalto', 'contact_sheet') | list %}
+<p class="muted">Gate 2: final review of episode {{ v.episode_number }}. Revision {{ v.revision }}, state {{ v.state | label }}{% if v.outcome %}, outcome {{ v.outcome | label }}{% endif %}.{% if pkg %} Package v{{ pkg.version }}, hash {{ pkg.package_hash | short(16) }}.{% endif %}</p>
+
+{% if v.gate_enabled %}
+<section data-testid="gate-status"><span class="ok"><strong>Approval is enabled.</strong></span> Every release condition is satisfied for this package.</section>
+{% else %}
+<section class="blockers" data-testid="gate-status">
+  <strong class="warn">Preview only. Approve is unavailable.</strong>
+  <ul>{% for b in v.gate_blockers %}<li>{{ b }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section data-testid="preview">
+  <h2>Playable episode</h2>
+  {% if master %}
+  <video controls preload="metadata" playsinline aria-label="Episode {{ v.episode_number }} master">
+    <source src="{{ master[0].review_path }}">
+    {% for cap in captions_links %}<track kind="subtitles" src="{{ cap.review_path }}" label="Caption {{ loop.index }}">{% endfor %}
+    Your browser cannot play this file.
+  </video>
+  {% else %}
+  <p class="warn">The package has no master cut.</p>
+  {% endif %}
+  {% set other_videos = video_links | rejectattr('role', 'equalto', 'master') | list %}
+  {% if other_videos %}
+  <h2>Variants and hook candidates</h2>
+  <div class="grid">
+    {% for m in other_videos %}
+    <div><span class="chip">{{ m.role | label }}</span>{{ media_el(m, page.media_types) }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if page.hook_candidates %}
+  <p>Hook candidates from experiment:</p>
+  <ul>{% for c in page.hook_candidates %}<li>{{ c.candidate_id }}: {{ c.duration_ms | timecode }}, {{ c.treatment }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if covers %}
+  <h2>Covers</h2>
+  <div class="grid">{% for m in covers %}<div>{{ media_el(m, page.media_types) }}</div>{% endfor %}</div>
+  {% endif %}
+</section>
+
+<section data-testid="subtitles">
+  <h2>Subtitle preview</h2>
+  {% if not page.captions %}<p class="warn">No caption track is recorded for this episode.</p>{% endif %}
+  {% for track in page.captions %}
+  <h3 style="font-size:15px">{{ track.locale }} · {{ track.timing_source | label }} · {{ track.state | label }}
+    {% if track.releasable %}<span class="ok">releasable</span>{% else %}<span class="bad">not releasable</span>{% endif %}</h3>
+  {% if not track.readable %}<p class="bad">This stored track cannot be read; it is not releasable.</p>{% endif %}
+  <div class="scroll"><table>
+    <thead><tr><th>Start</th><th>End</th><th>Text</th></tr></thead>
+    <tbody>{% for start, end, text in track.cues %}<tr><td>{{ start | timecode }}</td><td>{{ end | timecode }}</td><td lang="th">{{ text }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endfor %}
+</section>
+
+<section data-testid="cast">
+  <h2>Episode-one reference package</h2>
+  {% if v.episode_number == 1 %}
+    {% if cast or contact %}
+    <ul>
+      {% for m in cast + contact %}
+      <li>{{ media_el(m, page.media_types) }} <span class="hint">sha {{ m.sha256 | short }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="bad">No cast contact sheet or voice anchors in the package.</p>
+    {% endif %}
+  {% else %}
+    <p class="muted">Not episode one; identity lock applies from the first approved package.</p>
+  {% endif %}
+</section>
+
+<section data-testid="qa">
+  <h2>QA findings and coverage</h2>
+  <p class="hint">UNKNOWN is not a pass. Unsampled or unavailable checks are listed below and never counted as passing. No aggregate score is shown.</p>
+  {% if v.findings %}
+  <div class="scroll"><table>
+    <thead><tr><th>Check</th><th>Family</th><th>Severity</th><th>Coverage</th><th>Outcome</th><th>Window</th><th>Observed / expected</th></tr></thead>
+    <tbody>
+    {% for f in v.findings %}
+      <tr>
+        <td>{{ f.check_id }}</td><td>{{ f.check_family | label }}</td><td>{{ f.severity | label }}</td>
+        <td>{{ f.coverage | label }}</td><td{% if f.outcome == 'UNKNOWN' %} class="warn"{% endif %}>{{ f.outcome | label }}</td>
+        <td>{{ f.start_ms | timecode }} to {{ f.end_ms | timecode }}</td>
+        <td>{{ f.observed or '' }}{% if f.expected %} / {{ f.expected }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">No QA findings are recorded for the current QA cycle.</p>
+  {% endif %}
+
+  <h3 style="font-size:15px">Not checked (UNKNOWN)</h3>
+  {% set unknown_findings = v.findings | selectattr('outcome', 'equalto', 'UNKNOWN') | list %}
+  {% set uncovered = v.coverage | rejectattr('status', 'equalto', 'CHECKED') | list %}
+  {% set unknown_checks = pkg.qa.unknown_coverage_check_ids if pkg else [] %}
+  {% if unknown_findings or uncovered or unknown_checks %}
+  <ul data-testid="unknown">
+    {% for c in unknown_checks %}<li class="warn">{{ c }}: coverage unknown (listed by the package)</li>{% endfor %}
+    {% for f in unknown_findings %}<li class="warn">{{ f.check_id }} {{ f.start_ms | timecode }} to {{ f.end_ms | timecode }}: {{ f.coverage | label }}</li>{% endfor %}
+    {% for w in uncovered %}<li class="warn">{{ w.check_family | label }} {{ w.start_ms | timecode }} to {{ w.end_ms | timecode }}: {{ w.status | label }}{% if w.note %} ({{ w.note }}){% endif %}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No UNKNOWN coverage is recorded.</p>
+  {% endif %}
+  {% if pkg and pkg.qa.blocking_finding_ids %}<p class="bad">{{ pkg.qa.blocking_finding_ids | length }} blocking finding(s) in the package.</p>{% endif %}
+</section>
+
+<section data-testid="costs">
+  <h2>Cost and remaining funds</h2>
+  {% if v.cost %}
+  <div class="grid">
+    <div><span class="muted">Cap</span><br>{{ v.cost.episode_cap_micro_usd | usd }}</div>
+    <div><span class="muted">Settled</span><br>{{ v.cost.settled_micro_usd | usd }}</div>
+    <div><span class="muted">Accrued</span><br>{{ v.cost.accrued_micro_usd | usd }}</div>
+    <div><span class="muted">Reserved</span><br>{{ v.cost.reserved_outstanding_micro_usd | usd }}</div>
+    <div><span class="muted">Shutdown reserve (protected)</span><br>{{ v.cost.shutdown_reserve_micro_usd | usd }}</div>
+    <div><span class="muted">Headroom for paid dispatch</span><br>{{ v.cost.remaining_micro_usd | usd }}<br><span class="hint">cap minus committed minus shutdown reserve</span></div>
+    <div><span class="muted">Synthetic (fake, not money)</span><br>{{ v.cost.synthetic_fake_micro_usd | usd }}</div>
+  </div>
+  {% else %}
+  <p class="bad">No budget account exists for this episode; cost is unknown.</p>
+  {% endif %}
+</section>
+
+<section data-testid="destinations">
+  <h2>Destinations, schedule and policy</h2>
+  {% if pkg %}
+  <div class="scroll"><table>
+    <thead><tr><th>Platform</th><th>Account</th><th>Slot</th><th>Scheduled</th><th>Disclosures</th><th>Required</th></tr></thead>
+    <tbody>
+    {% for slot in pkg.release_scope %}
+      <tr>
+        <td>{{ slot.slot.platform | label }}</td><td>{{ slot.slot.account_ref }}</td><td>{{ slot.slot_kind | label }}</td>
+        <td>{{ slot.schedule.local_time }} {{ slot.schedule.iana_zone }}</td>
+        <td>{% for d in slot.disclosures %}<span class="chip">{{ d | label }}</span>{% endfor %}</td>
+        <td>{{ 'yes' if slot.required else 'optional' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+  {% if v.management_policy %}
+  <p>Management actions allowed:
+    {% for a in v.management_policy.allowed_actions | sort %}<span class="chip">{{ a | label }}</span>{% endfor %}
+  </p>
+  <p class="hint">Metadata cooldown {{ v.management_policy.metadata_cooldown_hours }} h. Within this policy, bounded title, caption, description, hashtag and reply edits need no new Gate 2. Covers, links, media and captions do.</p>
+  {% else %}
+  <p class="bad">The approved season policy is not available.</p>
+  {% endif %}
+</section>
+
+{% if can_decide %}
+<section data-testid="decision">
+  <h2>Decision</h2>
+
+  {% macro binding() %}
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="gate" value="EPISODE_FINAL">
+    <input type="hidden" name="entity_id" value="{{ v.episode_id }}">
+    <input type="hidden" name="expected_revision" value="{{ v.revision }}">
+    <input type="hidden" name="package_hash" value="{{ pkg.package_hash }}">
+    {% for h in pkg_hashes %}<input type="hidden" name="media_hash" value="{{ h }}">{% endfor %}
+    {% if pkg.management_policy_hash %}<input type="hidden" name="management_policy_hash" value="{{ pkg.management_policy_hash }}">{% endif %}
+    <input type="hidden" name="release_scope_hash" value="{{ pkg.release_scope_hash }}">
+  {% endmacro %}
+
+  {% if v.gate_enabled %}
+  <form method="post" action="/ui/episodes/{{ v.episode_id }}/review" data-testid="approve-form">
+    {{ binding() }}
+    <input type="hidden" name="action" value="APPROVE">
+    <input type="hidden" name="idempotency_key" value="{{ keys.approve }}">
+    <button type="submit" data-testid="approve">Approve &amp; schedule</button>
+  </form>
+  {% endif %}
+
+  <form method="post" action="/ui/episodes/{{ v.episode_id }}/review" data-testid="revise-form">
+    {{ binding() }}
+    <input type="hidden" name="action" value="REVISE">
+    <input type="hidden" name="idempotency_key" value="{{ keys.revise }}">
+    <p class="hint">Timecodes: milliseconds, or mm:ss, or mm:ss.mmm, or h:mm:ss.mmm. A revision returns the episode to the smallest affected stage and comes back to this gate.</p>
+    {% for i in range(feedback_rows) %}
+    <div class="grid">
+      <label>Category
+        <select name="feedback_category">
+          <option value="">(none)</option>
+          {% for c in categories %}<option value="{{ c }}">{{ c | label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Start <input name="feedback_start" placeholder="00:12.500" maxlength="20"></label>
+      <label>End <input name="feedback_end" placeholder="00:15.500" maxlength="20"></label>
+      <label>Note <textarea name="feedback_comment" maxlength="2000"></textarea></label>
+    </div>
+    {% endfor %}
+    <button type="submit" class="secondary" data-testid="revise">Revise</button>
+  </form>
+
+  <form method="post" action="/ui/episodes/{{ v.episode_id }}/review" data-testid="reject-form">
+    {{ binding() }}
+    <input type="hidden" name="action" value="REJECT">
+    <input type="hidden" name="idempotency_key" value="{{ keys.reject }}">
+    <label>Reason for rejecting <textarea name="reason" maxlength="2000"></textarea></label>
+    <button type="submit" class="danger" data-testid="reject">Reject episode</button>
+  </form>
+</section>
+{% else %}
+<section><p class="muted">No decision is open: the episode is {{ v.state | label }}{% if v.outcome %} with outcome {{ v.outcome | label }}{% endif %}.</p></section>
+{% endif %}
+{% endblock %}

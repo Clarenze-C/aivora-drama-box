@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{ title }} | Gate review</title>
+<style>
+:root {
+  --bg: #f6f6f3; --fg: #1d1d1b; --muted: #5f5f59; --line: #d8d8d1; --card: #ffffff;
+  --accent: #1d5c86; --ok: #14532d; --warn: #8a3a07; --bad: #9b1c1c; --chip: #ecece6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131313; --fg: #eeeeea; --muted: #a3a39c; --line: #353535; --card: #1d1d1d;
+    --accent: #8cc4ea; --ok: #86efac; --warn: #fdba74; --bad: #fca5a5; --chip: #2a2a2a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131313; --fg: #eeeeea; --muted: #a3a39c; --line: #353535; --card: #1d1d1d;
+  --accent: #8cc4ea; --ok: #86efac; --warn: #fdba74; --bad: #fca5a5; --chip: #2a2a2a;
+}
+body { background: var(--bg); color: var(--fg); margin: 0; font: 15px/1.5 system-ui, "Noto Sans Thai", "Tahoma", sans-serif; }
+header.bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); }
+header.bar nav a { margin-right: 12px; color: var(--accent); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
+h1 { font-size: 22px; margin: 8px 0 4px; overflow-wrap: anywhere; }
+h2 { font-size: 17px; margin: 0 0 8px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 14px 0; }
+.muted { color: var(--muted); }
+.chip { display: inline-block; background: var(--chip); border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 13px; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.alert { border: 1px solid var(--bad); border-radius: 8px; padding: 10px 12px; margin: 12px 0; color: var(--bad); }
+.blockers { border: 1px solid var(--warn); border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+.blockers li { overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+th { color: var(--muted); font-weight: 600; }
+form { margin: 0; }
+label { display: block; margin: 6px 0; }
+input, select, textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; max-width: 100%; box-sizing: border-box; }
+textarea { width: 100%; min-height: 64px; }
+button { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; padding: 7px 14px; cursor: pointer; margin: 4px 6px 4px 0; }
+button.secondary { background: transparent; color: var(--accent); }
+button.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+.inline { display: inline; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+video, img, audio { max-width: 100%; border-radius: 6px; }
+video { background: #000; }
+.hint { font-size: 13px; color: var(--muted); }
+a { color: var(--accent); overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<header class="bar">
+  <strong>Gate review</strong>
+  {% if signed_in %}
+  <nav>
+    <a href="/ui/seasons">Season proposals</a>
+    <form class="inline" method="post" action="/auth/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf or '' }}">
+      <button class="secondary" type="submit">Sign out</button>
+    </form>
+  </nav>
+  {% endif %}
+</header>
+<main>
+  <h1>{{ heading or title }}</h1>
+  {% if error %}
+  <div class="alert" role="alert" data-testid="error"><strong>{{ error.code }}</strong> {{ error.message }}</div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

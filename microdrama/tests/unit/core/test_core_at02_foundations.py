@@ -14,6 +14,7 @@ import pytest
 from core_support import (
     NON_HUMAN,
     T0,
+    WORKER,
     H,
     approve_package,
     episode_state,
@@ -24,9 +25,12 @@ from core_support import (
     ready_package,
 )
 
+from microdrama.contracts.cost import ProviderOperationResult
 from microdrama.contracts.enums import (
     EpisodeState,
     JobStatus,
+    Provenance,
+    ProviderOperationState,
     QueueName,
     SeasonState,
 )
@@ -34,7 +38,7 @@ from microdrama.contracts.errors import Conflict, InvalidTransition, StaleRevisi
 from microdrama.contracts.jobs import EpisodeStepInput
 from microdrama.core.approvals import record_approval_event
 from microdrama.core.jobs import JobService, NeedsReconciliation, Succeeded
-from microdrama.core.provider_ops import begin, resubmit_allowed
+from microdrama.core.provider_ops import begin, record_result, resubmit_allowed
 from microdrama.core.state_machine import transition_episode, transition_season
 from microdrama.persistence import Database
 from microdrama.testing.fakes import FakeClock, SequentialIds
@@ -192,6 +196,8 @@ def test_a_material_media_change_requires_the_same_gate2_again(db: Database) -> 
 
 
 def test_uncertain_external_work_is_never_reported_as_success(db: Database) -> None:
+    """Free text cannot turn an uncertain provider operation into success. A recorded provider
+    success can, and only then."""
     clock = FakeClock(T0)
     jobs = JobService(db, clock, SequentialIds("at02"))
     with db.transaction() as tx:
@@ -211,16 +217,42 @@ def test_uncertain_external_work_is_never_reported_as_success(db: Database) -> N
             request_hash=H,
             deadline_at=T0 + timedelta(minutes=1),
             job_id=claimed.id,
+            now=T0,
         )
     jobs.finish(claimed.id, worker_id="w", outcome=NeedsReconciliation(detail="no reply"), now=T0)
     assert jobs.get(queued.job_id).status is JobStatus.NEEDS_RECONCILIATION
     with pytest.raises(InvalidTransition), db.transaction() as tx:  # no blind resubmission
-        resubmit_allowed(tx, op.operation_id)
+        resubmit_allowed(tx, op.operation_id, now=T0)
     with pytest.raises(Conflict):  # the old holder cannot declare success
         jobs.finish(claimed.id, worker_id="w", outcome=Succeeded(result={"guess": 1}), now=T0)
+    # Free-text success is refused while the provider operation is still PENDING_SUBMIT.
+    with pytest.raises(InvalidTransition, match="not all recorded successes"):
+        jobs.resolve_reconciliation(
+            queued.job_id,
+            resolution="SUCCEEDED",
+            evidence="provider receipt present",
+            actor=WORKER,
+            now=T0,
+        )
     assert jobs.get(queued.job_id).status is JobStatus.NEEDS_RECONCILIATION
+    # Only a success the provider reported through record_result makes success possible.
+    with db.transaction() as tx:
+        record_result(
+            tx,
+            op.operation_id,
+            ProviderOperationResult(
+                operation_id=op.operation_id,
+                state=ProviderOperationState.SUCCEEDED,
+                provenance=Provenance.FAKE_SYNTHETIC,
+            ),
+            now=T0,
+        )
     resolved = jobs.resolve_reconciliation(
-        queued.job_id, resolution="SUCCEEDED", evidence="provider receipt present", now=T0
+        queued.job_id,
+        resolution="SUCCEEDED",
+        evidence="provider receipt present",
+        actor=WORKER,
+        now=T0,
     )
     assert resolved.status is JobStatus.SUCCEEDED and resolved.outcome["reconciled"] is True
 

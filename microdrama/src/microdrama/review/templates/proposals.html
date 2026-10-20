@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">Gate 1 decides the season concept. Nothing here approves automatically.</p>
+{% if not rows %}
+<section><p>No season proposals yet.</p></section>
+{% endif %}
+{% for row in rows %}
+<section data-testid="proposal">
+  <h2><a href="/ui/seasons/{{ row.season_id }}">{{ row.title_th }} / {{ row.title_en }}</a></h2>
+  <p>{{ row.logline }}</p>
+  <span class="chip">{{ row.state | label }}</span>
+  <span class="chip">scope v{{ row.scope_version }}</span>
+  <span class="chip">hash {{ row.scope_hash | short }}</span>
+  <span class="chip">research spend {{ row.research_spend_micro_usd | usd }}</span>
+</section>
+{% endfor %}
+{% endblock %}

@@ -30,13 +30,16 @@ from microdrama.contracts.errors import (
     InvalidTransition,
     NotFound,
     SchemaInvalid,
+    Unauthorized,
 )
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.infra import Clock, IdGenerator
 from microdrama.contracts.jobs import JOB_SPECS_BY_TYPE
 from microdrama.contracts.primitives import ContractModel
+from microdrama.contracts.principals import Principal
 from microdrama.contracts.routes import JobStatusView
 from microdrama.contracts.states import JOB_TRANSITIONS
+from microdrama.core.auth import OWNER_OR_OPERATOR_KINDS, require_principal_kind
 from microdrama.core.events import append_event
 from microdrama.persistence.db import Database, Tx, jsonb, update_with_revision
 
@@ -260,6 +263,28 @@ def _finish_plan(
     raise SchemaInvalid(f"unknown job outcome {type(outcome).__name__}")
 
 
+_QUARANTINE_OWNER = "core:quarantine"
+
+
+def _linked_ops(tx: Tx, job_id: UUID, *, in_flight_only: bool) -> list[dict[str, Any]]:
+    """Provider operations linked to a job (``provider_operations.job_id``), oldest first."""
+    if in_flight_only:
+        return tx.fetchall(
+            "SELECT id, state FROM provider_operations WHERE job_id = %s AND state = ANY(%s) "
+            "ORDER BY created_at, id",
+            (job_id, list(_IN_FLIGHT_OPERATIONS)),
+        )
+    return tx.fetchall(
+        "SELECT id, state, last_result FROM provider_operations WHERE job_id = %s "
+        "ORDER BY created_at, id",
+        (job_id,),
+    )
+
+
+def _ops_summary(rows: list[dict[str, Any]]) -> str:
+    return ", ".join(f"{row['id']}={row['state']}" for row in rows)
+
+
 class JobService:
     """Durable job operations. Each method runs in its own transaction unless given ``tx``."""
 
@@ -358,6 +383,9 @@ class JobService:
         _whole(priority, "priority")
         now = self._clock.now()
         when = _aware(run_after, "run_after") if run_after is not None else now
+        # A payload that names its episode links the job to it, so episode-scoped recovery
+        # (the outcome clearance check) sees the job even when the caller omits episode_id.
+        episode_id = episode_id or getattr(payload, "episode_id", None)
         input_hash = canonical_hash(payload)
         job_id = self._ids.new_id()
 
@@ -415,6 +443,57 @@ class JobService:
 
     # -- claim / heartbeat / lease ----------------------------------------------------
 
+    def _quarantine(
+        self,
+        tx: Tx,
+        row: Mapping[str, Any],
+        *,
+        ops: list[dict[str, Any]],
+        now: datetime,
+        attempted: str,
+    ) -> dict[str, Any]:
+        """Move a job with in-flight provider work to NEEDS_RECONCILIATION instead of running it.
+
+        RUNNING -> NEEDS_RECONCILIATION is a direct transition. QUEUED and RETRY_WAIT cannot reach
+        it directly in ``JOB_TRANSITIONS``, so they pass through RUNNING under a zero-length
+        quarantine lease that is cleared in the same transaction. No handler runs and no attempt
+        is consumed.
+        """
+        detail = (
+            f"{attempted} refused: provider operations still in flight "
+            f"({_ops_summary(ops)}); reconcile them before the job runs or finishes"
+        )
+        outcome = {
+            "kind": "NEEDS_RECONCILIATION",
+            "detail": detail,
+            "attempted": attempted,
+            "operations": [{"id": str(op["id"]), "state": op["state"]} for op in ops],
+        }
+        current = row
+        if JobStatus(current["status"]) is JobStatus.RETRY_WAIT:
+            current = self._move(tx, current, JobStatus.QUEUED, now=now, changes={})
+        if JobStatus(current["status"]) is JobStatus.QUEUED:
+            current = self._move(
+                tx,
+                current,
+                JobStatus.RUNNING,
+                now=now,
+                changes={
+                    "lease_owner": _QUARANTINE_OWNER,
+                    "lease_expires_at": now,
+                    "heartbeat_at": now,
+                },
+                event={"reason": "quarantine before run"},
+            )
+        return self._move(
+            tx,
+            current,
+            JobStatus.NEEDS_RECONCILIATION,
+            now=now,
+            changes={"error_code": "IN_FLIGHT_PROVIDER_OPERATION", "outcome": outcome},
+            event={"attempted": attempted},
+        )
+
     def claim(
         self,
         queue: QueueName | str,
@@ -423,7 +502,12 @@ class JobService:
         lease_ms: int,
         now: datetime | None = None,
     ) -> Job | None:
-        """Lease the highest-priority due job on ``queue``; None when nothing is due."""
+        """Lease the highest-priority due job on ``queue``; None when nothing is due.
+
+        A due QUEUED or RETRY_WAIT job that has a provider operation still in flight is never
+        leased: it moves to NEEDS_RECONCILIATION and the next candidate is considered. A
+        WAITING_EXTERNAL poll is not blocked: polling is itself the reconciliation step.
+        """
         target_queue = _queue(queue)
         worker = _worker(worker_id)
         lease = _lease_ms(lease_ms)
@@ -436,16 +520,27 @@ class JobService:
                 (target_queue.value, instant),
             )
             for retry in due_retries:
-                self._move(tx, retry, JobStatus.QUEUED, now=instant, changes={})
+                ops = _linked_ops(tx, retry["id"], in_flight_only=True)
+                if ops:
+                    self._quarantine(tx, retry, ops=ops, now=instant, attempted="claim")
+                else:
+                    self._move(tx, retry, JobStatus.QUEUED, now=instant, changes={})
 
-            row = tx.fetchone(
-                "SELECT * FROM jobs WHERE queue = %s AND status IN ('QUEUED', 'WAITING_EXTERNAL') "
-                "AND run_after <= %s ORDER BY priority, run_after, created_at "
-                "LIMIT 1 FOR UPDATE SKIP LOCKED",
-                (target_queue.value, instant),
-            )
-            if row is None:
-                return None
+            while True:
+                row = tx.fetchone(
+                    "SELECT * FROM jobs WHERE queue = %s AND status IN ('QUEUED', 'WAITING_EXTERNAL') "
+                    "AND run_after <= %s ORDER BY priority, run_after, created_at "
+                    "LIMIT 1 FOR UPDATE SKIP LOCKED",
+                    (target_queue.value, instant),
+                )
+                if row is None:
+                    return None
+                if row["status"] == JobStatus.QUEUED.value:
+                    ops = _linked_ops(tx, row["id"], in_flight_only=True)
+                    if ops:
+                        self._quarantine(tx, row, ops=ops, now=instant, attempted="claim")
+                        continue
+                break
             _check_transition(JobStatus(row["status"]), JobStatus.RUNNING)
             from_queued = row["status"] == JobStatus.QUEUED.value
             attempt = row["attempt"] + 1 if from_queued else row["attempt"]
@@ -546,7 +641,14 @@ class JobService:
         outcome: JobOutcome,
         now: datetime | None = None,
     ) -> Job:
-        """Record the handler's outcome. Only the lease holder may finish; others get Conflict."""
+        """Record the handler's outcome. Only the lease holder may finish; others get Conflict.
+
+        Provider operations linked to the job decide what the outcome may be. While any of them is
+        in flight, Succeeded, RetryLater and Failed are not recorded: the job moves to
+        NEEDS_RECONCILIATION with a detail that names the operations. WaitExternal is allowed only
+        when every in-flight operation is SUBMITTED or RUNNING; a PENDING_SUBMIT or UNKNOWN one
+        also moves the job to NEEDS_RECONCILIATION.
+        """
         worker = _worker(worker_id)
         instant = self._now(now)
         with self._db.transaction() as tx:
@@ -554,7 +656,27 @@ class JobService:
             if not self._holds_lease(row, worker, instant):
                 raise Conflict("lease lost", job_id=str(job_id), status=row["status"])
             target, changes = _finish_plan(row, outcome, instant)
-            updated = self._move(tx, row, target, now=instant, changes=changes)
+            in_flight = _linked_ops(tx, job_id, in_flight_only=True)
+            if isinstance(outcome, NeedsReconciliation):
+                blocking: list[dict[str, Any]] = []
+            elif isinstance(outcome, WaitExternal):
+                blocking = [
+                    op
+                    for op in in_flight
+                    if op["state"]
+                    in (
+                        ProviderOperationState.PENDING_SUBMIT.value,
+                        ProviderOperationState.UNKNOWN.value,
+                    )
+                ]
+            else:
+                blocking = in_flight
+            if blocking:
+                updated = self._quarantine(
+                    tx, row, ops=blocking, now=instant, attempted=type(outcome).__name__
+                )
+            else:
+                updated = self._move(tx, row, target, now=instant, changes=changes)
             return _job(updated)
 
     # -- recovery ---------------------------------------------------------------------
@@ -609,18 +731,29 @@ class JobService:
         self,
         job_id: UUID,
         *,
+        actor: Principal,
         resolution: str,
         evidence: str,
         now: datetime | None = None,
         worker_id: str | None = None,
         lease_ms: int | None = None,
     ) -> Job:
-        """Resolve a NEEDS_RECONCILIATION job with written evidence.
+        """Resolve a NEEDS_RECONCILIATION job with written evidence. ``actor`` must be an owner
+        session or an operator; models and webhooks are refused before anything is read.
 
-        ``RESUME`` returns it to RUNNING under a new lease (``worker_id`` and ``lease_ms`` required)
-        and does not count as a new attempt. ``SUCCEEDED`` and ``FAILED`` are the only other ways
-        out; no other path can mark the job SUCCEEDED.
+        - ``RESUME``: no precondition. The resuming worker (``worker_id``, ``lease_ms``) becomes the
+          lease holder, and its own ``finish`` is subject to the in-flight rules again.
+        - ``SUCCEEDED``: every provider operation linked to the job must be a recorded success
+          (``record_result``, state SUCCEEDED, with ``last_result``), and there must be at least one.
+          A job with no linked operation can only be resumed or failed.
+        - ``FAILED``: refused while any linked operation is still in flight.
         """
+        require_principal_kind(
+            actor,
+            OWNER_OR_OPERATOR_KINDS,
+            action="resolve a job's reconciliation",
+            error=Unauthorized,
+        )
         if resolution not in ("RESUME", "SUCCEEDED", "FAILED"):
             raise SchemaInvalid("resolution must be RESUME, SUCCEEDED or FAILED")
         proof = _text(evidence, "evidence")
@@ -632,7 +765,12 @@ class JobService:
                     f"job is {row['status']}, not NEEDS_RECONCILIATION",
                     status=row["status"],
                 )
-            event = {"resolution": resolution, "evidence": proof}
+            ops = _linked_ops(tx, job_id, in_flight_only=False)
+            event = {
+                "resolution": resolution,
+                "evidence": proof,
+                "actor_kind": actor.kind.value,
+            }
             if resolution == "RESUME":
                 worker = _worker(worker_id)
                 lease = _lease_ms(lease_ms)
@@ -649,6 +787,22 @@ class JobService:
                     event=event,
                 )
             elif resolution == "SUCCEEDED":
+                if not ops:
+                    raise InvalidTransition(
+                        "cannot resolve as SUCCEEDED: no provider operation is linked to the job; "
+                        "resume it or fail it",
+                    )
+                not_recorded = [
+                    op
+                    for op in ops
+                    if op["state"] != ProviderOperationState.SUCCEEDED.value
+                    or op["last_result"] is None
+                ]
+                if not_recorded:
+                    raise InvalidTransition(
+                        "cannot resolve as SUCCEEDED: linked provider operations are not all "
+                        f"recorded successes ({_ops_summary(not_recorded)})",
+                    )
                 updated = self._move(
                     tx,
                     row,
@@ -656,11 +810,22 @@ class JobService:
                     now=instant,
                     changes={
                         "error_code": None,
-                        "outcome": {"kind": "SUCCEEDED", "reconciled": True, "evidence": proof},
+                        "outcome": {
+                            "kind": "SUCCEEDED",
+                            "reconciled": True,
+                            "evidence": proof,
+                            "operations": [str(op["id"]) for op in ops],
+                        },
                     },
                     event=event,
                 )
             else:
+                in_flight = [op for op in ops if op["state"] in _IN_FLIGHT_OPERATIONS]
+                if in_flight:
+                    raise InvalidTransition(
+                        "cannot resolve as FAILED while provider operations are in flight "
+                        f"({_ops_summary(in_flight)})",
+                    )
                 updated = self._move(
                     tx,
                     row,

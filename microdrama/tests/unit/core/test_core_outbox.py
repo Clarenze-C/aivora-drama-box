@@ -327,3 +327,38 @@ def test_consume_once_refuses_an_unknown_event(db: Database) -> None:
 def test_dispatcher_rejects_a_zero_limit(db: Database) -> None:
     with pytest.raises(SchemaInvalid):
         OutboxDispatcher(db, transport="bus", publish=lambda e: None).dispatch_pending(limit=0)
+
+
+def test_racing_dispatchers_publish_each_aggregate_in_sequence_order(db: Database) -> None:
+    """V-15: two dispatchers race over two aggregates. Publication order per aggregate must equal
+    sequence order. A slow publish widens the race window that SKIP LOCKED used to exploit."""
+    import time
+
+    first, second = uuid.uuid4(), uuid.uuid4()
+    _append(db, first, 40)
+    _append(db, second, 40)
+    published: list[tuple[uuid.UUID, int]] = []
+    lock = threading.Lock()
+
+    def publish(event) -> None:
+        time.sleep(0.002)
+        with lock:
+            published.append((event.aggregate_id, event.sequence))
+
+    def drain() -> None:
+        dispatcher = OutboxDispatcher(db, transport="bus", publish=publish)
+        while dispatcher.dispatch_pending(limit=3):
+            pass
+
+    threads = [threading.Thread(target=drain) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=240)
+    assert len(published) == 80
+    assert len(set(published)) == 80
+    for aggregate in (first, second):
+        order = [seq for agg, seq in published if agg == aggregate]
+        assert order == list(range(1, 41)), f"aggregate published out of sequence: {order[:12]}..."
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM event_dispatches") == 80

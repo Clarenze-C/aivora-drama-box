@@ -97,3 +97,39 @@ def test_models_and_webhooks_cannot_read_costs(wired, kind, role) -> None:
     assert response.status_code == 403
     assert response.json()["code"] == "POLICY_DENIED"
     assert "summary" not in response.json()
+
+
+@pytest.fixture
+def wired_with_review(db: Database, object_store):
+    services = build_services(Settings(), db, store=object_store)
+    app = create_app(build_components(services, cookie_secure=False))
+    return services, TestClient(app, raise_server_exceptions=False)
+
+
+def test_review_routes_are_registered_when_an_object_store_exists(wired_with_review) -> None:
+    services, client = wired_with_review
+    registered = _registered(client)
+    review = {(spec.method, spec.path) for spec in ROUTES if spec.owner_module == "review"}
+    assert review and review <= registered
+    assert client.get("/ready").json()["object_store"] == "OK"
+
+
+def test_without_an_object_store_no_review_routes_are_served(wired) -> None:
+    services, client, _ = wired
+    assert services.review is None
+    assert ("GET", "/seasons/proposals") not in _registered(client)
+
+
+def test_the_wired_review_api_needs_an_owner_session(wired_with_review) -> None:
+    services, client = wired_with_review
+    assert client.get("/seasons/proposals").status_code == 401
+    services.auth.create_owner("owner", PASSWORD)
+    session = services.auth.login("owner", PASSWORD)
+    client.cookies.set(SESSION_COOKIE, session.session_token)
+    assert client.get("/seasons/proposals").status_code == 200
+    client.cookies.clear()
+    model = services.auth.issue_service_credential(
+        "critic-1", PrincipalKind.RUNTIME_MODEL, runtime_role=RuntimeRole.CRITIC
+    )
+    response = client.get("/seasons/proposals", headers={"Authorization": f"Bearer {model}"})
+    assert response.status_code in (401, 403)
