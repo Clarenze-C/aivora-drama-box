@@ -1,5 +1,5 @@
 task_id,title,status,owner,suggested_role,dependencies,milestone,size,contract_version,started_at,completed_at,evidence,blocker
-T001,Isolated scaffold and reproducible check commands,TODO,,Integrator,,M0,M,pending_T002,,,,
+T001,Isolated scaffold and reproducible check commands,ACCEPTED,Integrator,Integrator,,M0,M,scaffold,2026-10-20T05:30:00Z,2026-10-20T05:37:25Z,make check passed (30 tests; real PG16 row-lock + loopback isolation); microdrama/evidence/T001.md,
 T002,Canonical schemas/interfaces and fixtures,TODO,,Contract guardian,T001,M0,L,pending_T002,,,,
 T003,Durable schema/repositories/object-store metadata,TODO,,Integrator / database,T002,M0,L,pending_T002,,,,
 T004,"Workflow state, outbox, jobs and idempotency",TODO,,Core,T003,M1,L,pending_T002,,,,

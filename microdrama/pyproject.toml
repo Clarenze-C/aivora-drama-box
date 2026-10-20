@@ -1,0 +1,54 @@
+[project]
+name = "microdrama"
+version = "0.1.0"
+description = "Automated Thai micro-drama system (offline/mock implementation, M0-M4)."
+requires-python = ">=3.13"
+readme = "README.md"
+# Exact pins. These are the versions actually installed and verified in the
+# bootstrap sandbox; requirements.lock holds the full transitive freeze.
+dependencies = [
+    "fastapi==0.150.0",
+    "pydantic==2.14.1",
+    "psycopg[binary]==3.3.6",
+    "psycopg-pool==3.3.3",
+    "redis==8.1.0",
+    "jinja2==3.1.6",
+    "python-multipart==0.0.32",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+    "pytest-timeout==2.4.0",
+    "ruff==0.17.1",
+    "jsonschema==4.26.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -p no:cacheprovider"
+timeout = 300
+markers = [
+    "db: needs the isolated PostgreSQL test server (started automatically)",
+    "redis: needs the isolated Redis test server (started automatically)",
+    "ffmpeg: needs local ffmpeg/ffprobe binaries",
+    "slow: slower fault/concurrency scenarios",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["microdrama"]

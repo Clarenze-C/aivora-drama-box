@@ -1,0 +1,33 @@
+# microdrama/ local ignores.
+# The AIVORA root .gitignore ignores every directory named tests/ and scripts/
+# (legacy patterns). Re-include this module's test tree explicitly.
+!/tests/
+!/tests/**
+
+.venv/
+.local/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Never commit secrets or media binaries.
+.env
+.env.*
+!.env.example
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.png
+*.jpg
+*.jpeg
+*.webp

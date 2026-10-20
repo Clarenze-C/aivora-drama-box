@@ -1,0 +1,38 @@
+# Optional local services for manual exploration on a machine WITH Docker.
+# The test suite does NOT use this file: it starts isolated PostgreSQL/Redis
+# processes itself (see microdrama/README.md "Test services").
+#
+# UNVERIFIED IMAGE TAGS: Docker Hub was unreachable from the bootstrap sandbox,
+# so these tags were not pulled or tested. They are chosen to match the server
+# versions that WERE verified locally (PostgreSQL 16.15, Redis 7.0.15). Verify
+# and pin image digests before relying on this file.
+#
+# Isolation from existing AIVORA services:
+#   - dedicated compose project name and named volume (microdrama-local-*)
+#   - non-default host ports bound to 127.0.0.1 only
+#   - no external networks, no production credentials, no shared databases
+# Object storage: offline mode uses the private filesystem object store; an
+# S3-compatible service is a live-readiness item (T031+), not configured here.
+name: microdrama-local
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: microdrama
+      POSTGRES_DB: microdrama
+      # Local-only throwaway password; never reused anywhere else.
+      POSTGRES_PASSWORD: microdrama-local-only
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - microdrama-local-pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.0
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:56379:6379"
+
+volumes:
+  microdrama-local-pg:
