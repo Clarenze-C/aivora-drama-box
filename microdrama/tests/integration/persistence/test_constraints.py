@@ -1055,3 +1055,136 @@ def test_nested_float_in_json_document_is_refused(db: Database) -> None:  # N-1
     with pytest.raises(SchemaInvalid), db.transaction() as tx:
         tx.execute("SELECT %s::jsonb", ({"nested": [1, 2.5]},))
     assert jsonb({"unit_price_micro_usd": 250}).obj == {"unit_price_micro_usd": 250}
+
+
+class TestRound3Hardening:
+    def test_referenced_caption_cannot_be_deleted(self, db: Database) -> None:  # N-6
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            track = _caption(tx, episode)
+            package_id, package_hash = _package_with_captions(tx, episode, [track])
+            _approve_package(tx, package_id, _gate2(tx, episode, package_hash))
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute("DELETE FROM caption_tracks WHERE id = %s", (track,))
+
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "seasons",
+            "episodes",
+            "assets",
+            "release_packages",
+            "platform_posts",
+            "caption_tracks",
+            "jobs",
+            "reservations",
+            "budget_accounts",
+            "pod_leases",
+            "capability_registry",
+        ],
+    )
+    def test_audit_records_are_never_deleted_or_truncated(self, db: Database, table: str) -> None:
+        with pytest.raises(Conflict), db.transaction() as tx:
+            tx.execute(f"TRUNCATE {table} CASCADE")
+        with db.transaction() as tx:
+            season = seed_season(tx)
+        if table == "seasons":
+            with pytest.raises(Conflict), db.transaction() as tx:
+                tx.execute("DELETE FROM seasons WHERE id = %s", (season,))
+
+    def test_caption_superseded_before_approval_blocks_the_approved_transition(
+        self, db: Database
+    ) -> None:  # N-7
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            track = _caption(tx, episode)
+            package_id, package_hash = _package_with_captions(tx, episode, [track])
+            approval = _gate2(tx, episode, package_hash)  # recorded while the track is CURRENT
+            tx.execute("UPDATE caption_tracks SET state = 'SUPERSEDED' WHERE id = %s", (track,))
+        with (
+            pytest.raises(Unauthorized, match="caption tracks must be CURRENT"),
+            db.transaction() as tx,
+        ):
+            _approve_package(tx, package_id, approval)
+
+    def test_approval_needs_at_least_one_aligned_caption_track(self, db: Database) -> None:  # N-8
+        with db.transaction() as tx:
+            episode = seed_episode(tx, seed_season(tx))
+            _, package_hash = _package_with_captions(tx, episode, [])
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            _gate2(tx, episode, package_hash)
+
+    @pytest.mark.parametrize(
+        "doc", ['{"unit_price_micro_usd": 1.5}', '{"a": [1, {"b": 2.0}]}', '{"c": 2.5e-1}']
+    )
+    def test_non_integer_numbers_refused_even_as_json_text(
+        self, db: Database, doc: str
+    ) -> None:  # N-9
+        with db.transaction() as tx:
+            job = seed_job(tx, semantic_key=f"k:{uuid.uuid4().hex}")
+        with pytest.raises(Conflict, match="non-integer numbers"), db.transaction() as tx:
+            tx.execute("UPDATE jobs SET outcome = %s::jsonb WHERE id = %s", (doc, job))
+        with db.transaction() as tx:
+            tx.execute(
+                "UPDATE jobs SET outcome = %s::jsonb WHERE id = %s",
+                ('{"amount": 15, "t": "1.5"}', job),
+            )
+
+    def test_policy_documents_keep_their_original_decimals(self, db: Database) -> None:
+        # The original policy file contains USD decimals; it is settings input, exempt.
+        with db.transaction() as tx:
+            tx.execute(
+                "INSERT INTO policy_versions (id, version, document_kind, body, body_hash) "
+                "VALUES (%s, %s, %s, %s::jsonb, %s)",
+                (
+                    uuid.uuid4(),
+                    "automation-scope-test",
+                    "INACTIVE_DESIGN_EXAMPLE",
+                    '{"proposed_budget_allocation_usd": {"gpu": 2.5}}',
+                    H,
+                ),
+            )
+
+    @pytest.mark.parametrize(
+        "evidence",
+        [
+            [{"source": "FAKE_FIXTURE", "ref": "x"}, {"ref": "no-source"}],
+            [{"source": "fake_fixture", "ref": "x"}],
+            [{"source": "SOMETHING_ELSE", "ref": "x"}],
+        ],
+    )
+    def test_live_database_needs_a_real_evidence_source(
+        self, db: Database, evidence: list
+    ) -> None:  # N-10
+        with db.transaction() as tx:
+            tx.execute("UPDATE md_runtime_mode SET execution_mode = 'PRODUCTION'")
+        with pytest.raises(Unauthorized), db.transaction() as tx:
+            TestRuntimeModeGuard()._cap(tx, evidence)
+
+    @pytest.mark.parametrize(
+        "missing", ["critical_quality_pass_bp", "sample_count", "cost_per_accepted_shot_micro_usd"]
+    )
+    def test_enabled_preset_missing_measurement_keys(
+        self, db: Database, missing: str
+    ) -> None:  # N-5
+        measured = {
+            "sample_count": 3,
+            "critical_quality_pass_bp": 7000,
+            "cost_per_accepted_shot_micro_usd": 1,
+        }
+        del measured[missing]
+        with pytest.raises(Conflict), db.transaction() as tx:
+            insert_row(
+                tx,
+                "preset_registry",
+                {
+                    "id": uuid.uuid4(),
+                    "preset_id": f"p-{uuid.uuid4().hex[:6]}",
+                    "version": 1,
+                    "tier": "fast_four_step",
+                    "workflow_sha256": H,
+                    "record": jsonb({"measured": measured}),
+                    "enabled": True,
+                    "evidence": jsonb([{"source": "MEASURED_BENCHMARK", "ref": "b"}]),
+                },
+            )

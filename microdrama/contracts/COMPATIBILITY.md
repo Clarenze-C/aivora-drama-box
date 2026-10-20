@@ -57,9 +57,18 @@ them by hand.
   the package is missing/not CURRENT; and a caption track used by an APPROVED package cannot
   leave CURRENT until that package is SUPERSEDED (a recut returns to the same Gate 2). T008
   shows these as gate blockers; T020 re-checks before submitting.
-- **Float literals (V-12 residual).** The persistence layer refuses float bind parameters.
-  A float *literal* written into SQL source would still be cast by PostgreSQL; code review
-  catches those, and no DB check can see the pre-cast value.
+- **Link secrecy heuristic (N-2 residual).** The contract's token-like-link rule is a
+  heuristic backstop (opaque 32+ character segments, credentials, listed secret query keys).
+  It cannot recognise every token shape. T026 must build public/member URLs only from
+  verified provider post IDs using a per-provider allow-list of URL shapes, and test it.
+- **Runtime-mode deployment (V-4 residual).** Live deployments must revoke UPDATE on
+  `md_runtime_mode` from application roles. The `/ready` check (T029) must report not-ready
+  when the database's `md_runtime_mode` differs from `Settings.execution_mode`.
+- **Floats (V-12/N-1/N-9).** The persistence layer refuses floats in bind parameters and at
+  any depth inside JSON documents. Since migration 0009, a generic row trigger also refuses
+  any non-integer number anywhere in a stored row, including JSON bound as text. The original
+  policy file in `policy_versions` is the only exempt table. A float *literal* cast into a
+  bigint column in SQL source remains a residual that code review must catch.
 
 ## Changing a contract
 
