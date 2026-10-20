@@ -296,6 +296,35 @@ class TestGpuLeases:
         )
         return lease
 
+    def test_a_closed_reservation_records_why_it_closed(self, db: Database) -> None:  # 0012
+        with db.transaction() as tx:
+            account, _, episode = _account(tx)
+            lease = self._lease(tx, episode, account)
+            reservation = tx.fetchval(
+                "SELECT reservation_id FROM pod_leases WHERE id = %s", (lease,)
+            )
+        close = "UPDATE reservations SET state = %s, closed_at = now(), closed_reason = %s WHERE id = %s"
+        with pytest.raises(Conflict), db.transaction() as tx:  # closing needs a reason
+            tx.execute(close, ("RELEASED", None, reservation))
+        with pytest.raises(Conflict), db.transaction() as tx:  # one line only
+            tx.execute(close, ("RELEASED", "line one\nline two", reservation))
+        with pytest.raises(Conflict), db.transaction() as tx:  # an open reservation has none
+            tx.execute(
+                "UPDATE reservations SET closed_reason = 'early' WHERE id = %s", (reservation,)
+            )
+        with db.transaction() as tx:
+            tx.execute(close, ("RELEASED", "job cancelled before dispatch", reservation))
+        for change in (
+            "closed_reason = 'rewritten'",
+            "state = 'SETTLED', closed_reason = 'settlement'",
+        ):
+            with pytest.raises(Conflict), db.transaction() as tx:  # a release is final
+                tx.execute(f"UPDATE reservations SET {change} WHERE id = %s", (reservation,))
+        with db.transaction() as tx:  # late usage may still be recorded on it
+            tx.execute(
+                "UPDATE reservations SET settled_micro_usd = 5 WHERE id = %s", (reservation,)
+            )
+
     def test_only_one_live_gpu_lease_in_pilot(self, db: Database) -> None:
         with db.transaction() as tx:
             account, season, episode = _account(tx)

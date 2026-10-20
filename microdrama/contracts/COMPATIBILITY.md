@@ -83,6 +83,15 @@ them by hand.
   policy file in `policy_versions` is the only exempt table. A float *literal* cast into a
   bigint column in SQL source remains a residual that code review must catch.
 
+- **Cost lines use lowercase identifiers (M1, T005).** `CostLine.category`, `kind` and
+  `cost_basis` are `Identifier` fields (lowercase). The cost view emits the enum values
+  lowercased (`gpu_generation`, `settlement`, `synthetic_fake`) and `research_allocation` for
+  research spend attributed to the episode. This is a display view, not a stored payload, so
+  no contract change was made.
+- **Reservation close reasons (M1, migration 0012).** Every closed reservation stores why it
+  closed (`closed_reason`): the caller's reason for RELEASED, a fixed reason for EXPIRED and
+  SETTLED. A RELEASED reservation keeps its state and reason.
+
 ## Changing a contract
 
 A worker that needs a missing field **stops** and returns a contract-change
