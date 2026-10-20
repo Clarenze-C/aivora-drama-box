@@ -1,0 +1,13 @@
+case,gpu_price_label,usd_per_hour,final_video_seconds,generated_shot_seconds,warm_full_job_seconds_per_shot_assumed,average_total_takes,gpu_minutes,gpu_usd,excludes
+unmeasured_same_runtime_counterfactual,3090_price_only,0.5,300,5,20,1,20.0,0.1667,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,4090_price_only,0.89,300,5,20,1,20.0,0.2967,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,5090_price_only,1.19,300,5,20,1,20.0,0.3967,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,3090_price_only,0.5,300,5,20,2,40.0,0.3333,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,4090_price_only,0.89,300,5,20,2,40.0,0.5933,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,5090_price_only,1.19,300,5,20,2,40.0,0.7933,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,3090_price_only,0.5,300,5,20,3,60.0,0.5,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,4090_price_only,0.89,300,5,20,3,60.0,0.89,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,5090_price_only,1.19,300,5,20,3,60.0,1.19,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,3090_price_only,0.5,300,5,20,5,100.0,0.8333,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,4090_price_only,0.89,300,5,20,5,100.0,1.4833,startup idle storage services human work; runtime must be measured per GPU
+unmeasured_same_runtime_counterfactual,5090_price_only,1.19,300,5,20,5,100.0,1.9833,startup idle storage services human work; runtime must be measured per GPU

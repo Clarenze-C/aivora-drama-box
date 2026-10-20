@@ -1,0 +1,1 @@
+event_id,season_id,episode_id,job_id,lease_or_provider_request_id,bucket,provider,model_or_gpu_profile,state,reserved_usd,accrued_unbilled_usd,settled_usd,released_reservation_usd,billing_exposure_reserve_usd,source_price_version,started_at,updated_at,failure_reason,allocation_basis

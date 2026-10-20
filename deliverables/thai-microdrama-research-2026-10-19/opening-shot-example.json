@@ -1,0 +1,119 @@
+{
+  "status": "PROPOSED_NOT_RENDERED",
+  "contract_version": "1.0",
+  "series_id": "lastrepair",
+  "episode_id": "e01",
+  "shot_id": "s02",
+  "canon_version": "draft-v1",
+  "timeline": {
+    "in_seconds": 5,
+    "out_seconds": 10,
+    "requested_generation_seconds": 5,
+    "retained_seconds": 5
+  },
+  "dramatic_purpose": "May treats a frightening sale claim as an unpaid bill; defensiveness hides fear.",
+  "scene": {
+    "id": "SHOP_DAY1_AM_v1",
+    "camera_position": "A",
+    "eyeline": "left toward Da",
+    "action_axis": "do not cross",
+    "character_state": "does not yet know Art signed receipt"
+  },
+  "cast": [
+    {
+      "character_id": "MAY_v1",
+      "outfit_id": "MAY_WORK_A",
+      "voice_reference_id": "MAY_TH_v1",
+      "voice_source": "to be licensed/recorded",
+      "gesture": "glance receipt to Da",
+      "prop_state": "orange pencil behind right ear"
+    }
+  ],
+  "references": [
+    {
+      "slot": "character",
+      "asset_id": "MAY_v1_front_3q",
+      "sha256": null
+    },
+    {
+      "slot": "scene_start",
+      "asset_id": "e01_s02_keyframe",
+      "sha256": null
+    },
+    {
+      "slot": "voice",
+      "asset_id": "MAY_TH_v1_neutral_10s",
+      "sha256": null
+    }
+  ],
+  "dialogue": [
+    {
+      "speaker": "MAY_v1",
+      "language": "th",
+      "text": "ขายอะไรคะ ป้ายังติดค่าซ่อมอยู่เลย",
+      "cue_in_seconds": 6,
+      "cue_out_seconds": 8.6,
+      "english": "Sold? You still owe us for the repair.",
+      "delivery": "defensive politeness, fear underneath; native timed read pending"
+    }
+  ],
+  "visual_prompt": "Original fictional Thai woman May, blunt bob, forest-green boxy work jacket over cream tee, orange pencil behind right ear. Medium close-up at approved repair-shop camera A, glance from receipt toward Da at frame-left. Restrained defensive response. Soft street daylight and warm work lamp. Hold camera. No logos or generated text.",
+  "audio": {
+    "route": "select_after_benchmark",
+    "approved_dialogue_asset": null,
+    "room_tone": "SHOP_ROOM_A",
+    "music": "none",
+    "effects": "continuous fan, no register effect"
+  },
+  "generation": {
+    "backend": null,
+    "model_version": null,
+    "workflow_sha256": null,
+    "seed": null,
+    "mode": "fresh_keyframe",
+    "required_controls": [
+      "approved character reference",
+      "approved scene framing"
+    ],
+    "optional_controls": [
+      "voice timbre reference"
+    ],
+    "unsupported_control_behavior": "reject job or explicitly choose approved fallback; never silently discard requirements"
+  },
+  "acceptance": [
+    "exact Thai meaning and speaker",
+    "native pronunciation approval",
+    "approved face and jacket",
+    "pencil on right ear",
+    "correct eyeline",
+    "no music",
+    "lip timing reviewed"
+  ],
+  "retry": {
+    "max_total_attempts": 3,
+    "on_exhaustion": "human rewrite/reframe/voice-route decision"
+  },
+  "rights": {
+    "visual_license_record": null,
+    "voice_consent_record": null,
+    "global_distribution_cleared": false
+  },
+  "cost": {
+    "planned_output_usd_768p": 0.4,
+    "input_charges_usd": null,
+    "actual_total_usd": null
+  },
+  "publication_approved": false,
+  "shot_pattern_id": "confrontation_v1",
+  "dramatic_importance": "high",
+  "dialogue_complexity": "single_speaker_short_line",
+  "temporal_risk": "medium_lip_sync",
+  "required_identity_controls": [
+    "MAY_v1_face",
+    "MAY_TH_v1_voice",
+    "MAY_WORK_A"
+  ],
+  "preferred_render_tier": "best_accepted_cost_compatible_dialogue_preset",
+  "fallback_edit": "use accepted alternate or listening reaction while preserving speaker and meaning",
+  "reference_lock_version": null
+}

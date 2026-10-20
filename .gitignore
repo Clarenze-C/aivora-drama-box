@@ -1,0 +1,20 @@
+# Local environments, credentials and generated/runtime assets
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.sqlite
+*.sqlite3
+.local/
+generated/
+node_modules/
+.DS_Store

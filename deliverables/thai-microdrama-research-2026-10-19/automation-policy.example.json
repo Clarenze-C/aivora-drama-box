@@ -1,0 +1,259 @@
+{
+  "document_kind": "INACTIVE_DESIGN_EXAMPLE",
+  "version": "automation-scope-2026-10-19-v2",
+  "runtime_enabled": false,
+  "requirements_confirmed_by_user": {
+    "season_concept_and_arc_approval": "ONCE_PER_SEASON",
+    "episode_final_release_package_approval": "REQUIRED_PER_EPISODE",
+    "intermediate_script_prompt_reference_audio_edit_approvals": false,
+    "ai_pre_review_before_final_human_review": true,
+    "variable_cost_limit_usd_per_episode": 10,
+    "maximum_final_episode_duration_seconds": 300,
+    "fixed_subscriptions_reported_separately": true,
+    "social_management": [
+      "strategy_and_calendar",
+      "platform_variants",
+      "titles_captions_descriptions",
+      "keyword_hashtag_optimization",
+      "covers_thumbnails",
+      "scheduling_publishing",
+      "metadata_optimization",
+      "public_comment_replies",
+      "permitted_keyword_and_inbound_dms",
+      "comment_moderation",
+      "link_and_catalog_maintenance",
+      "analytics_attribution_reporting"
+    ],
+    "accepted_system_improvements": [
+      "IMP-01",
+      "IMP-02",
+      "IMP-03",
+      "IMP-04",
+      "IMP-05",
+      "IMP-06",
+      "IMP-07",
+      "IMP-08"
+    ]
+  },
+  "setup_required_before_execution": {
+    "approved_season_id": null,
+    "approved_season_scope_sha256": null,
+    "rights_route_id": null,
+    "comfy_api_workflow_sha256": null,
+    "model_and_node_version_registry": null,
+    "voice_and_music_license_registry": null,
+    "gpu_profile_and_actual_hourly_ceiling": null,
+    "destination_account_capability_registry": null,
+    "approved_schedule_windows": null,
+    "credential_store_reference": null,
+    "shared_research_spend_reservation": null,
+    "management_policy_sha256": null
+  },
+  "proposed_budget_allocation_usd": {
+    "research_script_prompts_metadata": 1.0,
+    "references_and_dialogue": 1.5,
+    "gpu_generation_warmup_retries": 2.5,
+    "ai_qa_asr_captions": 1.0,
+    "cpu_edit_storage_transfer": 0.5,
+    "metered_post_management": 1.0,
+    "uncommitted_recovery_and_billing_exposure_headroom": 2.5
+  },
+  "budget_policy": {
+    "reserve_atomically_before_paid_dispatch": true,
+    "include_settled_accrued_inflight_and_exposure": true,
+    "failed_and_rejected_jobs_remain_chargeable": true,
+    "human_requested_revisions_use_same_episode_cap": true,
+    "automatic_cap_increase": false,
+    "unknown_price_action": "BLOCK_PAID_DISPATCH",
+    "exhausted_budget_action": "STOP_PAID_WORK_AND_SHUT_DOWN_OWNED_GPU",
+    "management_exhausted_action": "DISABLE_METERED_MANAGEMENT_USE_SUPPORTED_FIXED_QUOTA_RULES_ONLY",
+    "paid_advertising_budget_usd": 0
+  },
+  "proposed_retry_settings": {
+    "maximum_total_attempts_per_shot": 3,
+    "maximum_automated_final_qa_repair_rounds": 2,
+    "maximum_transient_transport_attempts": 3,
+    "ambiguous_external_side_effect": "RECONCILE_DO_NOT_BLINDLY_RESUBMIT"
+  },
+  "quality_policy": {
+    "review_actual_final_media": true,
+    "writer_cannot_self_certify_final_footage": true,
+    "missing_critical_coverage_is_pass": false,
+    "technical_and_semantic_checks_separate": true,
+    "critical_unresolved_defect": "BLOCK_PUBLICATION",
+    "human_approval_on_timeout": false,
+    "observation_first_review": {
+      "required": true,
+      "first_pass_inputs": [
+        "actual_media",
+        "neutral_observation_questions"
+      ],
+      "first_pass_excludes": [
+        "intended_script",
+        "expected_dialogue",
+        "expected_plot_outcome",
+        "writer_rationale"
+      ],
+      "first_pass_report_immutable_before_comparison": true,
+      "second_pass_inputs": [
+        "frozen_observations",
+        "independent_transcript",
+        "intended_script",
+        "canon",
+        "identity_anchors",
+        "acceptance_criteria"
+      ],
+      "separate_model_calls": true,
+      "second_model_provider_required": false,
+      "cannot_treat_unsampled_interval_as_checked": true
+    }
+  },
+  "approval_policy": {
+    "final_approval_binds": [
+      "media_hashes",
+      "management_policy_hash",
+      "release_scope"
+    ],
+    "material_video_change": "RETURN_TO_FINAL_EPISODE_GATE",
+    "metadata_changes_within_approved_policy": "AUTOMATIC_VALIDATE_AND_LOG",
+    "unsupported_required_platform_capability": "HOLD_DESTINATION",
+    "routine_manual_upload_fallback": false
+  },
+  "gpu_policy": {
+    "persistent_asset_verification_before_normal_shutdown": true,
+    "gpu_off_before_waiting_for_human": true,
+    "independent_orphan_resource_janitor": true,
+    "only_manage_verified_pipeline_owned_tagged_resources": true,
+    "acquisition_timeout_action": "RECONCILE_RESOURCES_THEN_FAIL_OR_BACKOFF"
+  },
+  "proposed_community_policy": {
+    "routine_replies_grounded_in_released_catalog": true,
+    "cold_outbound_dm_campaigns": false,
+    "respect_messaging_windows_and_permissions": true,
+    "moderate_clear_spam_scams_threats_where_supported": true,
+    "remove_ordinary_criticism": false,
+    "automatic_account_bans": false,
+    "uncertain_destructive_action": "NO_ACTION_LOG_UNCERTAINTY",
+    "metadata_optimization_cooldown_hours": 24,
+    "maximum_substantive_metadata_optimizations_per_post_first_7_days": 2,
+    "automatic_contract_acceptance_sponsor_commitments_or_refunds": false
+  },
+  "production_identity_policy": {
+    "lock_trigger": "EPISODE_ONE_FINAL_APPROVAL",
+    "lock_assets": [
+      "faces",
+      "recurring_voice_ids_and_anchors",
+      "wardrobe_references",
+      "location_references",
+      "visual_style"
+    ],
+    "include_cast_contact_sheet_voice_anchors_in_first_final_package": true,
+    "render_later_episodes_before_first_lock": false,
+    "unseen_or_unreviewed_assets_already_locked": false,
+    "material_changes": "VERSION_AND_RETURN_TO_EXISTING_FINAL_GATE",
+    "additional_human_gate": false
+  },
+  "directing_playbook_policy": {
+    "required": true,
+    "reference_file": "directing-playbook.example.json",
+    "proposed_maximum_active_locations_per_episode": 2,
+    "proposed_maximum_featured_speaking_characters_per_episode": 3,
+    "proposed_maximum_speakers_per_shot": 2,
+    "over_complex_draft_action": "AUTOMATIC_STAGING_REWRITE_PRESERVING_DRAMATIC_EVENT",
+    "reuse_shot_patterns_not_plots": true
+  },
+  "render_routing_policy": {
+    "tiers": [
+      "fast_four_step",
+      "quality_eight_step",
+      "compatible_baseline"
+    ],
+    "enable_only_compatible_benchmarked_presets": true,
+    "required_controls_cannot_be_dropped": true,
+    "rank_by": [
+      "critical_quality_pass",
+      "cost_per_accepted_shot",
+      "cost_per_retained_second",
+      "downstream_repair_cost"
+    ],
+    "simple_shot_default": "CHEAPEST_QUALIFYING_PRESET",
+    "critical_dialogue_or_emotion_default": "BEST_ACCEPTED_COST_PRESET_FOR_CLASS",
+    "tier_promotion_uses_existing_attempt_and_budget_limits": true
+  },
+  "feedback_memory_policy": {
+    "capture_timecodes_and_asset_ids": true,
+    "categories": [
+      "identity_voice",
+      "thai_dialogue",
+      "subtitles",
+      "motivation",
+      "continuity_props",
+      "pacing",
+      "sound",
+      "other"
+    ],
+    "default_scope": "SHOT_OR_EPISODE",
+    "broader_rule_activation": "EXPLICIT_USER_RECURRING_SCOPE_OR_EXISTING_FINAL_GATE_APPROVAL",
+    "automatic_globalization_of_ambiguous_feedback": false,
+    "version_rules_and_allow_rollback": true,
+    "repair_smallest_affected_dependencies": true,
+    "budget_and_canon_overrides": false
+  },
+  "queue_isolation_policy": {
+    "logical_queues": [
+      "production",
+      "publication",
+      "community"
+    ],
+    "independent_gpu_janitor": true,
+    "reserve_execution_capacity_for_due_publication": true,
+    "protect_production_and_recovery_budget_from_community": true,
+    "shared_atomic_episode_budget": true,
+    "shared_account_provider_rate_limiter": true,
+    "comment_flood_action": "DEDUPE_RATE_LIMIT_PREFER_TEMPLATES_DEFER_OPTIONAL_ACTIONS",
+    "retain_shared_policy_blocks_for_rights_or_account_failure": true
+  },
+  "hook_experiment_policy": {
+    "candidate_count_per_approved_episode": 3,
+    "proposed_duration_seconds": [
+      20,
+      40
+    ],
+    "source": "EXISTING_ACCEPTED_FOOTAGE_AND_LICENSED_SOUND",
+    "new_video_generation_for_hook_tests": false,
+    "include_variants_in_existing_final_review": true,
+    "release_all_candidates_without_eligible_slots": false,
+    "record_treatment_sources_cohort_slot_and_denominators": true,
+    "organic_matched_comparison_is_causal_proof": false,
+    "primary_outcome": "ENGAGED_VIEWING_AND_NEXT_EPISODE_CONTINUATION",
+    "experiment_export_qa_management_costs_within_episode_cap": true
+  },
+  "reliability_qualification_policy": {
+    "consecutive_qualifying_episodes_required": 10,
+    "production_streak_and_management_window_status_separate": true,
+    "initial_management_window_days": 7,
+    "qualifying_episode_requires": [
+      "episode_variable_cap_met",
+      "quality_checks_passed",
+      "final_human_approval",
+      "supported_automatic_publication",
+      "no_duplicate_or_incorrect_release",
+      "no_hidden_manual_production_or_technical_fix"
+    ],
+    "automatic_repairs_from_final_review_feedback_allowed": true,
+    "failed_episode_or_manual_technical_fix_resets_streak": true,
+    "aggregate_failed_costs_in_effective_cost": true,
+    "younger_management_windows": "PENDING",
+    "increase_unattended_production_volume_before_qualification": false,
+    "additional_human_approval_gate": false,
+    "metrics": [
+      "effective_variable_usd_per_successful_episode",
+      "effective_variable_usd_per_published_minute",
+      "human_review_and_revision_minutes",
+      "hands_off_completion_fraction",
+      "failure_and_retry_distribution",
+      "duplicate_or_incorrect_release_incidents",
+      "next_episode_continuation_when_measurable"
+    ]
+  }
+}

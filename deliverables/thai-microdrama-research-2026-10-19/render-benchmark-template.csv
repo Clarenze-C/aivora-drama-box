@@ -1,0 +1,1 @@
+route,method,scene,seed_or_start,chain_depth,shot_id,model_commit,node_commit,gpu,resolution,generation_seconds,retained_seconds,wall_seconds,actual_cost_usd,identity_score_1_5,speaker_match,thai_critical_error,lip_offset_ms,wardrobe_pass,setting_pass,motion_pass,audio_seam_pass,native_reviewer,accepted,failure_notes

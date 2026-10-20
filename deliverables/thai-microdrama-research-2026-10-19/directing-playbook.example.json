@@ -1,0 +1,114 @@
+{
+  "document_kind": "INACTIVE_DESIGN_EXAMPLE",
+  "version": "directing-playbook-v1",
+  "runtime_enabled": false,
+  "settings_status": "INITIAL_TEST_PRESETS_NOT_MEASURED",
+  "limits": {
+    "active_locations_per_episode": 2,
+    "featured_speaking_characters_per_episode": 3,
+    "speakers_per_shot": 2
+  },
+  "timing": "ADAPT_TO_ACTUAL_AUDIO_AND_DRAMATIC_BEAT",
+  "patterns": [
+    {
+      "id": "confrontation_v1",
+      "purpose": "Make competing wants clear through an exchange and reaction.",
+      "coverage": [
+        "initiator",
+        "respondent",
+        "reaction_or_shared_space"
+      ],
+      "continuity": [
+        "preserve_action_axis",
+        "match_eyelines",
+        "consistent_prop_positions"
+      ],
+      "payoff": "A choice, refusal or changed leverage."
+    },
+    {
+      "id": "revelation_v1",
+      "purpose": "Show evidence that changes a character belief.",
+      "coverage": [
+        "evidence_or_action",
+        "character_comprehension",
+        "consequence"
+      ],
+      "continuity": [
+        "key_evidence_readable",
+        "reaction_after_evidence",
+        "no_premature_subtitle_spoiler"
+      ],
+      "payoff": "The audience understands what changed."
+    },
+    {
+      "id": "quiet_confession_v1",
+      "purpose": "Expose a vulnerable motive with room for silence.",
+      "coverage": [
+        "speaker",
+        "listener",
+        "optional_shared_silence"
+      ],
+      "continuity": [
+        "preserve_voice_identity",
+        "no_unmotivated_camera_change",
+        "continuous_room_tone"
+      ],
+      "payoff": "A relationship changes, even without a plot twist."
+    },
+    {
+      "id": "comic_reaction_v1",
+      "purpose": "Release tension through a character-specific response.",
+      "coverage": [
+        "setup",
+        "response",
+        "reaction_if_needed"
+      ],
+      "continuity": [
+        "joke_meaning_survives_subtitles",
+        "preserve_timing",
+        "no_repetitive_stock_gag"
+      ],
+      "payoff": "Humor reveals character or changes the interaction."
+    },
+    {
+      "id": "practical_prop_action_v1",
+      "purpose": "Make a practical objective or money/repair detail legible.",
+      "coverage": [
+        "objective",
+        "controlled_action_or_insert",
+        "result"
+      ],
+      "continuity": [
+        "same_prop_id",
+        "correct_hand_state",
+        "composite_critical_text_in_post"
+      ],
+      "payoff": "A visible result affects the decision."
+    },
+    {
+      "id": "cliffhanger_v1",
+      "purpose": "Leave a consequential next question after paying off a current beat.",
+      "coverage": [
+        "earned_consequence",
+        "reaction_or_decision",
+        "clear_next_episode_path"
+      ],
+      "continuity": [
+        "no_misleading_reversal",
+        "match_published_canon",
+        "truthful_episode_availability"
+      ],
+      "payoff": "A real unresolved decision or consequence, not withheld basic context."
+    }
+  ],
+  "required_shot_fields": [
+    "shot_pattern_id",
+    "dramatic_importance",
+    "dialogue_complexity",
+    "temporal_risk",
+    "required_identity_controls",
+    "preferred_render_tier",
+    "fallback_edit",
+    "reference_lock_version"
+  ]
+}

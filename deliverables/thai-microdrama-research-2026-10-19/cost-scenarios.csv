@@ -1,0 +1,4 @@
+scenario,finished_minutes,attempt_multiplier,duration_factor,output_usd_per_second,generated_seconds,video_usd,labor_hours,labor_usd,variable_services_usd,shared_tools_per_episode_usd,contingency_fraction,episode_usd,finished_minute_usd,setup_usd,season_10_episodes_usd,service_only_usd_excluding_labor_setup
+low,4,1.5,1.2,.08,432.00,34.5600,9,190,12,10,.10,271.22,67.80,300,3012.16,62.22
+base,4,3,1.3,.08,936.0,74.880,20,615,30,20,.15,850.86,212.72,900,9408.62,143.61
+high,4,5,1.5,.13,1800.0,234.000,39,1780,75,45,.25,2667.50,666.88,2500,29175.00,442.50
