@@ -12,7 +12,7 @@ The user has confirmed the operating requirements and all eight improvements bel
 
 Precedence: current user instructions → this SPEC for implementation → task breakdown for execution order → accepted policy/playbook examples → operating/research documents for rationale. Report conflicts; do not silently implement the older labor-heavy/manual-publishing plan. Other AIVORA projects' specifications are not policies for this system. Do not copy their account IDs, credentials, posting restrictions, databases, model mandates or deployment triggers into this project.
 
-Implementation root is proposed as `/root/AIVORA/microdrama/`, an isolated new module. This turn creates documentation only. Reuse existing AIVORA services only through separately documented, authorized interfaces; no direct writes to Arisa, Mission Control, trading services or their databases by default.
+Implementation root is proposed as `/root/AIVORA/drama-box/microdrama/`, an isolated new module. This turn creates documentation only. Reuse existing AIVORA services only through separately documented, authorized interfaces; no direct writes to Arisa, Mission Control, trading services or their databases by default.
 
 ## 2. Confirmed product requirements
 
