@@ -100,8 +100,7 @@ them by hand.
   AWAITING_FINAL_REVIEW edge, so an approved package cannot be superseded in this build. A
   post-approval recut needs a future contract change (a human-only return edge, or a HELD path
   that cancels unscheduled slots), and until then T020 must submit only the approved package's
-  hashes. The login form has no CSRF token, because no session exists yet; it relies on
-  `SameSite=Strict` cookies (single-owner deployment).
+  hashes. Sign-in uses a pre-session double-submit token (`md_login_csrf`, round-2 V-28).
 
 ## Changing a contract
 
