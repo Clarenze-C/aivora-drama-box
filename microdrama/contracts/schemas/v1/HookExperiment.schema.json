@@ -160,7 +160,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.4.0:HookExperiment",
+  "$id": "urn:microdrama:contracts:1.5.0:HookExperiment",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Three candidates from accepted footage; no fresh video renders (IMP-07).",

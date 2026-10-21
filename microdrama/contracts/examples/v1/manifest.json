@@ -613,7 +613,7 @@
     "model": "ObservationRequest"
   },
   "examples/v1/valid/PodLease.json": {
-    "canonical_sha256": "484041f3144d30ba341bd4e8df6b3c190b7a3807565ce4f04d5c74aebf3b3956",
+    "canonical_sha256": "79b1c73586b8c43bc3dfee98ef43706b7e9f0a868a6e14caa015952bc1dbfb7e",
     "expect": "valid",
     "model": "PodLease"
   },

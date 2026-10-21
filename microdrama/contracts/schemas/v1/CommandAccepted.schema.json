@@ -1,5 +1,5 @@
 {
-  "$id": "urn:microdrama:contracts:1.4.0:CommandAccepted",
+  "$id": "urn:microdrama:contracts:1.5.0:CommandAccepted",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

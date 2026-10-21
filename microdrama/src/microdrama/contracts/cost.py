@@ -240,6 +240,10 @@ class PodLease(VersionedPayload):
     accrued_until: UtcDateTime | None = Field(
         default=None, description="Paid interval already allocated (each interval once)"
     )
+    transferred_from: UUID | None = Field(
+        default=None,
+        description="Warm-pod handover: the lease this one replaced, else None",
+    )
     created_at: UtcDateTime
 
 

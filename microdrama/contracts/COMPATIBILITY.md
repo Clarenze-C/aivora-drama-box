@@ -1,4 +1,4 @@
-# Contract v1.4.0 — conventions and compatibility notes (guardian-owned)
+# Contract v1.5.0 — conventions and compatibility notes (guardian-owned)
 
 Frozen 2026-10-20 by the integrator/contract guardian (task T002). Python source
 of truth: `src/microdrama/contracts/`. Generated artifacts in this folder are
@@ -116,6 +116,12 @@ below and notifies affected lanes.
 
 ## Change log
 
+- **1.5.0** (2026-10-21, guardian, T012 warm-pod transfer): additive —
+  `cost.PodLease.transferred_from: UUID | None = None` names the lease a warm-pod
+  handover replaced (the `pod_leases.transferred_from` column has existed since
+  migration 0003; only the payload lacked it). No existing field changed; every 1.4.0
+  payload stays valid; `schema_version` stays `"1.0"`. Impacted lanes: T012 (writer),
+  T013/T014 (readers of lease provenance).
 - **1.4.0** (2026-10-20, guardian, M1 round-2 findings V-19, V-20, V-21, V-22, V-24, V-30):
   - `BudgetReservationRequest` refuses a zero unit price (a zero is not a known price).
   - GPU_GENERATION must be priced per GPU_SECOND, so the timeout bounds it.

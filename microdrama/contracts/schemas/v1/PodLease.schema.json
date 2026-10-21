@@ -26,7 +26,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.4.0:PodLease",
+  "$id": "urn:microdrama:contracts:1.5.0:PodLease",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Ownership of a GPU pod by exactly one episode/job at a time (pilot rule).",
@@ -154,6 +154,20 @@
       "description": "Unsupported/stale versions are rejected",
       "title": "Schema Version",
       "type": "string"
+    },
+    "transferred_from": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Warm-pod handover: the lease this one replaced, else None",
+      "title": "Transferred From"
     }
   },
   "required": [

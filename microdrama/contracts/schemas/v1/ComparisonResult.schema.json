@@ -503,7 +503,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.4.0:ComparisonResult",
+  "$id": "urn:microdrama:contracts:1.5.0:ComparisonResult",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

@@ -161,7 +161,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.4.0:Script",
+  "$id": "urn:microdrama:contracts:1.5.0:Script",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

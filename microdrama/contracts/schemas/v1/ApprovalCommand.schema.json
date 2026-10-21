@@ -112,7 +112,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.4.0:ApprovalCommand",
+  "$id": "urn:microdrama:contracts:1.5.0:ApprovalCommand",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "A human gate decision. The actor comes from the authenticated session, not here.",

@@ -15,5 +15,6 @@
   "pod_state": "RUNNING",
   "provider": "fake-runpod",
   "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
-  "schema_version": "1.0"
+  "schema_version": "1.0",
+  "transferred_from": null
 }
