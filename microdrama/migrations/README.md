@@ -13,6 +13,7 @@ to an unrelated live database.
 | `0004_media_and_qa.sql` | `assets`, `asset_lineage`, `edit_manifests`, `caption_tracks`, `hook_experiments`, `hook_exposures`, `qa_observations` (immutable Pass A), `qa_findings`, `repair_plans` |
 | `0005_distribution_and_analytics.sql` | `release_packages` (one APPROVED per episode), `platform_posts` (SPEC slot key unique), `metadata_versions`, `community_events` (provider dedupe), `management_actions`, `membership_catalog`, `entitlement_links`, `performance_snapshots`, `qualification_runs` |
 | `0006_registries.sql` | `credential_refs` (names/locators only, never secrets), `capability_registry`, `rights_registry`, `preset_registry`, `policy_versions` |
+| `0014_review_signin_token_state.sql` | `login_tokens`: review sign-in double-submit tokens stored as SHA-256 digests, single-use atomic redeem, server-clock TTL (V-38; whole-schema deletion/integer guards apply) |
 | `0013_provider_operation_links.sql` | every `provider_operations` row names its job and its paying reservation (no unmetered kinds in contract 1.4.0) |
 | `0012_reservation_closed_reason.sql` | `reservations.closed_reason`: required once a reservation is SETTLED/RELEASED/EXPIRED, absent while ACTIVE; a RELEASED reservation keeps its state and reason |
 | `0011_m0_round5_hardening.sql` | hook exposure identity immutable and `platform_post_id` FK; sequence counter identity immutable; enabled-preset measurements within contract ranges (bp 1..10000, micro-USD ≥ 0) |

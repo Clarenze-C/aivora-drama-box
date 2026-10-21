@@ -5,9 +5,15 @@ JSON (SPEC §4.3): ``GET /seasons/proposals``, ``GET /seasons/{id}``, ``POST /se
 
 Pages: ``/ui`` (proposals, season decision, episode review with the owner-only media stream
 ``/ui/media/{asset_id}``) and ``/auth`` (login and logout, which set and clear the ``md_session``
-cookie). Every route needs a live human owner session; a request that presents a bearer credential
-is authenticated as that service principal and then refused with 403, so workers, models and
-schedulers can never read review data or decide. Unsafe requests need the CSRF token.
+cookie). Every human-only route refuses a request that presents a bearer credential: the bearer
+is authenticated as that service principal and refused with 403 before the request body is even
+read (a route-level guard; see ``_refuse_non_human_route``), so workers, models and schedulers
+can never read review data or decide, and their malformed bodies are 403, not 422. Unsafe
+requests need the CSRF token.
+
+The sign-in form's pre-session token (``md_login_csrf``, V-28) is enforced server-side (V-38):
+single-use with a server-clock TTL, so a replayed pair signs in exactly once and the renewal
+after a failed attempt invalidates the token before it (``review.signin.SignInTokens``).
 
 Status codes: 202 for a queued or recorded decision, 200 with ``status="REPLAYED"`` for a replayed
 idempotency key, 409 for stale or conflicting decisions, 422 for invalid input, 403 for refused
@@ -15,14 +21,14 @@ principals and CSRF failures, 401 without a session.
 """
 
 import hmac
-import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
 from microdrama.contracts.enums import FeedbackCategory, SeasonState
@@ -41,12 +47,15 @@ from microdrama.review.forms import (
 )
 from microdrama.review.render import render
 from microdrama.review.service import EpisodePage, QaFindingRow, ReviewService
+from microdrama.review.signin import SIGNIN_TOKEN_TTL_SECONDS
 
 CSRF_COOKIE = "md_csrf"
 # Pre-session double-submit token for the sign-in form (V-28): the cookie and the form field carry
 # the same random value, so a cross-site form cannot log the owner into an attacker's account.
+# Since V-38 the pair is also single-use with a server-clock TTL (``review.signin.SignInTokens``):
+# any sign-in attempt consumes it, and the fresh token minted for a failure page invalidates the
+# one before it.
 LOGIN_CSRF_COOKIE = "md_login_csrf"
-LOGIN_CSRF_TTL_SECONDS = 900
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store, private",
     "X-Content-Type-Options": "nosniff",
@@ -78,13 +87,18 @@ def _command_response(result: CommandResult) -> JSONResponse:
 
 
 def _review_principal(human_session: Dependency, auth: AuthService) -> Dependency:
-    """Cookie session for humans; a bearer credential is read as a service principal (then 403)."""
+    """Cookie session for humans; a bearer credential is read as a service principal (then 403).
+
+    On the guarded routes (``_refuse_non_human_route``) this branch never fires for a body
+    request: the guard already refused the non-human bearer before the body was read. The
+    dependency keeps the check as a backstop so any route that skips the guard still refuses
+    after body parsing.
+    """
     service_principal = service_dependency(auth)
 
     async def review_principal(request: Request) -> Principal:
         if request.headers.get("authorization") is not None:
             principal = await service_principal(request)
-            # Refused here, before FastAPI parses the request body: a worker's bad body is 403.
             if not principal.is_human_owner:
                 raise Unauthorized("only a human owner may use the review API")
             return principal
@@ -149,7 +163,7 @@ def _login_page(
     response.set_cookie(
         LOGIN_CSRF_COOKIE,
         token,
-        max_age=LOGIN_CSRF_TTL_SECONDS,
+        max_age=SIGNIN_TOKEN_TTL_SECONDS,
         httponly=True,
         samesite="strict",
         secure=secure,
@@ -165,6 +179,37 @@ def _page_context(
     return {"signed_in": principal is not None, "csrf": csrf, **extra}
 
 
+def _refuse_non_human_route(auth: AuthService) -> type[APIRoute]:
+    """Route class whose handler refuses a non-human bearer before any body handling (V-37).
+
+    FastAPI reads and JSON-decodes a request body before route dependencies run, so a refusal
+    that lives only in a dependency buffers any body first and answers a worker's malformed
+    JSON with 422 instead of 403. Routes built from this class look at the ``Authorization``
+    header first — headers only, the body stream is never touched — and reuse the service
+    channel's parsing: a live non-human credential is refused with the same 403, a junk bearer
+    stays 401 (so it still dominates any session cookie), all before the body is touched.
+    """
+    service_principal = service_dependency(auth)  # core's bearer parsing; no credential logic here
+
+    class BearerRefusalRoute(APIRoute):
+        def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+            original = super().get_route_handler()
+            # Endpoints that inject ``principal`` require a human owner in this module; /auth and
+            # the /ui redirect stay open to anonymous browsers (and to their request bodies).
+            human_route = any(d.name == "principal" for d in self.dependant.dependencies)
+
+            async def refuse_bearer_first(request: Request) -> Response:
+                if human_route and request.headers.get("authorization") is not None:
+                    principal = await service_principal(request)
+                    if not principal.is_human_owner:
+                        raise Unauthorized("only a human owner may use the review API")
+                return await original(request)
+
+            return refuse_bearer_first
+
+    return BearerRefusalRoute
+
+
 def build_router(
     service: ReviewService,
     *,
@@ -175,7 +220,7 @@ def build_router(
 ) -> APIRouter:
     """Review routes. ``human_session`` is core's cookie dependency (CSRF checked on unsafe methods)."""
     csrf_for: CsrfTokenFor = csrf_token_for or csrf_cookie_token
-    router = APIRouter(tags=["review"])
+    router = APIRouter(route_class=_refuse_non_human_route(auth), tags=["review"])
     review_principal = _review_principal(human_session, auth)
     page_principal = _page_principal(human_session)
 
@@ -226,7 +271,8 @@ def build_router(
 
     @router.get("/auth/login", response_class=HTMLResponse)
     def login_page() -> HTMLResponse:
-        return _login_page(secrets.token_urlsafe(32), secure=cookie_secure)
+        # Every page view mints a stored token (digest only); the browser gets the clear value.
+        return _login_page(service.signin_tokens.issue(), secure=cookie_secure)
 
     @router.post("/auth/login", response_model=None)
     def login_submit(
@@ -237,15 +283,23 @@ def build_router(
     ) -> Response:
         cookie_token = request.cookies.get(LOGIN_CSRF_COOKIE)
         if not cookie_token or not login_csrf or not hmac.compare_digest(cookie_token, login_csrf):
-            # Checked before any password is verified: a forged or missing token never reaches auth.
+            # Checked before any password is verified: a forged or missing token never reaches
+            # auth, and the browser's real token is not consumed by a mismatched pair.
             raise Unauthorized(
                 "sign-in form token is missing or does not match; open the page again"
+            )
+        if not service.signin_tokens.redeem(cookie_token):
+            # Server-side token state (V-38), still before any password is verified: a token the
+            # server never issued, has expired on the server clock, or has already consumed (any
+            # attempt consumes it) never reaches auth.
+            raise Unauthorized(
+                "sign-in form token is expired or was already used; open the page again"
             )
         try:
             tokens = auth.login(username, password)
         except Unauthenticated:
             return _login_page(
-                secrets.token_urlsafe(32),
+                service.signin_tokens.issue(),  # fresh token; the failed pair is consumed
                 secure=cookie_secure,
                 error={"code": "UNAUTHENTICATED", "message": "Invalid username or password."},
                 username=username,

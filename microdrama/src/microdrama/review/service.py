@@ -83,6 +83,7 @@ from microdrama.review.packages import (
     current_package,
     record_package_decision,
 )
+from microdrama.review.signin import SIGNIN_TOKEN_TTL_SECONDS, SignInTokens
 
 # Repair stages in pipeline order; the smallest affected stage is the one a revision returns to.
 _STAGE_RANK: tuple[EpisodeState, ...] = (
@@ -258,6 +259,11 @@ class ReviewService:
     @property
     def store(self) -> ObjectStore:
         return self._store
+
+    @property
+    def signin_tokens(self) -> SignInTokens:
+        """The pre-session sign-in token store (V-38): this service's database and clock."""
+        return SignInTokens(self._db, self._clock, self._ids, ttl_seconds=SIGNIN_TOKEN_TTL_SECONDS)
 
     @staticmethod
     def is_material_change(old: ReleasePackage, new: ReleasePackage) -> bool:

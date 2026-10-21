@@ -352,6 +352,89 @@ def test_a_human_with_an_invalid_body_still_gets_422(api, world: World) -> None:
     assert response.json()["code"] == "SCHEMA_INVALID"
 
 
+# --- the bearer refusal happens before the body is read (V-37) ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "role"),
+    [
+        (PrincipalKind.SERVICE_WORKER, None),
+        (PrincipalKind.SCHEDULER, None),
+        (PrincipalKind.RUNTIME_MODEL, RuntimeRole.CRITIC),
+        (PrincipalKind.PROVIDER_WEBHOOK, None),
+    ],
+)
+def test_a_service_bearer_with_malformed_json_is_403_not_422(api, world: World, kind, role) -> None:
+    """FastAPI reads and JSON-decodes the body before dependencies run; the route-level guard
+    refuses a non-human bearer first, so a worker's malformed body is never 422 (V-37)."""
+    client, _csrf, _ = api
+    _s, episode_id, _package = world.ready_episode()
+    before = world.count("SELECT COUNT(*) FROM approval_events")
+    response = client.post(
+        f"/episodes/{episode_id}/review",
+        content=b'{"gate": "EPISODE_FINAL", broken',
+        headers={
+            **_bearer(world, kind, role),
+            "X-CSRF-Token": "ignored",
+            "content-type": "application/json",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["code"] == "UNAUTHORIZED"
+    assert world.count("SELECT COUNT(*) FROM approval_events") == before
+
+
+def test_a_huge_body_with_a_bearer_is_refused_before_any_of_it_is_read(api, world: World) -> None:
+    """A 1 MiB body with a bearer is 403 — valid or not, and so is an empty one; the same 1 MiB
+    body on the human channel is parsed (422), so the human channel still reads bodies."""
+    client, csrf, _ = api
+    _s, episode_id, _package = world.ready_episode()
+    bearer_headers = {
+        **_bearer(world, PrincipalKind.SERVICE_WORKER),
+        "content-type": "application/json",
+    }
+    blob = b'{"gate":"' + b"A" * (1 << 20) + b'"}'
+    unparseable = b'{"gate":"' + b"A" * (1 << 20)
+    for content in (blob, unparseable, b""):
+        refused = client.post(
+            f"/episodes/{episode_id}/review", content=content, headers=bearer_headers
+        )
+        assert refused.status_code == 403, len(content)
+        assert refused.json()["code"] == "UNAUTHORIZED"
+    human = client.post(
+        f"/episodes/{episode_id}/review",
+        content=blob,
+        headers={"X-CSRF-Token": csrf, "content-type": "application/json"},
+    )
+    assert human.status_code == 422
+    assert (
+        world.count("SELECT COUNT(*) FROM approval_events WHERE entity_id = %s", (episode_id,)) == 0
+    )
+
+
+def test_a_human_session_with_malformed_json_is_still_422(api, world: World) -> None:
+    client, csrf, _ = api
+    _s, episode_id, _package = world.ready_episode()
+    response = client.post(
+        f"/episodes/{episode_id}/review",
+        content=b'{"gate": "EPISODE_FINAL", broken',
+        headers={"X-CSRF-Token": csrf, "content-type": "application/json"},
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "SCHEMA_INVALID"
+
+
+def test_a_junk_bearer_dominates_a_valid_session_cookie(api, world: World) -> None:
+    """An Authorization header switches to the service channel even over a live cookie; junk
+    there is 401, never a silent fall-through to the cookie session (and no bypass either way)."""
+    client, _csrf, _ = api
+    response = client.get(
+        "/seasons/proposals", headers={"Authorization": "Bearer not-a-real-token"}
+    )
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
+
+
 def test_the_json_findings_and_the_qa_route_carry_the_same_set_with_cycles(
     api, world: World
 ) -> None:

@@ -645,3 +645,84 @@ def test_the_page_shows_each_finding_with_its_cycle_and_gate_effect(
     assert '<span class="bad">yes</span>' in row, "it still blocks Gate 2"
     assert f"({old}) from QA cycle 1" in page, "the blocker names the cycle too"
     assert 'data-testid="approve-form"' not in page
+
+
+# --- the sign-in token is enforced server-side (V-38) ----------------------------------------
+
+
+def test_a_replayed_sign_in_token_mints_no_second_session(web: TestClient, world: World) -> None:
+    """V-38: a successful sign-in consumes the pair; a replay is refused, not another session."""
+    token = login_token(web)
+    first = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert first.status_code == 303
+    sessions = world.count("SELECT COUNT(*) FROM human_sessions")
+    assert sessions == 1
+
+    web.cookies.set("md_login_csrf", token)
+    replay = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert replay.status_code == 403
+    assert world.count("SELECT COUNT(*) FROM human_sessions") == sessions
+
+
+def test_an_expired_sign_in_token_is_refused_on_the_server(web: TestClient, world: World) -> None:
+    """V-38: the TTL is judged against the server clock, not just the cookie's Max-Age."""
+    token = login_token(web)
+    world.clock.advance(seconds=901)
+    response = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert response.status_code == 403
+    assert world.count("SELECT COUNT(*) FROM human_sessions") == 0
+
+
+def test_a_sign_in_token_still_works_just_before_its_ttl(web: TestClient, world: World) -> None:
+    token = login_token(web)
+    world.clock.advance(seconds=899)
+    response = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert response.status_code == 303
+
+
+def test_a_failed_attempt_invalidates_the_old_pair_on_the_server(
+    web: TestClient, world: World
+) -> None:
+    """V-38: the token is consumed by any attempt. Pinning the old cookie back proves the
+    server (not the cookie jar) refuses the old pair even with the right password."""
+    token = login_token(web)
+    failed = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": "wrong-password-x", "login_csrf": token},
+    )
+    assert failed.status_code == 401
+    web.cookies.set("md_login_csrf", token)
+    stale = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert stale.status_code == 403, "the old pair must be dead after a failed attempt"
+    assert world.count("SELECT COUNT(*) FROM human_sessions") == 0
+
+
+def test_a_forged_form_token_leaves_the_real_pair_usable(web: TestClient) -> None:
+    """A pair mismatch is refused without consuming the browser's real token (the mismatch
+    never conclusively names a token; the legit browser keeps its open sign-in)."""
+    token = login_token(web)
+    forged = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": "forged-value"},
+    )
+    assert forged.status_code == 403
+    good = web.post(
+        "/auth/login",
+        data={"username": "review.owner", "password": PASSWORD, "login_csrf": token},
+    )
+    assert good.status_code == 303
