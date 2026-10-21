@@ -2,7 +2,10 @@
 
 Unknown, ineligible, expired, uncovered-territory and (outside OFFLINE_MOCK) fake-only rights all
 block. A clear rights decision says nothing about QA or review: no later gate may waive a rights
-blocker (AT-13).
+blocker (AT-13). Rights rows are flat columns with no record blob, so ``record`` derives the row
+id from the business key AND the canonical decision columns; every read re-derives that id and
+fails closed on an owner-level edit (V-33) — a flipped row reads as an integrity blocker, never
+as eligible.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from microdrama.contracts.enums import (
     RightsSubjectKind,
 )
 from microdrama.contracts.errors import Conflict, RightsUncleared, SchemaInvalid
+from microdrama.contracts.hashing import canonical_json
 from microdrama.contracts.infra import Clock
 from microdrama.contracts.registries import RightsRecord
 from microdrama.core.registry._common import (
@@ -29,6 +33,7 @@ from microdrama.core.registry._common import (
     clean_route,
     clean_subject_ref,
     clean_territories,
+    deterministic_uuid,
     ensure_provenance,
     has_real_evidence,
     label,
@@ -70,7 +75,9 @@ class RightsRegistry:
         """Insert a new version; the previous current version of the same subject is retired.
 
         Versions must strictly increase per (route, subject kind, subject ref). D3: a record built
-        from fake-synthetic data may not name a real evidence source.
+        from fake-synthetic data may not name a real evidence source. The row id is derived from
+        the business key AND the canonical decision columns, so every read can revalidate the row
+        against exactly what was recorded (V-33).
         """
         provenance = ensure_provenance(source_provenance)
         name = label(record.rights_route_id, record.subject_ref)
@@ -78,6 +85,19 @@ class RightsRegistry:
         if record.recorded_at > self._clock.now():
             raise SchemaInvalid("rights record is dated in the future")
         params = (record.rights_route_id, record.subject_kind.value, record.subject_ref)
+        # The exact stored form of every decision column, used both for the insert and for the
+        # integrity fingerprint inside the row id.
+        stored = {
+            "status": record.status.value,
+            "territories": canonical_document(list(record.territories)),
+            "commercial_use": record.commercial_use,
+            "output_release_allowed": record.output_release_allowed,
+            "required_disclosures": canonical_document(
+                [d.value for d in record.required_disclosures]
+            ),
+            "expires_at": record.expires_at,
+            "evidence": canonical_document(record.evidence),
+        }
         with self._db.transaction() as tx:
             latest = tx.fetchval(
                 "SELECT max(version) FROM rights_registry "
@@ -98,20 +118,25 @@ class RightsRegistry:
                 tx,
                 "rights_registry",
                 {
-                    "id": record.record_id,
+                    "id": deterministic_uuid(
+                        "rights",
+                        record.rights_route_id,
+                        record.subject_kind.value,
+                        record.subject_ref,
+                        str(record.version),
+                        _fingerprint(stored),
+                    ),
                     "rights_route_id": record.rights_route_id,
                     "version": record.version,
                     "subject_kind": record.subject_kind.value,
                     "subject_ref": record.subject_ref,
-                    "territories": jsonb(canonical_document(list(record.territories))),
-                    "commercial_use": record.commercial_use,
-                    "output_release_allowed": record.output_release_allowed,
-                    "required_disclosures": jsonb(
-                        canonical_document([d.value for d in record.required_disclosures])
-                    ),
-                    "expires_at": record.expires_at,
-                    "evidence": jsonb(canonical_document(record.evidence)),
-                    "status": record.status.value,
+                    "territories": jsonb(stored["territories"]),
+                    "commercial_use": stored["commercial_use"],
+                    "output_release_allowed": stored["output_release_allowed"],
+                    "required_disclosures": jsonb(stored["required_disclosures"]),
+                    "expires_at": stored["expires_at"],
+                    "evidence": jsonb(stored["evidence"]),
+                    "status": stored["status"],
                     "current": True,
                 },
             )
@@ -128,11 +153,12 @@ class RightsRegistry:
     ) -> RightsDecision:
         """Check every required subject for every target territory at instant ``at``.
 
-        Per subject, in order: no current record -> UNKNOWN; outside OFFLINE_MOCK a record without
-        real evidence -> UNKNOWN; UNKNOWN/INELIGIBLE/EXPIRED status -> that status; ELIGIBLE with
-        ``expires_at <= at`` -> EXPIRED; a target territory not covered (WORLDWIDE covers all),
-        or commercial use / output release not confirmed -> INELIGIBLE. The overall status is
-        ELIGIBLE only when there are no blockers.
+        Per subject, in order: no current record -> UNKNOWN; a stored row whose decision columns
+        no longer match its recorded id -> UNKNOWN integrity blocker (V-33); outside OFFLINE_MOCK
+        a record without real evidence -> UNKNOWN; UNKNOWN/INELIGIBLE/EXPIRED status -> that
+        status; ELIGIBLE with ``expires_at <= at`` -> EXPIRED; a target territory not covered
+        (WORLDWIDE covers all), or commercial use / output release not confirmed -> INELIGIBLE.
+        The overall status is ELIGIBLE only when there are no blockers.
         """
         route = clean_route(rights_route_id)
         wanted = _subjects(subjects)
@@ -144,9 +170,15 @@ class RightsRegistry:
         with self._db.transaction(readonly=True) as tx:
             for kind, ref in wanted:
                 row = _current_row(tx, route, kind, ref)
+                name = label(route, ref)
+                if row is not None and not _row_is_intact(row):
+                    # A tampered or damaged row fails closed: it is a blocker, never a pass.
+                    statuses.append(RightsStatus.UNKNOWN)
+                    blockers.append(f"rights record fails integrity revalidation: {name}")
+                    continue
                 status, found = _judge(
                     row,
-                    name=label(route, ref),
+                    name=name,
                     targets=targets,
                     when=when,
                     offline=offline,
@@ -172,9 +204,10 @@ class RightsRegistry:
             for kind, ref in _subjects(subjects):
                 row = _current_row(tx, route, kind, ref)
                 if row is not None:
-                    found.update(
-                        DisclosureKind(value) for value in (row["required_disclosures"] or [])
-                    )
+                    # V-35: decode first, so a corrupted disclosure value is a typed SchemaInvalid
+                    # instead of a raw ValueError; the integrity revalidation follows.
+                    found.update(_stored_disclosures(row, name=label(route, ref)))
+                    _ensure_intact(row, name=label(route, ref))
         return frozenset(found)
 
     def require_cleared(
@@ -226,6 +259,60 @@ def _subjects(
 
 def _current_row(tx: Tx, route: str, kind: RightsSubjectKind, ref: str) -> dict[str, Any] | None:
     return tx.fetchone(_SELECT_CURRENT, (route, kind.value, ref))
+
+
+def _fingerprint(row: dict[str, Any]) -> str:
+    """Canonical JSON of every stored decision column. ``record`` derives the row id from the
+    business key AND this fingerprint, so an owner-level edit of any of these columns changes the
+    re-derived id and fails read-time revalidation (V-33)."""
+    return canonical_json(
+        {
+            "commercial_use": row["commercial_use"],
+            "evidence": row["evidence"],
+            "expires_at": row["expires_at"],
+            "output_release_allowed": row["output_release_allowed"],
+            "required_disclosures": row["required_disclosures"],
+            "status": row["status"],
+            "territories": row["territories"],
+        }
+    )
+
+
+def _row_is_intact(row: dict[str, Any]) -> bool:
+    """True when the row's decision columns are exactly what ``record`` wrote."""
+    return row["id"] == deterministic_uuid(
+        "rights",
+        row["rights_route_id"],
+        row["subject_kind"],
+        row["subject_ref"],
+        str(row["version"]),
+        _fingerprint(row),
+    )
+
+
+def _ensure_intact(row: dict[str, Any], *, name: str) -> None:
+    """Preset-style read guard: a row edited outside ``record`` raises instead of reading back."""
+    if not _row_is_intact(row):
+        raise Conflict(
+            f"stored rights record for {name} fails integrity revalidation; reconcile before use",
+            rights_route_id=row["rights_route_id"],
+            subject_ref=row["subject_ref"],
+            version=row["version"],
+        )
+
+
+def _stored_disclosures(row: dict[str, Any], *, name: str) -> list[DisclosureKind]:
+    """Decode the stored disclosure names. A value that no longer decodes is a typed schema error,
+    never a raw ValueError out of the release path (V-35)."""
+    try:
+        return [DisclosureKind(value) for value in (row["required_disclosures"] or [])]
+    except (TypeError, ValueError):
+        raise SchemaInvalid(
+            f"stored rights record for {name} has an undecodable required_disclosures value",
+            rights_route_id=row["rights_route_id"],
+            subject_ref=row["subject_ref"],
+            version=row["version"],
+        ) from None
 
 
 def _judge(

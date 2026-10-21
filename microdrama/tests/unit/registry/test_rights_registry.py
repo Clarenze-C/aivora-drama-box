@@ -353,3 +353,81 @@ def test_required_disclosures_come_from_the_current_records(db: Database) -> Non
     assert registry.required_disclosures(rights_route_id=ROUTE, subjects=VOICE) == frozenset(
         {DisclosureKind.SYNTHETIC_VOICE}
     )
+
+
+# --- tampering: read-time revalidation (V-33, V-35) -------------------------------------
+
+
+def _replica_bypass(db: Database, sql: str, params: tuple) -> None:
+    """An owner-level SQL edit that bypasses the immutability triggers (CHECKs still hold)."""
+    with db.transaction() as tx:
+        tx.execute("SET LOCAL session_replication_role = replica")
+        tx.execute(sql, params)
+
+
+_FLIP_CURRENT = (
+    "UPDATE rights_registry SET status = 'ELIGIBLE', commercial_use = true, "
+    "output_release_allowed = true WHERE rights_route_id = %s AND subject_kind = %s "
+    "AND subject_ref = %s AND current"
+)
+_CURRENT_ROW = (ROUTE, RightsSubjectKind.VOICE.value, VOICE_REF)
+
+
+def test_a_replica_bypass_flip_to_eligible_fails_closed(db: Database) -> None:
+    """V-33: rights rows are revalidated on every read. A trigger-bypassing owner session that
+    flips an INELIGIBLE row and its decision columns to ELIGIBLE never reads back as eligible."""
+    registry = RightsRegistry(db, fixed_clock(), live_settings())
+    registry.record(
+        rights(
+            status=RightsStatus.INELIGIBLE,
+            commercial=False,
+            output=False,
+            expires=T0 + timedelta(days=365),
+            evidence=[real_license()],
+        ),
+        source_provenance=Provenance.LICENSED,
+    )
+    assert _decide(registry).status is RightsStatus.INELIGIBLE
+    _replica_bypass(db, _FLIP_CURRENT, _CURRENT_ROW)
+
+    decision = _decide(registry)
+    assert decision.eligible is False
+    assert decision.status is RightsStatus.UNKNOWN
+    assert decision.blockers == [f"rights record fails integrity revalidation: {ROUTE}/{VOICE_REF}"]
+    with pytest.raises(RightsUncleared):
+        registry.require_cleared(rights_route_id=ROUTE, subjects=VOICE, territories=["TH"])
+
+
+def test_a_replica_bypass_edit_of_a_decision_column_raises_on_disclosure_reads(
+    db: Database,
+) -> None:
+    """V-33: any stored decision column edit (expires_at alone here; the ELIGIBLE CHECK leaves
+    nothing else loose) breaks the re-derived row id: reads refuse the row instead of returning
+    the edited record."""
+    registry = _registry(db)
+    registry.record(rights(), source_provenance=Provenance.FAKE_SYNTHETIC)
+    _replica_bypass(
+        db,
+        "UPDATE rights_registry SET expires_at = '2031-10-20T00:00:00Z' "
+        "WHERE rights_route_id = %s AND subject_kind = %s AND subject_ref = %s AND current",
+        _CURRENT_ROW,
+    )
+    with pytest.raises(Conflict):
+        registry.required_disclosures(rights_route_id=ROUTE, subjects=VOICE)
+    decision = _decide(registry)
+    assert decision.eligible is False and decision.status is RightsStatus.UNKNOWN
+
+
+def test_a_corrupted_required_disclosures_value_is_a_typed_schema_error(db: Database) -> None:
+    """V-35: required_disclosures never leaks a raw ValueError out of the release path when a
+    stored disclosure string no longer decodes."""
+    registry = _registry(db)
+    registry.record(rights(), source_provenance=Provenance.FAKE_SYNTHETIC)
+    _replica_bypass(
+        db,
+        "UPDATE rights_registry SET required_disclosures = '[\"GARBAGE\"]'::jsonb "
+        "WHERE rights_route_id = %s AND subject_kind = %s AND subject_ref = %s AND current",
+        _CURRENT_ROW,
+    )
+    with pytest.raises(SchemaInvalid):
+        registry.required_disclosures(rights_route_id=ROUTE, subjects=VOICE)

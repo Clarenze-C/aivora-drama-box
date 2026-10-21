@@ -14,7 +14,7 @@ from datetime import datetime
 
 from microdrama.contracts.enums import CapabilityOperation, DisclosureKind, Platform
 from microdrama.contracts.errors import SchemaInvalid
-from microdrama.core.registry._common import clean_account
+from microdrama.core.registry._common import clean_account, clean_route
 from microdrama.core.registry.capabilities import CapabilityRegistry
 from microdrama.core.registry.rights import RightsRegistry
 
@@ -23,13 +23,18 @@ QA_BLOCKER = "qa: not all checks are green"
 
 @dataclass(frozen=True)
 class DestinationRequirement:
-    """One publication destination and what its route must support."""
+    """One publication destination and what its route must support.
+
+    ``provider_route`` is optional: an account with several current routes is ambiguous (fail
+    closed) unless the destination names one; ``None`` keeps that ambiguity blocker.
+    """
 
     platform: Platform
     account_ref: str
     required_ops: frozenset[CapabilityOperation]
     disclosures: frozenset[DisclosureKind]
     required: bool
+    provider_route: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -46,6 +51,13 @@ class DestinationRequirement:
         object.__setattr__(self, "account_ref", clean_account(self.account_ref))
         object.__setattr__(self, "required_ops", ops)
         object.__setattr__(self, "disclosures", disclosures)
+        # V-34: a named route must be as clean as every other registry identifier; None (the
+        # default) leaves multi-route accounts ambiguous rather than guessed.
+        object.__setattr__(
+            self,
+            "provider_route",
+            None if self.provider_route is None else clean_route(self.provider_route),
+        )
 
 
 def evaluate_release_conditions(
@@ -93,6 +105,7 @@ def evaluate_release_conditions(
             account_ref=destination.account_ref,
             required=destination.required_ops,
             disclosures=destination.disclosures | route_disclosures,
+            provider_route=destination.provider_route,
         )
         prefix = "" if destination.required else "optional: "
         blockers.extend(f"{prefix}{blocker}" for blocker in decision.blockers)

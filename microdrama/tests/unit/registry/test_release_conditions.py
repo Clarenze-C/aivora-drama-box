@@ -329,3 +329,75 @@ def test_an_expired_status_row_blocks_the_gate_despite_green_qa(db: Database) ->
     _clear_capability(db)
     blockers = _release(db, qa_all_green=True)
     assert blockers == [f"rights expired: {ROUTE}/{VOICE_REF}"]
+
+
+# --- provider_route disambiguation (V-34) ------------------------------------------------
+
+
+def test_a_multi_route_account_stays_ambiguous_without_a_named_route(db: Database) -> None:
+    """V-34 baseline: an account with two current routes still blocks ambiguously when no route
+    is named — the existing fail-closed behaviour is preserved."""
+    _clear_rights(db)
+    _clear_capability(db)
+    CapabilityRegistry(db, fixed_clock(), mock_settings()).record(
+        capability(route="fake-tiktok-route-b"), source_provenance=Provenance.FAKE_SYNTHETIC
+    )
+    assert _release(db, qa_all_green=True) == [
+        f"capability TIKTOK/{ACCOUNT}: 2 provider routes are current; name provider_route"
+    ]
+
+
+def test_a_named_good_provider_route_clears_a_multi_route_account(db: Database) -> None:
+    """V-34: a destination may name the provider route to disambiguate a multi-route account."""
+    _clear_rights(db)
+    _clear_capability(db)
+    CapabilityRegistry(db, fixed_clock(), mock_settings()).record(
+        capability(route="fake-tiktok-route-b"), source_provenance=Provenance.FAKE_SYNTHETIC
+    )
+    named = DestinationRequirement(
+        platform=Platform.TIKTOK,
+        account_ref=ACCOUNT,
+        required_ops=UPLOAD,
+        disclosures=AI,
+        required=True,
+        provider_route=CAP_ROUTE,
+    )
+    assert _release(db, destinations=[named], qa_all_green=True) == []
+
+
+def test_a_named_bad_provider_route_carries_only_that_routes_blockers(db: Database) -> None:
+    """V-34: naming the weak route holds the release on that route's own blockers."""
+    _clear_rights(db)
+    _clear_capability(db)
+    CapabilityRegistry(db, fixed_clock(), mock_settings()).record(
+        capability(
+            route="fake-tiktok-route-b",
+            operations={CapabilityOperation.SCHEDULE: CapabilitySupport.SUPPORTED_DOCUMENTED},
+        ),
+        source_provenance=Provenance.FAKE_SYNTHETIC,
+    )
+    bad = DestinationRequirement(
+        platform=Platform.TIKTOK,
+        account_ref=ACCOUNT,
+        required_ops=UPLOAD,
+        disclosures=AI,
+        required=True,
+        provider_route="fake-tiktok-route-b",
+    )
+    assert _release(db, destinations=[bad], qa_all_green=True) == [
+        "capability TIKTOK/acct:tiktok-main (fake-tiktok-route-b v1): SCHEDULE blocked, "
+        "support is documented only, not tested"
+    ]
+
+
+def test_a_destination_provider_route_must_be_a_clean_identifier_or_none() -> None:
+    with pytest.raises(SchemaInvalid):
+        DestinationRequirement(
+            platform=Platform.TIKTOK,
+            account_ref=ACCOUNT,
+            required_ops=UPLOAD,
+            disclosures=AI,
+            required=True,
+            provider_route="Not A Route",
+        )
+    assert TIKTOK.provider_route is None  # the field defaults to None (no disambiguation)

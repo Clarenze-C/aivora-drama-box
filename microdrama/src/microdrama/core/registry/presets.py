@@ -105,6 +105,10 @@ class PresetRegistry:
     def compatible(self, required_controls: Iterable[ControlKind | str]) -> list[PresetRecord]:
         """Enabled presets whose ``supported_controls`` include every required control."""
         required = {_control(item) for item in required_controls}
+        if not required:
+            # An empty requirement would pass every enabled preset; that is a caller bug, not
+            # clearance (V-36), matching CapabilityRegistry.evaluate's refusal of empty ops.
+            raise SchemaInvalid("at least one preset control must be required")
         return [
             preset for preset in self.enabled() if required.issubset(set(preset.supported_controls))
         ]

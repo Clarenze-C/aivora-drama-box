@@ -47,7 +47,17 @@ def test_compatible_returns_only_presets_with_every_required_control(db: Databas
     )
     assert _ids(registry.compatible({TEXT, FIRST})) == ["fake-full"]
     assert _ids(registry.compatible({TEXT})) == ["fake-full", "fake-text-only"]
-    assert _ids(registry.compatible(set())) == ["fake-full", "fake-text-only"]
+
+
+def test_empty_required_controls_are_a_caller_bug_not_a_pass_all(db: Database) -> None:
+    """V-36: compatible([]) would return every enabled preset — a caller bug, not clearance,
+    matching CapabilityRegistry.evaluate's refusal of an empty operation set."""
+    registry = _registry(db)
+    registry.record(preset(), source_provenance=Provenance.FAKE_SYNTHETIC)
+    with pytest.raises(SchemaInvalid):
+        registry.compatible([])
+    with pytest.raises(SchemaInvalid):
+        registry.compatible(set())
 
 
 def test_no_preset_is_returned_when_a_required_control_is_missing_everywhere(db: Database) -> None:
