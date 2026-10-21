@@ -599,7 +599,9 @@ class JobService:
 
         Takes a shared row lock, so a concurrent ``requeue_expired`` (which needs an exclusive
         lock) waits for ``tx`` to finish. Call it in the same transaction as any provider-operation
-        ``begin``, so an ambiguous external submission is always visible to recovery.
+        ``begin``, so an ambiguous external submission is always visible to recovery. It must wrap
+        ``record_result`` too: an operation may only be settled by the worker that still holds the
+        lease that authorised it, so a zombie worker cannot report results after expiry.
         """
         worker = _worker(worker_id)
         instant = self._now(now)

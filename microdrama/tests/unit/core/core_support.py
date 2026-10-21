@@ -208,11 +208,14 @@ def season_row(db: Database, season_id) -> dict:
 # --- budget reservations (every provider operation needs one: contract 1.4.0, V-24) -------------
 
 
-def make_reservation(db: Database, state: str = "ACTIVE", *, expires_hours: int = 1) -> uuid.UUID:
+def make_reservation(
+    db: Database, state: str = "ACTIVE", *, expires_hours: int = 1, job_id: uuid.UUID | None = None
+) -> uuid.UUID:
     """A reservation row in ``state`` on a fresh episode budget account.
 
     Raw rows: the budget lane owns the real lifecycle. ``closed_reason`` is set for every closed state,
-    as migration 0012 requires.
+    as migration 0012 requires. ``job_id`` binds the hold to a job the way ``budget.reserve`` does
+    (NULL = an older, unbound reservation).
     """
     with db.transaction() as tx:
         season = seed_season(tx)
@@ -227,8 +230,8 @@ def make_reservation(db: Database, state: str = "ACTIVE", *, expires_hours: int 
         tx.execute(
             "INSERT INTO reservations (id, account_id, request_id, semantic_key, request_hash, category, "
             "queue, provider, operation_kind, price, ceilings, reserved_micro_usd, state, expires_at, "
-            "closed_at, closed_reason) VALUES (%s, %s, %s, %s, %s, 'GPU_GENERATION', 'production', "
-            "'fake-runpod', 'pod', %s, %s, 100, %s, %s, %s, %s)",
+            "closed_at, closed_reason, job_id) VALUES (%s, %s, %s, %s, %s, 'GPU_GENERATION', 'production', "
+            "'fake-runpod', 'pod', %s, %s, 100, %s, %s, %s, %s, %s)",
             (
                 reservation,
                 account,
@@ -241,6 +244,7 @@ def make_reservation(db: Database, state: str = "ACTIVE", *, expires_hours: int 
                 T0 + timedelta(hours=expires_hours),
                 None if state == "ACTIVE" else T0,
                 None if state == "ACTIVE" else f"test fixture: {state.lower()}",
+                job_id,
             ),
         )
     return reservation

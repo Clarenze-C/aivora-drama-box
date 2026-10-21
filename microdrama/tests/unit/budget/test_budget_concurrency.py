@@ -27,7 +27,7 @@ from budget_support import (
 )
 
 from microdrama.contracts.enums import QueueName, ReceiptKind
-from microdrama.contracts.errors import BudgetExhausted, Conflict
+from microdrama.contracts.errors import BudgetExhausted, Conflict, ServiceUnavailable
 from microdrama.persistence import Database
 
 pytestmark = [pytest.mark.db, pytest.mark.slow]
@@ -287,6 +287,114 @@ def test_warm_pod_interval_racing_across_episodes_is_counted_once(
     assert total_accrued == 40_000  # the interval's 40,000 was counted once across both episodes
     check_consistent(first.account_id)
     check_consistent(second.account_id)
+
+
+def test_warm_pod_interval_deadlock_loser_gets_the_conflict_over_many_rounds(
+    world: World, check_consistent
+) -> None:
+    """V-32, repeated warm-pod race (probe P6): two episodes, two released leases on one pod, a
+    barrier race, over many rounds.
+
+    The two transactions take different account locks, so the pod's EXCLUDE gist index is the
+    only thing serialising them; when both speculative insertions collide Postgres aborts one
+    with a deadlock (40P01). That loser rolls back whole — the interval stays attributed exactly
+    once — so it must surface as the documented interval Conflict, never ServiceUnavailable, and
+    its account totals must not move.
+    """
+    svc = world.service
+    a_wins = b_wins = 0
+    start, end = T0, T0 + timedelta(minutes=10)
+    for round_no in range(60):
+        pod = f"pod-r3-{round_no}"
+        first = world.episode()
+        second = world.episode()
+        res_a = svc.reserve(
+            request_for(key=f"p6.a.{round_no}", episode_id=first.episode_id, worst=100_000)
+        )
+        res_b = svc.reserve(
+            request_for(key=f"p6.b.{round_no}", episode_id=second.episode_id, worst=100_000)
+        )
+        lease_a = world.lease(episode=first, reservation=res_a, pod_id=pod, lease_state="RELEASED")
+        lease_b = world.lease(episode=second, reservation=res_b, pod_id=pod, lease_state="RELEASED")
+        receipt_a = fake_receipt(
+            provider_receipt_id=f"p6.iv.a.{round_no}",
+            kind=ReceiptKind.ACCRUAL,
+            amount=40_000,
+            reservation=res_a,
+            interval=(start, end),
+            episode_id=first.episode_id,
+        )
+        receipt_b = fake_receipt(
+            provider_receipt_id=f"p6.iv.b.{round_no}",
+            kind=ReceiptKind.ACCRUAL,
+            amount=40_000,
+            reservation=res_b,
+            interval=(start, end),
+            episode_id=second.episode_id,
+        )
+        before_a = world.counters(first.account_id)
+        before_b = world.counters(second.account_id)
+
+        def report(lease, account, receipt, pod=pod):
+            return svc.record_gpu_interval(
+                lease_id=lease,
+                provider="fake-runpod",
+                pod_id=pod,
+                account_id=account,
+                interval_start=start,
+                interval_end=end,
+                basis="RUNNING",
+                receipt=receipt,
+            )
+
+        outcomes = race(
+            [
+                partial(report, lease_a, first.account_id, receipt_a),
+                partial(report, lease_b, second.account_id, receipt_b),
+            ]
+        )
+        winners = [v for kind, v in outcomes if kind == "ok"]
+        losers = [v for kind, v in outcomes if kind == "err"]
+        assert len(winners) == 1 and len(losers) == 1, (round_no, outcomes)
+        winner, loser = winners[0], losers[0]
+        if winner.account_id == first.account_id:
+            a_wins += 1
+        else:
+            b_wins += 1
+        # No transient failure may escape the documented error contract (V-32).
+        assert not isinstance(loser, ServiceUnavailable), (
+            f"round {round_no}: deadlock surfaced as {type(loser).__name__}: {loser.message}"
+        )
+        assert isinstance(loser, Conflict), (round_no, type(loser).__name__, loser.message)
+        assert "already attributed" in loser.message, (round_no, loser.message)
+        # Exactly one interval row on the pod and exactly one of the two receipts recorded.
+        assert (
+            world.count("SELECT count(*) FROM pod_usage_intervals WHERE pod_id = %s", (pod,)) == 1
+        )
+        assert (
+            world.count(
+                "SELECT count(*) FROM charges WHERE receipt_id IN (%s, %s) "
+                "AND account_id IN (%s, %s)",
+                (receipt_a.receipt_id, receipt_b.receipt_id, first.account_id, second.account_id),
+            )
+            == 1
+        )
+        # The winner moved reserved -> accrued by exactly the interval (committed unchanged for
+        # an ACCRUAL against an ACTIVE hold); the loser's account moved nothing.
+        for episode, before in ((first, before_a), (second, before_b)):
+            after = world.counters(episode.account_id)
+            moved = (
+                after["reserved"] - before["reserved"],
+                after["accrued"] - before["accrued"],
+                after["settled"] - before["settled"],
+            )
+            expected = (
+                (-40_000, 40_000, 0) if episode.account_id == winner.account_id else (0, 0, 0)
+            )
+            assert moved == expected, (round_no, moved, expected)
+        check_consistent(first.account_id)
+        check_consistent(second.account_id)
+    assert a_wins + b_wins == 60  # exactly one winner per round
 
 
 def test_concurrent_opening_of_one_episode_budget_yields_one_account(

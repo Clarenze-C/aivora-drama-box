@@ -164,6 +164,9 @@ def begin(
     - The reservation must be ACTIVE. A shared row lock on it serialises this begin with budget
       release (which takes FOR UPDATE): if begin wins, release sees the operation and refuses; if
       release wins, begin sees the closed reservation and refuses.
+    - A reservation already bound to a different job (``reservations.job_id``, which budget.reserve
+      sets) is refused: one job's hold never pays for another job's operation. Unbound (NULL)
+      reservations stay allowed.
     - A replay of an existing ``client_token`` returns that operation (the same request is never
       sent twice). A new operation is refused while any *other* operation linked to the same job or
       the same reservation is PENDING_SUBMIT, SUBMITTED, RUNNING or UNKNOWN. The only route to a
@@ -191,7 +194,7 @@ def begin(
     instant = _aware(now, "now")
     if reservation_id is not None:
         reservation = tx.fetchone(
-            "SELECT state FROM reservations WHERE id = %s FOR SHARE", (reservation_id,)
+            "SELECT state, job_id FROM reservations WHERE id = %s FOR SHARE", (reservation_id,)
         )
         if reservation is None:
             raise NotFound(f"reservation {reservation_id} not found")
@@ -200,6 +203,13 @@ def begin(
                 "reservation is not ACTIVE",
                 reservation_id=str(reservation_id),
                 state=reservation["state"],
+            )
+        if reservation["job_id"] is not None and reservation["job_id"] != job_id:
+            raise Conflict(
+                "reservation is bound to a different job",
+                reservation_id=str(reservation_id),
+                reservation_job_id=str(reservation["job_id"]),
+                job_id=str(job_id),
             )
 
     _lock_linked(tx, job_id, reservation_id)

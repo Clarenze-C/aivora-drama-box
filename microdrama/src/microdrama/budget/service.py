@@ -43,6 +43,7 @@ from microdrama.contracts.errors import (
     NotFound,
     ProtectedReserveViolation,
     SchemaInvalid,
+    ServiceUnavailable,
 )
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.infra import Clock, IdGenerator
@@ -667,7 +668,10 @@ class BudgetService:
         An exact replay of the same receipt returns the earlier result. Any other overlap on the
         same pod is refused as ``Conflict`` with totals unchanged. Warm-pod reuse across episodes
         cannot double count an interval either: the database exclusion constraint on the pod's
-        intervals (not serialized by one account lock) is mapped to the same conflict.
+        intervals (not serialized by one account lock) is mapped to the same conflict. Two
+        simultaneous reports of the same interval from different accounts can even deadlock
+        inside that exclusion index; that loser rolls back whole and is mapped to the same
+        ``Conflict``, never a transient failure.
         """
         try:
             return self._record_gpu_interval(
@@ -682,6 +686,17 @@ class BudgetService:
             )
         except DuplicateSemanticKey as exc:
             if "pod_usage_intervals" in str(exc.details.get("constraint") or ""):
+                raise Conflict(
+                    "interval already attributed", provider=provider, pod_id=pod_id
+                ) from exc
+            raise
+        except ServiceUnavailable as exc:
+            # The two account locks differ, so the pod's EXCLUDE gist index is the only thing
+            # serialising a warm-pod race; Postgres can abort one racer with a deadlock (40P01)
+            # inside the speculative insertion. The loser's transaction rolled back whole, so the
+            # interval stays attributed exactly once and the documented Conflict is the honest
+            # answer — a retry would only find the winner's interval and conflict anyway.
+            if exc.details.get("sqlstate") == "40P01":
                 raise Conflict(
                     "interval already attributed", provider=provider, pod_id=pod_id
                 ) from exc

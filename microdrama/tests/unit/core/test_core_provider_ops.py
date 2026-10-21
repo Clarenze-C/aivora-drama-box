@@ -920,3 +920,54 @@ def test_a_begin_on_a_job_waits_for_an_uncommitted_begin_on_that_job(db: Databas
     assert outcome["refused"].details["operations"] == [
         {"id": str(first.operation_id), "state": "PENDING_SUBMIT"}
     ]
+
+
+# --- V-31: a reservation bound to one job never pays for another job's operation -------------
+
+
+def test_begin_refuses_a_reservation_bound_to_a_different_job(db: Database) -> None:
+    """reservations.job_id names the job whose operation the hold pays for (budget.reserve binds
+    it today). An operation begun for a different job is refused before anything is written; the
+    release guard still protects the money, but the job-reservation binding must not lie."""
+    bound_job = linked_job(db)
+    other_job = linked_job(db)
+    reservation = make_reservation(db, job_id=bound_job)
+    token = f"v31-cross-{uuid.uuid4().hex[:6]}"
+    with pytest.raises(Conflict, match="bound to a different job"), db.transaction() as tx:
+        begin(
+            tx,
+            provider="fake-runpod",
+            operation_kind="pod",
+            client_token=token,
+            request_hash=H,
+            deadline_at=T0 + timedelta(minutes=10),
+            job_id=other_job,
+            reservation_id=reservation,
+            now=T0,
+        )
+    assert _refused_tokens(db, token) == 0  # nothing was written
+
+
+def test_begin_allows_a_reservation_bound_to_no_job(db: Database) -> None:
+    """Older rows and external integrations carry job_id = NULL; begin must not break them."""
+    op = _begin_on(db, make_reservation(db), f"v31-null-{uuid.uuid4().hex[:6]}")
+    assert op.state is S.PENDING_SUBMIT
+
+
+def test_begin_allows_the_reservation_bound_to_its_own_job(db: Database) -> None:
+    """The normal budget.flow shape: the hold was reserved for this job, so begin proceeds."""
+    job = linked_job(db)
+    reservation = make_reservation(db, job_id=job)
+    op = _begin_on(db, reservation, f"v31-same-{uuid.uuid4().hex[:6]}", job)
+    assert op.reservation_id == reservation and op.job_id == job
+
+
+def test_a_replay_from_the_bound_job_still_returns_the_stored_operation(db: Database) -> None:
+    """The binding check runs before the replay lookup, so replaying the original begin (same
+    token, same bound job) still returns the stored operation instead of a fresh conflict."""
+    job = linked_job(db)
+    reservation = make_reservation(db, job_id=job)
+    token = f"v31-replay-{uuid.uuid4().hex[:6]}"
+    first = _begin_on(db, reservation, token, job)
+    replay = _begin_on(db, reservation, token, job)
+    assert replay.operation_id == first.operation_id and replay.state is S.PENDING_SUBMIT
