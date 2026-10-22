@@ -23,7 +23,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.5.0:PostReadback",
+  "$id": "urn:microdrama:contracts:1.6.0:PostReadback",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

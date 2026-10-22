@@ -84,9 +84,18 @@ CLEANUP_OPERATION_KINDS: frozenset[str] = frozenset(
     {"pod.stop", "pod.terminate", "storage.cleanup"}
 )
 
-# Provider operation kinds that need no budget reservation. Empty in this build: every provider
-# operation is treated as paid until the guardian adds a reviewed unmetered kind (V-24).
-UNMETERED_OPERATION_KINDS: frozenset[str] = frozenset()
+# Provider operation kinds that need no budget reservation. Publishing calls are free platform
+# API requests: no provider bills them, so a reservation would be a fabricated hold (reserve()
+# already refuses zero-exposure prices). They still carry job linkage for crash recovery. The
+# database CHECK (relaxed per kind by migration 0016) is the second layer of this rule (V-24).
+UNMETERED_OPERATION_KINDS: frozenset[str] = frozenset(
+    {
+        "publish.submit_slot",
+        "publish.poll_status",
+        "publish.reconcile_slot",
+        "publish.update_metadata",
+    }
+)
 
 
 def _ceil_div(value: int, divisor: int) -> int:

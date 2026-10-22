@@ -828,8 +828,17 @@ def test_begin_without_a_reservation_is_refused_for_a_metered_kind(db: Database)
     assert _refused_tokens(db, "v24-no-reservation") == 0
 
 
-def test_the_unmetered_kind_list_is_empty_in_this_build() -> None:
-    assert UNMETERED_OPERATION_KINDS == frozenset()
+def test_the_unmetered_kind_list_is_exactly_the_publish_kinds() -> None:
+    """Free platform API calls only (T020, contract 1.6.0): the four publish kinds and nothing
+    else — every other provider operation stays reservation-gated at both layers."""
+    assert UNMETERED_OPERATION_KINDS == frozenset(
+        {
+            "publish.submit_slot",
+            "publish.poll_status",
+            "publish.reconcile_slot",
+            "publish.update_metadata",
+        }
+    )
 
 
 def test_a_listed_unmetered_kind_passes_the_application_guard_but_the_database_refuses_it(

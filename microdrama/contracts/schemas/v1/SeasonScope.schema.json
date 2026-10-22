@@ -419,7 +419,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.5.0:SeasonScope",
+  "$id": "urn:microdrama:contracts:1.6.0:SeasonScope",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Versioned season concept/arc/policy. Gate 1 approves ``scope_hash`` of this.",

@@ -27,7 +27,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.5.0:Principal",
+  "$id": "urn:microdrama:contracts:1.6.0:Principal",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Who is acting. Only HUMAN_OWNER principals carry a human session.\n\nApproval events require a HUMAN_OWNER principal with a live human session;\nworker, model, webhook and scheduler principals can never produce them.",
