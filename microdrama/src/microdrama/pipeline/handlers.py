@@ -242,10 +242,16 @@ def build_handlers(world) -> dict[str, Any]:
         run = world.qa_technical.run_episode_qa(
             payload.episode_id, asset_id=_master_asset(db, payload.episode_id)
         )
-        if run.all_checks_green:
+        # Unknown coverage is an honest outcome (AT-05: "unknown stays visible"),
+        # not a failure — the content-level checks belong to the observation and
+        # comparison passes that follow. Only BLOCKING checks fail the stage
+        # (T030-02b: failing on unknowns alone broke qa.technical in every pilot
+        # run, silently masked by the drain's old outcome-blind behavior).
+        if not run.blocking_check_ids:
             return Succeeded(
                 {
                     "qa_cycle": run.qa_cycle,
+                    "all_checks_green": run.all_checks_green,
                     "blocking_check_ids": list(run.blocking_check_ids),
                     "unknown_check_ids": list(run.unknown_check_ids),
                     "mock": True,
@@ -286,8 +292,19 @@ def build_handlers(world) -> dict[str, Any]:
             observation_report_id=payload.observation_report_id,
             identity_lock_id=payload.identity_lock_id,
         )
-        if run.all_checks_green:
-            return Succeeded({"qa_cycle": run.qa_cycle, "mock": True})
+        # Same rule as qa.technical (T030-02b): unknown/non-blocking findings are
+        # honest QA output — the runner's W07 assertion decides on OPEN BLOCKING
+        # findings from the durable table, not on all_checks_green here.
+        if not run.blocking_check_ids:
+            return Succeeded(
+                {
+                    "qa_cycle": run.qa_cycle,
+                    "all_checks_green": run.all_checks_green,
+                    "blocking_check_ids": list(run.blocking_check_ids),
+                    "unknown_check_ids": list(run.unknown_check_ids),
+                    "mock": True,
+                }
+            )
         return Failed(
             "comparison_blocking_checks", detail=f"blocking: {sorted(run.blocking_check_ids)}"
         )

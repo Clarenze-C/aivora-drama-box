@@ -129,11 +129,17 @@ class MockPipelineRunner:
         self.runtime = world.runtime_for(self.deployment)
         self.report = PipelineRunReport()
         self.human = world.human_owner(owner_username, owner_password)
+        self._started_at = world.fakes.clock.now()
 
     # --- infrastructure ------------------------------------------------------------------
 
     def _drain(self, *, advance_ms: int = CYCLE_ADVANCE_MS) -> dict[str, int]:
-        """Run worker cycles (advancing the fake clock) until every queue is idle."""
+        """Run worker cycles (advancing the fake clock) until every queue is idle.
+
+        A drain that ends with a FAILED lane job raises (T030-02a): the pilot must
+        never report a stage OK over a failed step — a silent failure here masked
+        the broken variants/hooks stage for the whole accepted T029 pilot run.
+        """
         executed = 0
         for _ in range(MAX_CYCLES):
             cycle = self.runtime.run_cycle()
@@ -141,7 +147,36 @@ class MockPipelineRunner:
             if len(cycle.idle_queues) == len(self.deployment.slots):
                 break
             self.world.fakes.clock.advance(ms=advance_ms)
+        self._assert_no_failed_jobs()
         return {"jobs_executed": executed}
+
+    def _assert_no_failed_jobs(self) -> None:
+        """Terminal FAILED jobs for this run's season/episode invalidate the stage.
+
+        Checked from the durable jobs table (not cycle reports) once queues are
+        idle, so an in-drain retry never false-positives — only a job that ended
+        the drain FAILED (exhausted retries or non-transient) raises. Before W01
+        sets the season, the run owns the whole (always-fresh) database.
+        """
+        season_id = self.report.season_id
+        episode_id = self.report.episode_id
+        if season_id is not None or episode_id is not None:
+            rows = self._rows(
+                "SELECT job_type, outcome FROM jobs WHERE status = 'FAILED' "
+                "AND created_at >= %s AND (season_id = %s OR episode_id = %s)",
+                (self._started_at, season_id, episode_id),
+            )
+        else:
+            rows = self._rows(
+                "SELECT job_type, outcome FROM jobs WHERE status = 'FAILED' AND created_at >= %s",
+                (self._started_at,),
+            )
+        if rows:
+            details = "; ".join(
+                f"{row['job_type']}: {(row['outcome'] or {}).get('detail', 'no detail')}"
+                for row in rows[:5]
+            )
+            raise RuntimeError(f"drained queues contain FAILED job(s) — {details}")
 
     def _enqueue(
         self,

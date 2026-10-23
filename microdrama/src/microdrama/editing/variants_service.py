@@ -335,17 +335,34 @@ class VariantsService:
         return str(row["state"])
 
     def _accepted_guard(self, asset_ids: set[UUID], *, what: str) -> None:
-        """Refuse anything that is not accepted/locked footage (typed, before staging)."""
+        """Refuse re-cutting imagery that is not accepted/locked footage (typed, before staging).
+
+        Only VIDEO sources are guarded: a variant/hook re-cut composes imagery, so an
+        unreviewed frame must never reach one (AT-10 "accepted source footage").
+        Dialogue AUDIO lanes legitimately live PROVISIONAL until the episode-one
+        identity lock at Gate 2 — they are mixed underneath, never re-cut, and their
+        truth is enforced by QA on the exported artifact and by the lock itself
+        (T030-02: guarding them made every pre-Gate 2 variant/hook export impossible).
+        """
         bad: dict[str, str] = {}
         for asset_id in sorted(asset_ids):
-            state = self._asset_state(asset_id)
+            kind, state = self._asset_kind_state(asset_id)
+            if kind is not AssetKind.VIDEO:
+                continue
             if state not in _ACCEPTED_ASSET_STATES:
                 bad[str(asset_id)] = state
         if bad:
             raise Conflict(
-                f"{what} may only re-cut accepted assets; found non-accepted sources",
+                f"{what} may only re-cut accepted footage; found non-accepted video sources",
                 states=bad,
             )
+
+    def _asset_kind_state(self, asset_id: UUID) -> tuple[AssetKind, str]:
+        row = self._row("SELECT state, descriptor FROM assets WHERE id = %s", (asset_id,))
+        if row is None:
+            raise NotFound("asset not found", asset_id=str(asset_id))
+        kind = AssetKind(row["descriptor"]["asset_kind"])
+        return kind, str(row["state"])
 
     def _source_dims(self, edl: EditDecisionList) -> dict[UUID, tuple[int, int]]:
         dims: dict[UUID, tuple[int, int]] = {}
@@ -1331,8 +1348,24 @@ class VariantsService:
     # --- final-review references ----------------------------------------------------------
 
     def final_review_media(self, episode_id: UUID) -> FinalReviewMedia:
-        """Everything the ordinary final-review package embeds for this episode."""
+        """Everything the ordinary final-review package embeds for this episode.
+
+        Media refs are content-deduped by sha256 (first occurrence wins, so the
+        role order master → burned → variant → hook → cover is stable): a variant
+        whose crop is byte-identical to the master is the SAME content, and the
+        package contract forbids duplicate media hashes (T030-02c — with the
+        variants stage actually exporting, the 16:9 variant duplicated the master
+        and Gate 2 rejected the package).
+        """
         media: list[MediaRef] = []
+        seen_sha: set[str] = set()
+
+        def _add(ref: MediaRef) -> None:
+            if ref.sha256 in seen_sha:
+                return
+            seen_sha.add(ref.sha256)
+            media.append(ref)
+
         main_row = self._row(
             "SELECT output_asset_id FROM edit_manifests WHERE episode_id = %s "
             "AND variant_key = 'main' AND output_asset_id IS NOT NULL "
@@ -1341,12 +1374,10 @@ class VariantsService:
         )
         if main_row is not None:
             master = self._asset(main_row["output_asset_id"])
-            media.append(MediaRef(asset_id=master.asset_id, sha256=master.sha256, role="master"))
+            _add(MediaRef(asset_id=master.asset_id, sha256=master.sha256, role="master"))
             burned = self._burned_derivative(master.asset_id)
             if burned is not None:
-                media.append(
-                    MediaRef(asset_id=burned.asset_id, sha256=burned.sha256, role="burned")
-                )
+                _add(MediaRef(asset_id=burned.asset_id, sha256=burned.sha256, role="burned"))
         variant_keys: list[str] = []
         hook_ids: list[str] = []
         for row in self._rows(
@@ -1357,29 +1388,21 @@ class VariantsService:
         ):
             descriptor = self._asset(row["output_asset_id"])
             if row["purpose"] == "HOOK":
-                media.append(
-                    MediaRef(asset_id=descriptor.asset_id, sha256=descriptor.sha256, role="hook")
-                )
+                _add(MediaRef(asset_id=descriptor.asset_id, sha256=descriptor.sha256, role="hook"))
                 hook_ids.append(row["variant_key"])
                 continue
-            media.append(
-                MediaRef(asset_id=descriptor.asset_id, sha256=descriptor.sha256, role="variant")
-            )
+            _add(MediaRef(asset_id=descriptor.asset_id, sha256=descriptor.sha256, role="variant"))
             variant_keys.append(row["variant_key"])
             burned = self._burned_derivative(descriptor.asset_id)
             if burned is not None:
-                media.append(
-                    MediaRef(asset_id=burned.asset_id, sha256=burned.sha256, role="variant")
-                )
+                _add(MediaRef(asset_id=burned.asset_id, sha256=burned.sha256, role="variant"))
         for row in self._rows(
             "SELECT descriptor FROM assets WHERE episode_id = %s AND asset_kind = 'IMAGE' "
             "AND provenance = 'DERIVED_LOCAL' ORDER BY id",
             (episode_id,),
         ):
             descriptor = AssetDescriptor.model_validate(row["descriptor"])
-            media.append(
-                MediaRef(asset_id=descriptor.asset_id, sha256=descriptor.sha256, role="cover")
-            )
+            _add(MediaRef(asset_id=descriptor.asset_id, sha256=descriptor.sha256, role="cover"))
         caption_ids = [
             row["id"]
             for row in self._rows(

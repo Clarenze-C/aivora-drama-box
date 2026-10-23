@@ -34,20 +34,10 @@ def _val(world, sql: str, params: tuple = ()):
 # --- AT-10 ---------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "DEFECT T030-02 (returned to T029): the pilot's edit.variants_and_hooks job "
-        "FAILS with 'variant export may only re-cut accepted assets; found non-accepted "
-        "sources' — the main EDL legitimately contains PROVISIONAL dialogue audio lanes "
-        "pre-Gate 2 (they lock at Gate 2, never ACCEPTED), so T016's accepted-guard can "
-        "never hold at the runner's W06 position. Worse, the runner's _drain ignores job "
-        "outcomes, so the pilot report still claims the stage OK (DEFECT T030-02a). "
-        "Until T029 re-orders the stage or T016 scopes the guard to video sources, no "
-        "hook experiment exists and AT-10 is BLOCKED. strict xfail: unlist when fixed."
-    ),
-    strict=True,
-)
 def test_three_hook_candidates_with_zero_extra_render_jobs(pilot) -> None:
+    """AT-10, un-xfailed after the T029 fix round: the guard now scopes to VIDEO
+    sources (T030-02 fix) and the runner fails stages on FAILED jobs (T030-02a),
+    so the pilot builds its hook experiment like T016 designed."""
     world, report = pilot
     experiment = _row(
         world, "SELECT body FROM hook_experiments WHERE episode_id = %s", (report.episode_id,)

@@ -236,3 +236,51 @@ def test_final_review_media_carries_variants_and_covers_too(world: World) -> Non
     assert review.hook_experiment_id is None  # no hooks: honest, not faked
     for ref in review.media:
         assert len(ref.sha256) == 64
+
+
+def test_guard_scopes_to_video_sources_pre_gate2_audio_lanes_pass(world: World) -> None:
+    """T030-02 regression: dialogue AUDIO lanes legitimately live PROVISIONAL until
+    the episode-one identity lock at Gate 2 — they are mixed underneath a re-cut,
+    never re-cut imagery. The accepted-guard must refuse only non-accepted VIDEO
+    sources, or every pre-Gate 2 variant/hook export is impossible."""
+    import uuid as _uuid
+
+    from microdrama.contracts.enums import AssetKind, AssetState
+    from microdrama.testing.media import make_wav_bytes
+
+    season_id, _scope = world.season()
+    episode_id = world.episode(season_id, state="RENDERING")
+    video_data, video_media = world.clips.clip(1_000)
+    video = world._register_asset(
+        _uuid.uuid4(),
+        AssetKind.VIDEO,
+        f"t030-guard/{_uuid.uuid4().hex}.mp4",
+        video_data,
+        "video/mp4",
+        episode_id,
+        season_id,
+        media=video_media,
+    )
+    audio = world._register_asset(
+        _uuid.uuid4(),
+        AssetKind.AUDIO,
+        f"t030-guard/{_uuid.uuid4().hex}.wav",
+        make_wav_bytes(900, 440),
+        "audio/wav",
+        episode_id,
+        season_id,
+    )
+    with world.db.transaction() as tx:
+        tx.execute(
+            "UPDATE assets SET state = %s WHERE id = %s", (AssetState.PROVISIONAL.value, audio)
+        )
+
+    service = variants_service(world)
+    # PROVISIONAL audio under ACCEPTED video: passes (the pre-Gate 2 pilot state).
+    service._accepted_guard({video, audio}, what="hook generation")
+
+    # Non-accepted VIDEO still refuses, typed, before any export runs.
+    with world.db.transaction() as tx:
+        tx.execute("UPDATE assets SET state = %s WHERE id = %s", (AssetState.FAILED.value, video))
+    with pytest.raises(Conflict, match="only re-cut accepted"):
+        service._accepted_guard({video, audio}, what="hook generation")
