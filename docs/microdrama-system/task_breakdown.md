@@ -99,7 +99,7 @@ The two-week pilot reaches as far as evidence allows; M7 can require the season'
 | T026 | Membership/early-access catalog and permitted DM delivery | L | T005, T006, T020 | Membership |
 | T027 | Metrics/experiments/effective cost/qualification | L | T004, T005, T016, T020, T025, T026 | Analytics |
 | T028 | Queue isolation/shared rate limiter/worker runtime | L | T004, T005, T012, T020, T025 | Integrator / workers |
-| T029 | n8n/composition/complete two-gate mock workflow | L | T008–T028 | Integrator |
+| T029 | In-app scheduling/composition/complete two-gate mock workflow | L | T008–T028 | Integrator |
 | T030 | Independent invariants/fault/security/readiness validation | L | T029 | Validator |
 | T031 | Real rights/Thai quality/GPU cost/provider configuration qualification | L / Live | T014, T018, T030 | GPU + QA + registry |
 | T032 | Controlled real publication/community/membership tests | L / Live | T021–T026, T030, T031 | Distribution + social |
@@ -266,9 +266,9 @@ For each: implement the common T020 interface without local alternate approval/b
 - **Build:** distinct production/publication/community job routing, reserved concurrency/priorities, durable jobs, shared provider/account quota and independently scheduled janitor.
 - **Accept:** AT-08 flood/load tests show community cannot starve due releases or spend protected funds; retries do not bypass limiter; outages resume durable jobs without duplicate effects. Initial one-episode GPU ownership enforced. IMP-06.
 
-### T029 — complete mock pipeline and n8n orchestration
+### T029 — complete mock pipeline and in-app schedule/webhook orchestration
 
-- **Writes:** composition roots, `workflows/n8n/`, integration configuration/tests, pilot runbooks; no unreviewed module rewrites.
+- **Writes:** composition roots, `scheduling/` (declarative W01–W12 registry + webhook routes), integration configuration/tests, pilot runbooks; no unreviewed module rewrites. Schedule firing only enqueues frozen job types; webhook routes only record deduplicated events and enqueue their handling. (n8n dropped 2026-10-23 by operator decision: it duplicated `core.jobs` while adding a stateful service.)
 - **Build:** schedules/webhooks/internal-service calls for W01–W12, complete fake original season/episode path, actual local FFmpeg fixture assembly, two review gates, identity lock, hooks, social/membership/analytics and terminal cleanup paths.
 - **Accept:** one reproducible offline command/demo from proposal to managed fake post; real media fixture exports playable; no paid network/public actions; no third routine human gate; every module cost/permission/coverage check remains active. Mock/fake statuses clearly visible.
 

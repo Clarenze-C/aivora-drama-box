@@ -9,7 +9,7 @@ export PYTHONPATH := src
 export MICRODRAMA_EXECUTION_MODE := OFFLINE_MOCK
 
 .PHONY: help install contracts contracts-check lint format test-unit test-contract \
-        test-integration test check services-up services-down
+        test-integration test check services-up services-down pilot
 
 help:
 	@echo "install           create .venv from requirements.lock"
@@ -20,6 +20,7 @@ help:
 	@echo "test-contract     contract tests"
 	@echo "test-integration  integration tests"
 	@echo "check             contracts-check + lint + all test suites"
+	@echo "pilot             run the offline two-gate mock demo (runbooks/pilot.md)"
 
 install:
 	python3 -m venv $(VENV)
@@ -54,6 +55,12 @@ test:
 
 check: contracts-check lint test-unit test-contract test-integration
 	@echo "make check: all offline checks passed"
+
+# One reproducible offline command: proposal → Gate 1 → episode → fake render →
+# real FFmpeg edit → QA → Gate 2 (identity lock) → fake publish → social →
+# analytics → janitors. No paid or public effects (runbooks/pilot.md).
+pilot:
+	$(PY) -m microdrama.pipeline.demo
 
 # Long-lived local services for manual exploration (no Docker needed).
 services-up:

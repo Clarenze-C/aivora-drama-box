@@ -31,3 +31,6 @@ dist/
 *.jpg
 *.jpeg
 *.webp
+
+# Generated pilot/demo artifacts (runbooks/pilot.md documents regeneration).
+out/

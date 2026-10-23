@@ -54,9 +54,9 @@ Initial test settings: two active locations, three featured speaking characters 
 
 ## 3. Delivery architecture and code layout
 
-Use Python for deterministic services, provider adapters and media workers, PostgreSQL for the durable business ledger, private S3-compatible storage for assets, Redis-backed worker queues, and FFmpeg/FFprobe for editing/inspection. Use n8n for schedules/webhook orchestration; core invariants live in tested services, not duplicated n8n expressions. Use a minimal authenticated server-rendered review interface initially. Bootstrap selects supported dependency versions and pins them; this SPEC does not mandate unverified package versions.
+Use Python for deterministic services, provider adapters and media workers, PostgreSQL for the durable business ledger, private S3-compatible storage for assets, Redis-backed worker queues, and FFmpeg/FFprobe for editing/inspection. Schedules and inbound webhooks are coded in-app (`scheduling/`): a declarative schedule registry whose firing only enqueues durable jobs, and webhook routes that record deduplicated `webhook_events` rows — core invariants live in tested services, never in trigger wiring. No external workflow engine (n8n decision 2026-10-23: it duplicated what `core.jobs` already provides while adding a stateful service to operate). Use a minimal authenticated server-rendered review interface initially. Bootstrap selects supported dependency versions and pins them; this SPEC does not mandate unverified package versions.
 
-Queue implementation must support the three named work classes and reserved concurrency; a Redis transport does not itself enforce business idempotency or budgets. APIs enqueue short durable jobs and return IDs. Long model/GPU tasks use submit/poll/reconcile steps; no browser request or workflow worker is held open through a human wait. Media bytes remain in object storage, not Redis or n8n payloads.
+Queue implementation must support the three named work classes and reserved concurrency; a Redis transport does not itself enforce business idempotency or budgets. APIs enqueue short durable jobs and return IDs. Long model/GPU tasks use submit/poll/reconcile steps; no browser request or workflow worker is held open through a human wait. Media bytes remain in object storage, not Redis or job payloads.
 
 ```text
 microdrama/
@@ -80,7 +80,7 @@ microdrama/
     analytics/                # Snapshots, experiment ledger, reports, qualification
     api/                      # Composition root; integrator-owned route registration
     workers/                  # Composition root; integrator-owned queue registration
-  workflows/n8n/              # Versioned exports calling internal services
+  scheduling/                 # Declarative W01–W12 schedule registry + webhook routes
   tests/{unit,contract,integration,fixtures}/
   deployment/                 # Local compose, locked images, configuration, runbooks
   evidence/                   # Redacted reproducible validation receipts, not secrets/media
@@ -278,4 +278,4 @@ Rollout sequence: local contracts/core/fake providers → isolated service integ
 
 Before live activation, record: globally eligible model/output rights; exact Thai-capable voice/reference route; optimized compatible preset benchmarks at intended resolution; real GPU/RAM/hourly limits and billed throughput; all required publishing/disclosure/update/insight/community capability tests; selected membership backend and payout/access behavior; QA error coverage; real cost fit and final-review time. Public H3 terms previously researched did not clearly clear the proposed US/EU/UK output release; optimizations do not resolve that issue.
 
-Primary integration anchors to recheck when implementing: [ComfyUI server routes](https://docs.comfy.org/development/comfyui-server/comms_routes), [Runpod pod lifecycle](https://docs.runpod.io/sdks/graphql/manage-pods), [n8n queues](https://docs.n8n.io/deploy/host-n8n/configure-n8n/scaling/enable-queue-mode), [Claude structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [video-review API coverage](https://ai.google.dev/gemini-api/docs/video-understanding), [FastH3 modes](https://haoailab.com/FastVideo/cookbook/minimax-h3/), [H3 license](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE). Platform/membership/DM sources and their limitations remain in the linked research plan. These sources establish interfaces or terms, not a successful end-to-end implementation.
+Primary integration anchors to recheck when implementing: [ComfyUI server routes](https://docs.comfy.org/development/comfyui-server/comms_routes), [Runpod pod lifecycle](https://docs.runpod.io/sdks/graphql/manage-pods), [Claude structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [video-review API coverage](https://ai.google.dev/gemini-api/docs/video-understanding), [FastH3 modes](https://haoailab.com/FastVideo/cookbook/minimax-h3/), [H3 license](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE). Platform/membership/DM sources and their limitations remain in the linked research plan. These sources establish interfaces or terms, not a successful end-to-end implementation.
