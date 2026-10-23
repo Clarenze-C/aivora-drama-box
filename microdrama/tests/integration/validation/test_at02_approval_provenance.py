@@ -27,6 +27,7 @@ NON_HUMAN = (
     Principal(principal_id="webhook:membership", kind="PROVIDER_WEBHOOK"),
 )
 
+
 #: A HUMAN_OWNER principal without a live session cannot even be CONSTRUCTED —
 #: the contract model itself refuses it — so a forged human is impossible at the
 #: boundary, not merely rejected inside the service.
@@ -84,9 +85,10 @@ def test_non_human_principals_cannot_approve_gate1(proposed) -> None:
     assert _row(world, "SELECT state FROM seasons WHERE id = %s", (season_id,))["state"] == (
         "PROPOSED"
     )
-    assert _count(
-        world, "SELECT count(*) FROM approval_events WHERE entity_id = %s", (season_id,)
-    ) == 0
+    assert (
+        _count(world, "SELECT count(*) FROM approval_events WHERE entity_id = %s", (season_id,))
+        == 0
+    )
 
 
 def test_stale_revision_and_rekeyed_gate1_replays_fail(proposed) -> None:
@@ -106,18 +108,14 @@ def test_stale_revision_and_rekeyed_gate1_replays_fail(proposed) -> None:
         world.review.decide_season(
             runner.human,
             season_id,
-            _gate1_command(
-                season_id, season["revision"], proposal["scope_hash"], key="t030-stale"
-            ),
+            _gate1_command(season_id, season["revision"], proposal["scope_hash"], key="t030-stale"),
         )
     # The SAME key with different content (a forged scope hash) is a conflict.
     with pytest.raises((Conflict, StaleRevision)):
         world.review.decide_season(
             runner.human,
             season_id,
-            _gate1_command(
-                season_id, after["revision"], "f" * 64, key=f"gate1:{season_id}"
-            ),
+            _gate1_command(season_id, after["revision"], "f" * 64, key=f"gate1:{season_id}"),
         )
     # Neither attempt changed the decided season.
     assert _row(world, "SELECT state FROM seasons WHERE id = %s", (season_id,))["state"] == (
@@ -155,7 +153,9 @@ def test_gate2_replays_never_re_release_or_requeue_publish(pilot) -> None:
         )
 
     human = world.human_owner("t030-replay-owner", "t030-not-a-real-password")
-    publish_jobs_before = _count(world, "SELECT count(*) FROM jobs WHERE job_type LIKE 'publish.%%'", ())
+    publish_jobs_before = _count(
+        world, "SELECT count(*) FROM jobs WHERE job_type LIKE 'publish.%%'", ()
+    )
     approval_events_before = _count(
         world, "SELECT count(*) FROM approval_events WHERE entity_id = %s", (episode_id,)
     )
@@ -171,12 +171,17 @@ def test_gate2_replays_never_re_release_or_requeue_publish(pilot) -> None:
         except (Conflict, StaleRevision):
             pass  # the typed refusal — also safe
         # Whatever the answer, the release side effects did not double.
-        assert _count(
-            world, "SELECT count(*) FROM approval_events WHERE entity_id = %s", (episode_id,)
-        ) == approval_events_before
-        assert _count(
-            world, "SELECT count(*) FROM jobs WHERE job_type LIKE 'publish.%%'", ()
-        ) == publish_jobs_before
-    assert _row(world, "SELECT state FROM episodes WHERE id = %s", (episode_id,))["state"] == (
-        episode["state"]
+        assert (
+            _count(
+                world, "SELECT count(*) FROM approval_events WHERE entity_id = %s", (episode_id,)
+            )
+            == approval_events_before
+        )
+        assert (
+            _count(world, "SELECT count(*) FROM jobs WHERE job_type LIKE 'publish.%%'", ())
+            == publish_jobs_before
+        )
+    assert (
+        _row(world, "SELECT state FROM episodes WHERE id = %s", (episode_id,))["state"]
+        == (episode["state"])
     )

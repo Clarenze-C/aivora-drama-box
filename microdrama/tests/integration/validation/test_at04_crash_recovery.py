@@ -66,9 +66,7 @@ def test_ambiguous_pod_create_is_adopted_never_duplicated(validation_world) -> N
     active = world.leases.ensure_pod(handle.lease.lease_id)
     assert active.lease.lease_state.value == "ACTIVE"
     assert active.lease.pod_id is not None
-    creates = [
-        call for call in world.fakes.pods.calls if call.method == "create_pod"
-    ]
+    creates = [call for call in world.fakes.pods.calls if call.method == "create_pod"]
     assert len(creates) == 1, "adoption must not create a second pod"
 
     ttl_ms = world.gpu_janitor._config.lease_ttl_ms  # noqa: SLF001

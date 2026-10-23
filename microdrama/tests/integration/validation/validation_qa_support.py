@@ -66,9 +66,7 @@ def seed_episode_with_script(db: Database, season_id: uuid.UUID) -> uuid.UUID:
     return episode_id
 
 
-def register_media_asset(
-    world, episode_id: uuid.UUID, path: Path, *, media=None
-) -> uuid.UUID:
+def register_media_asset(world, episode_id: uuid.UUID, path: Path, *, media=None) -> uuid.UUID:
     """Store a real media file and register it as the episode's ACCEPTED asset.
 
     ``media`` overrides the probed descriptor (truncated files cannot probe)."""
@@ -79,9 +77,9 @@ def register_media_asset(
             tmp.flush()
             media = probe(Path(tmp.name))
     with world.db.transaction(readonly=True) as tx:
-        season_id = tx.fetchone(
-            "SELECT season_id FROM episodes WHERE id = %s", (episode_id,)
-        )["season_id"]
+        season_id = tx.fetchone("SELECT season_id FROM episodes WHERE id = %s", (episode_id,))[
+            "season_id"
+        ]
     stored = world.store.put_bytes(
         f"t030/{episode_id}/{uuid.uuid4().hex}{path.suffix}", data, media_type="video/mp4"
     )

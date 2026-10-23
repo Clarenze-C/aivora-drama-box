@@ -112,7 +112,5 @@ def test_pilot_lock_adoption_is_explicit(pilot) -> None:
     attached = world.references.attach_identity_lock(ep5)
     assert attached == report.identity_lock_id
     with world.db.transaction(readonly=True) as tx:
-        stamped = tx.fetchval(
-            "SELECT identity_lock_id FROM episodes WHERE id = %s", (ep5,)
-        )
+        stamped = tx.fetchval("SELECT identity_lock_id FROM episodes WHERE id = %s", (ep5,))
     assert stamped == report.identity_lock_id

@@ -39,18 +39,13 @@ def _episode_with(world, defect) -> tuple[uuid.UUID, uuid.UUID]:
 def _findings(world, episode_id) -> list[dict]:
     with world.db.transaction(readonly=True) as tx:
         return tx.fetchall(
-            "SELECT check_id, severity, outcome, resolution FROM qa_findings "
-            "WHERE episode_id = %s",
+            "SELECT check_id, severity, outcome, resolution FROM qa_findings WHERE episode_id = %s",
             (episode_id,),
         )
 
 
 def _open_findings(findings) -> list[dict]:
-    return [
-        f
-        for f in findings
-        if f["resolution"] is None or f["resolution"] in ("OPEN",)
-    ]
+    return [f for f in findings if f["resolution"] is None or f["resolution"] in ("OPEN",)]
 
 
 # --- AT-05 --------------------------------------------------------------------------------
@@ -60,9 +55,7 @@ def _open_findings(findings) -> list[dict]:
     "kind",
     ["missing_audio", "black_frames", "bad_caption"],
 )
-def test_seeded_technical_defects_never_pass_silently_green(
-    qa_world, defect_suite, kind
-) -> None:
+def test_seeded_technical_defects_never_pass_silently_green(qa_world, defect_suite, kind) -> None:
     """Each seeded technical defect produces at least the finding it was designed
     to trip (the suite's own expected check ids), open or repairable — never a
     clean run."""
@@ -77,9 +70,7 @@ def test_seeded_technical_defects_never_pass_silently_green(
     assert _open_findings(findings), f"{kind}: findings exist but none are open"
 
 
-def test_truncated_output_blocks_decode_and_stays_honestly_unknown(
-    qa_world, defect_suite
-) -> None:
+def test_truncated_output_blocks_decode_and_stays_honestly_unknown(qa_world, defect_suite) -> None:
     """The truncated file cannot decode: the decode check is BLOCKED, dependent
     checks are UNKNOWN (never green), and unsampled coverage stays visible."""
     from microdrama.contracts.media import MediaInfo
@@ -97,9 +88,7 @@ def test_truncated_output_blocks_decode_and_stays_honestly_unknown(
     assert not run.all_checks_green
     outcomes = {f.check_id: f.outcome.value for f in run.findings}
     assert outcomes.get("technical.decode") == "BLOCKED"
-    unknowns = [
-        f for f in run.findings if f.outcome.value == "UNKNOWN"
-    ]
+    unknowns = [f for f in run.findings if f.outcome.value == "UNKNOWN"]
     assert unknowns, "dependent checks must surface as UNKNOWN, not green"
 
 
@@ -117,9 +106,7 @@ def test_clean_fixture_produces_no_blocking_findings(qa_world, defect_suite) -> 
 
 
 @pytest.mark.parametrize("kind", ["wrong_amount", "wrong_speaker", "identity_swap"])
-def test_observed_vs_intended_defects_surface_as_critical(
-    qa_world, defect_suite, kind
-) -> None:
+def test_observed_vs_intended_defects_surface_as_critical(qa_world, defect_suite, kind) -> None:
     """Blind observation (Pass A) followed by comparison against the intended
     script (Pass B): the wrong amount/speaker/identity swaps are typed findings —
     the media's ACTUAL contents decide, never the source prompt."""
@@ -146,9 +133,7 @@ def test_observation_cannot_be_handed_the_intended_script(qa_world, defect_suite
     line = script.scenes[0].lines[0].text_th
     leaking = [NeutralQuestion(question_id="q-leak", text=f"Does the frame show: {line}?")]
     with pytest.raises(Exception) as excinfo:
-        qa_world.qa_observation.observe_media(
-            episode_id, asset_id=asset_id, questions=leaking
-        )
+        qa_world.qa_observation.observe_media(episode_id, asset_id=asset_id, questions=leaking)
     assert "intended" in str(excinfo.value).lower() or "screen" in str(excinfo.value).lower()
 
 
@@ -182,9 +167,7 @@ def test_subtitle_defect_never_triggers_a_video_rerender(qa_world, defect_suite)
     episode_id, asset_id = _episode_with(qa_world, defect)
     qa_world.qa_technical.run_episode_qa(episode_id, asset_id=asset_id)
     with qa_world.db.transaction(readonly=True) as tx:
-        renders_before = tx.fetchval(
-            "SELECT count(*) FROM jobs WHERE job_type = 'render.shot'"
-        )
+        renders_before = tx.fetchval("SELECT count(*) FROM jobs WHERE job_type = 'render.shot'")
 
     try:
         outcome = qa_world.qa_repairs.plan_from_findings(episode_id)
@@ -198,9 +181,7 @@ def test_subtitle_defect_never_triggers_a_video_rerender(qa_world, defect_suite)
         pass  # the typed "never blanket" refusal — equally correct
 
     with qa_world.db.transaction(readonly=True) as tx:
-        renders_after = tx.fetchval(
-            "SELECT count(*) FROM jobs WHERE job_type = 'render.shot'"
-        )
+        renders_after = tx.fetchval("SELECT count(*) FROM jobs WHERE job_type = 'render.shot'")
     assert renders_after == renders_before
 
 

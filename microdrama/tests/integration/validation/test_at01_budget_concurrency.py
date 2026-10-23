@@ -72,9 +72,7 @@ def _quote():
     worst-case >= unit price × max_units rule holds for any probe size)."""
     from microdrama.testing.fakes.common import fake_price_quote
 
-    return fake_price_quote(PriceUnit.GPU_SECOND).model_copy(
-        update={"unit_price_micro_usd": 1}
-    )
+    return fake_price_quote(PriceUnit.GPU_SECOND).model_copy(update={"unit_price_micro_usd": 1})
 
 
 def _request(
@@ -152,7 +150,8 @@ def test_racing_reservations_cannot_overspend_the_episode_cap(validation_world, 
     back from the row are exact (committed + shutdown reserve never passes cap)."""
     episode_id, account_id = _episode_account(validation_world, db)
     requests = [
-        _request(key=f"t030.race.{i}", episode_id=episode_id, world=validation_world) for i in range(THREADS)
+        _request(key=f"t030.race.{i}", episode_id=episode_id, world=validation_world)
+        for i in range(THREADS)
     ]
     outcomes = _race([partial(validation_world.budget.reserve, r) for r in requests])
 
@@ -177,15 +176,11 @@ def test_racing_reservations_cannot_overspend_the_episode_cap(validation_world, 
     assert active == len(successes), "one durable reservation per granted request"
 
 
-def test_identical_semantic_key_racing_yields_exactly_one_reservation(
-    validation_world, db
-) -> None:
+def test_identical_semantic_key_racing_yields_exactly_one_reservation(validation_world, db) -> None:
     """A crashed worker's retry storm on ONE semantic key holds the money once."""
     episode_id, account_id = _episode_account(validation_world, db)
     request = _request(key="t030.same-key", episode_id=episode_id, world=validation_world)
-    outcomes = _race(
-        [partial(validation_world.budget.reserve, request) for _ in range(THREADS)]
-    )
+    outcomes = _race([partial(validation_world.budget.reserve, request) for _ in range(THREADS)])
     successes = [value for kind, value in outcomes if kind == "ok"]
     assert len(successes) == THREADS  # every racer gets an answer, none times out
     ids = {value.id for value in successes}
@@ -207,9 +202,7 @@ def test_settlement_racing_new_reservations_keeps_totals_exact(validation_world,
         for i in range(3)
     ]
     calls: list[Callable[[], Any]] = [
-        partial(
-            validation_world.budget.release, reservation.id, reason="t030 settled path"
-        )
+        partial(validation_world.budget.release, reservation.id, reason="t030 settled path")
         for reservation in settled
     ]
     calls += [
