@@ -460,6 +460,10 @@ class TriggerScheduler:
                 "AND NOT EXISTS (SELECT 1 FROM qa_findings f WHERE f.episode_id = e.id "
                 "  AND f.resolution = 'OPEN' AND (f.outcome IN ('REPAIRABLE', 'BLOCKED') "
                 "    OR f.severity = 'CRITICAL')) "
+                # MD-010: no package before the comparison pass has produced its
+                # findings for this media (a PASS row counts — the point is that
+                # Pass A and Pass B both ran).
+                "AND EXISTS (SELECT 1 FROM qa_findings f2 WHERE f2.episode_id = e.id) "
                 "AND NOT EXISTS (SELECT 1 FROM release_packages p WHERE p.episode_id = e.id "
                 "  AND p.status IN ('DRAFT', 'READY', 'BLOCKED')) "
                 "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.episode_id = e.id "

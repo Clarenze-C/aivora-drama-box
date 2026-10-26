@@ -16,7 +16,6 @@ from microdrama.contracts.release import (
     PostMetadata,
     PublicationCommand,
     ReleasePackage,
-    ReleaseSlotPlan,
 )
 from microdrama.persistence.db import Tx
 
@@ -40,11 +39,12 @@ def publication_command_for_post(
     """
     del tx  # reads happen through the caller's transaction-free helpers today
     package = ReleasePackage.model_validate(package_body)
+    # release_scope entries are already ReleaseSlotPlan models after validation.
     plan = next(
         (
-            ReleaseSlotPlan.model_validate(p)
-            for p in package.release_scope
-            if p["slot"]["release_slot"] == post["release_slot"]
+            candidate
+            for candidate in package.release_scope
+            if candidate.slot.release_slot == post["release_slot"]
         ),
         None,
     )
