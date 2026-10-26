@@ -30,15 +30,18 @@ LANE_ISOLATION_BOUND_MS = 10_000
 
 def _post_key(world) -> Any:
     def resolve(job: Job) -> str:
+        entity = job.input.get("platform_post_id")
         with world.db.transaction(readonly=True) as tx:
             post = tx.fetchone(
                 "SELECT platform, account_ref FROM platform_posts WHERE id = %s",
-                (job.input.get("platform_post_id"),),
+                (entity,),
             )
         if post is None:
-            raise LookupError(
-                f"limiter binding: post {job.input.get('platform_post_id')} not found"
-            )
+            # The row vanished between enqueue and claim (or the job names a
+            # synthetic ref, as the validation flood tests do): bucket the job
+            # by its own entity id. It borrows no account's quota, and the
+            # handler — not the throttle — decides its fate.
+            return limiter_key("unresolved-post", str(entity))
         return limiter_key(str(post["platform"]), str(post["account_ref"]))
 
     return resolve
@@ -51,15 +54,16 @@ def _submit_slot_key(job: Job) -> str:
 
 def _community_event_key(world) -> Any:
     def resolve(job: Job) -> str:
+        entity = job.input.get("community_event_id")
         with world.db.transaction(readonly=True) as tx:
             event = tx.fetchone(
                 "SELECT platform, account_ref FROM community_events WHERE id = %s",
-                (job.input.get("community_event_id"),),
+                (entity,),
             )
         if event is None:
-            raise LookupError(
-                f"limiter binding: community event {job.input.get('community_event_id')} not found"
-            )
+            # Same reasoning as _post_key: an unresolvable entity throttles on
+            # its own bucket rather than crashing the lane's cycle.
+            return limiter_key("unresolved-event", str(entity))
         return limiter_key(str(event["platform"]), str(event["account_ref"]))
 
     return resolve

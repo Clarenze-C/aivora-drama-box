@@ -196,20 +196,10 @@ def test_scheduler_and_workers_drive_release_with_only_the_two_gates(
         if verified:
             break
 
-    if not verified:
-        for row in _rows(world, "SELECT state FROM episodes ORDER BY episode_number"):
-            print("EPISODE STATE:", row["state"], flush=True)
-        for row in _rows(
-            world,
-            "SELECT job_type, status, count(*) AS n FROM jobs GROUP BY job_type, status "
-            "ORDER BY job_type",
-        ):
-            print("JOBS:", row["job_type"], row["status"], row["n"], flush=True)
-        for row in _rows(world, "SELECT state, count(*) AS n FROM platform_posts GROUP BY state"):
-            print("POSTS:", row["state"], row["n"], flush=True)
-        print("GATES HANDLED:", sorted(str(g) for g in handled_gates), flush=True)
-        print("FIRE ERRORS SEEN:", fire_errors[:10], flush=True)
     assert verified, "the scheduler-driven path never verified a required post"
+    # fire() survives a raising schedule by recording the error; progression
+    # must not have needed that crutch anywhere along the way.
+    assert fire_errors == [], "a schedule handler raised during firing"
     published = verified[0]["episode_id"]
     # Exactly the two human decisions for the PUBLISHED episode: Gate 1 on the
     # season and Gate 2 on this episode. The cadence schedule may have created
@@ -224,5 +214,22 @@ def test_scheduler_and_workers_drive_release_with_only_the_two_gates(
         )["c"]
         == 0
     )
-    assert _rows(world, "SELECT id FROM jobs WHERE status = 'FAILED'") == []
+    assert _rows(world, "SELECT id FROM jobs WHERE status = 'FAILED'") == [], (
+        "jobs failed along the scheduler-driven path"
+    )
+    # A finished post proves its submit's ambiguous-in-flight outcome: the
+    # verified readback resolves the parked submit job (the publication twin
+    # of W05's render reconcile). Posts still mid-flight at the break may
+    # hold their submit jobs in reconciliation — settled posts must not.
+    assert (
+        _rows(
+            world,
+            "SELECT j.id FROM jobs j "
+            "JOIN provider_operations po ON po.job_id = j.id "
+            "JOIN platform_posts p ON p.provider_operation_id = po.id "
+            "WHERE j.status = 'NEEDS_RECONCILIATION' "
+            "AND p.state IN ('PUBLISHED_VERIFIED', 'FAILED', 'CANCELLED')",
+        )
+        == []
+    ), "a settled post must resolve its submit job"
     assert fired >= 5  # a real multi-cycle progression, not one lucky fire

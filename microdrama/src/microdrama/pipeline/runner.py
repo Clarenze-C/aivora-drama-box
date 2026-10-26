@@ -619,7 +619,8 @@ class MockPipelineRunner:
     def w09_publish(self, episode_id: UUID) -> list[UUID]:
         self._drain()  # Gate 2 enqueued publish.schedule_release itself
         posts = self._rows(
-            "SELECT id, release_slot, state FROM platform_posts WHERE episode_id = %s "
+            "SELECT id, release_slot, state, dedupe_key FROM platform_posts "
+            "WHERE episode_id = %s "
             "ORDER BY release_slot",
             (episode_id,),
         )
@@ -639,7 +640,10 @@ class MockPipelineRunner:
                 "publish.submit_slot",
                 command,
                 episode_id=episode_id,
-                semantic_key=f"publish.submit_slot:{post['release_slot']}:{episode_id}",
+                # Keyed by the slot's own post row: release_slot names repeat
+                # across platforms in one scope, and two same-named slots'
+                # (correctly distinct) commands would collide on a name key.
+                semantic_key=f"publish.submit_slot:{post['id']}",
             )
         self._drain(advance_ms=3_000)
         for post in self._rows(

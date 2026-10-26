@@ -40,16 +40,23 @@ def publication_command_for_post(
     del tx  # reads happen through the caller's transaction-free helpers today
     package = ReleasePackage.model_validate(package_body)
     # release_scope entries are already ReleaseSlotPlan models after validation.
+    # The plan is resolved by dedupe key, never by slot name: release_slot
+    # names repeat across platforms/accounts inside one scope, and a
+    # name-matched command would submit some OTHER slot's post (its dedupe
+    # key locks that row) while this slot waited forever.
     plan = next(
         (
             candidate
             for candidate in package.release_scope
-            if candidate.slot.release_slot == post["release_slot"]
+            if candidate.slot.dedupe_key == post["dedupe_key"]
         ),
         None,
     )
     if plan is None:
-        raise LookupError(f"no slot plan for release_slot {post['release_slot']}")
+        raise LookupError(
+            f"no slot plan for dedupe key {post['dedupe_key']} "
+            f"(release_slot {post['release_slot']})"
+        )
     use_metadata = metadata or PostMetadata(
         locale="th-TH",
         title="ตอนที่ ๑ – หนี้เล็กๆ ของแม่ (จำลอง)",

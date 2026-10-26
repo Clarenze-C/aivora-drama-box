@@ -17,7 +17,7 @@ boundary probes now assert fixed behavior
 | F07 P1 | Production qualification decides from independently collected evidence: bound approval, all required slots verified, no open blocking findings, attributed spend inside the cap (recorded overrun or late billing above cap resets the streak on reevaluation). Management windows qualify only with durable in-window evidence the work ran (executed actions, ingested events, completed community jobs — the initial metadata version is publication, not management) | `tests/unit/analytics/test_analytics_qualification.py::TestCostCapInVerdicts` |
 | F08 P2 | `_account_spend` no longer adds `overrun_micro_usd` on top of committed spend (it is the above-cap subset, reported separately); per-minute cost uses `total * 60_000 // published_minutes_ms` with floor as the single explicit rounding rule — partial minutes are real minutes | `tests/unit/analytics/test_analytics_cost.py` (service-created overrun reconciliation) |
 | F09 P2 | The sealed package's QA summary derives unknown coverage from evidence (UNSAMPLED/UNAVAILABLE/PARTIAL/UNKNOWN checks keep their ids; missing critical checks stay unknown, never assumed passes; superseded findings excluded); the runner labels `GREEN_WITH_UNKNOWNS` when coverage is incomplete | `tests/unit/pipeline/test_packaging_summary.py` |
-| F01 P1 | The scheduler alone can drive the workflow: the cadence schedule creates the next approved episode; W05 claims the episode's owned pod lease, dispatches initial routed attempts and accepts verified outputs (operation discovery keyed to `render.shot` jobs, not a provider string); W06 proposes assembly only for a complete accepted shot set; W07 chains technical → observation → comparison → repairs → package from durable state; W09 submits due SCHEDULED slots through the shared `publication_command_for_post` builder and polls SUBMITTED **and** PROCESSING posts; the deployment timer runs on the wall clock | `tests/integration/pipeline/test_scheduler_driven_path.py` (two human gates only; world rebuilt between stages at boundaries with no in-flight provider operation) |
+| F01 P1 | The scheduler alone can drive the workflow: the cadence schedule creates the next approved episode; W05 claims the episode's owned pod lease, dispatches initial routed attempts and accepts verified outputs (operation discovery keyed to `render.shot` jobs, not a provider string); W06 proposes assembly only for a complete accepted shot set; W07 chains technical → observation → comparison → repairs → package from durable state; W09 submits due SCHEDULED slots through the shared `publication_command_for_post` builder (plan resolved by dedupe key, never by slot name — names repeat across platforms in one scope) with one submit proposal per slot in flight, polls SUBMITTED **and** PROCESSING posts (only those with an external id), and proposes `publish.reconcile_slot` for slots whose submit went ambiguous (op UNKNOWN/past deadline, single-flight per slot); a verified readback resolves the submit job its success parked in NEEDS_RECONCILIATION (the publication twin of W05's render reconcile); the deployment timer runs on the wall clock | `tests/integration/pipeline/test_scheduler_driven_path.py` (two human gates only; world rebuilt between stages at boundaries with no in-flight provider operation), `tests/unit/publishing/test_w09_discovery.py` |
 
 ## Known limits (unchanged by this cycle, tracked by the review's engineering table)
 
@@ -48,31 +48,68 @@ offline guard active):
 | unit: rendering/publishing/community/api/testing | 1012 passed |
 | contract | 412 passed (version 1.6.0 unchanged) |
 | integration: composed repair chain (F03) | 2 passed |
-| integration: scheduler-driven path (F01) | **NOT YET GREEN** — see resume state |
-| `make check` (single full pass) | **NOT RUN THIS SESSION** (quota); lanes above are its contents run separately |
-| `tests/integration/validation` (AT suite) | **NOT RERUN after the last scheduler edits** (44/44 before them) |
+| integration: scheduler-driven path (F01) | **1 passed (238.6 s)** — post-mortem prints stripped, settle-resolution and no-fire-error asserts added |
+| unit: publishing W09 discovery pins (`test_w09_discovery.py`, added this cycle) | 4 passed; publishing unit lane + pipeline contract lane rerun green (267 passed) |
+| `make check` (single full pass) | **passed** — contracts-check + lint + unit 2346 + contract 412 + integration 174 in one run (2026-10-26) |
+| `tests/integration/validation` (AT suite) | 174 integration passed inside `make check`, including the full AT lane (44/44 baseline restored; AT-08's flood markers now run on fallback buckets) |
 | Probes (`evidence/build-review-2026-10-25-probes.py`) | all FIXED lines, exit 0 |
+
+### The F01 acceptance test's last three defects (found via timeline dumps, all fixed)
+
+1. **Stacked submit proposals** (`scheduling/service.py`): a submit job still
+   pending did not stop a later period from proposing a second one under a
+   fresh period key; the stale sibling executed against the slot the first
+   job had moved and died on Conflict. Discovery now keeps one submit
+   proposal per slot in flight (W07's package-stage guard pattern), keyed by
+   the slot identity fields serialized in the payload — the payload's slot
+   has no `dedupe_key` (it is a computed hash, never serialized).
+2. **Name-matched commands submitted other slots' posts**
+   (`publishing/commands.py`): `publication_command_for_post` resolved the
+   slot plan by `release_slot` name, which repeats across platforms inside
+   one release scope; the command's dedupe key then locked a DIFFERENT post
+   row (its submits "succeeded" as no-op replays or failed on that post's
+   HELD/PROCESSING state while the intended slot never moved). Plans resolve
+   by dedupe key now.
+3. **Successful submits parked their jobs forever** (`pipeline/handlers.py`):
+   a successful submit's provider operation stays in flight until the post
+   verifies, so the job layer parks the job in NEEDS_RECONCILIATION at
+   finish; nothing resolved it. The poll handler now resolves the linked
+   submit job when its readback verifies — mirroring W05's render reconcile.
+
+Also closed this cycle (known-missing from the previous session): W09
+reconcile discovery — slots parked by an ambiguous submit (op UNKNOWN or past
+deadline, including SUBMITTED slots with no external id) get their
+`publish.reconcile_slot` proposal; the poll schedule never proposes a poll
+for a slot without an external id.
+
+### Fallout the first full `make check` caught (all fixed same day)
+
+4. **The mock runner fed the builder name-only post rows**
+   (`pipeline/runner.py`): `_command_for_post` received dicts selected without
+   `dedupe_key` (and keyed its submit jobs by release_slot name, which
+   collides across platforms) — the pilot fixture and `test_full_mock_path`
+   died on `KeyError`/`IdempotencyConflict` once plans resolved by dedupe
+   key. The runner now selects the key and keys submit jobs by post id.
+5. **Strict F04 limiter bindings crashed whole lane cycles**
+   (`pipeline/deployments.py`): a provider-bound job whose durable row was
+   gone (deleted between enqueue and claim, or a synthetic validation marker
+   — AT-08's flood tests use random ids by design) raised `LookupError` out
+   of `run_cycle`. Bindings now bucket unresolvable entities by their own
+   entity id — no account's quota is borrowed, the handler decides the job's
+   fate, and a wiring bug (a field binding naming a missing payload field)
+   still fails loudly as pinned. Pinned by
+   `tests/unit/workers/test_workers_shared_quota.py::test_an_unresolved_entity_buckets_alone_instead_of_crashing_the_cycle`.
 
 ## Resume state (next session)
 
-1. `tests/integration/pipeline/test_scheduler_driven_path.py` — the F01
-   acceptance test. Last diagnostic run stalled at episode 1 RENDERING with
-   three scheduler defects, all now fixed in `scheduling/service.py`:
-   `LeaseHandle` attribute (`handle.lease.lease_id`), W06 completeness filter
-   (had silently failed to apply — now asserted in source), W03 write proposing
-   episodes 2..10 before the episode-one identity lock. A run with these fixes
-   was in flight when the session ended; if it still stalls, dump episode
-   state / jobs / posts from the test's post-mortem prints (still in the test)
-   and follow the chain: research → gate1 → compile → cadence episode → write →
-   references → lease+dispatch → poll/accept → assemble+variants → QA chain →
-   package → gate2 → schedule → submit → poll.
-2. After it is green: one full `make check`, then the AT validation suite
-   (`tests/integration/validation`), then remove the post-mortem prints from
-   the scheduler test.
-3. Commit cadence: waves 1+2 (F02/F06/F07/F08/F09) are already committed at
-   `3cd56fc`; this commit carries F03/F04/F05/F01 and the docs.
-4. Not started (review's "further engineering" table, out of remediation
-   scope): durable fake-provider state across restarts, real provider edges
-   (T031), platform/membership transports (T032), multi-process deployment
-   definitions, management heartbeats for quiet weeks, task_status.csv
-   reconciliation.
+Nothing open on the remediation itself. Remaining work is the review's
+"further engineering" table, out of remediation scope: durable fake-provider
+state across restarts, real provider edges (T031), platform/membership
+transports (T032), multi-process deployment definitions, management heartbeats
+for quiet weeks, task_status.csv reconciliation. One design note for whoever
+picks up W09 live work: a reconcile that proves the post absent re-arms the
+SAME slot (`SUBMITTED`, op `PENDING_SUBMIT`, fresh deadline) — W09 submit
+discovery only proposes for `SCHEDULED` rows, so a re-armed slot's resubmit
+needs a command carrying its CURRENT metadata version
+(`publication_command_for_post` builds the initial version id); unreachable
+offline, but live adapters will hit it.

@@ -446,11 +446,52 @@ def build_handlers(world) -> dict[str, Any]:
 
     handlers["publish.submit_slot"] = publish_submit_slot
 
+    def _resolve_submit_job_for_post(post_id) -> None:
+        """Verification proves the submit's ambiguous-in-flight outcome.
+
+        A successful submit leaves its job NEEDS_RECONCILIATION (its provider
+        operation stays in flight until the post verifies — the job layer
+        refuses a plain SUCCEEDED meanwhile). The verified readback is the
+        evidence that resolves it: the publication twin of W05's render
+        reconcile. Idempotent: a job already resolved raises InvalidTransition,
+        which is exactly the nothing-to-do case.
+        """
+        from microdrama.contracts.enums import PrincipalKind
+        from microdrama.contracts.errors import InvalidTransition
+        from microdrama.contracts.principals import Principal
+
+        with db.transaction(readonly=True) as tx:
+            pending = tx.fetchall(
+                "SELECT j.id FROM jobs j JOIN provider_operations po "
+                "ON po.job_id = j.id WHERE po.id = ("
+                "  SELECT provider_operation_id FROM platform_posts WHERE id = %s) "
+                "AND j.status = 'NEEDS_RECONCILIATION'",
+                (post_id,),
+            )
+        if not pending:
+            return
+        monitor = Principal(principal_id="svc:w09-publish-poll", kind=PrincipalKind.SCHEDULER)
+        for job in pending:
+            try:
+                world.jobs.resolve_reconciliation(
+                    job["id"],
+                    actor=monitor,
+                    resolution="SUCCEEDED",
+                    evidence=(
+                        f"post {post_id} reached PUBLISHED_VERIFIED with readback; "
+                        "submit outcome proven"
+                    ),
+                    now=world.fakes.clock.now(),
+                )
+            except InvalidTransition:
+                continue  # resolved by a sibling poll first
+
     def publish_poll_status(ctx: JobContext) -> JobOutcome:
         payload: PlatformPostRef = ctx.payload  # type: ignore[assignment]
         result = world.publishing.poll_status(payload.platform_post_id)
         state = result.get("state")
         if state in ("PUBLISHED_VERIFIED", "COMPLETED"):
+            _resolve_submit_job_for_post(payload.platform_post_id)
             return Succeeded(
                 {
                     "platform_post_id": str(payload.platform_post_id),

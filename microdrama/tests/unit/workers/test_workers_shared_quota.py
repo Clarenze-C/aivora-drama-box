@@ -105,6 +105,41 @@ class TestProviderBoundBindingsRequired:
         report = runtime.run_cycle()
         assert report.reports[0].action == "RATE_DEFERRED"
 
+    def test_an_unresolved_entity_buckets_alone_instead_of_crashing_the_cycle(
+        self, world: WorkersWorld
+    ):
+        """A job whose durable row vanished (or names a synthetic ref, as the
+        validation flood markers do) must run on its own throttle bucket — it
+        borrows no account's quota, and one poisoned job never kills the lane's
+        cycle (the AT-08 regression of the strict bindings)."""
+        from microdrama.pipeline.deployments import lane_bindings
+
+        marker = UUID("00000000-0000-0000-0000-0000000000b2")
+        deployment = WorkerDeployment(
+            name="pub",
+            slots=(QueueSlots(QueueName.PUBLICATION, 1),),
+            handlers={"publish.poll_status": counting_handler({}, "poll")},
+            limiter=world.limiter,
+            bindings=lane_bindings(world),
+        )
+        runtime = WorkerRuntime(world.jobs, world.db, world.clock, deployment)
+        with world.db.transaction() as tx:
+            world.jobs.enqueue(
+                tx,
+                job_type="publish.poll_status",
+                semantic_key="unresolved-entity:1",
+                payload=PlatformPostRef(platform_post_id=marker),
+            )
+        report = runtime.run_cycle()
+        assert report.reports[0].action == "EXECUTED", (
+            "the unresolvable marker executes on its fallback bucket"
+        )
+        with world.db.transaction(readonly=True) as tx:
+            status = tx.fetchone(
+                "SELECT status FROM jobs WHERE semantic_key = 'unresolved-entity:1'"
+            )
+        assert status["status"] == "SUCCEEDED"
+
 
 class TestLaneIsolation:
     def test_blocked_community_does_not_delay_a_due_publication(self, world: WorkersWorld):

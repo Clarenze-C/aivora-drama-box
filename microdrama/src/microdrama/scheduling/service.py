@@ -15,8 +15,9 @@ is safe to call concurrently or after a crash:
   the cadence schedule creates the next approved episode, W05 dispatches the
   initial routed attempts and accepts verified outputs, W06 proposes assembly
   only for a complete accepted shot set, W07 chains technical → observation →
-  comparison → repairs → package, and W09 submits due slots and polls both
-  SUBMITTED and PROCESSING posts;
+  comparison → repairs → package, and W09 submits due slots (one proposal
+  per slot in flight), polls both SUBMITTED and PROCESSING posts, and
+  proposes the reconcile job for slots whose submit went ambiguous;
 - firing state (``schedule_state`` rows) only prevents busy-spinning; missing
   state can never duplicate an effect because the semantic keys dedupe.
 
@@ -545,9 +546,26 @@ class TriggerScheduler:
 
         period = self._period("w09-publish-submit", now)
         with self.world.db.transaction(readonly=True) as tx:
+            # One submit proposal per slot at a time: while a submit job is
+            # still pending, a later period must not stack a second one under
+            # a fresh period key — the stale sibling would execute against the
+            # slot the first job already moved (HELD, PROCESSING, RETRY_WAIT)
+            # and die on Conflict. Discovery dedupe only, the same guard the
+            # W07 package stage uses; the service stays the sole authority.
             posts = tx.fetchall(
-                "SELECT * FROM platform_posts WHERE state = 'SCHEDULED' "
-                "AND scheduled_utc <= %s ORDER BY scheduled_utc",
+                "SELECT * FROM platform_posts p WHERE p.state = 'SCHEDULED' "
+                "AND p.scheduled_utc <= %s "
+                # The payload's slot key has no serialized dedupe_key (it is a
+                # computed hash); the identity fields the posts table itself
+                # treats as unique identify the slot's submit jobs instead.
+                "AND NOT EXISTS (SELECT 1 FROM jobs j "
+                "  WHERE j.job_type = 'publish.submit_slot' "
+                "  AND j.input -> 'slot' ->> 'episode_id' = p.episode_id::text "
+                "  AND j.input -> 'slot' ->> 'platform' = p.platform "
+                "  AND j.input -> 'slot' ->> 'account_ref' = p.account_ref "
+                "  AND j.input -> 'slot' ->> 'release_slot' = p.release_slot "
+                "  AND j.status IN ('QUEUED', 'RUNNING', 'RETRY_WAIT', 'WAITING_EXTERNAL')) "
+                "ORDER BY p.scheduled_utc",
                 (now,),
             )
         submitted = held = 0
@@ -595,10 +613,31 @@ class TriggerScheduler:
 
         with self.world.db.transaction(readonly=True) as tx:
             # F01: an adapter may return PROCESSING directly at submission; that
-            # row needs a poll job exactly like a SUBMITTED one.
+            # row needs a poll job exactly like a SUBMITTED one. A slot without
+            # an external id cannot be polled — its ambiguity is reconcile work.
             posts = tx.fetchall(
                 "SELECT id FROM platform_posts WHERE state IN ('SUBMITTED', 'PROCESSING') "
-                "AND updated_at <= %s ORDER BY updated_at",
+                "AND external_id IS NOT NULL AND updated_at <= %s ORDER BY updated_at",
+                (now,),
+            )
+            # F01: an ambiguous submit (crash between sent and recorded, an
+            # adapter timeout) parks its slot with the operation UNKNOWN or
+            # past its deadline. The scheduler proposes the ordinary
+            # reconcile job so the publication lane clears its own
+            # ambiguity; the service re-checks due-ness under the slot lock,
+            # and discovery stays single-flight per slot.
+            ambiguous = tx.fetchall(
+                "SELECT p.id FROM platform_posts p "
+                "JOIN provider_operations po ON po.id = p.provider_operation_id "
+                "WHERE (p.state = 'NEEDS_RECONCILIATION' "
+                "  OR (p.state IN ('SUBMITTED', 'PROCESSING') AND p.external_id IS NULL)) "
+                "AND (po.state = 'UNKNOWN' OR (po.state IN ('PENDING_SUBMIT', 'SUBMITTED', "
+                "  'RUNNING') AND po.deadline_at <= %s)) "
+                "AND NOT EXISTS (SELECT 1 FROM jobs j "
+                "  WHERE j.job_type = 'publish.reconcile_slot' "
+                "  AND j.input ->> 'platform_post_id' = p.id::text "
+                "  AND j.status IN ('QUEUED', 'RUNNING', 'RETRY_WAIT', 'WAITING_EXTERNAL')) "
+                "ORDER BY po.created_at",
                 (now,),
             )
         for post in posts:
@@ -607,6 +646,13 @@ class TriggerScheduler:
                 PlatformPostRef(platform_post_id=post["id"]),
                 report,
                 semantic_key=f"{self._period('w09-publish-poll', now)}:{post['id']}",
+            )
+        for post in ambiguous:
+            self._enqueue(
+                "publish.reconcile_slot",
+                PlatformPostRef(platform_post_id=post["id"]),
+                report,
+                semantic_key=f"{self._period('w09-publish-poll', now)}:rec:{post['id']}",
             )
 
     def _w11_analytics(self, now: datetime, report: FireReport) -> None:
