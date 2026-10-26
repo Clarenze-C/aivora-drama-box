@@ -37,22 +37,41 @@ MOCK_DISCLOSURES = [DisclosureKind.AI_GENERATED_CONTENT, DisclosureKind.SYNTHETI
 
 
 def _qa_summary(tx: Tx, episode_id: UUID):
+    """The package's QA summary, derived from the episode's own media evidence.
+
+    Unknown coverage is never dropped: a check that never ran (UNSAMPLED/
+    UNAVAILABLE), ran partially (PARTIAL) or ended UNKNOWN keeps its check id in
+    the sealed package, and a required critical check with no finding row at all
+    is missing evidence — retained as unknown, never assumed as a pass. The
+    release gate itself still decides on blocking findings only (no new human
+    gate turns unknowns into refusals); this summary is what lets the sealed
+    package and the stage report agree with the evidence behind the approval.
+    Superseded findings are history, not current evidence, so they are excluded.
+    """
     from microdrama.contracts.release import QASummary
+    from microdrama.qa.config import CRITICAL_CHECK_IDS
     from microdrama.review.gate_conditions import finding_blocks
 
     findings = tx.fetchall(
-        "SELECT id, severity, outcome, resolution FROM qa_findings WHERE episode_id = %s "
-        "ORDER BY qa_cycle DESC, created_at DESC LIMIT 200",
+        "SELECT id, check_id, severity, outcome, coverage, resolution "
+        "FROM qa_findings WHERE episode_id = %s AND resolution <> 'SUPERSEDED' "
+        "ORDER BY qa_cycle DESC, created_at DESC",
         (episode_id,),
     )
     blocking = [
         row["id"]
         for row in findings
-        if finding_blocks(row["severity"], row["outcome"], row["resolution"] or "OPEN")
+        if finding_blocks(row["severity"], row["outcome"], row["resolution"])
     ]
+    unknown: set[str] = {
+        row["check_id"]
+        for row in findings
+        if row["coverage"] != "CHECKED" or row["outcome"] == "UNKNOWN"
+    }
+    unknown.update(set(CRITICAL_CHECK_IDS) - {row["check_id"] for row in findings})
     return QASummary(
         blocking_finding_ids=sorted(set(blocking), key=str),
-        unknown_coverage_check_ids=[],
+        unknown_coverage_check_ids=sorted(unknown),
         finding_count=len(findings),
         provenance=Provenance.FAKE_SYNTHETIC,
     )

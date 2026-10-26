@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from analytics_support import AnalyticsWorld
@@ -20,6 +21,10 @@ def _clean_published(world: AnalyticsWorld, season, number: int, *, spend: int =
     episode, _post = world.published_episode(season, number=number)
     if spend:
         world.charge(episode, spend)
+    # A clean episode is one whose unattended management work demonstrably ran:
+    # one executed management action inside the window (F07 — elapsed time alone
+    # no longer qualifies a window).
+    world.management_cycle(episode)
     return episode
 
 
@@ -217,3 +222,67 @@ class TestRunPersistence:
                     "(%s, %s, %s, 'QUALIFIED', 'PENDING', 3, '{}'::jsonb)",
                     (__import__("uuid").uuid4(), season, world.clock.now()),
                 )
+
+
+class TestCostCapInVerdicts:
+    """F07: the US$10 cap is part of the eligibility decision, late billing included."""
+
+    def test_above_cap_late_billing_resets_an_earned_streak(self, world):
+        season = world.season()
+        for number in range(2, 12):  # ten clean episodes
+            _clean_published(world, season, number)
+        first = world.analytics.evaluate_qualification(season, now=world.clock.now() + LATE)
+        assert first.production_status is QualificationStatus.QUALIFIED
+        # Late billing lands after publication: episode 7's real total crosses the cap.
+        charged = next(e for e in first.episodes if e.episode_number == 7)
+        result = world.charge_result(charged.episode_id, 10_000_000)
+        assert result.overrun_recorded_micro_usd > 0
+        second = world.analytics.evaluate_qualification(season, now=world.clock.now() + LATE)
+        assert second.production_status is QualificationStatus.NOT_QUALIFIED
+        assert second.consecutive_qualifying_production == 4  # 8..11 after ep 7
+        episode_7 = next(e for e in second.episodes if e.episode_number == 7)
+        assert episode_7.production_qualifies is False
+        assert any("above_cap" in r for r in second.streak_resets)
+
+    def test_management_window_without_evidence_never_qualifies(self, world):
+        season = world.season()
+        episode, _post = world.published_episode(season, number=2)  # no management_cycle
+        world.charge(episode, 100_000)
+        result = world.analytics.evaluate_qualification(
+            season, now=world.clock.now() + timedelta(days=MANAGEMENT_WINDOW_DAYS, hours=1)
+        )
+        row = result.episodes[0]
+        assert row.production_qualifies is True  # production earned it
+        assert row.management_window_status is QualificationStatus.NOT_QUALIFIED
+        assert result.management_status is QualificationStatus.NOT_QUALIFIED
+
+    def test_open_blocking_finding_prevents_production_qualification(self, world):
+        season = world.season()
+        episode = _clean_published(world, season, 2)
+        with world.db.transaction() as tx:
+            from microdrama.persistence.db import insert_row
+
+            insert_row(
+                tx,
+                "qa_findings",
+                {
+                    "id": uuid4(),
+                    "episode_id": episode,
+                    "qa_cycle": 1,
+                    "asset_id": uuid4(),
+                    "start_ms": 0,
+                    "end_ms": 1000,
+                    "check_id": "asr.critical_term_match",
+                    "check_family": "asr",
+                    "source_pass": "PASS_B_COMPARISON",
+                    "severity": "CRITICAL",
+                    "coverage": "CHECKED",
+                    "outcome": "BLOCKED",
+                    "body": {"check_id": "asr.critical_term_match"},
+                    "resolution": "OPEN",
+                },
+            )
+        result = world.analytics.evaluate_qualification(season, now=world.clock.now() + LATE)
+        row = result.episodes[0]
+        assert row.production_qualifies is False
+        assert result.production_status is QualificationStatus.NOT_QUALIFIED

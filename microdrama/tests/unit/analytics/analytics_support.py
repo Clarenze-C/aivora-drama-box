@@ -159,8 +159,18 @@ class AnalyticsWorld(PublishingWorld):
         category: BudgetCategory = BudgetCategory.GPU_GENERATION,
     ) -> None:
         """Real usage through the REAL BudgetService (synthetic receipt)."""
+        self.charge_result(episode_id, amount_micro_usd, category=category)
+
+    def charge_result(
+        self,
+        episode_id: UUID,
+        amount_micro_usd: int,
+        *,
+        category: BudgetCategory = BudgetCategory.GPU_GENERATION,
+    ):
+        """``charge`` that returns the service's ChargeResult (overrun evidence)."""
         self._receipt_counter += 1
-        self.budget.record_usage(
+        return self.budget.record_usage(
             UsageReceipt(
                 receipt_id=uuid.uuid4(),
                 provider="runpod",
@@ -199,6 +209,68 @@ class AnalyticsWorld(PublishingWorld):
                     "occurred_at": self.clock.now() + timedelta(days=days_after_publication),
                 },
             )
+
+    def management_cycle(self, episode_id: UUID, *, hours_after_publication: float = 1.0) -> None:
+        """Durable evidence the unattended management work ran inside the window.
+
+        One EXECUTED management action on the episode's first verified post — the
+        same evidence shape the qualification evaluator reads (quiet weeks with
+        no trace do not qualify; see analytics/qualification).
+        """
+        with self.db.transaction(readonly=True) as tx:
+            post = tx.fetchone(
+                "SELECT id, platform, account_ref, verified_at FROM platform_posts "
+                "WHERE episode_id = %s AND verified_at IS NOT NULL "
+                "ORDER BY verified_at LIMIT 1",
+                (episode_id,),
+            )
+        assert post is not None, "management evidence needs a verified post"
+        self._receipt_counter += 1
+        with self.db.transaction() as tx:
+            insert_row(
+                tx,
+                "management_actions",
+                {
+                    "id": uuid.uuid4(),
+                    "kind": "COMMENT_REPLY",
+                    "platform": post["platform"],
+                    "account_ref": post["account_ref"],
+                    "platform_post_id": post["id"],
+                    "dedupe_key": f"analytics-mgmt-{episode_id.hex}-{self._receipt_counter}",
+                    "body": {
+                        "kind": "COMMENT_REPLY",
+                        "note": "fixture management evidence",
+                        "estimated_cost_micro_usd": 0,
+                    },
+                    "policy_hash": "a" * 64,
+                    "catalog_version": 1,
+                    "decision": "EXECUTED",
+                    "provenance": "FAKE_SYNTHETIC",
+                    "executed_at": post["verified_at"] + timedelta(hours=hours_after_publication),
+                },
+            )
+
+    def research_charge(
+        self, season_id: UUID, amount_micro_usd: int, *, suffix: str = "run"
+    ) -> None:
+        """A settled charge on the season's research account (the pre-Gate-1 spend)."""
+        self._receipt_counter += 1
+        self.budget.record_usage(
+            UsageReceipt(
+                receipt_id=uuid.uuid4(),
+                provider="fake-sources",
+                provider_receipt_id=f"analytics-research-{season_id.hex[:8]}-{self._receipt_counter}-{suffix}",
+                kind=ReceiptKind.SETTLEMENT,
+                cost_basis=CostBasis.SYNTHETIC_FAKE,
+                season_id=season_id,
+                category=BudgetCategory.RESEARCH_SCRIPT_PROMPTS_METADATA,
+                amount_micro_usd=amount_micro_usd,
+                units=1,
+                unit="REQUEST",
+                observed_at=self.clock.now(),
+                provenance=FAKE,
+            )
+        )
 
     # --- snapshot plumbing ----------------------------------------------------------------
 

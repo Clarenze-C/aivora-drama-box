@@ -11,18 +11,23 @@ consecutive qualifying episodes). Truth rules this module owns:
   ``PENDING``; a season whose streak broke and is rebuilding is ``NOT_QUALIFIED``
   until it reaches ten again.
 - **A qualifying episode earned it alone**: ``PUBLISHED_VERIFIED``/``MANAGED``
-  state, no failure outcome, and **zero manual interventions**. A failed/rejected
-  episode breaks the streak; so does an episode that was published only because a
-  human fixed or uploaded something. An episode still in flight is ``None``
+  state, no failure outcome, zero manual interventions, an approval actually
+  bound to the released package, every required slot verified, no open blocking
+  QA finding, and full attributed cost inside the cap (a recorded overrun or
+  late billing above cap breaks the streak on reevaluation). A failed/rejected
+  episode breaks the streak; so does an episode that was published only because
+  a human fixed or uploaded something. An episode still in flight is ``None``
   (pending) and also stops the streak — the rolling count is trailing.
 - **Management windows are per episode and start at publication.** The window is
   the first seven days after the episode's first verified post. Before day seven
-  the window is ``PENDING`` (with its end recorded); after seven clean days it is
-  ``QUALIFIED``; any manual intervention inside the window makes it
-  ``NOT_QUALIFIED`` (unattended management was rescued by a human). An episode
-  still in flight has not opened a window (``PENDING``); an episode that failed
-  before publication never will (``NOT_QUALIFIED`` — the management track cannot
-  complete around a production failure).
+  the window is ``PENDING`` (with its end recorded); after seven days it is
+  ``QUALIFIED`` only when no manual intervention happened inside it AND the
+  unattended management work left durable evidence it ran (executed actions,
+  ingested events, metadata edits or completed community jobs in the window) —
+  elapsed time alone proves nothing. Otherwise it is ``NOT_QUALIFIED``. An
+  episode still in flight has not opened a window (``PENDING``); an episode that
+  failed before publication never will (``NOT_QUALIFIED`` — the management track
+  cannot complete around a production failure).
 - **Costs travel with the verdict.** Every episode's spend — failed ones
   included — is read from the real budget counters (``analytics.cost``); the
   effective cost of a season counts every micro-dollar, and a non-qualifying
@@ -59,7 +64,14 @@ _MANAGEMENT_INTERVENTION_KINDS = (
 
 @dataclass(frozen=True)
 class EpisodeFacts:
-    """Everything one episode contributes to a qualification run."""
+    """Everything one episode contributes to a qualification run.
+
+    Beyond the coarse state, the facts carry the independently collected
+    invariants the verdict actually checks: the cost cap and any recorded
+    overrun (late billing above cap resets the streak on reevaluation), open
+    blocking QA findings, whether every required slot is verified, and whether
+    an approved package bound to a real approval event exists.
+    """
 
     episode_id: UUID
     episode_number: int
@@ -68,6 +80,11 @@ class EpisodeFacts:
     manual_interventions: int
     management_started_at: datetime | None
     spend_micro_usd: int
+    cap_micro_usd: int = 0
+    overrun_micro_usd: int = 0
+    blocking_findings_open: int = 0
+    required_slots_verified: bool = False
+    approval_bound: bool = False
 
 
 def _episode_facts(tx: Tx, season_id: UUID) -> list[EpisodeFacts]:
@@ -94,6 +111,25 @@ def _episode_facts(tx: Tx, season_id: UUID) -> list[EpisodeFacts]:
     facts: list[EpisodeFacts] = []
     for row in episodes:
         spend = episode_spend(tx, row["id"])
+        blocking = int(
+            tx.fetchval(
+                "SELECT count(*) FROM qa_findings WHERE episode_id = %s "
+                "AND (severity = 'CRITICAL' OR outcome = 'BLOCKED') "
+                "AND resolution = 'OPEN'",
+                (row["id"],),
+            )
+            or 0
+        )
+        slots = tx.fetchone(
+            "SELECT count(*) AS total, count(*) FILTER (WHERE verified_at IS NOT NULL) "
+            "AS verified FROM platform_posts WHERE episode_id = %s AND required",
+            (row["id"],),
+        )
+        approval = tx.fetchone(
+            "SELECT id FROM release_packages WHERE episode_id = %s AND status = 'APPROVED' "
+            "AND approval_event_id IS NOT NULL",
+            (row["id"],),
+        )
         facts.append(
             EpisodeFacts(
                 episode_id=row["id"],
@@ -103,6 +139,13 @@ def _episode_facts(tx: Tx, season_id: UUID) -> list[EpisodeFacts]:
                 manual_interventions=interventions.get(row["id"], 0),
                 management_started_at=starts.get(row["id"]),
                 spend_micro_usd=spend.spend_micro_usd if spend else 0,
+                cap_micro_usd=spend.cap_micro_usd if spend else 0,
+                overrun_micro_usd=spend.overrun_micro_usd if spend else 0,
+                blocking_findings_open=blocking,
+                required_slots_verified=(
+                    slots is not None and slots["total"] > 0 and slots["verified"] == slots["total"]
+                ),
+                approval_bound=approval is not None,
             )
         )
     return facts
@@ -119,13 +162,68 @@ def _window_interventions(tx: Tx, episode_id: UUID, started_at: datetime, ends_a
     )
 
 
+def _management_ran(tx: Tx, episode_id: UUID, started_at: datetime, ends_at: datetime) -> bool:
+    """True when the unattended management work left durable evidence in the window.
+
+    Seven quiet days prove nothing on their own. Evidence the management system
+    actually ran is any of, inside the window: an executed management action on
+    the episode's posts, an ingested community event, a created metadata
+    version, or a SUCCEEDED community-queue job for the episode. A window that
+    closed with none of these did not demonstrate its management work ran and
+    cannot qualify — the fix for the elapsed-clock-equals-success defect. When
+    the unattended path needs quiet weeks to qualify, it must instrument its own
+    cycle heartbeats; this evaluator only reads what is durably true.
+    """
+    window = (episode_id, started_at, ends_at)
+    return bool(
+        tx.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM management_actions ma "
+            "JOIN platform_posts p ON p.id = ma.platform_post_id "
+            "WHERE p.episode_id = %s AND ma.executed_at BETWEEN %s AND %s)",
+            window,
+        )
+        or tx.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM community_events ce "
+            "JOIN platform_posts p ON p.id = ce.platform_post_id "
+            "WHERE p.episode_id = %s AND ce.received_at BETWEEN %s AND %s)",
+            window,
+        )
+        or tx.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM jobs WHERE episode_id = %s "
+            "AND queue = 'COMMUNITY' AND status = 'SUCCEEDED' "
+            "AND updated_at BETWEEN %s AND %s)",
+            window,
+        )
+    )
+
+
 def _production_qualifies(facts: EpisodeFacts) -> bool | None:
+    """The explicit eligibility decision, invariant by invariant.
+
+    A published episode qualifies only when it earned it on every axis the SPEC
+    names: no terminal failure, no manual rescue, an approval actually bound to
+    the released package, every required slot verified, no open blocking QA
+    finding, and its full attributed cost inside the cap — including late
+    billing, which reevaluation picks up from the live counters and turns a
+    previously-clean episode into a streak reset. Incomplete evidence (no bound
+    approval, no required slot verified) fails the episode rather than passing
+    it on the coarse state; an episode still in flight stays pending.
+    """
     if facts.outcome is not None:
         return False
-    if facts.state in _PUBLISHED_STATES:
-        # A published episode that needed a human is a manual-fixed episode.
-        return facts.manual_interventions == 0
-    return None  # still in flight
+    if facts.state not in _PUBLISHED_STATES:
+        return None  # still in flight
+    if facts.manual_interventions:
+        return False
+    if not facts.approval_bound:
+        return False
+    if not facts.required_slots_verified:
+        return False
+    if facts.blocking_findings_open:
+        return False
+    if facts.spend_micro_usd > facts.cap_micro_usd or facts.overrun_micro_usd:
+        return False
+    return True
 
 
 def _production_reason(facts: EpisodeFacts, qualifies: bool | None) -> str:
@@ -135,6 +233,16 @@ def _production_reason(facts: EpisodeFacts, qualifies: bool | None) -> str:
         return f"outcome={facts.outcome}"
     if facts.manual_interventions:
         return f"manual_interventions={facts.manual_interventions}"
+    if not facts.approval_bound:
+        return "no approved package bound to an approval event"
+    if not facts.required_slots_verified:
+        return "required release slots not all verified"
+    if facts.blocking_findings_open:
+        return f"open_blocking_findings={facts.blocking_findings_open}"
+    if facts.spend_micro_usd > facts.cap_micro_usd:
+        return f"above_cap: spend {facts.spend_micro_usd} > cap {facts.cap_micro_usd} micro-USD"
+    if facts.overrun_micro_usd:
+        return f"recorded_overrun={facts.overrun_micro_usd} micro-USD"
     return "published clean"
 
 
@@ -155,6 +263,10 @@ def _management_window(
         return QualificationStatus.PENDING, ends_at
     if _window_interventions(tx, facts.episode_id, started, ends_at) > 0:
         return QualificationStatus.NOT_QUALIFIED, ends_at
+    if not _management_ran(tx, facts.episode_id, started, ends_at):
+        # The clock alone is not management success: with no durable evidence the
+        # window's work ran, the window did not qualify.
+        return QualificationStatus.NOT_QUALIFIED, ends_at
     return QualificationStatus.QUALIFIED, ends_at
 
 
@@ -170,11 +282,18 @@ def _run_status(
     else:
         production = QualificationStatus.PENDING  # clean so far, fewer than ten
     # Management rolls over the last ten windows (the contract pins: QUALIFIED
-    # needs ten corresponding qualified windows). A failed window inside the
-    # tail is NOT_QUALIFIED; anything else still open or short of ten is PENDING.
+    # needs ten corresponding qualified windows). The windows must belong to the
+    # production-qualifying run — a window whose episode stopped qualifying (a
+    # streak reset, e.g. late billing above cap) no longer corresponds to a
+    # qualifying production, and the database itself refuses a QUALIFIED
+    # management row with fewer than ten consecutive qualifying episodes. A
+    # failed window inside the tail is NOT_QUALIFIED; anything else still open
+    # or short of ten is PENDING.
     tail = episodes[-REQUIRED_CONSECUTIVE:]
-    if len(tail) == REQUIRED_CONSECUTIVE and all(
-        e.management_window_status is QualificationStatus.QUALIFIED for e in tail
+    if (
+        consecutive >= REQUIRED_CONSECUTIVE
+        and len(tail) == REQUIRED_CONSECUTIVE
+        and all(e.management_window_status is QualificationStatus.QUALIFIED for e in tail)
     ):
         management = QualificationStatus.QUALIFIED
     elif any(e.management_window_status is QualificationStatus.NOT_QUALIFIED for e in tail):

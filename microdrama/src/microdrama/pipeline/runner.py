@@ -553,7 +553,18 @@ class MockPipelineRunner:
         )[0]["c"]
         if blocking:
             raise RuntimeError(f"W07: {blocking} blocking QA finding(s) remain open")
-        self.report.add("W07", "qa", "GREEN", blocking_findings=0)
+        # Honest green: absence of blocking findings is not full coverage. Checks
+        # that never ran or ended UNKNOWN keep their names in the stage report —
+        # the same evidence the sealed package's QA summary carries (F09).
+        unknown_rows = self._rows(
+            "SELECT check_id FROM qa_findings WHERE episode_id = %s "
+            "AND resolution <> 'SUPERSEDED' "
+            "AND (coverage <> 'CHECKED' OR outcome = 'UNKNOWN')",
+            (episode_id,),
+        )
+        unknown_ids = sorted({row["check_id"] for row in unknown_rows})
+        label = "GREEN" if not unknown_ids else "GREEN_WITH_UNKNOWNS"
+        self.report.add("W07", "qa", label, blocking_findings=0, unknown_check_ids=unknown_ids)
 
     # --- packaging + Gate 2 -----------------------------------------------------------------
 

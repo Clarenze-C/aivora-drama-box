@@ -87,7 +87,12 @@ def render_scorecard(result: QualificationResult, cost: SeasonCost) -> str:
     )
     lines.append(f"- Recorded overruns (never erased): {_fmt(cost.overrun_micro_usd, micro=True)}")
     lines.append(
-        f"- Fixed season research (reported separately): {_fmt(cost.fixed_research_micro_usd, micro=True)}"
+        "- Research attributed to episodes (already inside variable): "
+        + _fmt(cost.attributed_research_micro_usd, micro=True)
+    )
+    lines.append(
+        "- Fixed season research, unattributed residue (reported separately): "
+        + _fmt(cost.fixed_research_micro_usd, micro=True)
     )
     lines.append("")
     lines.append(

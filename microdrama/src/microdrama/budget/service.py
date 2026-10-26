@@ -936,6 +936,7 @@ class BudgetService:
         season_id: UUID,
         episode_ids: Iterable[UUID],
         basis: str,
+        tx: Tx | None = None,
     ) -> list[ResearchAllocation]:
         """Attribute settled research spend to episodes, once per (source charge, episode).
 
@@ -950,8 +951,12 @@ class BudgetService:
         - RESEARCH committed + share must stay within the RESEARCH allocation.
         A share that does not fit refuses the whole call with BudgetExhausted and writes nothing.
         The unattributed residue stays on the research account; the error names it. The orchestrator
-        (T029) must attribute research right after opening the episode accounts and before any paid
+        must attribute research right after opening the episode accounts and before any paid
         work, so the shares fit the empty allowance.
+
+        Pass ``tx`` to run inside a caller-owned transaction (the story lane does this
+        inside its write claim, where the episode row and season are already locked);
+        without it the allocation owns its own transaction.
         """
         episodes = list(episode_ids)
         if not episodes:
@@ -960,59 +965,65 @@ class BudgetService:
             raise SchemaInvalid("research allocation episodes must be distinct")
         if not basis or not basis.strip():
             raise SchemaInvalid("research allocation requires a basis")
+        if tx is not None:
+            return self._allocate_research_cost(tx, season_id, episodes, basis)
+        with self._db.transaction() as owned:
+            return self._allocate_research_cost(owned, season_id, episodes, basis)
+
+    def _allocate_research_cost(
+        self, tx: Tx, season_id: UUID, episodes: list[UUID], basis: str
+    ) -> list[ResearchAllocation]:
         results: list[ResearchAllocation] = []
-        with self._db.transaction() as tx:
-            research_id = research_account_id(tx, season_id)
-            target_ids = {ep: episode_account_id(tx, ep) for ep in episodes}
-            locked: dict[UUID, tuple] = {}
-            for account_id in sorted({research_id, *target_ids.values()}):
-                locked[account_id] = (
-                    lock_account(tx, account_id),
-                    lock_categories(tx, account_id),
+        research_id = research_account_id(tx, season_id)
+        target_ids = {ep: episode_account_id(tx, ep) for ep in episodes}
+        locked: dict[UUID, tuple] = {}
+        for account_id in sorted({research_id, *target_ids.values()}):
+            locked[account_id] = (
+                lock_account(tx, account_id),
+                lock_categories(tx, account_id),
+            )
+        for episode_id in episodes:
+            target = locked[target_ids[episode_id]][0]
+            if target.season_id != season_id:
+                raise Conflict("episode budget belongs to a different season")
+        ledgers = {
+            account_id: self._ledger(tx, acct, cats) for account_id, (acct, cats) in locked.items()
+        }
+        sources = tx.fetchall(_RESEARCH_SOURCE_SQL, (research_id,))
+        residue = sum(source["amount_micro_usd"] for source in sources)
+        for source in sources:
+            shares = split_first_takes_remainder(source["amount_micro_usd"], len(episodes))
+            for episode_id, share in zip(episodes, shares, strict=True):
+                if share == 0:
+                    continue
+                target_id = target_ids[episode_id]
+                ledger = ledgers[target_id]
+                self._check_research_share(
+                    ledger, episode_id=episode_id, share=share, residue=residue
                 )
-            for episode_id in episodes:
-                target = locked[target_ids[episode_id]][0]
-                if target.season_id != season_id:
-                    raise Conflict("episode budget belongs to a different season")
-            ledgers = {
-                account_id: self._ledger(tx, acct, cats)
-                for account_id, (acct, cats) in locked.items()
-            }
-            sources = tx.fetchall(_RESEARCH_SOURCE_SQL, (research_id,))
-            residue = sum(source["amount_micro_usd"] for source in sources)
-            for source in sources:
-                shares = split_first_takes_remainder(source["amount_micro_usd"], len(episodes))
-                for episode_id, share in zip(episodes, shares, strict=True):
-                    if share == 0:
-                        continue
-                    target_id = target_ids[episode_id]
-                    ledger = ledgers[target_id]
-                    self._check_research_share(
-                        ledger, episode_id=episode_id, share=share, residue=residue
+                insert_row(
+                    tx,
+                    "cost_allocations",
+                    {
+                        "id": self._new_id(),
+                        "source_charge_id": source["id"],
+                        "source_account_id": research_id,
+                        "target_account_id": target_id,
+                        "amount_micro_usd": share,
+                        "basis": basis,
+                    },
+                )
+                ledger.move(_RESEARCH, settled=share)
+                results.append(
+                    ResearchAllocation(
+                        source_charge_id=source["id"],
+                        target_account_id=target_id,
+                        episode_id=episode_id,
+                        amount_micro_usd=share,
                     )
-                    insert_row(
-                        tx,
-                        "cost_allocations",
-                        {
-                            "id": self._new_id(),
-                            "source_charge_id": source["id"],
-                            "source_account_id": research_id,
-                            "target_account_id": target_id,
-                            "amount_micro_usd": share,
-                            "basis": basis,
-                        },
-                    )
-                    ledger.move(_RESEARCH, settled=share)
-                    results.append(
-                        ResearchAllocation(
-                            source_charge_id=source["id"],
-                            target_account_id=target_id,
-                            episode_id=episode_id,
-                            amount_micro_usd=share,
-                        )
-                    )
-            for ledger in ledgers.values():
-                ledger.flush()
+                )
+        for ledger in ledgers.values():
+            ledger.flush()
         return results
 
     @staticmethod

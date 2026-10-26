@@ -313,13 +313,46 @@ def build_handlers(world) -> dict[str, Any]:
 
     def qa_plan_repairs(ctx: JobContext) -> JobOutcome:
         payload: EpisodeStepInput = ctx.payload  # type: ignore[assignment]
-        plan = world.qa_repairs.plan_from_findings(payload.episode_id)
-        if plan.plan_id is None:
-            return Succeeded({"plan_id": None, "reason": "nothing repairable", "mock": True})
-        execution = world.qa_repairs.execute_plan(plan.plan_id)
+        from microdrama.qa.repairs import NoRepairableInput
+
+        # The trigger selects the planner: a Gate 2 REVISE job carries the human
+        # decision as its causation id (review._revise enqueues it that way), and
+        # its feedback items must reach plan_from_feedback — a findings planner
+        # would either ignore the human comment or fail for lack of machine
+        # findings. Every other trigger plans from the latest QA cycle.
+        try:
+            if payload.trigger == "human_feedback":
+                if ctx.job.causation_id is None:
+                    return Failed(
+                        "repair_missing_approval",
+                        detail="human_feedback repair needs the Gate 2 approval as causation id",
+                    )
+                outcome = world.qa_repairs.plan_from_feedback(
+                    payload.episode_id, ctx.job.causation_id
+                )
+            else:
+                outcome = world.qa_repairs.plan_from_findings(payload.episode_id)
+        except NoRepairableInput as exc:
+            # Typed no-work outcome, never an escaped exception: nothing was spent
+            # and nothing changed, so the lane keeps moving — there is no defect to
+            # repair and no revision item to execute.
+            return Succeeded(
+                {
+                    "plan_id": None,
+                    "reason": "nothing_repairable",
+                    "detail": str(exc)[:200],
+                    "mock": True,
+                }
+            )
+        # RepairPlanOutcome nests the plan (outcome.plan.plan_id); a replayed
+        # outcome re-executes nothing (execute_plan replays a COMPLETED plan's
+        # stored execution).
+        execution = world.qa_repairs.execute_plan(outcome.plan.plan_id)
         return Succeeded(
             {
-                "plan_id": str(plan.plan_id),
+                "plan_id": str(outcome.plan.plan_id),
+                "trigger": outcome.plan.trigger.value,
+                "replayed_plan": outcome.replayed,
                 "executed_steps": len(execution.steps),
                 "returns_to_gate2": execution.returns_to_gate2,
                 "mock": True,

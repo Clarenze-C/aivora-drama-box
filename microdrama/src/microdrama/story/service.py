@@ -829,6 +829,11 @@ class StoryService:
                 episode_id=episode_id,
                 policy=scope.cost_policy,
             )
+            # MD-007 / SPEC §6: allocated season research is part of the episode's
+            # directly attributable variable cost, so it is booked BEFORE the fit
+            # check and before any paid dispatch — a research share that does not
+            # fit the cap refuses the dispatch (typed, nothing spent).
+            self._attribute_research(tx, season["id"])
             account_id = episode_account_id(tx, episode_id)
             account = lock_account(tx, account_id)
             planned_worst = self._planned_worst_case(episode_id, write_attempt)
@@ -1085,6 +1090,52 @@ class StoryService:
     def _planned_worst_case(self, episode_id: UUID, write_attempt: int = 1) -> int:
         return sum(
             step.worst_case_micro_usd for step in self._plan_calls(episode_id, write_attempt)
+        )
+
+    #: The persisted allocation basis (cost_allocations.basis): what the share
+    #: means and when it was booked, so the attribution is auditable.
+    RESEARCH_ALLOCATION_BASIS = (
+        "story-claim: equal split of unallocated settled season research across the "
+        "season's open episode accounts at write-claim time"
+    )
+
+    def _attribute_research(self, tx: Tx, season_id: UUID) -> None:
+        """Book unallocated settled season research into the open episode accounts.
+
+        The durable research-attribution seam the budget service requires (its
+        docstring names this exact step): equal split across the season's
+        episodes that currently hold accounts — the first episode takes the
+        integer remainder — and already-allocated charges are skipped, so this is
+        idempotent at every claim. Research settled before a later episode's
+        account exists attributes to the accounts open at that claim; rejected,
+        late-billed and never-attributable research stays on the research account
+        as project-level residue (analytics reports it separately, never inside
+        an episode's variable cost). A season without a research envelope has
+        nothing to attribute.
+        """
+        has_envelope = tx.fetchone(
+            "SELECT id FROM budget_accounts WHERE scope_kind = 'SEASON_RESEARCH' "
+            "AND season_id = %s",
+            (season_id,),
+        )
+        if has_envelope is None:
+            return
+        episodes = [
+            row["id"]
+            for row in tx.fetchall(
+                "SELECT e.id FROM episodes e JOIN budget_accounts a ON a.episode_id = e.id "
+                "WHERE e.season_id = %s AND a.scope_kind = 'EPISODE' "
+                "ORDER BY e.episode_number, e.id",
+                (season_id,),
+            )
+        ]
+        if not episodes:
+            return
+        self._budget.allocate_research_cost(
+            tx=tx,
+            season_id=season_id,
+            episode_ids=episodes,
+            basis=self.RESEARCH_ALLOCATION_BASIS,
         )
 
     def _reserve(self, state: _WriteState, step: _CallPlan):
