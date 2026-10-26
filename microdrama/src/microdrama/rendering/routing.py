@@ -23,6 +23,7 @@ request, and submits through the ordinary adapter path.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -38,7 +39,7 @@ from microdrama.contracts.errors import (
 )
 from microdrama.contracts.infra import Clock
 from microdrama.contracts.primitives import DEFAULT_LIMITS, ProductionLimits
-from microdrama.contracts.season import Shot
+from microdrama.contracts.season import Shot, ShotManifest
 from microdrama.core.events import append_event
 from microdrama.core.jobs import JobService
 from microdrama.persistence.db import Database
@@ -637,6 +638,7 @@ __all__ = [
     "allowed_tier_classes",
     "attempt_seed",
     "attempt_semantic_key",
+    "RouterShotDispatch",
     "build_render_request",
     "dispatch_routed_attempt",
     "is_critical_shot",
@@ -644,3 +646,86 @@ __all__ = [
     "route_id_for",
     "shot_class_key",
 ]
+
+
+class RouterShotDispatch:
+    """The ShotDispatchPort over the ordinary router (build-review F03).
+
+    A SHOT repair re-renders as an ORDINARY routed attempt: route through
+    ``ShotRouter`` (the repair gets no preset shortcut), reserve through
+    ``ComfyRenderService.reserve_attempt`` (a real budget hold), enqueue the
+    durable ``render.shot`` job and submit — exactly ``dispatch_routed_attempt``.
+    The integrator wires the manifest lookup and the episode's reference
+    bindings; attempts are counted from the same durable job ledger the router
+    writes, so the cap the planner checks and the cap this port enforces are one
+    number.
+    """
+
+    def __init__(
+        self,
+        db: Database,
+        comfy: ComfyRenderService,
+        jobs: JobService,
+        router: ShotRouter,
+        catalog: PresetCatalog,
+        *,
+        manifest_for: Callable[[UUID], ShotManifest],
+        bindings_for: Callable[[UUID], Any],
+    ) -> None:
+        self._db = db
+        self._comfy = comfy
+        self._jobs = jobs
+        self._router = router
+        self._catalog = catalog
+        self._manifest_for = manifest_for
+        self._bindings_for = bindings_for
+
+    def _shot(self, episode_id: UUID, shot_id: str) -> tuple[Shot, int, int]:
+        manifest = self._manifest_for(episode_id)
+        shot = next((s for s in manifest.shots if s.shot_id == shot_id), None)
+        if shot is None:
+            raise NotFound(
+                "repair dispatch names a shot the current manifest does not carry",
+                shot_id=shot_id,
+            )
+        return shot, manifest.version, int(manifest.episode_number)
+
+    def attempts_used(self, *, episode_number: int, shot_id: str) -> int:
+        prefix = attempt_semantic_key(episode_number, shot_id, 1).rsplit("attempt", 1)[0]
+        with self._db.transaction(readonly=True) as tx:
+            rows = tx.fetchall(
+                "SELECT semantic_key FROM jobs WHERE job_type = 'render.shot' "
+                "AND semantic_key LIKE %s",
+                (prefix + "attempt%",),
+            )
+        attempts: set[int] = set()
+        for row in rows:
+            suffix = str(row["semantic_key"]).rsplit("attempt", 1)[-1]
+            if suffix.isdigit():
+                attempts.add(int(suffix))
+        return len(attempts)
+
+    def dispatch_repair(
+        self, *, episode_id: UUID, episode_number: int, shot_id: str, attempt_number: int
+    ) -> UUID:
+        shot, manifest_version, _ = self._shot(episode_id, shot_id)
+        decision = self._router.route_shot(
+            shot,
+            episode_id=episode_id,
+            manifest_version=manifest_version,
+            attempt_number=attempt_number,
+        )
+        bindings = self._bindings_for(episode_id)
+        attempt = dispatch_routed_attempt(
+            self._db,
+            self._comfy,
+            self._jobs,
+            decision=decision,
+            shot=shot,
+            catalog=self._catalog,
+            episode_number=episode_number,
+            reference_asset_ids=list(bindings.reference_asset_ids),
+            identity_lock_id=bindings.lock_id,
+            prompt_text=f"repair re-render for shot {shot_id}",
+        )
+        return attempt.job_id

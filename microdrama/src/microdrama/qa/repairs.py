@@ -30,6 +30,7 @@ instead of silently bypassing the gate.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
@@ -262,6 +263,43 @@ class JobsShotDispatch:
         )
 
 
+class CaptionRebuildOutcome(ContractModel):
+    """What a caption repair's direct-output rebuild produced (build-review F03)."""
+
+    new_asset_ids: list[UUID] = Field(default_factory=list)
+    superseded_asset_ids: list[UUID] = Field(default_factory=list)
+    notes: list[ShortText] = Field(default_factory=list)
+
+
+class CaptionRebuildPort(Protocol):
+    """The editing-lane seam: regenerate a repaired caption's real outputs.
+
+    A caption repair changed the cue source; before any finding resolves or a
+    package reopens, the subtitle (SRT) artifact for each repaired track and the
+    burned derivatives built from those cues must be regenerated (stale burns
+    superseded). The composition root wires the editing/variants-backed
+    implementation; the default refuses loudly so an unwired composition can
+    never mark a repair complete with no rebuilt media.
+    """
+
+    def rebuild_caption_outputs(
+        self, episode_id: UUID, track_ids: Sequence[UUID]
+    ) -> CaptionRebuildOutcome: ...
+
+
+class RefusingCaptionRebuild:
+    """Default port: refuse — no composition claimed the rebuild seam."""
+
+    def rebuild_caption_outputs(
+        self, episode_id: UUID, track_ids: Sequence[UUID]
+    ) -> CaptionRebuildOutcome:
+        raise ServiceUnavailable(
+            "caption output rebuild is not wired in this composition; the integrator "
+            "registers the editing-backed CaptionRebuildPort",
+            episode_id=str(episode_id),
+        )
+
+
 class RepairPlanOutcome(ContractModel):
     """What one planning call returns (the plan plus its durable row state)."""
 
@@ -327,6 +365,7 @@ class RepairService:
         config: RepairsConfig | None = None,
         limits: ProductionLimits | None = None,
         shot_dispatch: ShotDispatchPort | None = None,
+        caption_rebuild: CaptionRebuildPort | None = None,
     ) -> None:
         self._db = db
         self._clock = clock
@@ -338,6 +377,7 @@ class RepairService:
         # The SAME ProductionLimits the render service anchors on (single source).
         self._limits = limits or DEFAULT_LIMITS
         self._shot_dispatch: ShotDispatchPort = shot_dispatch or JobsShotDispatch(db)
+        self._caption_rebuild: CaptionRebuildPort = caption_rebuild or RefusingCaptionRebuild()
         self._id_lock = threading.Lock()
 
     # --- plumbing --------------------------------------------------------------------
@@ -1058,11 +1098,18 @@ class RepairService:
                 # Asynchronous stages own the climb back; the open package is
                 # superseded now so no decision can bind media that is changing.
                 self._supersede_open_packages(tx, plan.episode_id)
-            if plan.finding_ids:
+            if plan.finding_ids and synchronous:
+                # Only a caption plan that passed its scoped recheck AND rebuilt
+                # its outputs resolves findings here — the fix is proven on the
+                # actual media. Asynchronous plans dispatched re-queued work;
+                # their findings stay OPEN until the fresh QA cycle proves the
+                # defect is gone (resolve_repaired_findings, called by the QA
+                # continuation) — resolving at dispatch would claim a repair
+                # that has not happened yet (F03).
                 tx.execute(
-                    "UPDATE qa_findings SET resolution = 'RESOLVED' "
-                    "WHERE id = ANY(%s) AND resolution = 'OPEN'",
-                    ([str(f) for f in plan.finding_ids],),
+                    "UPDATE qa_findings SET resolution = 'RESOLVED', "
+                    "resolved_by_plan_id = %s WHERE id = ANY(%s) AND resolution = 'OPEN'",
+                    (plan.plan_id, [str(f) for f in plan.finding_ids]),
                 )
             self._mark_completed(
                 tx,
@@ -1082,13 +1129,80 @@ class RepairService:
             invalidated_asset_ids=invalidated,
             new_caption_track_ids=new_tracks,
             requeued_job_ids=requeued,
-            findings_resolved=list(plan.finding_ids),
+            # Caption plans resolved theirs inline (recheck + rebuilt outputs);
+            # async dispatches resolve nothing — their findings stay OPEN for the
+            # QA continuation (F03: no resolution before the defect is proven gone).
+            findings_resolved=list(plan.finding_ids) if synchronous else [],
             returns_to_gate2=returns_to_gate2,
             settled_micro_usd=settled_total,
-            notes=["caption repair is cue-level; the render pipeline was never invoked"]
+            notes=[
+                "caption repair re-derived cues and rebuilt its outputs; "
+                "the render pipeline was never invoked"
+            ]
             if synchronous
-            else ["stage requeues own the return to Gate 2"],
+            else [
+                "stage requeues own the return to Gate 2; covered findings stay OPEN "
+                "until the fresh QA cycle proves the fix"
+            ],
         )
+
+    def resolve_repaired_findings(self, episode_id: UUID, *, latest_cycle: int) -> int:
+        """Resolve plan-covered findings a fresh QA cycle has proven fixed (F03).
+
+        The QA continuation calls this after recording a NEW cycle's findings for
+        an episode with dispatched (asynchronous) repair plans: a covered
+        REPAIRABLE finding from an earlier cycle whose check now PASSes in the
+        latest cycle is RESOLVED, attributed to the plan that dispatched the fix.
+        A finding whose check still does not pass stays OPEN — the defect is not
+        gone, and no amount of elapsed work rewrites that. Returns how many
+        findings resolved.
+        """
+        resolved: int = 0
+        with self._db.transaction() as tx:
+            plans = tx.fetchall(
+                "SELECT body FROM repair_plans WHERE episode_id = %s "
+                "AND trigger = 'QA_FINDING' AND status IN ('COMPLETED', 'FAILED')",
+                (episode_id,),
+            )
+            covered: dict[UUID, UUID] = {}  # finding_id -> plan_id
+            for row in plans:
+                plan = RepairPlan.model_validate(row["body"])
+                for finding_id in plan.finding_ids:
+                    covered.setdefault(finding_id, plan.plan_id)
+            if not covered:
+                return 0
+            passing = {
+                r["check_id"]
+                for r in tx.fetchall(
+                    "SELECT check_id FROM qa_findings WHERE episode_id = %s "
+                    "AND qa_cycle = %s AND outcome = 'PASS'",
+                    (episode_id, latest_cycle),
+                )
+            }
+            for row in tx.fetchall(
+                "SELECT id, check_id, resolution FROM qa_findings "
+                "WHERE id = ANY(%s) AND resolution = 'OPEN'",
+                ([str(f) for f in covered],),
+            ):
+                if row["check_id"] not in passing:
+                    continue
+                tx.execute(
+                    "UPDATE qa_findings SET resolution = 'RESOLVED', "
+                    "resolved_by_plan_id = %s WHERE id = %s AND resolution = 'OPEN'",
+                    (covered[row["id"]], row["id"]),
+                )
+                resolved += 1
+            if resolved:
+                append_event(
+                    tx,
+                    aggregate_type="episode",
+                    aggregate_id=episode_id,
+                    event_type="qa.repair.findings_resolved",
+                    payload={"resolved": resolved, "latest_cycle": latest_cycle},
+                    correlation_id=self._new_id(),
+                    occurred_at=self._now(),
+                )
+        return resolved
 
     def _execute_step(
         self,
@@ -1102,9 +1216,18 @@ class RepairService:
         if step.target is RepairTarget.CAPTION:
             with self._db.transaction() as tx:
                 new_ids = self._repair_captions(tx, plan, step, script, duration_ms)
+            # F03: the changed cue source must regenerate its real outputs before
+            # anything downstream treats the media as repaired — the subtitle
+            # artifact per repaired track and the burned derivatives built from
+            # those cues. An unwired rebuild port refuses here, so a repair can
+            # never complete with a track that has no downloadable artifact and
+            # a burn of the old cues.
+            rebuild = self._caption_rebuild.rebuild_caption_outputs(plan.episode_id, new_ids)
             return (
-                f"re-derived {len(step.target_ids)} cue(s) into new caption track versions",
-                [],
+                f"re-derived {len(step.target_ids)} cue(s) into new caption track "
+                f"versions; rebuilt {len(rebuild.new_asset_ids)} output asset(s), "
+                f"superseded {len(rebuild.superseded_asset_ids)} stale derivative(s)",
+                list(rebuild.superseded_asset_ids),
                 new_ids,
                 [],
             )
@@ -1256,6 +1379,23 @@ class RepairService:
                 "updated_at = %s WHERE id = %s AND state = 'CURRENT'",
                 (self._now(), row["id"]),
             )
+            # An identical replace-back (the repair restored exactly the
+            # assembled content) replays the content-addressed row instead of
+            # inserting a duplicate-content twin — the same one-current rule the
+            # editing lane enforces, so ids and subtitle artifacts stay
+            # content-addressed across a repair round-trip.
+            existing_row = tx.fetchone(
+                "SELECT id, state FROM caption_tracks WHERE id = %s", (track_id,)
+            )
+            if existing_row is not None:
+                if existing_row["state"] != "CURRENT":
+                    tx.execute(
+                        "UPDATE caption_tracks SET state = 'CURRENT', revision = revision + 1, "
+                        "updated_at = %s WHERE id = %s",
+                        (self._now(), track_id),
+                    )
+                new_ids.append(track_id)
+                continue
             insert_row(
                 tx,
                 "caption_tracks",
@@ -1526,11 +1666,15 @@ class RepairService:
         return RepairExecution.model_validate(row["payload"])
 
     def _media_duration_ms(self, plan: RepairPlan) -> int:
-        """Duration for cue clamping: the episode's newest video asset's measured
-        duration, else the furthest cue end (clamping never shortens the timeline)."""
+        """Duration for cue clamping: the CURRENT assembled master's measured
+        duration — captions live on the master timeline, and a later hook or
+        variant export (F01: the newest video asset is routinely a ~30 s hook)
+        is a different timeline entirely. Without an assembled master yet, the
+        furthest cue end stands (clamping never shortens the timeline)."""
         asset_row = self._row(
-            "SELECT descriptor FROM assets WHERE episode_id = %s AND asset_kind = 'VIDEO' "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT a.descriptor FROM edit_manifests m JOIN assets a ON a.id = m.output_asset_id "
+            "WHERE m.episode_id = %s AND m.variant_key = 'main' AND m.state = 'RENDERED' "
+            "AND m.output_asset_id IS NOT NULL ORDER BY m.version DESC LIMIT 1",
             (plan.episode_id,),
         )
         if asset_row is not None:
@@ -1642,6 +1786,7 @@ def build_repair_service(
     config: RepairsConfig | None = None,
     limits: ProductionLimits | None = None,
     shot_dispatch: ShotDispatchPort | None = None,
+    caption_rebuild: CaptionRebuildPort | None = None,
 ) -> RepairService:
     """Composition-time factory (the integrator registers routes/jobs, not this module)."""
     return RepairService(
@@ -1654,11 +1799,14 @@ def build_repair_service(
         config=config,
         limits=limits,
         shot_dispatch=shot_dispatch,
+        caption_rebuild=caption_rebuild,
     )
 
 
 __all__ = [
     "AttemptCapReached",
+    "CaptionRebuildOutcome",
+    "CaptionRebuildPort",
     "CATEGORY_BY_TARGET",
     "EXECUTED_EVENT",
     "NoRepairableInput",
@@ -1670,6 +1818,7 @@ __all__ = [
     "RepairCauseUnknown",
     "RepairExecution",
     "RepairPlanOutcome",
+    "RefusingCaptionRebuild",
     "RepairRoundExceeded",
     "RepairService",
     "RepairsConfig",

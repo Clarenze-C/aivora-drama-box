@@ -28,7 +28,7 @@ byte-identical exports on one FFmpeg build.
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -92,6 +92,7 @@ from microdrama.editing.fonts import resolve_caption_font
 from microdrama.editing.models import (
     AssemblyOutcome,
     AssemblyStatus,
+    DerivedOutputsRebuild,
     EditingFinding,
     TechnicalCheck,
 )
@@ -219,6 +220,305 @@ class EditingService:
         return sorted(stale)
 
     # --- source resolution --------------------------------------------------------------
+
+    # --- caption repair rebuild (build-review F03) ----------------------------------------
+
+    def rebuild_caption_outputs(
+        self, episode_id: UUID, track_ids: Sequence[UUID]
+    ) -> DerivedOutputsRebuild:
+        """Re-export a repaired caption track's direct outputs.
+
+        A caption repair changed the cue source; its outputs must follow before
+        anything downstream treats the media as repaired:
+
+        - every named CURRENT track gets its subtitle (SRT) artifact, stored and
+          registered content-addressed, linked through ``caption_tracks.asset_id``
+          (the review UI and the release package link captions through that
+          column — a track without it has no downloadable artifact);
+        - the burned master derivative is re-burned from the assembled master and
+          the repaired burn-locale track, deterministically content-addressed
+          (``burned_asset_id_for``), with the stale burned asset superseded.
+
+        Honest skips, never silent ones: no assembled master yet means the coming
+          assembly burns the new CURRENT track itself; no covering font means the
+          burn is skipped exactly as assembly would. Idempotent: replaying a
+          rebuild whose assets already exist stores nothing new.
+        """
+        from microdrama.contracts.enums import AssetState as _AS
+
+        episode_row = self._row("SELECT season_id FROM episodes WHERE id = %s", (episode_id,))
+        if episode_row is None:
+            raise NotFound("episode not found", episode_id=str(episode_id))
+        season_id = episode_row["season_id"]
+        now = self._now()
+        result = DerivedOutputsRebuild()
+        tracks: dict[UUID, CaptionTrack] = {}
+        with self._db.transaction(readonly=True) as tx:
+            for track_id in track_ids:
+                row = tx.fetchone(
+                    "SELECT body, state, asset_id FROM caption_tracks WHERE id = %s "
+                    "AND episode_id = %s",
+                    (track_id, episode_id),
+                )
+                if row is None:
+                    raise NotFound(
+                        "rebuild names a track this episode does not own", track_id=str(track_id)
+                    )
+                if row["state"] != "CURRENT":
+                    raise Conflict(
+                        "rebuild names a caption track that is no longer CURRENT",
+                        track_id=str(track_id),
+                        state=row["state"],
+                    )
+                tracks[track_id] = CaptionTrack.model_validate(row["body"])
+
+        # 1) subtitle artifacts (one per repaired track, deterministic ids)
+        with self._db.transaction() as tx:
+            for track_id, track in tracks.items():
+                asset_id = caption_asset_id_for(track.track_id)
+                body_hash = track_body_hash(track)
+                srt = srt_bytes(track)
+                stored = self._store.put_bytes(
+                    f"edits/{episode_id}/captions/{track.locale}/{body_hash[:32]}.srt",
+                    srt,
+                    media_type="application/x-subrip",
+                )
+                # Resolve by CONTENT first: the artifact's key is its body hash,
+                # so an identical replace-back must link the track to the asset
+                # that already carries exactly these bytes (promoting it back if
+                # a prior round superseded it) — never register the same bytes
+                # under a second asset row.
+                by_key = tx.fetchone(
+                    "SELECT id, sha256, state FROM assets WHERE object_key = %s",
+                    (stored.key,),
+                )
+                if by_key is not None and by_key["sha256"] == stored.sha256:
+                    if by_key["state"] == _AS.SUPERSEDED.value:
+                        update_with_revision(
+                            tx,
+                            "assets",
+                            by_key["id"],
+                            int(
+                                tx.fetchval(
+                                    "SELECT revision FROM assets WHERE id = %s", (by_key["id"],)
+                                )
+                                or 0
+                            ),
+                            {"state": _AS.ACCEPTED.value},
+                            now=now,
+                        )
+                    tx.execute(
+                        "UPDATE caption_tracks SET asset_id = %s, revision = revision + 1, "
+                        "updated_at = %s WHERE id = %s",
+                        (by_key["id"], now, track_id),
+                    )
+                    result.notes.append(
+                        f"{track.locale}: subtitle artifact already carries these exact bytes"
+                    )
+                    continue
+                existing = tx.fetchone(
+                    "SELECT sha256, state FROM assets WHERE id = %s", (asset_id,)
+                )
+                if existing is not None and existing["sha256"] == stored.sha256:
+                    if existing["state"] == _AS.SUPERSEDED.value:
+                        update_with_revision(
+                            tx,
+                            "assets",
+                            asset_id,
+                            int(
+                                tx.fetchval(
+                                    "SELECT revision FROM assets WHERE id = %s", (asset_id,)
+                                )
+                                or 0
+                            ),
+                            {"state": _AS.ACCEPTED.value},
+                            now=now,
+                        )
+                        result.new_asset_ids.append(asset_id)
+                        result.notes.append(
+                            f"{track.locale}: identical subtitle artifact re-promoted after supersede"
+                        )
+                    else:
+                        result.notes.append(f"{track.locale}: subtitle artifact already current")
+                else:
+                    if existing is not None:
+                        update_with_revision(
+                            tx,
+                            "assets",
+                            asset_id,
+                            int(
+                                tx.fetchval(
+                                    "SELECT revision FROM assets WHERE id = %s", (asset_id,)
+                                )
+                                or 0
+                            ),
+                            {"state": _AS.SUPERSEDED.value},
+                            now=now,
+                        )
+                        result.superseded_asset_ids.append(asset_id)
+                    register_asset(
+                        tx,
+                        AssetDescriptor(
+                            asset_id=asset_id,
+                            asset_kind=AssetKind.CAPTION,
+                            object_key=stored.key,
+                            sha256=stored.sha256,
+                            size_bytes=stored.size_bytes,
+                            media_type="application/x-subrip",
+                            media=None,
+                            state=_AS.ACCEPTED,
+                            provenance=Provenance.DERIVED_LOCAL,
+                            episode_id=episode_id,
+                            season_id=season_id,
+                            lineage=[],
+                            created_at=now,
+                        ),
+                    )
+                    result.new_asset_ids.append(asset_id)
+                tx.execute(
+                    "UPDATE caption_tracks SET asset_id = %s, revision = revision + 1, "
+                    "updated_at = %s WHERE id = %s",
+                    (asset_id, now, track_id),
+                )
+
+        # 2) burned master derivative (burn-locale track only)
+        burn_track = next(
+            (t for t in tracks.values() if t.locale == self._config.burn_locale), None
+        )
+        if burn_track is None:
+            result.notes.append(
+                f"no {self._config.burn_locale} track in this repair; the burn is untouched"
+            )
+            return result
+        main = self._row(
+            "SELECT edl_hash, output_asset_id FROM edit_manifests WHERE episode_id = %s "
+            "AND variant_key = 'main' AND state = 'RENDERED' AND output_asset_id IS NOT NULL "
+            "ORDER BY version DESC LIMIT 1",
+            (episode_id,),
+        )
+        if main is None:
+            result.notes.append(
+                "no assembled master yet; the coming assembly burns the repaired track"
+            )
+            return result
+        master_descriptor = self._row(
+            "SELECT descriptor FROM assets WHERE id = %s", (main["output_asset_id"],)
+        )
+        if master_descriptor is None:
+            raise NotFound(
+                "the assembled master asset is missing",
+                asset_id=str(main["output_asset_id"]),
+            )
+        master = AssetDescriptor.model_validate(master_descriptor["descriptor"])
+        burned_id = burned_asset_id_for(str(main["edl_hash"]), track_body_hash(burn_track))
+        existing_burned = self._row("SELECT id, state FROM assets WHERE id = %s", (burned_id,))
+        if existing_burned is not None and existing_burned["state"] == _AS.ACCEPTED.value:
+            result.notes.append("burned master already rebuilt for this caption body")
+            return result
+        with TemporaryDirectory(prefix="md-repair-burn-") as tmp:
+            runner = FFmpegRunner(workdir=Path(tmp), timeout_ms=self._config.ffmpeg_timeout_ms)
+            master_name = "master.mp4"
+            stage_bytes(runner, name=master_name, data=self._store.get_bytes(master.object_key))
+            srt_name = f"captions-{burn_track.locale}.srt"
+            (runner.workdir / srt_name).write_bytes(srt_bytes(burn_track))
+            font = resolve_caption_font(self._config, [cue.text for cue in burn_track.cues])
+            if font.path is None or not font.coverage_ok:
+                result.notes.append(
+                    "no installed font covers the repaired caption text; the burn is skipped"
+                )
+                return result
+            stage_file(runner, name="caption-font.otf", source=Path(font.path))
+            burned_path = run_burned_export(
+                runner,
+                master_name=master_name,
+                srt_name=srt_name,
+                font_family=font.family,
+                config=self._config,
+                output="burned.mp4",
+            )
+            burned_media = runner.probe(burned_path)
+            burned_bytes = burned_path.read_bytes()
+        with self._db.transaction() as tx:
+            # Supersede every stale burned derivative of this master (lineage is
+            # exactly [master]): no package can bind a burn of the old cues.
+            for row in tx.fetchall(
+                "SELECT id FROM assets WHERE episode_id = %s AND asset_kind = 'VIDEO' "
+                "AND provenance = 'DERIVED_LOCAL'",
+                (episode_id,),
+            ):
+                descriptor = AssetDescriptor.model_validate(
+                    tx.fetchone("SELECT descriptor FROM assets WHERE id = %s", (row["id"],))[
+                        "descriptor"
+                    ]
+                )
+                if (
+                    descriptor.lineage == [master.asset_id]
+                    and descriptor.asset_id != burned_id
+                    and descriptor.state == _AS.ACCEPTED.value
+                ):
+                    update_with_revision(
+                        tx,
+                        "assets",
+                        descriptor.asset_id,
+                        int(
+                            tx.fetchval(
+                                "SELECT revision FROM assets WHERE id = %s", (descriptor.asset_id,)
+                            )
+                            or 0
+                        ),
+                        {"state": _AS.SUPERSEDED.value},
+                        now=now,
+                    )
+                    result.superseded_asset_ids.append(descriptor.asset_id)
+            if existing_burned is not None:
+                update_with_revision(
+                    tx,
+                    "assets",
+                    burned_id,
+                    int(
+                        tx.fetchval("SELECT revision FROM assets WHERE id = %s", (burned_id,)) or 0
+                    ),
+                    {"state": _AS.ACCEPTED.value},
+                    now=now,
+                )
+            stored_burned = self._store.put_bytes(
+                f"edits/{episode_id}/burned/{str(main['edl_hash'])[:32]}-repair.mp4",
+                burned_bytes,
+                media_type="video/mp4",
+            )
+            register_asset(
+                tx,
+                AssetDescriptor(
+                    asset_id=burned_id,
+                    asset_kind=AssetKind.VIDEO,
+                    object_key=stored_burned.key,
+                    sha256=stored_burned.sha256,
+                    size_bytes=stored_burned.size_bytes,
+                    media_type="video/mp4",
+                    media=burned_media,
+                    state=_AS.ACCEPTED,
+                    provenance=Provenance.DERIVED_LOCAL,
+                    episode_id=episode_id,
+                    season_id=season_id,
+                    lineage=[master.asset_id],
+                    created_at=now,
+                ),
+            )
+            result.new_asset_ids.append(burned_id)
+            append_event(
+                tx,
+                aggregate_type="episode",
+                aggregate_id=episode_id,
+                event_type="editing.caption_outputs_rebuilt",
+                payload={
+                    "track_ids": [str(t) for t in track_ids],
+                    "new_asset_ids": [str(a) for a in result.new_asset_ids],
+                    "superseded_asset_ids": [str(a) for a in result.superseded_asset_ids],
+                },
+                correlation_id=self._new_id(),
+                occurred_at=now,
+            )
+        return result
 
     def _line_sources(self, episode_id: UUID, script: Script) -> dict[str, LineSource]:
         sources: dict[str, LineSource] = {}

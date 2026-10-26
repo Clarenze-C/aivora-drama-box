@@ -27,7 +27,7 @@ from microdrama.contracts.enums import (
     PrincipalKind,
     QueueName,
 )
-from microdrama.contracts.infra import IdGenerator, ObjectStore
+from microdrama.contracts.infra import Clock, IdGenerator, ObjectStore
 from microdrama.contracts.season import ManagementPolicy
 from microdrama.core.auth import AuthService
 from microdrama.core.idempotency import IdempotencyService
@@ -47,7 +47,11 @@ from microdrama.publishing.youtube import build_youtube_adapter
 from microdrama.qa.audio import OfflineMediaObserver, as_speech_observer
 from microdrama.qa.comparison import build_comparison_service
 from microdrama.qa.observation import build_observation_service
-from microdrama.qa.repairs import build_repair_service
+from microdrama.qa.repairs import (
+    CaptionRebuildOutcome,
+    CaptionRebuildPort,
+    build_repair_service,
+)
 from microdrama.qa.service import build_technical_qa_service
 from microdrama.references import ReferencesService, build_references_service
 from microdrama.rendering.comfy_jobs import ComfyRenderService, build_comfy_render_service
@@ -56,7 +60,7 @@ from microdrama.rendering.janitor import build_janitor as build_gpu_janitor
 from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
 from microdrama.rendering.pods import PodManager
 from microdrama.rendering.presets import PresetCatalog
-from microdrama.rendering.routing import ShotRouter
+from microdrama.rendering.routing import RouterShotDispatch, ShotRouter
 from microdrama.research import ResearchService, build_research_service
 from microdrama.review import ReviewService
 from microdrama.story import StoryService, build_story_service
@@ -70,6 +74,7 @@ from microdrama.testing.media import FixtureTruthRegistry
 from microdrama.workers import SharedRateLimiter, WorkerRuntime
 from microdrama.workers.janitor import WorkersJanitor
 from microdrama.workers.janitor import build_janitor as build_workers_janitor
+from microdrama.workers.pg_limiter import PostgresSharedRateLimiter
 from microdrama.workers.runtime import QueueSlots, WorkerDeployment
 
 from .catalog import seed_mock_catalog
@@ -129,7 +134,7 @@ class PipelineWorld:
         return self.auth.authenticate_session(tokens.session_token)
 
     def operator_token(self, principal_id: str = "svc:pipeline-scheduler") -> str:
-        """A real scheduler credential (what n8n and the demo enqueue jobs with)."""
+        """A real scheduler credential (what the timer and the demo enqueue jobs with)."""
         return self.auth.issue_service_credential(
             principal_id, PrincipalKind.SCHEDULER, scopes=("jobs",)
         )
@@ -154,7 +159,13 @@ class PipelineWorld:
         return WorkerRuntime(self.jobs, self.db, self.fakes.clock, deployment)
 
     def runtime(self, handlers, *, name: str = "pipeline-worker") -> WorkerRuntime:
-        """The composed worker runtime: one reserved slot per queue (T028 semantics)."""
+        """The composed worker runtime: one reserved slot per queue (T028 semantics).
+
+        Provider-bound job types carry shared-bucket bindings (F04): the
+        limiter is enforced, not decorative.
+        """
+        from .deployments import lane_bindings
+
         deployment = WorkerDeployment(
             name=name,
             slots=(
@@ -164,6 +175,7 @@ class PipelineWorld:
             ),
             handlers=handlers,
             limiter=self.limiter,
+            bindings=lane_bindings(self),
         )
         return WorkerRuntime(self.jobs, self.db, self.fakes.clock, deployment)
 
@@ -219,6 +231,48 @@ FIXTURE_TESTED_OPS = {
 }
 
 
+class ComposedCaptionRebuild:
+    """The editing/variants-backed CaptionRebuildPort (build-review F03).
+
+    Composition-root adapter: the repaired tracks' subtitle artifacts and the
+    burned master come from the editing service; the burned variant derivatives
+    from the variants service. Both are real local-FFmpeg exports over the
+    CURRENT media — nothing is relabelled as rebuilt.
+    """
+
+    def __init__(self, editing: EditingService, variants: VariantsService) -> None:
+        self._editing = editing
+        self._variants = variants
+
+    def rebuild_caption_outputs(self, episode_id, track_ids) -> CaptionRebuildOutcome:
+        edited = self._editing.rebuild_caption_outputs(episode_id, list(track_ids))
+        re_burned = self._variants.rebuild_burned_variants(episode_id)
+        return CaptionRebuildOutcome(
+            new_asset_ids=[*edited.new_asset_ids, *re_burned.new_asset_ids],
+            superseded_asset_ids=[
+                *edited.superseded_asset_ids,
+                *re_burned.superseded_asset_ids,
+            ],
+            notes=[*edited.notes, *re_burned.notes],
+        )
+
+
+def _manifest_for(db):
+    def load(episode_id):
+        from microdrama.contracts.season import ShotManifest
+
+        with db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT body FROM shot_manifests WHERE episode_id = %s AND status = 'CURRENT'",
+                (episode_id,),
+            )
+        if row is None:
+            raise LookupError(f"no CURRENT shot manifest for episode {episode_id}")
+        return ShotManifest.model_validate(row["body"])
+
+    return load
+
+
 def _build_adapter(platform: Platform, settings: Settings, fakes: FakeProviders):
     if platform is Platform.YOUTUBE:
         return build_youtube_adapter(
@@ -240,7 +294,7 @@ def build_pipeline_world(
     settings: Settings,
     db: Database,
     *,
-    clock: FakeClock | None = None,
+    clock: Clock | None = None,
     ids: IdGenerator | None = None,
     store: ObjectStore | None = None,
     truth: FixtureTruthRegistry | None = None,
@@ -342,7 +396,25 @@ def build_pipeline_world(
         db, fake_clock, fake_ids, settings, budget=budget, store=store, observer=observer
     )
     qa_comparison = build_comparison_service(db, fake_clock, fake_ids, settings, budget=budget)
-    qa_repairs = build_repair_service(db, fake_clock, fake_ids, settings, budget=budget, jobs=jobs)
+    shot_dispatch = RouterShotDispatch(
+        db,
+        comfy,
+        jobs,
+        router,
+        catalog,
+        manifest_for=_manifest_for(db),
+        bindings_for=references.render_request_bindings,
+    )
+    qa_repairs = build_repair_service(
+        db,
+        fake_clock,
+        fake_ids,
+        settings,
+        budget=budget,
+        jobs=jobs,
+        shot_dispatch=shot_dispatch,
+        caption_rebuild=ComposedCaptionRebuild(editing, variants),
+    )
 
     adapters = {platform: _build_adapter(platform, settings, fakes) for platform in _PLATFORMS}
     publishing = PublishingService(db, fake_clock, fake_ids, adapters, store)
@@ -353,7 +425,10 @@ def build_pipeline_world(
     )
     analytics = build_analytics_service(db, fake_clock, fake_ids)
 
-    limiter = SharedRateLimiter(fake_clock)
+    # The durable limiter (F04): buckets live in PostgreSQL, so every worker
+    # process and every restart shares ONE allowance per provider account —
+    # the in-process limiter is for single-process tests only.
+    limiter = PostgresSharedRateLimiter(db, fake_clock)
     workers_janitor = build_workers_janitor(db, jobs, budget, fake_clock, fake_ids)
     gpu_janitor = build_gpu_janitor(
         db,
@@ -403,4 +478,10 @@ def build_pipeline_world(
     )
 
 
-__all__ = ["PipelineWorld", "build_pipeline_world", "T0"]
+__all__ = [
+    "CaptionRebuildPort",
+    "ComposedCaptionRebuild",
+    "PipelineWorld",
+    "build_pipeline_world",
+    "T0",
+]

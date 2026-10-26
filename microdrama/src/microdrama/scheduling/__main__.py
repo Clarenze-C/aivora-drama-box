@@ -29,10 +29,15 @@ def main(argv: list[str] | None = None) -> int:
     db = Database(dsn, min_size=1, max_size=4).open()
     try:
         migrate(dsn)
+        from microdrama.core.clock import SystemClock
         from microdrama.pipeline.world import build_pipeline_world
         from microdrama.scheduling import TriggerScheduler, default_catalog
 
-        world = build_pipeline_world(settings, db, seed_registries=False)
+        # The deployment timer runs on the wall clock: every invocation fires
+        # against real time, so repeated invocations keep advancing due work
+        # (F01 — the fixed demo T0 made every fresh process re-fire the same
+        # instant and never progress past the first firing).
+        world = build_pipeline_world(settings, db, clock=SystemClock(), seed_registries=False)
         scheduler = TriggerScheduler(world, default_catalog())
         report = scheduler.fire()
         print(json.dumps(report.as_dict(), default=str))

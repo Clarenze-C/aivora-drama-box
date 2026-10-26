@@ -456,7 +456,11 @@ class ReferencesService:
             manifest = ShotManifest.model_validate(
                 self._current_manifest_row(tx, episode_id)["body"]
             )
-            if self._filled(script, manifest):
+            if self._filled(script, manifest) and self._lines_audio_usable(tx, episode_id, script):
+                # F03: a filled script/manifest is only a replay while every
+                # line's audio is still usable — a repair may have superseded the
+                # audio a filled script still points at, and that line must be
+                # re-voiced, not skipped.
                 return None
             if episode["correlation_id"] is not None:
                 raise Conflict(
@@ -962,10 +966,19 @@ class ReferencesService:
         return A.ref_id_for("line-audio", f"{episode_id}:{line_id}:{canonical_hash(text_th)[:12]}")
 
     def _line_asset_exists(self, episode_id: UUID, line_id: str, text_th: str) -> bool:
+        """A line's audio counts as present only while it is USABLE.
+
+        Build-review F03: a repair supersedes the wrong line's audio asset; a
+        superseded (or failed) row still exists, so an existence check alone
+        would treat the invalidated audio as present and skip the re-voicing the
+        repair requeued. Only PROVISIONAL/ACCEPTED/LOCKED audio satisfies a
+        replay; SUPERSEDED/FAILED audio must be regenerated.
+        """
         with self._db.transaction(readonly=True) as tx:
             return (
                 tx.fetchone(
-                    "SELECT id FROM assets WHERE id = %s",
+                    "SELECT id FROM assets WHERE id = %s AND state IN "
+                    "('PROVISIONAL', 'ACCEPTED', 'LOCKED')",
                     (self._line_asset_id(episode_id, line_id, text_th),),
                 )
                 is not None
@@ -1271,6 +1284,24 @@ class ReferencesService:
         )
 
     # --- replay / failure -------------------------------------------------------------------
+
+    def _lines_audio_usable(self, tx: Tx, episode_id: UUID, script: Script) -> bool:
+        """Whether every script line's line-audio asset is present and usable.
+
+        A repair supersedes the audio it invalidates; SUPERSEDED or FAILED audio
+        means the filled script is stale and the affected lines must regenerate.
+        The deterministic id embeds the line text, so a script-side change to the
+        spoken text also lands here as a missing asset.
+        """
+        for scene in script.scenes:
+            for line in scene.lines:
+                row = tx.fetchone(
+                    "SELECT state FROM assets WHERE id = %s",
+                    (self._line_asset_id(episode_id, line.line_id, line.text_th),),
+                )
+                if row is None or str(row["state"]) in ("SUPERSEDED", "FAILED"):
+                    return False
+        return True
 
     @staticmethod
     def _filled(script: Script, manifest: ShotManifest) -> bool:

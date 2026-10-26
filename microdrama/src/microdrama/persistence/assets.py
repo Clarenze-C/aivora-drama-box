@@ -21,12 +21,40 @@ from microdrama.persistence.db import Tx, get_row, insert_row, jsonb, update_wit
 def register_asset(
     tx: Tx, descriptor: AssetDescriptor, *, generation_key: str | None = None
 ) -> AssetDescriptor:
-    """Insert an asset row and its lineage edges. Idempotent for an identical descriptor."""
-    existing = tx.fetchone("SELECT descriptor FROM assets WHERE id = %s", (descriptor.asset_id,))
+    """Insert an asset row and its lineage edges. Idempotent for an identical descriptor.
+
+    A re-registration whose descriptor is byte-identical to the stored row
+    PROMOTES a SUPERSEDED/FAILED asset back to the descriptor's state (build-
+    review F03): a repair invalidates the wrong line's audio, the requeue
+    re-synthesizes it, and deterministic synthesis reproduces exactly the same
+    artifact — content equality is the proof the replacement is the real one,
+    so the invalidated row becomes usable again rather than staying dead while
+    its exact content is re-registered. Different content under the same
+    content-addressed id stays a Conflict (a determinism bug, never overwritten).
+    """
+    existing = tx.fetchone(
+        "SELECT descriptor, state FROM assets WHERE id = %s", (descriptor.asset_id,)
+    )
     if existing is not None:
         stored = AssetDescriptor.model_validate(existing["descriptor"])
         if stored != descriptor:
             raise Conflict(f"asset {descriptor.asset_id} already registered with different content")
+        if str(existing["state"]) != descriptor.state.value and str(existing["state"]) in (
+            "SUPERSEDED",
+            "FAILED",
+        ):
+            update_with_revision(
+                tx,
+                "assets",
+                descriptor.asset_id,
+                int(
+                    tx.fetchval("SELECT revision FROM assets WHERE id = %s", (descriptor.asset_id,))
+                    or 0
+                ),
+                {"state": descriptor.state.value},
+                now=descriptor.created_at,
+            )
+            return descriptor
         return stored
     media = descriptor.media
     insert_row(

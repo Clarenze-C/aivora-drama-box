@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from .janitor import JanitorReport, JanitorStep, WorkersJanitor, build_janitor
 from .limiter import ProviderLimit, SharedRateLimiter, limiter_key
+from .pg_limiter import PostgresSharedRateLimiter
 from .runtime import (
     GPU_EXCLUSIVE_TYPES,
     CycleReport,
@@ -30,6 +31,7 @@ __all__ = [
     "ProviderLimit",
     "QueueSlots",
     "RunReport",
+    "PostgresSharedRateLimiter",
     "SharedRateLimiter",
     "WorkersJanitor",
     "WorkerDeployment",

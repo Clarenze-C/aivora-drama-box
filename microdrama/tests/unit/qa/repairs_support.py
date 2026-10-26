@@ -46,7 +46,13 @@ from microdrama.contracts.season import ApprovalCommand, TimecodedFeedback
 from microdrama.core.approvals import record_approval_event
 from microdrama.persistence import insert_row, jsonb, register_asset
 from microdrama.qa.models import build_finding
-from microdrama.qa.repairs import RepairsConfig, RepairService, ShotDispatchPort
+from microdrama.qa.repairs import (
+    CaptionRebuildOutcome,
+    CaptionRebuildPort,
+    RepairsConfig,
+    RepairService,
+    ShotDispatchPort,
+)
 from microdrama.references.anchors import ref_id_for
 from microdrama.review.packages import store_release_package
 from microdrama.testing.seed import seed_episode, seed_human_session, seed_owner
@@ -91,6 +97,30 @@ class RecordingShotDispatch:
         return uuid.uuid4()
 
 
+class RecordingCaptionRebuild:
+    """CaptionRebuildPort stand-in: records rebuild calls, fabricates no media.
+
+    Unit-lane tests assert the repair's contract with the port (called once per
+    caption step, with exactly the new track ids); the real local-FFmpeg rebuild
+    is exercised by the composed pipeline tests.
+    """
+
+    def __init__(self, *, fail: Exception | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._fail = fail
+
+    def rebuild_caption_outputs(self, episode_id: UUID, track_ids) -> CaptionRebuildOutcome:
+        self.calls.append(
+            {"episode_id": episode_id, "track_ids": [UUID(str(t)) for t in track_ids]}
+        )
+        if self._fail is not None:
+            raise self._fail
+        return CaptionRebuildOutcome(
+            new_asset_ids=[uuid.uuid4() for _ in track_ids],
+            notes=["recording rebuild: no media fabricated"],
+        )
+
+
 class RepairsWorld(QAWorld):
     """QAWorld plus the T019 seeds and service builders."""
 
@@ -100,7 +130,11 @@ class RepairsWorld(QAWorld):
         config: RepairsConfig | None = None,
         limits: ProductionLimits | None = None,
         shot_dispatch: ShotDispatchPort | None = None,
+        caption_rebuild: CaptionRebuildPort | None = None,
     ) -> RepairService:
+        # Default to the recording rebuild: unit tests exercise the port
+        # contract, not FFmpeg; individual tests override with None to pin the
+        # unwired-composition refusal.
         return RepairService(
             self.db,
             self.clock,
@@ -110,6 +144,7 @@ class RepairsWorld(QAWorld):
             config=config,
             limits=limits,
             shot_dispatch=shot_dispatch,
+            caption_rebuild=caption_rebuild or RecordingCaptionRebuild(),
         )
 
     # --- seeds -------------------------------------------------------------------------
@@ -178,10 +213,11 @@ class RepairsWorld(QAWorld):
         severity: str = "CRITICAL",
         observed: str = "5,000 baht",
         expected: str = "50,000 baht",
+        run_key: str = "repairs-test-run",
     ) -> UUID:
         asset_id = uuid.uuid4()
         body = build_finding(
-            run_key="repairs-test-run",
+            run_key=run_key,
             episode_id=episode_id,
             asset_id=asset_id,
             start_ms=start_ms,

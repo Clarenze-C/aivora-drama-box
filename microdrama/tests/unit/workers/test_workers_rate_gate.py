@@ -79,9 +79,8 @@ class TestDeferral:
 
 class TestNoBypassOnRetry:
     def test_a_retry_reacquires_and_can_defer_again(self, world):
-        """The deferred job re-acquires on every attempt; an empty bucket keeps
-        deferring it. Rate-limit deferrals consume attempts by frozen job
-        semantics — pinned here so the truth is visible, not hidden."""
+        """The deferred job re-acquires on every claim; an empty bucket keeps
+        deferring it without consuming the transport-attempt allowance."""
         key = world.ids.new_id()
         world.limiter.set_limit(str(key), capacity=1, refill_per_second=1)
         world.limiter.try_acquire(str(key))
@@ -112,7 +111,10 @@ class TestNoBypassOnRetry:
         assert counter["poll"] == 1
         assert world.job_row(job)["status"] == "SUCCEEDED"
 
-    def test_rate_deferrals_consume_attempts_by_frozen_semantics(self, world):
+    def test_rate_deferrals_do_not_exhaust_the_attempt_allowance(self, world):
+        """F04: a rate wait is not a transport failure — the claim's attempt is
+        restored on deferral, so healthy work waits on quota forever (visibly,
+        in RETRY_WAIT) instead of silently burning out after max_attempts."""
         key = world.ids.new_id()
         world.limiter.set_limit(str(key), capacity=1, refill_per_second=1)
         world.limiter.try_acquire(str(key))
@@ -124,15 +126,26 @@ class TestNoBypassOnRetry:
         )
         row = world.job_row(job)
         assert row["max_attempts"] == 3  # the frozen default
-        # three deferral cycles with the bucket drained every time
-        for _ in range(3):
+        # five deferral cycles with the bucket drained every time — past the
+        # attempt cap: the job must still be waiting, never FAILED
+        for _ in range(5):
             runtime.run_cycle()
             row = world.job_row(job)
-            if row["status"] == "RETRY_WAIT":
-                world.clock.set(row["run_after"] + timedelta(milliseconds=1))
-                world.limiter.try_acquire(str(key))  # spend the refilled token
-        assert row["status"] == "FAILED"  # visible, never silently dropped
-        assert row["error_code"].endswith("RATE_LIMITED")
+            assert row["status"] == "RETRY_WAIT"
+            assert row["attempt"] == 0  # restored every time
+            world.clock.set(row["run_after"] + timedelta(milliseconds=1))
+            world.limiter.try_acquire(str(key))  # spend the refilled token
+        # the moment quota frees, the same job runs and succeeds
+        world.clock.set(row["run_after"] + timedelta(seconds=2))
+        counter: dict[str, int] = {}
+        runtime2 = world.runtime(
+            {"publish.poll_status": counting_handler(counter, "poll")},
+            limiter=world.limiter,
+            bindings={"publish.poll_status": "platform_post_id"},
+        )
+        runtime2.run_cycle()
+        assert counter["poll"] == 1
+        assert world.job_row(job)["status"] == "SUCCEEDED"
 
     def test_shared_key_serializes_across_queues(self, world):
         """A publication job and a community job on one provider account take

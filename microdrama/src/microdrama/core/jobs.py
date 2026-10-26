@@ -549,6 +549,45 @@ class JobService:
             )
             return _job(updated)
 
+    def defer(
+        self,
+        job_id: UUID,
+        *,
+        worker_id: str,
+        retry_after_ms: int,
+        now: datetime | None = None,
+    ) -> Job:
+        """Return a RUNNING job to RETRY_WAIT WITHOUT consuming a transport attempt.
+
+        The admission path for shared-quota waits (build-review F04): claiming
+        had already incremented ``attempt``; a rate wait is not a transport
+        failure, so the increment is restored — healthy work can never silently
+        exhaust its attempt allowance on quota waits. Only the lease holder may
+        defer, and only a RUNNING job; the durable event records the deferral.
+        """
+        worker = _worker(worker_id)
+        delay = _whole(retry_after_ms, "retry_after_ms")
+        instant = self._now(now)
+        with self._db.transaction() as tx:
+            row = self._lock(tx, job_id)
+            if not self._holds_lease(row, worker, instant):
+                raise Conflict("lease lost", job_id=str(job_id), status=row["status"])
+            changes = {
+                "error_code": "RATE_LIMITED",
+                "run_after": instant + timedelta(milliseconds=delay),
+                "attempt": max(0, int(row["attempt"]) - 1),
+                "outcome": {"kind": "RATE_DEFERRED", "retry_after_ms": delay},
+            }
+            updated = self._move(
+                tx,
+                row,
+                JobStatus.RETRY_WAIT,
+                now=instant,
+                changes=changes,
+                event={"rate_deferred": True, "attempt_restored": True},
+            )
+        return _job(updated)
+
     def heartbeat(
         self,
         job_id: UUID,

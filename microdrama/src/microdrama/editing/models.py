@@ -88,6 +88,21 @@ class ObservedSpeech(ContractModel):
     speaker_id: str | None = None
 
 
+class DerivedOutputsRebuild(ContractModel):
+    """What one repair's direct-output rebuild produced (build-review F03).
+
+    A changed caption source must regenerate its real outputs — the subtitle
+    artifact and every burned derivative built from that caption track — before
+    any finding is resolved or a new package is sealed. This records exactly
+    which assets were (re)created and which stale derivatives were superseded;
+    notes carry the honest skips (no master yet, no covering font).
+    """
+
+    new_asset_ids: list[UUID] = Field(default_factory=list)
+    superseded_asset_ids: list[UUID] = Field(default_factory=list)
+    notes: list[ShortText] = Field(default_factory=list)
+
+
 class AssemblyOutcome(ContractModel):
     """What ``assemble_episode`` returns. Failed attempts keep their spend."""
 
@@ -112,6 +127,7 @@ class AssemblyOutcome(ContractModel):
 
 __all__ = [
     "AssemblyOutcome",
+    "DerivedOutputsRebuild",
     "AssemblyStatus",
     "EditingFinding",
     "FontResolution",

@@ -28,17 +28,10 @@ from uuid import UUID, uuid4
 
 from microdrama.contracts.enums import ApprovalAction, GateType
 from microdrama.contracts.jobs import EpisodeStepInput, PlatformPostRef, SeasonStepInput
-from microdrama.contracts.release import (
-    PostMetadata,
-    PublicationCommand,
-    ReleaseSlotPlan,
-)
 from microdrama.contracts.season import ApprovalCommand
 from microdrama.persistence.db import insert_row
-from microdrama.publishing import metadata as meta
-from microdrama.publishing.service import command_id_for
-from microdrama.publishing.slots import publish_client_token
 
+from .deployments import lane_bindings
 from .handlers import build_handlers
 
 #: Fake wall-clock step between worker cycles: lets fake renders/publishes finish.
@@ -125,6 +118,7 @@ class MockPipelineRunner:
             ),
             handlers=self.handlers,
             limiter=world.limiter,
+            bindings=lane_bindings(world),
         )
         self.runtime = world.runtime_for(self.deployment)
         self.report = PipelineRunReport()
@@ -723,43 +717,13 @@ class MockPipelineRunner:
             )
 
     def _command_for_post(self, post: dict, package_row: dict, approval_id: UUID):
-        from microdrama.contracts.enums import DisclosureKind
+        from microdrama.publishing.commands import publication_command_for_post
 
-        pkg = package_row["body"]
-        plan = next(
-            (
-                ReleaseSlotPlan.model_validate(p)
-                for p in pkg["release_scope"]
-                if p["slot"]["release_slot"] == post["release_slot"]
-            ),
+        return publication_command_for_post(
             None,
-        )
-        if plan is None:
-            raise RuntimeError(f"no slot plan for release_slot {post['release_slot']}")
-        metadata = PostMetadata(
-            locale="th-TH",
-            title="ตอนที่ ๑ – หนี้เล็กๆ ของแม่ (จำลอง)",
-            caption="ฤดูกาลนำร่อง ตอนที่ 1 (mock)",
-            description="Pilot mock episode.",
-            hashtags=["#thaidrama", "#shortseries"],
-            disclosures=[DisclosureKind.AI_GENERATED_CONTENT],
-            catalog_version=1,
-        )
-        return PublicationCommand(
-            command_id=command_id_for(plan.slot.dedupe_key),
-            release_package_id=package_row["id"],
-            release_package_hash=pkg["package_hash"],
+            post=dict(post),
+            package_body=package_row["body"],
             approval_event_id=approval_id,
-            slot=plan.slot,
-            slot_kind=plan.slot_kind,
-            asset_id=plan.asset_id,
-            asset_sha256=plan.asset_sha256,
-            metadata=metadata,
-            metadata_version_id=meta.initial_metadata_version_id(plan.slot.dedupe_key),
-            schedule=plan.schedule,
-            capability_id=plan.capability_id,
-            capability_version=plan.capability_version,
-            client_token=publish_client_token(plan.slot.dedupe_key, pkg["package_hash"]),
         )
 
     # --- W10 community/membership ------------------------------------------------------------

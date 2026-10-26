@@ -78,6 +78,13 @@ def default_catalog() -> ScheduleCatalog:
                 "not enqueue it (the approval itself is the primary trigger).",
             ),
             Schedule(
+                "w03-episode-cadence",
+                "W03",
+                timedelta(days=1),
+                "Create the next PLANNED episode inside the approved scope's count "
+                "(action — episode creation is cadence configuration).",
+            ),
+            Schedule(
                 "w03-write",
                 "W03",
                 timedelta(days=1),
@@ -90,6 +97,13 @@ def default_catalog() -> ScheduleCatalog:
                 "Daily reference/voice preparation for episodes with CURRENT scripts.",
             ),
             Schedule(
+                "w05-render-dispatch",
+                "W05",
+                timedelta(minutes=15),
+                "Claim the episode's owned pod and dispatch initial routed attempts "
+                "for un-dispatched manifest shots (action).",
+            ),
+            Schedule(
                 "w05-render-poll",
                 "W05",
                 timedelta(minutes=15),
@@ -99,13 +113,21 @@ def default_catalog() -> ScheduleCatalog:
                 "w06-edit",
                 "W06",
                 timedelta(hours=1),
-                "Assemble episodes whose accepted shot set is complete.",
+                "Assemble episodes whose accepted shot set is complete (completeness "
+                "is established against the CURRENT manifest before proposing).",
             ),
             Schedule(
                 "w07-qa",
                 "W07",
                 timedelta(hours=1),
-                "Run technical QA on assembled masters; observation/compare follow.",
+                "The QA continuation: technical on changed media, observation of the "
+                "current master, comparison, repairs, then the review package.",
+            ),
+            Schedule(
+                "w09-publish-submit",
+                "W09",
+                timedelta(minutes=5),
+                "Submit due SCHEDULED slots whose dependencies are verified.",
             ),
             Schedule(
                 "w09-publish-poll",

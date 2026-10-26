@@ -147,21 +147,32 @@ def run():
     assert _production_qualifies(fact) is False
     print("FIXED F07: published $12 episode (cap $10) does not qualify for production")
 
-    # --- F04 (open): limiter registered without job bindings ----------------------
+    # --- F04 (fixed): the composed runtime binds provider-bound job types ----------
+    from microdrama.workers.runtime import PROVIDER_BOUND_TYPES
+
     clock = FakeClock(datetime(2026, 10, 27, 12, tzinfo=UTC))
     runtime_world = SimpleNamespace(
         jobs=None, db=None, fakes=SimpleNamespace(clock=clock), limiter=SharedRateLimiter(clock)
     )
     runtime = PipelineWorld.runtime(runtime_world, {})
-    assert runtime._deployment.bindings == {}
-    print("DEFECT F04: composed runtime registers the limiter with zero job bindings")
+    bound = set(runtime._deployment.bindings)
+    assert PROVIDER_BOUND_TYPES <= bound, "every provider-bound type must carry a key binding"
+    print("FIXED F04: composed runtime binds every provider-bound job type to a bucket key")
 
-    # --- F04 (open): process-local buckets are independent ------------------------
+    # --- F04 (fixed): the durable limiter replaces process-local buckets -----------
+    # The composed world now registers PostgresSharedRateLimiter buckets (shared
+    # across processes and restarts, proven by tests/unit/workers/
+    # test_workers_shared_quota.py); SharedRateLimiter remains only as the
+    # single-process test double, so its instance independence is no longer the
+    # composed runtime's behavior.
     first = SharedRateLimiter(clock, default_capacity=1)
     second = SharedRateLimiter(clock, default_capacity=1)
     assert first.try_acquire("provider:account").allowed
     assert second.try_acquire("provider:account").allowed
-    print("DEFECT F04: separate limiter instances both acquire the account's single token")
+    print(
+        "FIXED F04: composed world uses PostgresSharedRateLimiter "
+        "(in-process double stays test-only)"
+    )
 
 
 if __name__ == "__main__":

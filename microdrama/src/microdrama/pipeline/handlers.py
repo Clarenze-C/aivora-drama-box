@@ -296,12 +296,19 @@ def build_handlers(world) -> dict[str, Any]:
         # honest QA output — the runner's W07 assertion decides on OPEN BLOCKING
         # findings from the durable table, not on all_checks_green here.
         if not run.blocking_check_ids:
+            # F03: a fresh comparison cycle is where dispatched repairs get their
+            # proof — covered findings whose check now passes resolve here; the
+            # rest stay open because the defect is still there.
+            resolved = world.qa_repairs.resolve_repaired_findings(
+                payload.episode_id, latest_cycle=run.qa_cycle
+            )
             return Succeeded(
                 {
                     "qa_cycle": run.qa_cycle,
                     "all_checks_green": run.all_checks_green,
                     "blocking_check_ids": list(run.blocking_check_ids),
                     "unknown_check_ids": list(run.unknown_check_ids),
+                    "repair_findings_resolved": resolved,
                     "mock": True,
                 }
             )

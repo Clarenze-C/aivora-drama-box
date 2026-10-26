@@ -93,7 +93,7 @@ from microdrama.editing.export import run_burned_export
 from microdrama.editing.ffmpeg import FFmpegRunner, stage_bytes, stage_file
 from microdrama.editing.fonts import resolve_caption_font
 from microdrama.editing.hooks import HookPlan, plan_hook_candidates
-from microdrama.editing.models import AssemblyStatus
+from microdrama.editing.models import AssemblyStatus, DerivedOutputsRebuild
 from microdrama.editing.variants import (
     FramingChange,
     VariantBlocker,
@@ -108,7 +108,7 @@ from microdrama.editing.variants import (
     variant_semantic_hash,
 )
 from microdrama.persistence.assets import register_asset
-from microdrama.persistence.db import Database, Tx, insert_row, jsonb
+from microdrama.persistence.db import Database, Tx, insert_row, jsonb, update_with_revision
 
 VARIANTS_OPERATION = "editing.variants_export"
 COVERS_OPERATION = "editing.covers_export"
@@ -795,6 +795,143 @@ class VariantsService:
         return None
 
     # --- covers --------------------------------------------------------------------------
+
+    # --- burned-derivative rebuild (build-review F03) --------------------------------------
+
+    def rebuild_burned_variants(self, episode_id: UUID) -> DerivedOutputsRebuild:
+        """Re-burn every variant's burned derivative from the CURRENT caption track.
+
+        A caption repair changed the burn-locale cues; each variant's burned
+        export is a direct derivative of those cues (its asset id embeds the
+        caption body hash), so a stale burn must be superseded and re-burned
+        before any package binds it. Variants whose export honestly skipped the
+        burn (no covering font, no track at export time) are skipped again with
+        a note — a rebuild never invents a derivative the original export did
+        not produce. Idempotent: an already-rebuilt burn replays as a note.
+        """
+        from microdrama.contracts.enums import AssetState as _AS
+
+        episode_row = self._row("SELECT season_id FROM episodes WHERE id = %s", (episode_id,))
+        if episode_row is None:
+            raise NotFound("episode not found", episode_id=str(episode_id))
+        season_id = episode_row["season_id"]
+        track = self._caption_track(episode_id, self._config.burn_locale)
+        result = DerivedOutputsRebuild()
+        if track is None:
+            result.notes.append(
+                f"no current {self._config.burn_locale} caption track; nothing to re-burn"
+            )
+            return result
+        body_hash = track_body_hash(track)
+        rows = self._rows(
+            "SELECT id, edl_hash, variant_key, output_asset_id FROM edit_manifests "
+            "WHERE episode_id = %s AND variant_key <> 'main' AND state = 'RENDERED' "
+            "AND output_asset_id IS NOT NULL ORDER BY variant_key, version",
+            (episode_id,),
+        )
+        font = resolve_caption_font(self._config, [cue.text for cue in track.cues])
+        if font.path is None or not font.coverage_ok:
+            result.notes.append(
+                "no installed font covers the repaired caption text; burns are skipped"
+            )
+            return result
+        now = self._now()
+        with TemporaryDirectory(prefix="md-variants-rebuild-") as tmp:
+            runner = FFmpegRunner(workdir=Path(tmp), timeout_ms=self._config.ffmpeg_timeout_ms)
+            srt_name = f"captions-{self._config.burn_locale}.srt"
+            (runner.workdir / srt_name).write_bytes(srt_bytes(track))
+            stage_file(runner, name="caption-font.otf", source=Path(font.path))
+            for row in rows:
+                vhash = str(row["edl_hash"])
+                clean = self._asset(row["output_asset_id"])
+                stale = self._burned_derivative(clean.asset_id)
+                expected = variant_burned_asset_id_for(vhash, body_hash)
+                if stale is not None and stale.asset_id == expected and stale.state == _AS.ACCEPTED:
+                    result.notes.append(f"{row['variant_key']}: burned variant already rebuilt")
+                    continue
+                if stale is None:
+                    # The original export produced no burn for this variant; a
+                    # rebuild does not invent one now.
+                    continue
+                clean_name = f"variant-{row['variant_key']}.mp4"
+                stage_bytes(runner, name=clean_name, data=self._store.get_bytes(clean.object_key))
+                burned_path = run_burned_export(
+                    runner,
+                    master_name=clean_name,
+                    srt_name=srt_name,
+                    font_family=font.family,
+                    config=self._config,
+                    output=f"burned-{row['variant_key']}.mp4",
+                )
+                burned_media = runner.probe(burned_path)
+                burned_bytes = burned_path.read_bytes()
+                with self._db.transaction() as tx:
+                    revision = int(
+                        tx.fetchval("SELECT revision FROM assets WHERE id = %s", (stale.asset_id,))
+                        or 0
+                    )
+                    update_with_revision(
+                        tx,
+                        "assets",
+                        stale.asset_id,
+                        revision,
+                        {"state": _AS.SUPERSEDED.value},
+                        now=now,
+                    )
+                    result.superseded_asset_ids.append(stale.asset_id)
+                    existing_expected = tx.fetchone(
+                        "SELECT id, sha256, state FROM assets WHERE id = %s", (expected,)
+                    )
+                    stored = self._store.put_bytes(
+                        f"edits/{episode_id}/variants/{vhash[:32]}-burned-{body_hash[:8]}.mp4",
+                        burned_bytes,
+                        media_type="video/mp4",
+                    )
+                    if existing_expected is not None:
+                        update_with_revision(
+                            tx,
+                            "assets",
+                            expected,
+                            int(
+                                tx.fetchval(
+                                    "SELECT revision FROM assets WHERE id = %s", (expected,)
+                                )
+                                or 0
+                            ),
+                            {
+                                "state": _AS.ACCEPTED.value,
+                                "descriptor": jsonb(
+                                    self._video_descriptor(
+                                        expected,
+                                        stored,
+                                        burned_media,
+                                        episode_id,
+                                        season_id,
+                                        [clean.asset_id],
+                                        now,
+                                    )
+                                ),
+                            },
+                            now=now,
+                        )
+                    else:
+                        register_asset(
+                            tx,
+                            self._video_descriptor(
+                                expected,
+                                stored,
+                                burned_media,
+                                episode_id,
+                                season_id,
+                                [clean.asset_id],
+                                now,
+                            ),
+                        )
+                    result.new_asset_ids.append(expected)
+                    result.notes.append(
+                        f"{row['variant_key']}: burned variant re-burned from repaired captions"
+                    )
+        return result
 
     def derive_covers(self, episode_id: UUID, *, targets: Sequence[VariantTarget]) -> CoversOutcome:
         """Derive one static cover per tested aspect ratio from the review master."""

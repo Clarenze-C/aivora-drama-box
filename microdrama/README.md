@@ -127,7 +127,7 @@ microdrama/
     editing/ qa/ review/ publishing/ community/ memberships/ analytics/
     api/ workers/   composition roots (integrator-owned registration)
     testing/        test-only helpers: isolated servers, fakes, fixtures
-  workflows/n8n/    versioned n8n exports that call internal services
+  scheduling/      in-app schedule registry (n8n dropped 2026-10-23)
   tests/{unit,contract,integration,fixtures}/
   deployment/       local compose, configuration, runbooks
   evidence/         short redacted evidence notes per task (no secrets/media)

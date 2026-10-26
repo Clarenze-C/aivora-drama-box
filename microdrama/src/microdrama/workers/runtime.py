@@ -76,21 +76,58 @@ class QueueSlots:
             raise SchemaInvalid("a queue reservation needs at least one slot")
 
 
+#: Job types whose provider calls make them subject to shared-bucket admission
+#: in the composed runtime (build-review F04): every publication submit/poll and
+#: community action spends one shared per-account allowance. A composed
+#: deployment that serves one of these types without a binding cannot enforce
+#: the quota and refuses to build — an unbound limiter is decoration, not a limit.
+PROVIDER_BOUND_TYPES: frozenset[str] = frozenset(
+    {
+        "publish.submit_slot",
+        "publish.poll_status",
+        "publish.reconcile_slot",
+        "community.ingest_event",
+        "community.respond",
+        "community.deliver_dm",
+        "community.optimize_metadata",
+    }
+)
+
+#: How a deployment derives a job's shared-bucket key: the input field that
+#: carries it, or a callable over the claimed job (for keys composed from
+#: several fields, e.g. provider:account).
+KeyBinding = "str | Callable[[Job], str]"
+
+
 @dataclass(frozen=True)
 class WorkerDeployment:
     """Deployment definition the integrator owns: queues, slots, handlers, bindings.
 
     ``name`` identifies the worker process in leases. Handlers are frozen
     job-type callables (e.g. T027's ``analytics_handlers``); ``bindings`` maps
-    a job type to the input field that carries its shared limiter key.
+    a job type to its shared limiter key: either the input field that carries
+    the key, or a callable over the claimed job (e.g. composing
+    ``provider:account`` from a slot's platform and account). A deployment that
+    serves a PROVIDER_BOUND type must bind it — building refuses otherwise.
     """
 
     name: str
     slots: tuple[QueueSlots, ...]
     handlers: Mapping[str, Handler]
     limiter: RateLimiter | None = None
-    bindings: Mapping[str, str] = field(default_factory=dict)
+    bindings: Mapping[str, KeyBinding] = field(default_factory=dict)
     lease_ms: int = 300_000
+
+    def __post_init__(self) -> None:
+        if self.limiter is None:
+            return
+        unbound = PROVIDER_BOUND_TYPES & set(self.handlers) - set(self.bindings)
+        if unbound:
+            raise SchemaInvalid(
+                "a limiter is configured but provider-bound job types have no "
+                "shared-bucket bindings; their quota would not be enforced",
+                job_types=sorted(unbound),
+            )
 
     def slots_for(self, queue: QueueName) -> int:
         for slot in self.slots:
@@ -182,7 +219,19 @@ class WorkerRuntime:
             defer = RetryLater(error_code="GPU_EPISODE_BUSY", retry_after_ms=5_000)
         if defer is not None:
             action = "GPU_DEFERRED" if defer.error_code == "GPU_EPISODE_BUSY" else "RATE_DEFERRED"
-            self._finish(job, defer, now=now)
+            if defer.error_code == "RATE_LIMITED":
+                # A rate wait is not a transport failure: returning the job to
+                # RETRY_WAIT without restoring the attempt would let healthy
+                # work silently exhaust its attempt allowance on quota waits
+                # (build-review F04).
+                self._jobs.defer(
+                    job.id,
+                    worker_id=self._deployment.name,
+                    retry_after_ms=defer.retry_after_ms,
+                    now=now,
+                )
+            else:
+                self._finish(job, defer, now=now)
             return RunReport(job.queue, job.id, job.job_type, action, defer.error_code)
         handler = self._deployment.handlers.get(job.job_type)
         if handler is None:
@@ -211,15 +260,18 @@ class WorkerRuntime:
         """Shared-bucket admission for bound job types; None means run."""
         if self._deployment.limiter is None:
             return None
-        key_field = self._deployment.bindings.get(job.job_type)
-        if key_field is None:
+        binding = self._deployment.bindings.get(job.job_type)
+        if binding is None:
             return None
-        key = str(job.input.get(key_field, "")) if isinstance(job.input, dict) else ""
+        if callable(binding):
+            key = binding(job)
+        else:
+            key = str(job.input.get(binding, "")) if isinstance(job.input, dict) else ""
         if not key:
             raise SchemaInvalid(
-                "limiter binding field missing from job input",
+                "limiter binding produced an empty shared-bucket key",
                 job_type=job.job_type,
-                field=key_field,
+                field=binding if not callable(binding) else "<resolver>",
             )
         decision = self._deployment.limiter.try_acquire(key)
         if decision.allowed:
@@ -293,6 +345,7 @@ def effect_once_handler(
 
 __all__ = [
     "GPU_EXCLUSIVE_TYPES",
+    "PROVIDER_BOUND_TYPES",
     "CycleReport",
     "QueueSlots",
     "RunReport",
