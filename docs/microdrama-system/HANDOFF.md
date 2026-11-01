@@ -36,10 +36,10 @@ deployment receipt.
   preparation before the existing Gate 2; T047 must test the composed release
   path. T044 and T045 remain `REVIEW`/unfinished. T046, T047 and live
   T031–T035 have not started.
-- The **last full green** receipt (2026-11-01, after T047, under
-  CPUQuota45%): `make check` **all offline checks passed** — **2,595 unit,
-  462 contract and 214 integration** tests (the +6 are T047's composed
-  acceptance); Ruff clean. Earlier same-day post-T044b2 run: 208 integration. `make pilot` exit 0: W01–W12, exactly two
+- The **last full green** receipt (2026-11-01, after T046, under
+  CPUQuota45%): `make check` **all offline checks passed** — **2,599 unit,
+  462 contract and 214 integration** tests; Ruff clean; `make pilot` exit 0.
+  Same-day increments: +6 integration (T047), +4 unit (T046 entries). `make pilot` exit 0: W01–W12, exactly two
   human gates, 16 local exports, 303,000 **synthetic** micro-USD. Focused
   intake receipts re-verified independently in the same session: 19/19
   (12 unit intake UI, 7 composed script_maker integration) and 570 unit +
@@ -172,9 +172,15 @@ responses as billed cost.
 4. ~~T047~~ **DONE 2026-11-01** (see [T047 evidence](../../microdrama/evidence/T047.md)):
    production expectations reader + dispatch-boundary asset/rights gates built
    and proven composed; T037 closed on the intake-born Gate 2 release path.
-   Codex scoped review pending quota reset (11-04). Next: T046 private
-   staging/owner-scope/backup drills. DNS/TLS for `dramabox.aivora.agency` is a
-   separate deployment action.
+   Codex scoped review pending quota reset (11-04). T046 is also **DONE
+   2026-11-01** ([T046 evidence](../../microdrama/evidence/T046.md)): private
+   loopback staging stack (serve + worker entries, pinned images), 7/7 drill
+   PASS including postgres-restart session durability and backup/restore; two
+   real defects found and fixed (restart-idempotent seeding, deterministic ids
+   in durable processes). DNS/TLS for `dramabox.aivora.agency` remains
+   operator-only runbook work (`deployment/staging/DOMAIN-RUNBOOK.md`). M5V2
+   offline software is complete; remaining gates are live qualification
+   (T045 accounting, T031 canary) and the M6+/M7 live milestones.
 5. Finish T045 accounting/bootstrap and obtain explicit rights, credentials,
    current quote, time/storage/spend cap and operator authorization for T031's
    bounded real canary. T032 controlled real account tests, T033 first actual
