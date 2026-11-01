@@ -1,0 +1,84 @@
+{
+  "bindings": [
+    {
+      "asset_id": "dccdf5a3-8b92-5ce0-b646-7f19bd89b14a",
+      "asset_sha256": "262bc8e8a7b3f75fb5699ea674dbf246a859db853a391ec3d62e4c2079db3166",
+      "asset_version": 1,
+      "content_sha256": "1bd1b75480e0a834fa408bda40881f9efe57b718ac498510b14fd7e443c9515b",
+      "created_at": "2026-10-30T00:00:00Z",
+      "record_id": "9c28258b-8f4a-5b9f-8a13-d41f5656441c",
+      "rights": {
+        "commercial_use": true,
+        "evidence_sha256": [
+          "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+        ],
+        "expires_at": null,
+        "output_release_allowed": true,
+        "rights_route_id": "original-fiction",
+        "rights_version": 1,
+        "status": "ELIGIBLE",
+        "subject_kind": "MODEL_OUTPUT",
+        "subject_ref": "original-fiction-output",
+        "territories": [
+          "TH"
+        ]
+      },
+      "role": "character_identity",
+      "schema_version": "2.0",
+      "subject_id": "fon",
+      "updated_at": "2026-10-30T00:00:00Z",
+      "valid_from": "2026-10-30T00:00:00Z",
+      "valid_until": null,
+      "version": 1
+    },
+    {
+      "asset_id": "e325678a-b70f-5143-8f9b-cc1ef868ec16",
+      "asset_sha256": "45dcc52de624dcb7cd318197125adfd53a10daf30d23d1b19c9db058594812b8",
+      "asset_version": 1,
+      "content_sha256": "15844cac793f266b0b5180225fa96f1bf9ac93d07c389ef5743a0797c0d8e282",
+      "created_at": "2026-10-30T00:00:00Z",
+      "record_id": "8a588f00-7bdc-56cf-a70b-facbb38fc958",
+      "rights": {
+        "commercial_use": true,
+        "evidence_sha256": [
+          "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+        ],
+        "expires_at": null,
+        "output_release_allowed": true,
+        "rights_route_id": "original-fiction",
+        "rights_version": 1,
+        "status": "ELIGIBLE",
+        "subject_kind": "MODEL_OUTPUT",
+        "subject_ref": "original-fiction-output",
+        "territories": [
+          "TH"
+        ]
+      },
+      "role": "location",
+      "schema_version": "2.0",
+      "subject_id": "stall",
+      "updated_at": "2026-10-30T00:00:00Z",
+      "valid_from": "2026-10-30T00:00:00Z",
+      "valid_until": null,
+      "version": 1
+    }
+  ],
+  "content_sha256": "b45d818d83d3a7f824072ddf07b6df2d97df5961cc1a196fbbff1ce9d15fac13",
+  "created_at": "2026-10-30T00:00:00Z",
+  "downstream_invalidation_ids": [],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "prompt_text": "Fon reads the ledger in the morning stall.",
+  "record_id": "96a9421f-44db-5f08-8315-8a5929510f02",
+  "schema_version": "2.0",
+  "shot_duration_ms": 10000,
+  "shot_id": "shot-1",
+  "shot_sequence": 1,
+  "source_hashes": [
+    "7a36a9233db7b7df9d9fa3263de88cc46c608c2b56ca54737e71fd23d80f8d6a",
+    "4333ad0e18ef1517e8468195f974388e4604b69ea081d183dbf31640930b0732"
+  ],
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

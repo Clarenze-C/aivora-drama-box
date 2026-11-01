@@ -1,0 +1,94 @@
+{
+  "approved_scope_hash": "383045e52c0276a94440e9ebbfd95f2e40a1a014e9c92fb7cc293a99606715a2",
+  "content_sha256": "46b7decea4b62d943765b0e80103acb79d9e547e36bf81b247935de31d3bbe84",
+  "created_at": "2026-10-30T00:00:00Z",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "pack_hash": "3508e0431fc3a591abd081e92004e06a135b34acec0c7df0f35143422630775e",
+  "pack_id": "07f7147f-88c2-5a39-b071-992e40d31eb6",
+  "pack_version": 1,
+  "record_id": "cd5111e7-dcdf-5f92-8319-44baf58f4a65",
+  "schema_version": "2.0",
+  "sections": [
+    {
+      "duration_ms": 15000,
+      "section_id": "section-example-1",
+      "sequence": 1,
+      "shot_ids": [
+        "shot-example-1"
+      ]
+    }
+  ],
+  "shots": [
+    {
+      "action_handoff": "Fon opens the ledger and holds on the debt entry.",
+      "beat_id": "beat-1",
+      "duration_ms": 15000,
+      "edit_intent": "Cut to a close insert on the ledger entry.",
+      "events": [
+        {
+          "after": "open",
+          "before": "closed",
+          "content_sha256": "5863c999f62f34e762d33da82d9b129d7f34ebff02c23536911d24e12ea308b9",
+          "created_at": "2026-10-30T00:00:00Z",
+          "effective_from_ms": 0,
+          "effective_until_ms": 4000,
+          "entity_id": "ledger",
+          "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+          "evidence_sha256": "1507b2855c5b973e7a83270cca0ca09ac98edb5844d76096b90f1368352d048b",
+          "field": "open",
+          "record_id": "9e35c022-fe9c-5775-9928-05f5f5642e7c",
+          "scene_id": "scene-1",
+          "schema_version": "2.0",
+          "sequence": 1,
+          "updated_at": "2026-10-30T00:00:00Z",
+          "valid_from": "2026-10-30T00:00:00Z",
+          "valid_until": null,
+          "version": 1
+        }
+      ],
+      "eyeline": "Fon looks down at the debt ledger.",
+      "framing": "medium_close_up",
+      "scene_id": "scene-1",
+      "screen_axis": "stall-counter-axis",
+      "screen_direction": "STATIC",
+      "section_id": "section-example-1",
+      "sequence": 1,
+      "shot_id": "shot-example-1",
+      "sound_intent": "Quiet stall ambience under the paper movement.",
+      "source_dependency_ids": [
+        "07f7147f88c25a39b071992e40d31eb6",
+        "scene-1",
+        "beat-1"
+      ],
+      "source_hashes": [
+        "4d0e5e3b19918385ccd322b7cde805af9a6adaa3634026d6702e3e9c806d9190",
+        "5863c999f62f34e762d33da82d9b129d7f34ebff02c23536911d24e12ea308b9",
+        "857e10cbcbdd7194ceb5e36624fc32368d57084e53c2b7e454a7089acef726bd"
+      ],
+      "state_in": [
+        {
+          "entity_id": "ledger",
+          "field": "open",
+          "value": "closed"
+        }
+      ],
+      "state_out": [
+        {
+          "entity_id": "ledger",
+          "field": "open",
+          "value": "open"
+        }
+      ]
+    }
+  ],
+  "source_hashes": [
+    "3508e0431fc3a591abd081e92004e06a135b34acec0c7df0f35143422630775e",
+    "4d0e5e3b19918385ccd322b7cde805af9a6adaa3634026d6702e3e9c806d9190",
+    "5863c999f62f34e762d33da82d9b129d7f34ebff02c23536911d24e12ea308b9",
+    "857e10cbcbdd7194ceb5e36624fc32368d57084e53c2b7e454a7089acef726bd"
+  ],
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "BillingAllocationBasis": {
+      "enum": [
+        "MEASURED_OVERLAP",
+        "STORAGE_OWNER",
+        "UNCOVERED"
+      ],
+      "title": "BillingAllocationBasis",
+      "type": "string"
+    },
+    "BillingComponent": {
+      "enum": [
+        "GPU",
+        "CPU",
+        "DISK"
+      ],
+      "title": "BillingComponent",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.15.0:RunpodBillingAllocation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allocated_at": {
+      "format": "date-time",
+      "title": "Allocated At",
+      "type": "string"
+    },
+    "allocation_basis": {
+      "$ref": "#/$defs/BillingAllocationBasis"
+    },
+    "allocation_id": {
+      "format": "uuid",
+      "title": "Allocation Id",
+      "type": "string"
+    },
+    "bucket_identity_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bucket Identity Sha256",
+      "type": "string"
+    },
+    "bucket_observation_id": {
+      "format": "uuid",
+      "title": "Bucket Observation Id",
+      "type": "string"
+    },
+    "bucket_revision": {
+      "minimum": 1,
+      "title": "Bucket Revision",
+      "type": "integer"
+    },
+    "component": {
+      "$ref": "#/$defs/BillingComponent"
+    },
+    "delta_micro_usd": {
+      "description": "Signed integer micro-USD",
+      "title": "Delta Micro Usd",
+      "type": "integer"
+    },
+    "owner_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "const": "recovery_pool",
+          "type": "string"
+        }
+      ],
+      "title": "Owner Id"
+    },
+    "owner_kind": {
+      "enum": [
+        "EPISODE",
+        "RECOVERY"
+      ],
+      "title": "Owner Kind",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "allocation_id",
+    "bucket_identity_sha256",
+    "bucket_observation_id",
+    "bucket_revision",
+    "component",
+    "owner_kind",
+    "owner_id",
+    "allocation_basis",
+    "delta_micro_usd",
+    "allocated_at"
+  ],
+  "title": "RunpodBillingAllocation",
+  "type": "object"
+}

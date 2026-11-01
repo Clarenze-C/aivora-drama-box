@@ -1,0 +1,20 @@
+{
+  "after": "closed",
+  "before": "closed",
+  "content_sha256": "5863c999f62f34e762d33da82d9b129d7f34ebff02c23536911d24e12ea308b9",
+  "created_at": "2026-10-30T00:00:00Z",
+  "effective_from_ms": 0,
+  "effective_until_ms": 4000,
+  "entity_id": "ledger",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "evidence_sha256": "1507b2855c5b973e7a83270cca0ca09ac98edb5844d76096b90f1368352d048b",
+  "field": "open",
+  "record_id": "9e35c022-fe9c-5775-9928-05f5f5642e7c",
+  "scene_id": "scene-1",
+  "schema_version": "2.0",
+  "sequence": 1,
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

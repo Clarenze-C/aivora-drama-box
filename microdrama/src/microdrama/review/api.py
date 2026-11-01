@@ -5,7 +5,10 @@ JSON (SPEC §4.3): ``GET /seasons/proposals``, ``GET /seasons/{id}``, ``POST /se
 
 Pages: ``/ui`` (proposals, season decision, episode review with the owner-only media stream
 ``/ui/media/{asset_id}``) and ``/auth`` (login and logout, which set and clear the ``md_session``
-cookie). Every human-only route refuses a request that presents a bearer credential: the bearer
+cookie). With an ``IntakeService`` wired (T044b2) the pages also cover the three-step Script
+Maker wizard (``/ui/intake``), its status/candidate-selection page (``/ui/intake/{season_id}``)
+and the season workbench (``/ui/seasons/{season_id}/workbench``). Every human-only route refuses
+a request that presents a bearer credential: the bearer
 is authenticated as that service principal and refused with 403 before the request body is even
 read (a route-level guard; see ``_refuse_non_human_route``), so workers, models and schedulers
 can never read review data or decide, and their malformed bodies are 403, not 422. Unsafe
@@ -32,7 +35,12 @@ from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
 from microdrama.contracts.enums import FeedbackCategory, SeasonState
-from microdrama.contracts.errors import MicrodramaError, Unauthenticated, Unauthorized
+from microdrama.contracts.errors import (
+    MicrodramaError,
+    SchemaInvalid,
+    Unauthenticated,
+    Unauthorized,
+)
 from microdrama.contracts.principals import Principal
 from microdrama.contracts.routes import EpisodeReviewView, SeasonProposalSummary, SeasonView
 from microdrama.contracts.season import ApprovalCommand
@@ -41,10 +49,21 @@ from microdrama.core.http import SESSION_COOKIE, Dependency, service_dependency
 from microdrama.core.idempotency import CommandResult
 from microdrama.review.forms import (
     FEEDBACK_ROWS,
+    POLICY_MUTABLE_FIELDS,
+    Gate2MetadataForm,
     command_from_form,
     new_idempotency_key,
     validation_message,
 )
+from microdrama.review.intake import (
+    IntakeService,
+    answers_from_form,
+    check_form_fields,
+    step_answers,
+    wizard_key,
+    wizard_step,
+)
+from microdrama.review.progress import EpisodeProgressView, SeasonProgressView
 from microdrama.review.render import render
 from microdrama.review.service import EpisodePage, QaFindingRow, ReviewService
 from microdrama.review.signin import SIGNIN_TOKEN_TTL_SECONDS
@@ -217,8 +236,13 @@ def build_router(
     auth: AuthService,
     csrf_token_for: CsrfTokenFor | None = None,
     cookie_secure: bool = True,
+    intake: IntakeService | None = None,
 ) -> APIRouter:
-    """Review routes. ``human_session`` is core's cookie dependency (CSRF checked on unsafe methods)."""
+    """Review routes. ``human_session`` is core's cookie dependency (CSRF checked on unsafe methods).
+
+    ``intake`` (T044b2) adds the three-step Script Maker wizard, its status page
+    and the season workbench; without it those routes do not exist.
+    """
     csrf_for: CsrfTokenFor = csrf_token_for or csrf_cookie_token
     router = APIRouter(route_class=_refuse_non_human_route(auth), tags=["review"])
     review_principal = _review_principal(human_session, auth)
@@ -231,7 +255,7 @@ def build_router(
         principal: Annotated[Principal, Depends(review_principal)],
     ) -> list[SeasonProposalSummary]:
         require_human_owner(principal)
-        return service.season_proposals()
+        return service.season_proposals(principal)
 
     @router.get("/seasons/{season_id}", response_model=SeasonView)
     def season_view(
@@ -239,7 +263,7 @@ def build_router(
         principal: Annotated[Principal, Depends(review_principal)],
     ) -> SeasonView:
         require_human_owner(principal)
-        return service.season_view(season_id)
+        return service.season_view(principal, season_id)
 
     @router.post("/seasons/{season_id}/approval", response_model=None)
     def season_approval(
@@ -256,7 +280,205 @@ def build_router(
         principal: Annotated[Principal, Depends(review_principal)],
     ) -> EpisodeReviewView:
         require_human_owner(principal)
-        return service.episode_review(episode_id)
+        return service.episode_review(principal, episode_id)
+
+    # --- owner progress (read-only, owner-scoped; T044a) --------------------------------
+    #
+    # The projections are module-local response models (review.progress), not
+    # contract payloads, so the reads live under the module's /ui prefix rather
+    # than the contract route table until a contracts guardian freezes a public
+    # package (docs/microdrama-system/T044a-contract-proposal.md). They keep the
+    # JSON principal chain (bearer-first refusal), unlike the HTML pages.
+
+    @router.get("/ui/seasons/{season_id}/progress.json", response_model=SeasonProgressView)
+    def season_progress(
+        season_id: UUID,
+        principal: Annotated[Principal, Depends(review_principal)],
+    ) -> SeasonProgressView:
+        """Durable progress for the owner's season, projected from current rows."""
+        require_human_owner(principal)
+        return service.season_progress(principal, season_id)
+
+    @router.get("/ui/episodes/{episode_id}/progress.json", response_model=EpisodeProgressView)
+    def episode_progress(
+        episode_id: UUID,
+        principal: Annotated[Principal, Depends(review_principal)],
+    ) -> EpisodeProgressView:
+        """Durable progress for one of the owner's episodes, from current rows."""
+        require_human_owner(principal)
+        return service.episode_progress(principal, episode_id)
+
+    # --- three-step Script Maker intake (T044b2) -----------------------------------------
+    #
+    # The wizard asks exactly the three owner answers; every advanced value is
+    # server-side configuration. All intake routes are human-owner routes under
+    # the same bearer-first refusal and CSRF rules as the rest of /ui.
+
+    if intake is not None:
+
+        @router.get("/ui/intake", response_class=HTMLResponse)
+        def intake_wizard_page(
+            request: Request, principal: Annotated[Principal, Depends(page_principal)]
+        ) -> HTMLResponse:
+            require_human_owner(principal)
+            context = _page_context(
+                request,
+                csrf_for,
+                principal,
+                title="Script Maker",
+                heading="New season — Script Maker",
+                step=1,
+                wizard_key=new_idempotency_key(),
+                story_idea="",
+                genre_tags="",
+                tone="",
+                defaults=intake.defaults_brief(),
+                error=None,
+            )
+            return _html(render("intake_wizard.html", **context))
+
+        @router.post("/ui/intake", response_model=None)
+        async def intake_wizard_submit(
+            request: Request, principal: Annotated[Principal, Depends(page_principal)]
+        ) -> Response:
+            require_human_owner(principal)
+            form = await request.form()
+            try:
+                check_form_fields(form)
+                step = wizard_step(form)
+                key = wizard_key(form)
+                if step == 0:
+                    answers = answers_from_form(form)
+                    result = await run_in_threadpool(
+                        intake.submit, principal, answers=answers, key=key
+                    )
+                    season_id = UUID(result.body["season_id"])
+                    return RedirectResponse(
+                        f"/ui/intake/{season_id}",
+                        status_code=303,
+                        headers=dict(_SECURITY_HEADERS),
+                    )
+                answers = step_answers(form, step)
+                context = _page_context(
+                    request,
+                    csrf_for,
+                    principal,
+                    title="Script Maker",
+                    heading="New season — Script Maker",
+                    step=step + 1,
+                    wizard_key=key,
+                    story_idea=answers.story_idea if answers else "",
+                    genre_tags=" ".join(answers.genre_tags) if answers else "",
+                    tone=answers.tone if answers else "",
+                    defaults=intake.defaults_brief(),
+                    error=None,
+                )
+                return _html(render("intake_wizard.html", **context))
+            except (MicrodramaError, ValidationError, ValueError) as exc:
+                error = _error_dict(exc)
+
+                def posted(name: str) -> str:
+                    value = form.get(name)
+                    return value if isinstance(value, str) else ""
+
+                failed_step = 1
+                raw_step = form.get("step")
+                if isinstance(raw_step, str) and raw_step in ("1", "2", "3"):
+                    failed_step = int(raw_step)
+                elif raw_step == "submit":
+                    failed_step = 3
+                context = _page_context(
+                    request,
+                    csrf_for,
+                    principal,
+                    title="Script Maker",
+                    heading="New season — Script Maker",
+                    step=failed_step,
+                    wizard_key=posted("wizard_key") or new_idempotency_key(),
+                    story_idea=posted("story_idea"),
+                    genre_tags=posted("genre_tags"),
+                    tone=posted("tone"),
+                    defaults=intake.defaults_brief(),
+                    error=error,
+                )
+                return _html(render("intake_wizard.html", **context), status=422)
+
+        @router.get("/ui/intake/{season_id}", response_class=HTMLResponse)
+        def intake_status_page(
+            season_id: UUID,
+            request: Request,
+            principal: Annotated[Principal, Depends(page_principal)],
+        ) -> HTMLResponse:
+            require_human_owner(principal)
+            view = intake.status(principal, season_id)
+            context = _page_context(
+                request,
+                csrf_for,
+                principal,
+                title="Script Maker — intake",
+                heading="Script Maker intake",
+                view=view,
+                error=None,
+            )
+            return _html(render("intake_status.html", **context))
+
+        @router.post("/ui/intake/{season_id}/selection", response_model=None)
+        async def intake_selection(
+            season_id: UUID,
+            request: Request,
+            principal: Annotated[Principal, Depends(page_principal)],
+        ) -> Response:
+            require_human_owner(principal)
+            form = await request.form()
+            try:
+                candidate_raw = form.get("candidate_id")
+                intake_hash = form.get("intake_sha256")
+                if not isinstance(candidate_raw, str) or not isinstance(intake_hash, str):
+                    raise SchemaInvalid("a candidate and the intake hash are required")
+                candidate_id = UUID(candidate_raw)
+                await run_in_threadpool(
+                    intake.select,
+                    principal,
+                    season_id,
+                    candidate_id,
+                    intake_sha256=intake_hash,
+                )
+            except (MicrodramaError, ValidationError, ValueError) as exc:
+                error = _error_dict(exc)
+                view = await run_in_threadpool(intake.status, principal, season_id)
+                context = _page_context(
+                    request,
+                    csrf_for,
+                    principal,
+                    title="Script Maker — intake",
+                    heading="Script Maker intake",
+                    view=view,
+                    error=error,
+                )
+                status = exc.http_status if isinstance(exc, MicrodramaError) else 422
+                return _html(render("intake_status.html", **context), status=status)
+            return RedirectResponse(
+                f"/ui/intake/{season_id}", status_code=303, headers=dict(_SECURITY_HEADERS)
+            )
+
+        @router.get("/ui/seasons/{season_id}/workbench", response_class=HTMLResponse)
+        def season_workbench_page(
+            season_id: UUID,
+            request: Request,
+            principal: Annotated[Principal, Depends(page_principal)],
+        ) -> HTMLResponse:
+            require_human_owner(principal)
+            bench = intake.workbench(principal, season_id)
+            context = _page_context(
+                request,
+                csrf_for,
+                principal,
+                title="Season workbench",
+                heading=f"{bench.title_th} / {bench.title_en} — workbench",
+                bench=bench,
+                error=None,
+            )
+            return _html(render("workbench.html", **context))
 
     @router.post("/episodes/{episode_id}/review", response_model=None)
     def episode_decision(
@@ -333,7 +555,7 @@ def build_router(
     @router.get("/ui/seasons", response_class=HTMLResponse)
     def proposals_page(request: Request, principal: Annotated[Principal, Depends(page_principal)]):
         require_human_owner(principal)
-        rows = service.season_proposals()
+        rows = service.season_proposals(principal)
         context = _page_context(
             request, csrf_for, principal, title="Season proposals", rows=rows, error=None
         )
@@ -344,7 +566,7 @@ def build_router(
         season_id: UUID, request: Request, principal: Annotated[Principal, Depends(page_principal)]
     ):
         require_human_owner(principal)
-        view = service.season_view(season_id)
+        view = service.season_view(principal, season_id)
         context = _page_context(
             request,
             csrf_for,
@@ -369,7 +591,7 @@ def build_router(
             await run_in_threadpool(service.decide_season, principal, sid, command)
         except (MicrodramaError, ValidationError) as exc:
             error = _error_dict(exc)
-            view = await run_in_threadpool(service.season_view, sid)
+            view = await run_in_threadpool(service.season_view, principal, sid)
             context = _page_context(
                 request,
                 csrf_for,
@@ -391,8 +613,30 @@ def build_router(
         episode_id: UUID, request: Request, principal: Annotated[Principal, Depends(page_principal)]
     ):
         require_human_owner(principal)
-        page = service.episode_page(episode_id)
-        return _html(_render_episode(request, csrf_for, principal, page, error=None))
+        page = service.episode_page(principal, episode_id)
+        meta_form = service.gate2_metadata_form(principal, episode_id)
+        return _html(
+            _render_episode(request, csrf_for, principal, page, error=None, meta_form=meta_form)
+        )
+
+    @router.get("/ui/seasons/{season_id}/progress", response_class=HTMLResponse)
+    def season_progress_page(
+        season_id: UUID, request: Request, principal: Annotated[Principal, Depends(page_principal)]
+    ):
+        """The owner's timeline page: every episode's stages, counts and waits."""
+        require_human_owner(principal)
+        progress = service.season_progress(principal, season_id)
+        view = service.season_view(principal, season_id)
+        context = _page_context(
+            request,
+            csrf_for,
+            principal,
+            title="Season progress",
+            heading=f"{view.scope.title_en} — durable progress",
+            progress=progress,
+            error=None,
+        )
+        return _html(render("progress.html", **context))
 
     @router.post("/ui/episodes/{episode_id}/review", response_model=None)
     async def episode_form(
@@ -405,9 +649,40 @@ def build_router(
             command = command_from_form(form)
             await run_in_threadpool(service.decide_episode, principal, eid, command)
         except (MicrodramaError, ValidationError) as exc:
-            page = await run_in_threadpool(service.episode_page, eid)
+            page = await run_in_threadpool(service.episode_page, principal, eid)
+            meta_form = await run_in_threadpool(service.gate2_metadata_form, principal, eid)
             status = exc.http_status if isinstance(exc, MicrodramaError) else 422
-            body = _render_episode(request, csrf_for, principal, page, error=_error_dict(exc))
+            body = _render_episode(
+                request, csrf_for, principal, page, error=_error_dict(exc), meta_form=meta_form
+            )
+            return _html(body, status)
+        return RedirectResponse(
+            f"/ui/episodes/{eid}", status_code=303, headers=dict(_SECURITY_HEADERS)
+        )
+
+    @router.post("/ui/episodes/{episode_id}/metadata", response_model=None)
+    async def episode_metadata_form(
+        episode_id: UUID, request: Request, principal: Annotated[Principal, Depends(page_principal)]
+    ) -> Response:
+        """Owner-supplied Gate 2 release metadata: seal the V2 manifest, decide nothing.
+
+        Bearer-first refusal and the session CSRF check cover this route like every
+        other owner write. The preparation itself records no ApprovalEvent and
+        leaves the Gate 2 decision open; it returns to the same page, which shows
+        the exact manifest and hash the Approve & schedule form then binds.
+        """
+        require_human_owner(principal)
+        eid = episode_id
+        form = await request.form()
+        try:
+            await run_in_threadpool(service.submit_gate2_metadata, principal, eid, form)
+        except (MicrodramaError, ValidationError) as exc:
+            page = await run_in_threadpool(service.episode_page, principal, eid)
+            meta_form = await run_in_threadpool(service.gate2_metadata_form, principal, eid)
+            status = exc.http_status if isinstance(exc, MicrodramaError) else 422
+            body = _render_episode(
+                request, csrf_for, principal, page, error=_error_dict(exc), meta_form=meta_form
+            )
             return _html(body, status)
         return RedirectResponse(
             f"/ui/episodes/{eid}", status_code=303, headers=dict(_SECURITY_HEADERS)
@@ -419,14 +694,14 @@ def build_router(
     ) -> list[QaFindingRow]:
         """Every QA finding of the episode with its QA cycle; the same rows as the review page."""
         require_human_owner(principal)
-        return service.qa_finding_rows(episode_id)
+        return service.qa_finding_rows(principal, episode_id)
 
     @router.get("/ui/media/{asset_id}", response_model=None)
     def media(
         asset_id: UUID, principal: Annotated[Principal, Depends(review_principal)]
     ) -> FileResponse:
         require_human_owner(principal)
-        file = service.media_file(asset_id)
+        file = service.media_file(principal, asset_id)
         return FileResponse(
             file.path,
             media_type=file.media_type,
@@ -443,6 +718,7 @@ def _render_episode(
     page: EpisodePage,
     *,
     error: dict[str, str] | None,
+    meta_form: Gate2MetadataForm | None = None,
 ) -> str:
     view = page.view
     context = _page_context(
@@ -461,6 +737,8 @@ def _render_episode(
             "revise": new_idempotency_key(),
             "reject": new_idempotency_key(),
         },
+        meta_form=meta_form,
+        policy_fields=POLICY_MUTABLE_FIELDS,
     )
     return render("episode.html", **context)
 

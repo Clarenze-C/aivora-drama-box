@@ -1,0 +1,203 @@
+{
+  "$defs": {
+    "BillingFinalityState": {
+      "enum": [
+        "PENDING_PROVIDER_FINALITY",
+        "ALLOCATED_PROVIDER_REPORTED",
+        "INVOICE_VERIFIED",
+        "DISPUTED"
+      ],
+      "title": "BillingFinalityState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.15.0:RunpodBillingBucketObservation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bucket_end": {
+      "format": "date-time",
+      "title": "Bucket End",
+      "type": "string"
+    },
+    "bucket_identity_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bucket Identity Sha256",
+      "type": "string"
+    },
+    "bucket_size_seconds": {
+      "minimum": 1,
+      "title": "Bucket Size Seconds",
+      "type": "integer"
+    },
+    "bucket_start": {
+      "format": "date-time",
+      "title": "Bucket Start",
+      "type": "string"
+    },
+    "cpu_amount_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Cpu Amount Micro Usd",
+      "type": "integer"
+    },
+    "currency": {
+      "pattern": "^[A-Z]{3}$",
+      "title": "Currency",
+      "type": "string"
+    },
+    "disk_amount_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Disk Amount Micro Usd",
+      "type": "integer"
+    },
+    "dispute_reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dispute Reason"
+    },
+    "finality_state": {
+      "$ref": "#/$defs/BillingFinalityState"
+    },
+    "gpu_amount_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Gpu Amount Micro Usd",
+      "type": "integer"
+    },
+    "invoice_verification_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Invoice Verification Id"
+    },
+    "observation_id": {
+      "format": "uuid",
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "pod_id": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Pod Id",
+      "type": "string"
+    },
+    "prior_observation_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prior Observation Id"
+    },
+    "prior_raw_response_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prior Raw Response Sha256"
+    },
+    "provider_account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Provider Account Ref",
+      "type": "string"
+    },
+    "provider_resolved_window_end": {
+      "format": "date-time",
+      "title": "Provider Resolved Window End",
+      "type": "string"
+    },
+    "provider_resolved_window_start": {
+      "format": "date-time",
+      "title": "Provider Resolved Window Start",
+      "type": "string"
+    },
+    "query_id": {
+      "format": "uuid",
+      "title": "Query Id",
+      "type": "string"
+    },
+    "raw_response_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Response Sha256",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "total_amount_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Total Amount Micro Usd",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "observation_id",
+    "query_id",
+    "provider_account_ref",
+    "pod_id",
+    "bucket_start",
+    "bucket_end",
+    "bucket_size_seconds",
+    "bucket_identity_sha256",
+    "revision",
+    "provider_resolved_window_start",
+    "provider_resolved_window_end",
+    "raw_response_sha256",
+    "observed_at",
+    "currency",
+    "total_amount_micro_usd",
+    "gpu_amount_micro_usd",
+    "cpu_amount_micro_usd",
+    "disk_amount_micro_usd",
+    "finality_state"
+  ],
+  "title": "RunpodBillingBucketObservation",
+  "type": "object"
+}

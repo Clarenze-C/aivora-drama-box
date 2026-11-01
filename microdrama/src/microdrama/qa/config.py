@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from microdrama.contracts.cost import PriceQuote
+from microdrama.qa.continuity import DEFAULT_SUBTITLE_SAFE_AREA_BP
 
 # Check ids that must be PASS (not REPAIRABLE/BLOCKED/UNKNOWN) before a QA run can be
 # called green. Anything not listed here is surfaced but does not gate the summary.
@@ -56,6 +57,9 @@ class QAConfig:
     unreleased_claim_phrases: tuple[str, ...] = DEFAULT_UNRELEASED_CLAIM_PHRASES
     # Text alignment between an observed segment/cue and an intended script line.
     align_min_ratio: float = 0.6
+    # Phone-safe subtitle area (x0, y0, x1, y1 in basis points of the frame) the
+    # T042b continuity subtitle check enforces against observed subtitle boxes.
+    subtitle_safe_area_bp: tuple[int, int, int, int] = DEFAULT_SUBTITLE_SAFE_AREA_BP
     # Budget hook: price a paid observation/ASR step would be charged. None (default)
     # means the offline fixture observer is free and nothing is reserved.
     observer_price: PriceQuote | None = None
@@ -78,6 +82,9 @@ class QAConfig:
             raise ValueError("align_min_ratio must be in (0, 1]")
         if self.reservation_ttl_ms < 60_000:
             raise ValueError("reservation_ttl_ms must be at least one minute")
+        x0, y0, x1, y1 = self.subtitle_safe_area_bp
+        if not (0 <= x0 < x1 <= 10_000 and 0 <= y0 < y1 <= 10_000):
+            raise ValueError("subtitle_safe_area_bp must be a valid bp rectangle")
         unknown = set(self.critical_check_ids) - set(CRITICAL_CHECK_IDS)
         if unknown:
             raise ValueError(f"unknown critical check ids: {sorted(unknown)}")

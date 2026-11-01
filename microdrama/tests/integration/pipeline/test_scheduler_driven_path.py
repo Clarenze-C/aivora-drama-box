@@ -14,11 +14,13 @@ progression survives process restarts on durable state alone.
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import UUID
 
 import pytest
 
 from microdrama.config import Settings
 from microdrama.contracts.enums import ApprovalAction, GateType
+from microdrama.contracts.errors import Unauthenticated
 from microdrama.contracts.season import ApprovalCommand
 from microdrama.persistence import Database
 from microdrama.pipeline.deployments import lane_deployments
@@ -78,6 +80,39 @@ def _inflight_renders(world) -> int:
             "('PENDING_SUBMIT', 'SUBMITTED', 'RUNNING')",
         )["c"]
     )
+
+
+def test_mock_world_owner_session_uses_database_time_and_expiry_remains_enforced(
+    db: Database, offline_settings: Settings
+) -> None:
+    world = build_pipeline_world(offline_settings, db)
+    assert world.fakes.clock.now().isoformat() == "2026-10-27T12:00:00+00:00"
+
+    world.auth.create_owner("clock-check-owner", "clock-check-password")
+    tokens = world.auth.login("clock-check-owner", "clock-check-password")
+    with world.db.transaction(readonly=True) as tx:
+        session = tx.fetchone(
+            "SELECT created_at, expires_at FROM human_sessions WHERE id = %s",
+            (tokens.session_id,),
+        )
+        db_now = tx.fetchval("SELECT clock_timestamp()")
+
+    assert session["created_at"] <= db_now
+    assert db_now < session["expires_at"]
+    assert tokens.expires_at == session["expires_at"]
+    world.auth.authenticate_session(tokens.session_token)
+    with pytest.raises(Unauthenticated):
+        world.auth.authenticate_session("forged-session-token")
+
+    with world.db.transaction() as tx:
+        tx.execute(
+            "UPDATE human_sessions SET created_at = clock_timestamp() - interval '3 seconds', "
+            "expires_at = clock_timestamp() - interval '1 second' "
+            "WHERE id = %s",
+            (tokens.session_id,),
+        )
+    with pytest.raises(Unauthenticated):
+        world.auth.authenticate_session(tokens.session_token)
 
 
 def _maybe_gate1(world, human, season_id, done: set) -> None:
@@ -148,9 +183,11 @@ def test_scheduler_and_workers_drive_release_with_only_the_two_gates(
         "scheduler-path-owner", "scheduler-not-a-real-password"
     ).session_token
 
-    # The operator's durable input: a proposed season with a research envelope.
+    # The operator's durable input: a proposed season with a research envelope,
+    # linked to its creator at creation (T044a owner scope).
+    owner_id = UUID(human.principal_id.removeprefix("owner:"))
     with world.db.transaction() as tx:
-        season_id = seed_season(tx, state="PROPOSED")
+        season_id = seed_season(tx, state="PROPOSED", owner_id=owner_id)
         world.budget.open_research_account(tx, season_id=season_id, envelope_micro_usd=2_000_000)
 
     handled_gates: set = set()

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -21,7 +24,9 @@ from microdrama.contracts.enums import (
     ReceiptKind,
     RenderTier,
 )
+from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.primitives import (
+    AccountRef,
     ContractModel,
     Count,
     CurrencyCode,
@@ -34,6 +39,7 @@ from microdrama.contracts.primitives import (
     SemanticKey,
     Sha256Hex,
     ShortText,
+    SignedMicroUSD,
     UtcDateTime,
     VersionedPayload,
 )
@@ -229,6 +235,369 @@ class UsageReceipt(VersionedPayload):
         return self.cost_basis in (CostBasis.PROVIDER_REPORTED, CostBasis.BILLED)
 
 
+class BillingQueryState(StrEnum):
+    BUCKETS = "BUCKETS"
+    EMPTY = "EMPTY"
+    UNKNOWN = "UNKNOWN"
+
+
+class BillingFinalityState(StrEnum):
+    PENDING_PROVIDER_FINALITY = "PENDING_PROVIDER_FINALITY"
+    ALLOCATED_PROVIDER_REPORTED = "ALLOCATED_PROVIDER_REPORTED"
+    INVOICE_VERIFIED = "INVOICE_VERIFIED"
+    DISPUTED = "DISPUTED"
+
+
+class BillingComponent(StrEnum):
+    GPU = "GPU"
+    CPU = "CPU"
+    DISK = "DISK"
+
+
+class BillingAllocationBasis(StrEnum):
+    MEASURED_OVERLAP = "MEASURED_OVERLAP"
+    STORAGE_OWNER = "STORAGE_OWNER"
+    UNCOVERED = "UNCOVERED"
+
+
+class BillingVerificationResult(StrEnum):
+    MATCHED = "MATCHED"
+    MISMATCHED = "MISMATCHED"
+
+
+def runpod_bucket_identity_sha256(
+    account_ref: str,
+    pod_id: str,
+    bucket_start: UtcDateTime,
+    bucket_end: UtcDateTime,
+    bucket_size_seconds: PositiveInt,
+) -> str:
+    """Stable bucket identity excludes amount/revision so updates append to one lineage."""
+    return canonical_hash(
+        {
+            "provider": "RUNPOD",
+            "account_ref": account_ref,
+            "pod_id": pod_id,
+            "bucket_start": bucket_start,
+            "bucket_end": bucket_end,
+            "bucket_size_seconds": bucket_size_seconds,
+        }
+    )
+
+
+class RunpodBillingQueryObservation(VersionedPayload):
+    query_id: UUID
+    provider_account_ref: AccountRef
+    requested_window_start: UtcDateTime
+    requested_window_end: UtcDateTime
+    provider_resolved_window_start: UtcDateTime
+    provider_resolved_window_end: UtcDateTime
+    bucket_size_seconds: PositiveInt
+    raw_response_sha256: Sha256Hex
+    observed_at: UtcDateTime
+    result_state: BillingQueryState
+    bucket_observation_ids: list[UUID] = Field(default_factory=list)
+    unknown_reason: ShortText | None = None
+
+    @model_validator(mode="after")
+    def _query_shape(self):
+        if self.requested_window_end <= self.requested_window_start:
+            raise ValueError("requested billing query window must be non-empty")
+        if self.provider_resolved_window_end <= self.provider_resolved_window_start:
+            raise ValueError("provider-resolved billing query window must be non-empty")
+        if len(set(self.bucket_observation_ids)) != len(self.bucket_observation_ids):
+            raise ValueError("duplicate bucket observation ID in billing query")
+        if self.result_state is BillingQueryState.BUCKETS and not self.bucket_observation_ids:
+            raise ValueError("BUCKETS query state requires at least one observation")
+        if self.result_state is not BillingQueryState.BUCKETS and self.bucket_observation_ids:
+            raise ValueError("EMPTY/UNKNOWN query state cannot contain bucket observations")
+        if self.result_state is BillingQueryState.UNKNOWN and self.unknown_reason is None:
+            raise ValueError("UNKNOWN billing query needs an explicit reason")
+        if self.result_state is not BillingQueryState.UNKNOWN and self.unknown_reason is not None:
+            raise ValueError("unknown_reason only applies to UNKNOWN billing query state")
+        return self
+
+
+class RunpodBillingBucketObservation(VersionedPayload):
+    observation_id: UUID
+    query_id: UUID
+    provider_account_ref: AccountRef
+    pod_id: ShortText
+    bucket_start: UtcDateTime
+    bucket_end: UtcDateTime
+    bucket_size_seconds: PositiveInt
+    bucket_identity_sha256: Sha256Hex
+    revision: PositiveInt
+    prior_observation_id: UUID | None = None
+    prior_raw_response_sha256: Sha256Hex | None = None
+    provider_resolved_window_start: UtcDateTime
+    provider_resolved_window_end: UtcDateTime
+    raw_response_sha256: Sha256Hex
+    observed_at: UtcDateTime
+    currency: CurrencyCode
+    total_amount_micro_usd: MicroUSD
+    gpu_amount_micro_usd: MicroUSD
+    cpu_amount_micro_usd: MicroUSD
+    disk_amount_micro_usd: MicroUSD
+    finality_state: BillingFinalityState
+    invoice_verification_id: UUID | None = None
+    dispute_reason: ShortText | None = None
+
+    @model_validator(mode="after")
+    def _bucket_shape(self):
+        if self.bucket_end <= self.bucket_start:
+            raise ValueError("billing bucket interval must be non-empty")
+        if self.provider_resolved_window_end <= self.provider_resolved_window_start:
+            raise ValueError("provider-resolved billing window must be non-empty")
+        if not (
+            self.bucket_start < self.provider_resolved_window_end
+            and self.bucket_end > self.provider_resolved_window_start
+        ):
+            raise ValueError("billing bucket must overlap its provider-resolved query window")
+        expected_identity = runpod_bucket_identity_sha256(
+            self.provider_account_ref,
+            self.pod_id,
+            self.bucket_start,
+            self.bucket_end,
+            self.bucket_size_seconds,
+        )
+        if self.bucket_identity_sha256 != expected_identity:
+            raise ValueError("billing bucket identity hash does not match account/pod/window/size")
+        if (self.prior_observation_id is None) != (self.prior_raw_response_sha256 is None):
+            raise ValueError("prior bucket observation ID and raw hash must be provided together")
+        if self.revision == 1 and self.prior_observation_id is not None:
+            raise ValueError("first billing bucket revision cannot have a prior observation")
+        if self.revision > 1 and self.prior_observation_id is None:
+            raise ValueError("later billing bucket revision requires its prior observation link")
+        components_match = self.total_amount_micro_usd == (
+            self.gpu_amount_micro_usd + self.cpu_amount_micro_usd + self.disk_amount_micro_usd
+        )
+        if (self.currency != "USD" or not components_match) and (
+            self.finality_state is not BillingFinalityState.DISPUTED
+        ):
+            raise ValueError("non-USD or component-mismatched billing bucket must be DISPUTED")
+        if self.finality_state is BillingFinalityState.DISPUTED and self.dispute_reason is None:
+            raise ValueError("DISPUTED billing bucket needs a reason")
+        if self.finality_state is not BillingFinalityState.DISPUTED and self.dispute_reason:
+            raise ValueError("dispute reason only applies to DISPUTED billing bucket")
+        if self.finality_state is BillingFinalityState.INVOICE_VERIFIED:
+            if self.invoice_verification_id is None:
+                raise ValueError(
+                    "INVOICE_VERIFIED billing bucket needs an invoice verification link"
+                )
+        elif (
+            self.invoice_verification_id is not None
+            and self.finality_state is not BillingFinalityState.DISPUTED
+        ):
+            raise ValueError("invoice verification link requires verified or disputed finality")
+        return self
+
+
+class RunpodBillingAllocation(VersionedPayload):
+    allocation_id: UUID
+    bucket_identity_sha256: Sha256Hex
+    bucket_observation_id: UUID
+    bucket_revision: PositiveInt
+    component: BillingComponent
+    owner_kind: Literal["EPISODE", "RECOVERY"]
+    owner_id: UUID | Literal["recovery_pool"]
+    allocation_basis: BillingAllocationBasis
+    delta_micro_usd: SignedMicroUSD
+    allocated_at: UtcDateTime
+
+    @model_validator(mode="after")
+    def _allocation_shape(self):
+        is_recovery = self.owner_kind == "RECOVERY"
+        if is_recovery != (self.owner_id == "recovery_pool"):
+            raise ValueError(
+                "RECOVERY owner must use recovery_pool ID; EPISODE owner must use UUID"
+            )
+        if is_recovery != (self.allocation_basis is BillingAllocationBasis.UNCOVERED):
+            raise ValueError("UNCOVERED allocation basis is only valid for recovery-pool owner")
+        if not is_recovery:
+            expected_basis = (
+                BillingAllocationBasis.STORAGE_OWNER
+                if self.component is BillingComponent.DISK
+                else BillingAllocationBasis.MEASURED_OVERLAP
+            )
+            if self.allocation_basis is not expected_basis:
+                raise ValueError(
+                    "allocation basis does not match GPU/CPU overlap or disk ownership"
+                )
+        return self
+
+
+class BillingInvoiceVerification(VersionedPayload):
+    verification_id: UUID
+    provider_account_ref: AccountRef
+    bucket_identity_sha256: Sha256Hex
+    bucket_observation_id: UUID
+    bucket_revision: PositiveInt
+    evidence_source: Literal["INVOICE", "CONSOLE"]
+    evidence_sha256: Sha256Hex
+    evidence_observed_at: UtcDateTime
+    verified_at: UtcDateTime
+    currency: CurrencyCode
+    amount_micro_usd: MicroUSD
+    result: BillingVerificationResult
+    mismatch_reason: ShortText | None = None
+
+    @model_validator(mode="after")
+    def _verification_shape(self):
+        if self.result is BillingVerificationResult.MATCHED:
+            if self.currency != "USD":
+                raise ValueError("matched invoice verification must be denominated in USD")
+            if self.mismatch_reason is not None:
+                raise ValueError("matched invoice verification cannot carry a mismatch reason")
+        elif self.mismatch_reason is None:
+            raise ValueError("mismatched invoice verification needs a reason")
+        return self
+
+
+def validate_runpod_billing_query(
+    query: RunpodBillingQueryObservation,
+    buckets: list[RunpodBillingBucketObservation],
+    allocations: list[RunpodBillingAllocation] | None = None,
+    *,
+    prior_observations: Mapping[UUID, RunpodBillingBucketObservation] | None = None,
+) -> None:
+    """Verify query/bucket linkage; EMPTY and UNKNOWN responses never settle zero."""
+    allocations = allocations or []
+    prior_observations = prior_observations or {}
+    if query.result_state is not BillingQueryState.BUCKETS:
+        if buckets or allocations:
+            raise ValueError("EMPTY/UNKNOWN billing query cannot produce buckets or allocations")
+        return
+    by_id = {bucket.observation_id: bucket for bucket in buckets}
+    if len(by_id) != len(buckets) or set(by_id) != set(query.bucket_observation_ids):
+        raise ValueError("query bucket observation IDs do not match supplied bucket records")
+    for allocation in allocations:
+        if allocation.bucket_observation_id not in by_id:
+            raise ValueError("allocation is not attached to a bucket in its query")
+    for bucket in buckets:
+        if (
+            bucket.query_id != query.query_id
+            or bucket.provider_account_ref != query.provider_account_ref
+            or bucket.bucket_size_seconds != query.bucket_size_seconds
+            or bucket.provider_resolved_window_start != query.provider_resolved_window_start
+            or bucket.provider_resolved_window_end != query.provider_resolved_window_end
+        ):
+            raise ValueError("billing bucket does not match its provider-resolved query")
+        prior = prior_observations.get(bucket.observation_id)
+        if bucket.revision > 1 and prior is None:
+            raise ValueError("later billing bucket revision requires its exact prior observation")
+        validate_runpod_billing_revision(prior, bucket)
+        bucket_allocations = [
+            allocation
+            for allocation in allocations
+            if allocation.bucket_observation_id == bucket.observation_id
+        ]
+        if bucket_allocations:
+            validate_runpod_billing_allocations(bucket, bucket_allocations, prior=prior)
+        elif bucket.finality_state in (
+            BillingFinalityState.ALLOCATED_PROVIDER_REPORTED,
+            BillingFinalityState.INVOICE_VERIFIED,
+        ):
+            raise ValueError("allocated bucket query is missing component allocations")
+
+
+def validate_runpod_billing_revision(
+    prior: RunpodBillingBucketObservation | None,
+    current: RunpodBillingBucketObservation,
+) -> None:
+    """Require monotonic, same-bucket revision links and exact prior response hash."""
+    if prior is None:
+        if current.revision != 1 or current.prior_observation_id is not None:
+            raise ValueError("first billing bucket revision must be revision 1 without a prior")
+        return
+    if current.revision != prior.revision + 1:
+        raise ValueError("billing bucket revision must increase monotonically by one")
+    if current.bucket_identity_sha256 != prior.bucket_identity_sha256:
+        raise ValueError("billing bucket revision identity changed")
+    if (
+        current.prior_observation_id != prior.observation_id
+        or current.prior_raw_response_sha256 != prior.raw_response_sha256
+    ):
+        raise ValueError("billing bucket revision does not link its exact prior observation")
+
+
+def validate_runpod_billing_allocations(
+    current: RunpodBillingBucketObservation,
+    allocations: list[RunpodBillingAllocation],
+    *,
+    prior: RunpodBillingBucketObservation | None = None,
+) -> None:
+    """Require signed component deltas to sum exactly to new-minus-prior amounts."""
+    validate_runpod_billing_revision(prior, current)
+    if current.finality_state not in (
+        BillingFinalityState.ALLOCATED_PROVIDER_REPORTED,
+        BillingFinalityState.INVOICE_VERIFIED,
+    ):
+        if allocations:
+            raise ValueError("pending or disputed bucket cannot be allocated")
+        return
+    if len({item.allocation_id for item in allocations}) != len(allocations):
+        raise ValueError("duplicate billing allocation ID")
+    if len(
+        {
+            (item.component, item.owner_kind, item.owner_id, item.allocation_basis)
+            for item in allocations
+        }
+    ) != len(allocations):
+        raise ValueError("duplicate owner/component allocation for bucket revision")
+    component_fields = {
+        BillingComponent.GPU: "gpu_amount_micro_usd",
+        BillingComponent.CPU: "cpu_amount_micro_usd",
+        BillingComponent.DISK: "disk_amount_micro_usd",
+    }
+    for allocation in allocations:
+        if (
+            allocation.bucket_observation_id != current.observation_id
+            or allocation.bucket_identity_sha256 != current.bucket_identity_sha256
+            or allocation.bucket_revision != current.revision
+        ):
+            raise ValueError("allocation does not reference the exact bucket revision")
+    for component, field_name in component_fields.items():
+        if not any(item.component is component for item in allocations):
+            raise ValueError(f"{component.value} component needs an explicit allocation")
+        prior_amount = getattr(prior, field_name) if prior is not None else 0
+        expected_delta = getattr(current, field_name) - prior_amount
+        actual_delta = sum(
+            item.delta_micro_usd for item in allocations if item.component is component
+        )
+        if actual_delta != expected_delta:
+            raise ValueError(
+                f"{component.value} allocation deltas do not match bucket revision delta"
+            )
+
+
+def validate_billing_invoice_verification(
+    bucket: RunpodBillingBucketObservation,
+    verification: BillingInvoiceVerification,
+) -> None:
+    if (
+        verification.provider_account_ref != bucket.provider_account_ref
+        or verification.bucket_identity_sha256 != bucket.bucket_identity_sha256
+        or verification.bucket_observation_id != bucket.observation_id
+        or verification.bucket_revision != bucket.revision
+    ):
+        raise ValueError("invoice verification does not bind the exact bucket revision")
+    if verification.result is BillingVerificationResult.MATCHED:
+        if (
+            bucket.finality_state is not BillingFinalityState.INVOICE_VERIFIED
+            or bucket.invoice_verification_id != verification.verification_id
+            or verification.amount_micro_usd != bucket.total_amount_micro_usd
+            or verification.currency != bucket.currency
+        ):
+            raise ValueError("INVOICE_VERIFIED bucket does not match its invoice evidence")
+    else:
+        if (
+            bucket.finality_state is not BillingFinalityState.DISPUTED
+            or bucket.invoice_verification_id != verification.verification_id
+        ):
+            raise ValueError("mismatched invoice evidence must link a DISPUTED bucket")
+
+
 class PodLease(VersionedPayload):
     """Ownership of a GPU pod by exactly one episode/job at a time (pilot rule)."""
 
@@ -279,6 +648,9 @@ class RenderRequest(VersionedPayload):
     fps: PositiveInt
     duration_ms: PositiveMs
     reservation_id: UUID
+    prompt_manifest_id: UUID | None = None
+    prompt_manifest_sha256: Sha256Hex | None = None
+    semantic_workflow_sha256: Sha256Hex | None = None
     prompt_text: str = Field(
         max_length=4000, description="Data passed to the graph, never executed"
     )
@@ -286,6 +658,13 @@ class RenderRequest(VersionedPayload):
 
     @model_validator(mode="after")
     def _rules(self) -> RenderRequest:
+        if (self.prompt_manifest_id is None) != (self.prompt_manifest_sha256 is None):
+            raise ValueError("prompt manifest ID and hash must be provided together")
+        prompt_bound = self.prompt_manifest_id is not None
+        if prompt_bound != (self.semantic_workflow_sha256 is not None):
+            raise ValueError(
+                "semantic workflow hash is required exactly with the prompt manifest locator"
+            )
         if self.attempt_number > 3:
             raise ValueError("maximum three paid generation attempts per shot")
         if self.duration_ms > 15_000:
@@ -295,6 +674,27 @@ class RenderRequest(VersionedPayload):
         if len(set(self.required_controls)) != len(self.required_controls):
             raise ValueError("duplicate required control")
         return self
+
+
+def validate_render_request_prompt_binding(
+    request: RenderRequest,
+    *,
+    prompt_manifest_id: UUID,
+    prompt_manifest_sha256: str,
+    semantic_workflow_sha256: str,
+) -> None:
+    """Fail closed unless the request matches its loaded manifest and pinned mapping."""
+    if request.prompt_manifest_id is None or request.prompt_manifest_sha256 is None:
+        raise ValueError("V2 render request requires a PromptManifest locator")
+    if request.semantic_workflow_sha256 is None:
+        raise ValueError("V2 render request requires a pinned semantic workflow hash")
+    if (request.prompt_manifest_id, request.prompt_manifest_sha256) != (
+        prompt_manifest_id,
+        prompt_manifest_sha256,
+    ):
+        raise ValueError("render request does not match the exact loaded PromptManifest")
+    if request.semantic_workflow_sha256 != semantic_workflow_sha256:
+        raise ValueError("render request semantic workflow hash differs from the pinned mapping")
 
 
 class OutputRef(ContractModel):

@@ -107,6 +107,15 @@ def build_handlers(world) -> dict[str, Any]:
 
     def research_collect_and_propose(ctx: JobContext) -> JobOutcome:
         payload: SeasonStepInput = ctx.payload  # type: ignore[assignment]
+        # Owner-intake jobs (T044b2) run the composed Script Maker path: candidate
+        # generation behind the season's research envelope, then the bounded
+        # research run that persists the current Gate 1 proposal. Everything else
+        # (scheduled pilot triggers) keeps the mock research request.
+        intake = getattr(world, "intake", None)
+        if intake is not None:
+            outcome = intake.handle_research_job(ctx)
+            if outcome is not None:
+                return outcome
         result = world.research.run_research(
             payload.season_id, mock_research_request(payload.season_id, trigger=payload.trigger)
         )

@@ -13,6 +13,7 @@ mint them). A rollback is an ordinary new version that records ``rollback_of``.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid5
@@ -20,6 +21,7 @@ from uuid import UUID, uuid5
 from microdrama.contracts.errors import Conflict, NotFound, SchemaInvalid
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.release import PostMetadata
+from microdrama.contracts.v2 import ApprovedSlotMetadata, ReleaseApprovalManifest
 from microdrama.persistence.db import Tx, insert_row, update_with_revision
 from microdrama.publishing.slots import POST_NAMESPACE
 
@@ -42,6 +44,17 @@ def initial_metadata_version_id(dedupe_key: str) -> UUID:
 
 def metadata_hash(metadata: PostMetadata) -> str:
     return canonical_hash(metadata)
+
+
+def has_mock_label(metadata: PostMetadata) -> bool:
+    """Recognize explicit fixture labels without matching ordinary substrings."""
+    english_label = re.compile(r"(?<![a-z0-9])(?:mock|fixture|pilot|test)(?![a-z0-9])", re.I)
+    thai_labels = ("จำลอง", "ทดสอบ")
+    values = (metadata.title, metadata.caption, metadata.description)
+    return any(
+        english_label.search(value) or any(label in value for label in thai_labels)
+        for value in values
+    )
 
 
 def substantive_change(old: PostMetadata, new: PostMetadata) -> bool:
@@ -155,3 +168,52 @@ def require_current(tx: Tx, post_id: UUID, version_id: UUID) -> PostMetadata:
             command_version=str(version_id),
         )
     return current[1]
+
+
+def approved_live_binding(
+    tx: Tx, *, post: dict[str, Any], approval_event_id: UUID
+) -> tuple[ReleaseApprovalManifest, ApprovedSlotMetadata]:
+    """Load exact V2 approval and current canonical metadata for a live slot."""
+    event = tx.fetchone(
+        "SELECT release_manifest_hash FROM approval_events WHERE id = %s "
+        "AND entity_type = 'episode' AND entity_id = %s AND action = 'APPROVE'",
+        (approval_event_id, post["episode_id"]),
+    )
+    if event is None or event["release_manifest_hash"] is None:
+        raise Conflict("V1-only approval has no V2 live metadata authority")
+    package = tx.fetchone(
+        "SELECT package_hash FROM release_packages WHERE id = %s AND episode_id = %s AND status = 'APPROVED'",
+        (post["release_package_id"], post["episode_id"]),
+    )
+    manifest_row = (
+        tx.fetchone(
+            "SELECT payload FROM release_approval_manifests WHERE manifest_hash = %s "
+            "AND release_package_id = %s AND release_package_hash = %s",
+            (
+                event["release_manifest_hash"],
+                post["release_package_id"],
+                package["package_hash"] if package else None,
+            ),
+        )
+        if package
+        else None
+    )
+    if package is None or manifest_row is None:
+        raise Conflict("approved package or its Gate 2 manifest is missing or stale")
+    manifest = ReleaseApprovalManifest.model_validate(manifest_row["payload"])
+    rows = tx.fetchall(
+        "SELECT payload FROM approved_slot_metadata WHERE release_package_id = %s "
+        "AND slot_id = %s AND is_current",
+        (post["release_package_id"], f"slot-{post['dedupe_key']}"),
+    )
+    if len(rows) != 1:
+        raise Conflict("exact current approved slot metadata is missing or ambiguous")
+    slot = ApprovedSlotMetadata.model_validate(rows[0]["payload"])
+    if not any(
+        item.metadata_id == slot.metadata_id
+        and item.metadata_version == slot.metadata_version
+        and item.content_sha256 == slot.content_sha256
+        for item in manifest.slots
+    ):
+        raise Conflict("current approved slot metadata is absent from Gate 2 manifest")
+    return manifest, slot

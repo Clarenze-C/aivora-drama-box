@@ -9,16 +9,24 @@ import sys
 from pathlib import Path
 
 from microdrama.contracts import CONTRACT_VERSION, build
-from microdrama.contracts.examples import VALID_BUILDERS, invalid_cases
+from microdrama.contracts.examples import (
+    V2_VALID_BUILDERS,
+    VALID_BUILDERS,
+    episode_review_view,
+    invalid_cases,
+)
 from microdrama.contracts.registry import ALL_MODELS, CORE_PAYLOADS
+from microdrama.contracts.routes import EpisodeReviewView
 
 MODULE_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_every_spec_payload_has_valid_and_invalid_examples() -> None:
-    assert set(VALID_BUILDERS) == set(CORE_PAYLOADS)
+    assert set(VALID_BUILDERS) | (set(V2_VALID_BUILDERS) - {"V1ManifestReadback"}) == set(
+        CORE_PAYLOADS
+    )
     assert {case[0] for case in invalid_cases()} >= set(CORE_PAYLOADS)
-    assert len(CORE_PAYLOADS) == 29
+    assert len(CORE_PAYLOADS) == 52
 
 
 def test_generated_files_validate() -> None:
@@ -31,8 +39,19 @@ def test_committed_contracts_match_source() -> None:
 
 def test_version_file() -> None:
     assert (
-        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "1.6.0"
+        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "2.15.0"
     )
+
+
+def test_episode_review_view_exposes_typed_manifest_and_keeps_legacy_v1_readback() -> None:
+    current = episode_review_view()
+    assert current.release_approval_manifest is not None
+    assert current.release_approval_manifest.schema_version == "2.0"
+    legacy_payload = current.model_dump(mode="json")
+    legacy_payload.pop("release_approval_manifest")
+    legacy = EpisodeReviewView.model_validate(legacy_payload)
+    assert legacy.schema_version == "1.0"
+    assert legacy.release_approval_manifest is None
 
 
 def test_generation_is_deterministic_across_hash_seeds() -> None:
@@ -54,7 +73,13 @@ def test_generation_is_deterministic_across_hash_seeds() -> None:
 def test_schemas_are_closed_objects() -> None:
     for name in ALL_MODELS:
         schema = json.loads(
-            (MODULE_ROOT / "contracts" / "schemas" / "v1" / f"{name}.schema.json").read_text()
+            (
+                MODULE_ROOT
+                / "contracts"
+                / "schemas"
+                / build._schema_generation(ALL_MODELS[name])[0]
+                / f"{name}.schema.json"
+            ).read_text()
         )
         assert schema.get("additionalProperties") is False, (
             f"{name} schema must reject unknown fields"
@@ -62,9 +87,11 @@ def test_schemas_are_closed_objects() -> None:
 
 
 def test_structural_defects_are_rejected_by_the_published_schemas() -> None:
-    manifest = json.loads(
-        (MODULE_ROOT / "contracts" / "examples" / "v1" / "manifest.json").read_text()
-    )
     for name in build.SCHEMA_MUST_REJECT:
-        entry = manifest[f"examples/v1/invalid/{name}.json"]
+        model_name = name.split("__", 1)[0]
+        version_dir = build._schema_generation(ALL_MODELS[model_name])[0]
+        manifest = json.loads(
+            (MODULE_ROOT / "contracts" / "examples" / version_dir / "manifest.json").read_text()
+        )
+        entry = manifest[f"examples/{version_dir}/invalid/{name}.json"]
         assert entry["json_schema_rejects"] is True, name

@@ -1,0 +1,27 @@
+{
+  "content_sha256": "a64a85dc3c02a50e7afc6e1f8c47ff1cda0e8391ce83ae62b429c4b0c0fbc744",
+  "created_at": "2026-10-30T00:00:00Z",
+  "episode_count": 10,
+  "escalation": [
+    "The creditor shortens the deadline."
+  ],
+  "intake_id": "780d4d6e-2fb3-52c5-830e-0f9e566f946b",
+  "logline": "A daughter returns to save a family stall.",
+  "payoff_debt": [
+    "Who co-signed the loan"
+  ],
+  "promise": "Each debt reveals a family choice.",
+  "record_id": "7db9560e-ae41-59a0-88c3-1687fdcbebf9",
+  "rights": {
+    "note": "Confirm commercial output release and territories before production.",
+    "status": "PENDING"
+  },
+  "schema_version": "2.0",
+  "scope_sha256": "97e2de0a37a28d277c4ee7bd38ded0932d7079c09017f6bb2663ac92df9757f8",
+  "title_en": "Mother's Stall",
+  "title_th": "ร้านของแม่",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

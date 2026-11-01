@@ -1,0 +1,80 @@
+{
+  "approved_reveal_episode": 1,
+  "asset_id": "a92bb089-e25d-5ae9-b4c5-11ec07764794",
+  "asset_sha256": "d7965e2a87d13042006c5253231be84df3f6953309152a6d125fe9750956e848",
+  "asset_version": 1,
+  "cta_text": "Watch episode one",
+  "derivation_manifest_sha256": "9a640af9608c844d97fe0ffcec1a496c98b7cc1e8b8d8e49837d617c11a4ad79",
+  "derivative_type": "POSTER",
+  "duration_ms": null,
+  "no_release_obligation": true,
+  "platform_safe_zones": [
+    {
+      "bottom_bp": 1200,
+      "cta_box": {
+        "height_bp": 900,
+        "width_bp": 5600,
+        "x_bp": 700,
+        "y_bp": 7400
+      },
+      "left_bp": 500,
+      "platform": "TIKTOK",
+      "right_bp": 500,
+      "title_box": {
+        "height_bp": 900,
+        "width_bp": 5600,
+        "x_bp": 700,
+        "y_bp": 1500
+      },
+      "top_bp": 600
+    },
+    {
+      "bottom_bp": 1200,
+      "cta_box": {
+        "height_bp": 900,
+        "width_bp": 5600,
+        "x_bp": 700,
+        "y_bp": 7400
+      },
+      "left_bp": 500,
+      "platform": "YOUTUBE",
+      "right_bp": 500,
+      "title_box": {
+        "height_bp": 900,
+        "width_bp": 5600,
+        "x_bp": 700,
+        "y_bp": 1500
+      },
+      "top_bp": 600
+    }
+  ],
+  "readability_evidence_sha256": "55c82b203c204b593f3227edc87bf1a4425c6c2dd4b2e8c47f360f87cc956c0a",
+  "reveal_boundary_ms": null,
+  "sources": [
+    {
+      "asset_id": "9e4e3788-e27b-51f4-9b61-e36ad4c165ec",
+      "asset_sha256": "1636a61797be3fe8daa9ed3311d6754f57954c11bac4ab56f4be716edf3efca7",
+      "asset_version": 1,
+      "rights": {
+        "commercial_use": true,
+        "evidence_sha256": [
+          "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+        ],
+        "expires_at": null,
+        "output_release_allowed": true,
+        "rights_route_id": "original-fiction",
+        "rights_version": 1,
+        "status": "ELIGIBLE",
+        "subject_kind": "MODEL_OUTPUT",
+        "subject_ref": "original-fiction-output",
+        "territories": [
+          "TH"
+        ]
+      },
+      "role": "CHARACTER",
+      "source_in_ms": null,
+      "source_out_ms": null
+    }
+  ],
+  "title_text": "Mother's Stall"
+}

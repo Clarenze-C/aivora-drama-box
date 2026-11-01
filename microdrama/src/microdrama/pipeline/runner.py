@@ -30,6 +30,7 @@ from microdrama.contracts.enums import ApprovalAction, GateType
 from microdrama.contracts.jobs import EpisodeStepInput, PlatformPostRef, SeasonStepInput
 from microdrama.contracts.season import ApprovalCommand
 from microdrama.persistence.db import insert_row
+from microdrama.review.scope import link_season_creator
 
 from .deployments import lane_bindings
 from .handlers import build_handlers
@@ -220,6 +221,9 @@ class MockPipelineRunner:
                     "title_en": "Pilot season (mock)",
                 },
             )
+            # New intake links its creator at creation (T044a): the season is
+            # owned by the human the run acts for, never unassigned.
+            link_season_creator(tx, season_id, self.human)
             self.world.budget.open_research_account(
                 tx, season_id=season_id, envelope_micro_usd=2_000_000
             )
@@ -369,6 +373,27 @@ class MockPipelineRunner:
         )
         dispatched: list[tuple[UUID, UUID]] = []  # (job_id, operation_id)
         for shot in manifest.shots:
+            prompt_text = f"mock render for shot {shot.shot_id}"
+            typed_prompt = None
+            prop_sheets = []
+            dispatch_at = self.world.fakes.clock.now()
+            if shot.prop_ids:
+                from microdrama.references.v2_planning import (
+                    V2ReferenceRepository,
+                    build_prop_prompt_manifest,
+                )
+
+                typed_prompt, prop_sheets = build_prop_prompt_manifest(
+                    self.world.db,
+                    episode_id=episode_id,
+                    manifest_version=manifest.version,
+                    shot=shot,
+                    prompt_text=prompt_text,
+                    at=dispatch_at,
+                )
+                typed_prompt = V2ReferenceRepository(
+                    self.world.db, self.world.store
+                ).persist_companion_records([typed_prompt])[0]
             decision = self.world.router.route_shot(
                 shot,
                 episode_id=episode_id,
@@ -384,7 +409,10 @@ class MockPipelineRunner:
                 episode_number=1,
                 reference_asset_ids=list(bindings.reference_asset_ids),
                 identity_lock_id=bindings.lock_id,
-                prompt_text=f"mock render for shot {shot.shot_id}",
+                prompt_text=prompt_text,
+                prompt_manifest=typed_prompt,
+                prop_sheets=prop_sheets,
+                dispatch_at=dispatch_at if typed_prompt is not None else None,
             )
             operation_id = self._operation_id(attempt.job_id)
             if operation_id is not None:
@@ -619,23 +647,22 @@ class MockPipelineRunner:
     def w09_publish(self, episode_id: UUID) -> list[UUID]:
         self._drain()  # Gate 2 enqueued publish.schedule_release itself
         posts = self._rows(
-            "SELECT id, release_slot, state, dedupe_key FROM platform_posts "
+            "SELECT id, release_slot, state, dedupe_key, release_package_id, approval_event_id "
+            "FROM platform_posts "
             "WHERE episode_id = %s "
             "ORDER BY release_slot",
             (episode_id,),
         )
         if not posts:
             raise RuntimeError("W09: no platform posts scheduled")
-        package = self._row(
-            "SELECT id, body FROM release_packages WHERE episode_id = %s "
-            "AND status = 'APPROVED' ORDER BY version DESC LIMIT 1",
-            (episode_id,),
-        )
-        approval_id = self.report.gate2_approval_id
         for post in posts:
             if post["state"] != "SCHEDULED":
                 continue
-            command = self._command_for_post(post, package, approval_id)
+            package = self._row(
+                "SELECT id, body FROM release_packages WHERE id = %s AND status = 'APPROVED'",
+                (post["release_package_id"],),
+            )
+            command = self._command_for_post(post, package, post["approval_event_id"])
             self._enqueue(
                 "publish.submit_slot",
                 command,
@@ -721,13 +748,29 @@ class MockPipelineRunner:
             )
 
     def _command_for_post(self, post: dict, package_row: dict, approval_id: UUID):
+        from microdrama.publishing import metadata as metadata_versions
         from microdrama.publishing.commands import publication_command_for_post
 
+        with self.world.db.transaction(readonly=True) as tx:
+            current_metadata = metadata_versions.current_metadata(tx, post["id"])
+            allow_mock = self.world.settings.is_offline_mock
+            binding = (
+                (None, None)
+                if allow_mock
+                else metadata_versions.approved_live_binding(
+                    tx, post=dict(post), approval_event_id=approval_id
+                )
+            )
         return publication_command_for_post(
             None,
             post=dict(post),
             package_body=package_row["body"],
             approval_event_id=approval_id,
+            metadata=current_metadata[1] if current_metadata else None,
+            metadata_version_id=current_metadata[0] if current_metadata else None,
+            allow_mock_metadata=allow_mock,
+            release_manifest=binding[0],
+            approved_slot_metadata=binding[1],
         )
 
     # --- W10 community/membership ------------------------------------------------------------

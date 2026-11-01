@@ -179,14 +179,14 @@ def test_ambiguous_create_that_created_adopts_without_second_create() -> None:
     assert len(manager.find_owned()) == 1
 
 
-def test_ambiguous_create_that_did_not_create_retries_same_token() -> None:
+def test_ambiguous_create_without_visible_pod_stays_unknown_without_retry() -> None:
     provider = _provider(PodCreateScenario.CREATE_TIMEOUT_NOT_CREATED)
     manager = _manager(provider)
-    pod = manager.acquire_or_reconcile(_spec(), name="render", client_token="t-retry")
-    assert pod.client_token == "t-retry"
+    with pytest.raises(NeedsReconciliation):
+        manager.acquire_or_reconcile(_spec(), name="render", client_token="t-retry")
     creates = [c for c in provider.calls if c.method == "create_pod"]
-    assert len(creates) == 2  # one ambiguous attempt, one retry after reconcile found nothing
-    assert len(manager.find_owned()) == 1
+    assert len(creates) == 1
+    assert len(manager.find_owned()) == 0  # absence is still not proof of non-creation
 
 
 def test_persistently_ambiguous_create_stays_needs_reconciliation() -> None:
@@ -199,7 +199,7 @@ def test_persistently_ambiguous_create_stays_needs_reconciliation() -> None:
     with pytest.raises(NeedsReconciliation):
         manager.acquire_or_reconcile(_spec(), name="render", client_token="t-stuck")
     creates = [c for c in provider.calls if c.method == "create_pod"]
-    assert len(creates) == 2  # bounded attempts, then an honest ambiguous outcome
+    assert len(creates) == 1  # no retry after an ambiguous result
 
 
 # --- verification --------------------------------------------------------------------------------

@@ -542,6 +542,7 @@ class TriggerScheduler:
         dependency slots (if any) are verified; the publishing service remains
         the sole authority over capability, disclosure and idempotency.
         """
+        from microdrama.publishing import metadata as metadata_versions
         from microdrama.publishing.commands import publication_command_for_post
 
         period = self._period("w09-publish-submit", now)
@@ -553,8 +554,11 @@ class TriggerScheduler:
             # and die on Conflict. Discovery dedupe only, the same guard the
             # W07 package stage uses; the service stays the sole authority.
             posts = tx.fetchall(
-                "SELECT * FROM platform_posts p WHERE p.state = 'SCHEDULED' "
-                "AND p.scheduled_utc <= %s "
+                "SELECT p.* FROM platform_posts p "
+                "LEFT JOIN provider_operations po ON po.id = p.provider_operation_id "
+                "WHERE (p.state = 'SCHEDULED' OR (p.state = 'SUBMITTED' "
+                "  AND p.external_id IS NULL AND po.state = 'PENDING_SUBMIT' "
+                "  AND p.attempt > 1)) AND p.scheduled_utc <= %s "
                 # The payload's slot key has no serialized dedupe_key (it is a
                 # computed hash); the identity fields the posts table itself
                 # treats as unique identify the slot's submit jobs instead.
@@ -584,11 +588,21 @@ class TriggerScheduler:
                 if not set(deps) <= verified:
                     held += 1
                     continue
+            allow_mock = bool(
+                getattr(getattr(self.world, "settings", None), "is_offline_mock", False)
+            )
             with self.world.db.transaction(readonly=True) as tx:
                 package = tx.fetchone(
-                    "SELECT id, body FROM release_packages WHERE episode_id = %s "
-                    "AND status = 'APPROVED' ORDER BY version DESC LIMIT 1",
-                    (post["episode_id"],),
+                    "SELECT id, body FROM release_packages WHERE id = %s AND status = 'APPROVED'",
+                    (post["release_package_id"],),
+                )
+                current_metadata = metadata_versions.current_metadata(tx, post["id"])
+                binding = (
+                    (None, None)
+                    if allow_mock
+                    else metadata_versions.approved_live_binding(
+                        tx, post=dict(post), approval_event_id=post["approval_event_id"]
+                    )
                 )
             if package is None:
                 continue
@@ -597,6 +611,11 @@ class TriggerScheduler:
                 post=dict(post),
                 package_body=package["body"],
                 approval_event_id=post["approval_event_id"],
+                metadata=current_metadata[1] if current_metadata else None,
+                metadata_version_id=current_metadata[0] if current_metadata else None,
+                allow_mock_metadata=allow_mock,
+                release_manifest=binding[0],
+                approved_slot_metadata=binding[1],
             )
             self._enqueue(
                 "publish.submit_slot",

@@ -20,6 +20,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import uuid
 import wave
 import zlib
 from collections.abc import Iterable, Sequence
@@ -439,6 +440,31 @@ class VideoDefectTruth(_Span):
     kind: Literal["black", "frozen"]
 
 
+class ContinuityTruthWindow(_Span):
+    """Declared continuity observation for one sampled window of the actual media.
+
+    Synthetic and unmeasured (``confidence_bp`` defaults to exact): the offline
+    stand-in for what a real vision/ASR evaluator would report over the exported
+    bytes — never a quality claim. ``None`` means the fixture declares the
+    dimension as NOT observed in this window.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    visible_character_ids: tuple[str, ...] | None = None
+    outfit_by_character: tuple[tuple[str, str], ...] | None = None
+    holder_by_prop: tuple[tuple[str, str], ...] | None = None
+    location_id: str | None = None
+    geometry_token: str | None = None
+    eyeline: str | None = None
+    action_handoff: str | None = None
+    proof_text: str | None = None
+    voice_ids: tuple[str, ...] | None = None
+    subtitle_rect_bp: tuple[int, int, int, int] | None = None
+    subtitle_text: str | None = None
+    confidence_bp: int = Field(default=10_000, ge=0, le=10_000)
+
+
 class FixtureTruth(BaseModel):
     """What a fixture actually contains. Synthetic and unmeasured; never a quality claim."""
 
@@ -452,6 +478,7 @@ class FixtureTruth(BaseModel):
     identities: tuple[IdentityTruth, ...] = ()
     text_items: tuple[TextTruth, ...] = ()
     video_defects: tuple[VideoDefectTruth, ...] = ()
+    continuity: tuple[ContinuityTruthWindow, ...] = ()
     covered_ranges_ms: tuple[tuple[int, int], ...]
     provenance: Literal[Provenance.ORIGINAL_FIXTURE] = Provenance.ORIGINAL_FIXTURE
     synthetic: Literal[True] = True
@@ -464,9 +491,11 @@ class FixtureTruth(BaseModel):
             if not (0 <= start < end <= self.duration_ms) or start < previous_end:
                 raise ValueError("covered ranges must be ordered, disjoint and inside the media")
             previous_end = end
-        for span in (*self.spoken, *self.identities, *self.video_defects):
+        for span in (*self.spoken, *self.identities, *self.video_defects, *self.continuity):
             if span.end_ms > self.duration_ms:
-                raise ValueError("speech, identity and video defects must lie inside the media")
+                raise ValueError(
+                    "speech, identity, video defects and continuity windows must lie inside the media"
+                )
         return self
 
 
@@ -810,16 +839,279 @@ def seeded_defect_suite(
     return built
 
 
+# --- labeled continuity defect suite (T042b) ------------------------------------------------
+#
+# The intended continuity state of the two-scene example episode, expressed as
+# typed expectations, plus media fixtures whose DECLARED truth deviates from it
+# in exactly one dimension per defect. The declared truth is the offline
+# observation stand-in keyed by the media's own sha256 — the comparison always
+# runs against the actual exported media SHA, never an invented script-consistent
+# observation. Fixture labels verify software behavior only (OFFLINE_FIXTURE_ONLY).
+
+
+_CONTINUITY_SCENE_SPANS: dict[str, tuple[int, int]] = {
+    "s1": (0, 3_800),
+    "s2": (3_800, SUITE_DURATION_MS),
+}
+_CONTINUITY_VISIBLE: dict[str, tuple[str, ...]] = {"s1": ("fon", "lek"), "s2": ("nok",)}
+_CONTINUITY_OUTFITS: dict[str, dict[str, str]] = {
+    "s1": {"fon": "outfit-fon-market-a", "lek": "outfit-lek-market-a"},
+    "s2": {"nok": "outfit-nok-room-b"},
+}
+_CONTINUITY_HOLDERS: dict[str, dict[str, str]] = {"s1": {"prop-debt-note": "lek"}, "s2": {}}
+_CONTINUITY_LOCATION: dict[str, tuple[str, str]] = {
+    "s1": ("stall", "geo-stall-v1"),
+    "s2": ("shophouse-room", "geo-room-v1"),
+}
+_CONTINUITY_VOICES: dict[str, str] = {
+    "fon": "voice-fon-th",
+    "lek": "voice-lek-th",
+    "nok": "voice-nok-th",
+}
+_CONTINUITY_SPEAKING: dict[str, tuple[str, ...]] = {"s1": ("fon", "lek"), "s2": ("nok",)}
+_CONTINUITY_EYELINE: dict[str, str] = {
+    "s1": "fon looks toward lek",
+    "s2": "nok looks toward the door",
+}
+_CONTINUITY_HANDOFF: dict[str, str | None] = {
+    "s1": "lek passes the debt note to fon",
+    "s2": None,
+}
+CONTINUITY_PROOF_TEXT = "หนี้ค้างชำระ ห้าหมื่นบาท"
+CONTINUITY_PROOF_PROP = "prop-debt-note"
+#: A rendered subtitle box fully inside the default phone-safe area, and one
+#: that spills past its bottom edge (y1 > 8800 bp).
+CONTINUITY_SUBTITLE_RECT_SAFE = (400, 8_100, 9_600, 8_700)
+CONTINUITY_SUBTITLE_RECT_UNSAFE = (400, 8_900, 9_600, 9_600)
+
+
+def continuity_proof_text_sha256() -> str:
+    """Expected proof-text layer hash (normalized text, T042a convention)."""
+    from microdrama.contracts.hashing import sha256_hex
+
+    return sha256_hex(" ".join(CONTINUITY_PROOF_TEXT.split()).casefold().encode("utf-8"))
+
+
+def clean_continuity_expectations(episode_id: uuid.UUID):
+    """The typed continuity expectations of the pristine two-scene example episode."""
+    from microdrama.qa.continuity import EpisodeContinuityExpectations, ExpectedContinuityWindow
+
+    windows = []
+    for scene_id in ("s1", "s2"):
+        start, end = _CONTINUITY_SCENE_SPANS[scene_id]
+        proof = {CONTINUITY_PROOF_PROP: continuity_proof_text_sha256()} if scene_id == "s1" else {}
+        windows.append(
+            ExpectedContinuityWindow(
+                start_ms=start,
+                end_ms=end,
+                scene_id=scene_id,
+                visible_character_ids=frozenset(_CONTINUITY_VISIBLE[scene_id]),
+                outfit_by_character=_CONTINUITY_OUTFITS[scene_id],
+                holder_by_prop=_CONTINUITY_HOLDERS[scene_id],
+                location_id=_CONTINUITY_LOCATION[scene_id][0],
+                geometry_token=_CONTINUITY_LOCATION[scene_id][1],
+                eyeline=_CONTINUITY_EYELINE[scene_id],
+                action_handoff=_CONTINUITY_HANDOFF[scene_id],
+                proof_text_sha256_by_prop=proof,
+                speaking_character_ids=frozenset(_CONTINUITY_SPEAKING[scene_id]),
+                voice_by_character=_CONTINUITY_VOICES,
+                expects_subtitles=True,
+                shot_class=("TWO_HANDED_DIALOGUE" if scene_id == "s1" else "SINGLE_DIALOGUE"),
+            )
+        )
+    return EpisodeContinuityExpectations(episode_id=episode_id, windows=tuple(windows))
+
+
+def _clean_continuity_truth() -> tuple[ContinuityTruthWindow, ...]:
+    """The declared truth of media that matches the pristine expectations."""
+    windows = []
+    for scene_id in ("s1", "s2"):
+        start, end = _CONTINUITY_SCENE_SPANS[scene_id]
+        location_id, geometry = _CONTINUITY_LOCATION[scene_id]
+        windows.append(
+            ContinuityTruthWindow(
+                start_ms=start,
+                end_ms=end,
+                visible_character_ids=_CONTINUITY_VISIBLE[scene_id],
+                outfit_by_character=tuple(_CONTINUITY_OUTFITS[scene_id].items()),
+                holder_by_prop=tuple(_CONTINUITY_HOLDERS[scene_id].items()) or None,
+                location_id=location_id,
+                geometry_token=geometry,
+                eyeline=_CONTINUITY_EYELINE[scene_id],
+                action_handoff=_CONTINUITY_HANDOFF[scene_id],
+                proof_text=CONTINUITY_PROOF_TEXT if scene_id == "s1" else None,
+                voice_ids=tuple(_CONTINUITY_VOICES[c] for c in _CONTINUITY_SPEAKING[scene_id]),
+                subtitle_rect_bp=CONTINUITY_SUBTITLE_RECT_SAFE,
+                subtitle_text=_LINES["s1-l1"].text_th if scene_id == "s1" else None,
+            )
+        )
+    return tuple(windows)
+
+
+@dataclass(frozen=True)
+class LabeledContinuityFixture:
+    """One generated continuity fixture with its ground-truth defect labels."""
+
+    kind: str
+    path: Path
+    sha256: str
+    truth: FixtureTruth
+    defect_check_ids: tuple[str, ...]
+    shot_class: str
+
+
+def _continuity_overrides(
+    kind: str,
+) -> tuple[tuple[ContinuityTruthWindow, ...], tuple[str, ...], str]:
+    """(declared truth windows, expected check ids to trip, shot class) per defect kind."""
+    from microdrama.qa.continuity import CHECK_SPECS, ContinuityDimension
+
+    def spec_id(dimension: ContinuityDimension) -> str:
+        return CHECK_SPECS[dimension].check_id
+
+    clean = list(_clean_continuity_truth())
+    s1, s2 = clean[0], clean[1]
+    if kind == "clean":
+        return tuple(clean), (), "TWO_HANDED_DIALOGUE"
+    if kind == "identity_defect":
+        # lek is missing on screen in scene 1: nok is visible instead.
+        patched = s1.model_copy(update={"visible_character_ids": ("fon", "nok")})
+        return (patched, s2), (spec_id(ContinuityDimension.IDENTITY),), "TWO_HANDED_DIALOGUE"
+    if kind == "outfit_defect":
+        patched = s1.model_copy(
+            update={
+                "outfit_by_character": (
+                    ("fon", "outfit-fon-market-a"),
+                    ("lek", "outfit-lek-market-b"),
+                )
+            }
+        )
+        return (patched, s2), (spec_id(ContinuityDimension.OUTFIT),), "TWO_HANDED_DIALOGUE"
+    if kind == "prop_holder_defect":
+        patched = s1.model_copy(update={"holder_by_prop": (("prop-debt-note", "fon"),)})
+        return (patched, s2), (spec_id(ContinuityDimension.PROP_HOLDER),), "TWO_HANDED_DIALOGUE"
+    if kind == "location_defect":
+        # Scene 1 rendered in the shophouse-room geometry: wrong location/space.
+        patched = s1.model_copy(
+            update={"location_id": "shophouse-room", "geometry_token": "geo-room-v1"}
+        )
+        return (patched, s2), (spec_id(ContinuityDimension.LOCATION_SPACE),), "ESTABLISHING"
+    if kind == "eyeline_defect":
+        patched = s1.model_copy(update={"eyeline": "lek looks away from fon"})
+        return (patched, s2), (spec_id(ContinuityDimension.EYELINE_HANDOFF),), "TWO_HANDED_DIALOGUE"
+    if kind == "proof_text_defect":
+        patched = s1.model_copy(update={"proof_text": "หนี้ค้างชำระ ห้าพันบาท"})
+        return (patched, s2), (spec_id(ContinuityDimension.PROOF_TEXT),), "PROP_INSERT"
+    if kind == "thai_voice_defect":
+        # fon's voice answers in scene 2 where only nok speaks.
+        patched = s2.model_copy(update={"voice_ids": ("voice-fon-th",)})
+        return (s1, patched), (spec_id(ContinuityDimension.THAI_VOICE),), "SINGLE_DIALOGUE"
+    if kind == "subtitle_safe_area_defect":
+        patched = s1.model_copy(update={"subtitle_rect_bp": CONTINUITY_SUBTITLE_RECT_UNSAFE})
+        return (
+            (patched, s2),
+            (spec_id(ContinuityDimension.SUBTITLE_SAFE_AREA),),
+            "TWO_HANDED_DIALOGUE",
+        )
+    raise ValueError(f"unknown continuity defect kind: {kind}")
+
+
+CONTINUITY_DEFECT_KINDS: tuple[str, ...] = (
+    "clean",
+    "identity_defect",
+    "outfit_defect",
+    "prop_holder_defect",
+    "location_defect",
+    "eyeline_defect",
+    "proof_text_defect",
+    "thai_voice_defect",
+    "subtitle_safe_area_defect",
+)
+
+
+def continuity_defect_suite(
+    tmp_dir: Path | str, registry: FixtureTruthRegistry
+) -> dict[str, LabeledContinuityFixture]:
+    """Generate every labeled continuity fixture and register each file's truth.
+
+    Every fixture carries the pristine speech/identity/captions of the T017
+    clean plan (so only the continuity dimension deviates) plus the declared
+    continuity truth of its defect kind. The intended expected side is
+    ``clean_continuity_expectations``; labels name the checks each defect is
+    designed to trip (OFFLINE_FIXTURE_ONLY ground truth).
+    """
+    root = Path(tmp_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    spoken = _default_spoken()
+    identities = _default_identities()
+    captions = _default_captions()
+    windows = [(s.start_ms, s.end_ms) for s in spoken]
+    built: dict[str, LabeledContinuityFixture] = {}
+    for kind in CONTINUITY_DEFECT_KINDS:
+        continuity, defect_ids, shot_class = _continuity_overrides(kind)
+        truth = FixtureTruth(
+            fixture_id=f"continuity-{kind}",
+            duration_ms=SUITE_DURATION_MS,
+            has_audio=True,
+            has_video=True,
+            spoken=spoken,
+            identities=identities,
+            text_items=captions,
+            continuity=continuity,
+            covered_ranges_ms=((0, SUITE_DURATION_MS),),
+        )
+        # Same convention as the T017 suite: the carrier cannot render outfits or
+        # eyelines, so the file embeds a digest of its declared truth — distinct
+        # truths are distinct bytes and distinct sha256 keys into the registry.
+        tag = f"microdrama-fixture:continuity:{kind}:{canonical_hash(truth)[:32]}"
+        base = root / f"continuity-{kind}.base.mp4"
+        make_clip(
+            base,
+            duration_ms=SUITE_DURATION_MS,
+            with_audio=True,
+            silence_ranges=_complement(windows, SUITE_DURATION_MS),
+            comment=tag,
+        )
+        final = root / f"continuity-{kind}.mp4"
+        cues = [
+            CaptionCue(cue_id=f"c{i}", start_ms=c.start_ms, end_ms=c.end_ms, text=c.text)
+            for i, c in enumerate(captions, start=1)
+        ]
+        mux_mov_text(base, cues, final)
+        base.unlink()
+        sha = file_sha256(str(final))
+        registry.register(sha, truth)
+        built[kind] = LabeledContinuityFixture(
+            kind=kind,
+            path=final,
+            sha256=sha,
+            truth=truth,
+            defect_check_ids=defect_ids,
+            shot_class=shot_class,
+        )
+    return built
+
+
 __all__ = [
+    "CONTINUITY_DEFECT_KINDS",
+    "CONTINUITY_PROOF_PROP",
+    "CONTINUITY_PROOF_TEXT",
+    "CONTINUITY_SUBTITLE_RECT_SAFE",
+    "CONTINUITY_SUBTITLE_RECT_UNSAFE",
+    "ContinuityTruthWindow",
     "FixtureTruth",
     "FixtureTruthRegistry",
     "IdentityTruth",
+    "LabeledContinuityFixture",
     "MediaProbeError",
     "MediaToolError",
     "SeededDefect",
     "SpokenTruth",
     "TextTruth",
     "VideoDefectTruth",
+    "clean_continuity_expectations",
+    "continuity_defect_suite",
+    "continuity_proof_text_sha256",
     "decodes_cleanly",
     "detect_black",
     "detect_frozen",

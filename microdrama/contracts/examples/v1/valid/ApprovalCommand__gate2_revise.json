@@ -20,6 +20,7 @@
   "media_hashes": [],
   "package_hash": "86507ed091e685696d9e41f2bc7a6a861b8f059f1f4b2cdd5f4ed7327e1321ac",
   "reason": null,
+  "release_manifest_hash": null,
   "release_scope_hash": null,
   "schema_version": "1.0"
 }

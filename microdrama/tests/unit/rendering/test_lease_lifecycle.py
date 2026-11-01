@@ -10,6 +10,7 @@ from rendering_support import GPU_SECOND_MICRO, T0, RenderWorld
 from microdrama.contracts.enums import PodState, ReceiptKind
 from microdrama.contracts.errors import (
     InvalidTransition,
+    NeedsReconciliation,
     TransientProviderError,
 )
 from microdrama.rendering import client_token_for
@@ -63,15 +64,20 @@ def test_ambiguous_create_timeout_that_created_is_adopted(world: RenderWorld) ->
     assert token_pods[0].pod_id == active.lease.pod_id
 
 
-def test_ambiguous_create_timeout_that_did_not_create_retries_once(world: RenderWorld) -> None:
+def test_ambiguous_create_timeout_that_did_not_create_stays_unknown(
+    world: RenderWorld,
+) -> None:
     ep = world.episode()
     world.provider.queue_scenarios(PodCreateScenario.CREATE_TIMEOUT_NOT_CREATED)
     handle = world.claim(ep, KEY)
-    active = world.leases.ensure_pod(handle.lease.lease_id)
-    assert active.lease.lease_state.value == "ACTIVE"
+    with pytest.raises(NeedsReconciliation):
+        world.leases.ensure_pod(handle.lease.lease_id)
     creates = [c for c in world.provider.calls if c.method == "create_pod"]
-    assert len(creates) == 2  # reconciled in between; never a blind re-create
-    assert len(world.owned_pods()) == 1
+    assert len(creates) == 1  # one create, one owned-token lookup; never a blind re-create
+    assert world.owned_pods() == []  # absence on an eventually consistent list proves nothing
+    # The claim stays durably safe: unpaid, unbound, and reconcilable by the janitor.
+    row = world.lease_row(handle.lease.lease_id)
+    assert row["lease_state"] == "CLAIMED" and row["pod_state"] == "REQUESTED"
 
 
 def test_crash_after_create_is_recovered_from_durable_state(world: RenderWorld) -> None:

@@ -27,6 +27,7 @@ from microdrama.contracts.enums import (
     PrincipalKind,
     QueueName,
 )
+from microdrama.contracts.examples import season_scope
 from microdrama.contracts.infra import Clock, IdGenerator, ObjectStore
 from microdrama.contracts.season import ManagementPolicy
 from microdrama.core.auth import AuthService
@@ -61,8 +62,13 @@ from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_leas
 from microdrama.rendering.pods import PodManager
 from microdrama.rendering.presets import PresetCatalog
 from microdrama.rendering.routing import RouterShotDispatch, ShotRouter
-from microdrama.research import ResearchService, build_research_service
-from microdrama.review import ReviewService
+from microdrama.research import (
+    ResearchService,
+    build_research_service,
+    build_script_maker_service,
+)
+from microdrama.research.models import ComparatorCorpus
+from microdrama.review import IntakeConfig, IntakeService, ReviewService
 from microdrama.story import StoryService, build_story_service
 from microdrama.testing.fakes import (
     FakeClock,
@@ -79,13 +85,29 @@ from microdrama.workers.runtime import QueueSlots, WorkerDeployment
 
 from .catalog import seed_mock_catalog
 from .conditions import build_registry_release_conditions
-from .mocks import script_story_fakes
+from .mocks import MOCK_COMPARATOR_SCENE, MOCK_SOURCES, script_story_fakes
 from .registry_seed import seed_mock_registries
+
+#: Bounded mock pre-Gate-1 research envelope for the owner intake (T044b2).
+#: US$2 of labelled synthetic exposure — configuration, not a live default.
+_MOCK_INTAKE_ENVELOPE_MICRO_USD = 2_000_000
 
 #: After every fixture adapter's internal clock (the Instagram adapter stamps
 #: verified_at at its own fixed 2026-10-27T12:00Z; registry recording refuses a
 #: future verification), and before the pilot's evening release window.
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
+
+
+class _DatabaseClock:
+    """Clock for human-session validity, aligned with approval DB triggers."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def now(self) -> datetime:
+        with self._db.transaction(readonly=True) as tx:
+            return tx.fetchval("SELECT clock_timestamp()")
+
 
 _PLATFORMS = (Platform.YOUTUBE, Platform.TIKTOK, Platform.INSTAGRAM, Platform.FACEBOOK)
 
@@ -103,6 +125,8 @@ class PipelineWorld:
     idempotency: IdempotencyService
     auth: AuthService
     research: ResearchService
+    script_maker: object
+    intake: IntakeService
     story: StoryService
     references: ReferencesService
     review: ReviewService
@@ -313,7 +337,10 @@ def build_pipeline_world(
     budget = BudgetService(db, fake_clock, fake_ids, settings)
     jobs = JobService(db, fake_clock, fake_ids)
     idempotency = IdempotencyService(db)
-    auth = AuthService(db, fake_clock, fake_ids)
+    # Approval migrations validate sessions with PostgreSQL clock_timestamp(). Keep
+    # auth on that same clock while the mock production/provider timeline stays
+    # deterministic at T0 (and advances only when tests explicitly advance it).
+    auth = AuthService(db, _DatabaseClock(db), fake_ids)
 
     research = build_research_service(
         db,
@@ -344,6 +371,27 @@ def build_pipeline_world(
         image_provider=fakes.generation,
         voice_provider=fakes.generation,
         rights=rights,
+    )
+    script_maker = build_script_maker_service(fake_clock, settings, budget=budget, llm=fakes.llm)
+    # The mock intake defaults (T044b2): the labelled fixture source lane, the
+    # mock comparator and the example scope template with a mock research
+    # envelope. A live deployment configures its own or nothing dispatches.
+    intake = IntakeService(
+        db,
+        fake_clock,
+        fake_ids,
+        settings,
+        jobs=jobs,
+        idempotency=idempotency,
+        budget=budget,
+        script_maker=script_maker,
+        research=research,
+        config=IntakeConfig(
+            research_envelope_micro_usd=_MOCK_INTAKE_ENVELOPE_MICRO_USD,
+            allowed_source_ids=MOCK_SOURCES,
+            comparator_corpus=ComparatorCorpus(scenes=[MOCK_COMPARATOR_SCENE]),
+            scope_template=season_scope(),
+        ),
     )
     review = ReviewService(
         db,
@@ -454,6 +502,8 @@ def build_pipeline_world(
         idempotency=idempotency,
         auth=auth,
         research=research,
+        script_maker=script_maker,
+        intake=intake,
         story=story,
         references=references,
         review=review,

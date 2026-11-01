@@ -36,6 +36,20 @@ REFERENCE_CONTROLS = frozenset(
 
 
 @dataclass(frozen=True)
+class SemanticWorkflowInput:
+    """Exact role/source provenance for a named input in the vendor graph."""
+
+    role: str
+    subject_id: str
+    port: str
+    asset_id: str
+    asset_version: int
+    asset_sha256: str
+    rights_route_id: str
+    rights_version: int
+
+
+@dataclass(frozen=True)
 class BoundWorkflow:
     """A validated, ready-to-submit API-format prompt graph plus its identities."""
 
@@ -43,6 +57,10 @@ class BoundWorkflow:
     graph: dict[str, Any]
     workflow_sha256: str
     request_hash: str
+    semantic_inputs: tuple[SemanticWorkflowInput, ...] = ()
+    semantic_template_sha256: str | None = None
+    prompt_manifest_sha256: str | None = None
+    source_hashes: tuple[str, ...] = ()
 
     @property
     def media_kinds(self) -> tuple[str, ...]:
@@ -146,4 +164,4 @@ def bind_workflow(template: WorkflowTemplate, request: RenderRequest) -> BoundWo
     )
 
 
-__all__ = ["BoundWorkflow", "REFERENCE_CONTROLS", "bind_workflow"]
+__all__ = ["BoundWorkflow", "REFERENCE_CONTROLS", "SemanticWorkflowInput", "bind_workflow"]

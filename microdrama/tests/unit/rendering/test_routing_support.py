@@ -194,6 +194,7 @@ def shot(
     importance: Level = Level.MEDIUM,
     speakers: int = 0,
     duration_ms: int = 4_000,
+    prop_ids: tuple[str, ...] = (),
 ) -> Shot:
     speaker_ids = [f"char-{i}" for i in range(speakers)]
     complexity = {
@@ -221,8 +222,8 @@ def shot(
         framing="Medium close-up",
         eyelines="down to the ledger",
         location_id="loc-street-stall",
-        outfit_ids=["outfit-day-1"],
-        prop_ids=["prop-ledger"],
+        outfit_ids=[],
+        prop_ids=list(prop_ids),
         sound="street ambience",
         acceptance_criteria=["prop state legible"],
     )

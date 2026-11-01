@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">Current typed V2 documents for this season, hash-verified on read. Missing or
+unreadable records are shown as unknown — never invented.</p>
+
+<section data-testid="workbench-scope">
+  <h2>Season scope — arc and cast</h2>
+  {% if bench.scope_doc.record_id %}
+  <p><span class="chip">{{ bench.scope_doc.summary | label }}</span>
+     <span class="chip">v{{ bench.scope_doc.version }} {{ bench.scope_doc.content_sha256 | short(8) }}</span></p>
+  {% endif %}
+  {% if bench.arc %}
+  <div class="scroll"><table>
+    <thead><tr><th>Ep</th><th>Summary</th><th>Cliffhanger</th></tr></thead>
+    <tbody>
+    {% for beat in bench.arc %}
+    <tr><td>{{ beat.episode_number }}</td><td>{{ beat.summary }}</td><td>{{ beat.cliffhanger or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="scroll"><table>
+    <thead><tr><th>Character</th><th>Role</th><th>Voice</th></tr></thead>
+    <tbody>
+    {% for c in bench.characters %}
+    <tr><td>{{ c.name_th }} / {{ c.name_en }}</td><td>{{ c.role }}</td><td>{{ c.voice_direction }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">{{ bench.scope_doc.note or 'no arc yet' }}</p>
+  {% endif %}
+</section>
+
+<section data-testid="workbench-bible">
+  <h2>Bible, character logic and secret timing</h2>
+  {% if bench.story_ledger.record_id %}
+  <p>{{ bench.story_ledger.summary }}</p>
+  {% else %}<p class="muted">{{ bench.story_ledger.note }}</p>{% endif %}
+  {% if bench.character_logic %}
+  <ul>{% for doc in bench.character_logic %}<li>{{ doc.summary }} <span class="chip">v{{ doc.version }} {{ doc.content_sha256 | short(8) }}</span></li>{% endfor %}</ul>
+  {% else %}<p class="muted">No current character logic records.</p>{% endif %}
+  {% if bench.secret_ledger.record_id %}
+  <p>{{ bench.secret_ledger.summary }}</p>
+  {% else %}<p class="muted">{{ bench.secret_ledger.note }}</p>{% endif %}
+</section>
+
+<section data-testid="workbench-look">
+  <h2>Look, sheets and wardrobe</h2>
+  {% if bench.style_bible.record_id %}
+  <p>Series look: {{ bench.style_bible.summary }} <span class="chip">v{{ bench.style_bible.version }}</span></p>
+  {% else %}<p class="muted">{{ bench.style_bible.note }}</p>{% endif %}
+  {% if bench.wardrobe_bibles %}
+  <ul>{% for doc in bench.wardrobe_bibles %}<li>{{ doc.summary }} <span class="chip">v{{ doc.version }}</span></li>{% endfor %}</ul>
+  {% else %}<p class="muted">No current wardrobe bibles.</p>{% endif %}
+  {% if bench.prop_sheets %}
+  <ul>{% for doc in bench.prop_sheets %}<li>{{ doc.contract_type }}: {{ doc.summary }}{% if not doc.record_id %} — <span class="muted">{{ doc.note }}</span>{% endif %}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if bench.location_layouts %}
+  <ul>{% for doc in bench.location_layouts %}<li>{{ doc.contract_type }}: {{ doc.summary }}{% if not doc.record_id %} — <span class="muted">{{ doc.note }}</span>{% endif %}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if bench.asset_sheets %}
+  <p>Asset sheets:</p>
+  <ul>{% for doc in bench.asset_sheets %}<li>{{ doc.summary }} <span class="chip">v{{ doc.version }} {{ doc.content_sha256 | short(8) }}</span></li>{% endfor %}</ul>
+  {% else %}<p class="muted">No current asset sheets.</p>{% endif %}
+</section>
+
+{% for episode in bench.episodes %}
+<section data-testid="workbench-episode" data-episode="{{ episode.episode_number }}">
+  <h2>Episode {{ episode.episode_number }} — sections and shots</h2>
+  <p>
+    <span class="chip">{{ episode.state | label }}</span>
+    {% if episode.outcome %}<span class="chip">outcome {{ episode.outcome | label }}</span>{% endif %}
+    {% if episode.pack.record_id %}<span class="chip">pack: {{ episode.pack.summary }}</span>
+    {% else %}<span class="chip muted">{{ episode.pack.note }}</span>{% endif %}
+    {% if episode.directing_manifest.record_id %}<span class="chip">directing: {{ episode.directing_manifest.summary }}</span>
+    {% else %}<span class="chip muted">{{ episode.directing_manifest.note }}</span>{% endif %}
+  </p>
+  {% if episode.sections %}
+  <div class="scroll"><table>
+    <thead><tr><th>#</th><th>Section</th><th>Duration</th><th>Shots</th></tr></thead>
+    <tbody>
+    {% for section in episode.sections %}
+    <tr><td>{{ section.sequence }}</td><td>{{ section.section_id }}</td>
+        <td>{{ section.duration_ms | timecode }}</td>
+        <td>{{ section.shot_ids | join(', ') }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="scroll"><table>
+    <thead><tr><th>#</th><th>Shot</th><th>Scene</th><th>Beat</th><th>Duration</th></tr></thead>
+    <tbody>
+    {% for shot in episode.shots %}
+    <tr><td>{{ shot.sequence }}</td><td>{{ shot.shot_id }}</td>
+        <td>{{ shot.scene_id }}</td><td>{{ shot.beat_id }}</td>
+        <td>{{ shot.duration_ms | timecode }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+  {% if episode.wardrobe_assignments %}
+  <p>Wardrobe:</p>
+  <ul>{% for doc in episode.wardrobe_assignments %}<li>{{ doc.summary }}{% if doc.media_asset_id %}
+    — <a href="/ui/media/{{ doc.media_asset_id }}">view outfit asset</a>{% endif %}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if episode.prompt_manifests %}
+  <p>Shot reference bindings:</p>
+  <ul>{% for doc in episode.prompt_manifests %}<li>{{ doc.summary }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+{% else %}
+<section><p class="muted">No episodes exist for this season yet.</p></section>
+{% endfor %}
+
+{% if bench.unknown_notes %}
+<section class="blockers" data-testid="workbench-unknowns">
+  <h2>Unknown / unverifiable</h2>
+  <ul>{% for note in bench.unknown_notes %}<li>{{ note }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,107 @@
+{
+  "catalog_entry": null,
+  "cost": null,
+  "coverage": [],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "episode_number": 1,
+  "feedback_categories": [
+    "identity_voice",
+    "thai_dialogue",
+    "subtitles",
+    "motivation",
+    "continuity_props",
+    "pacing",
+    "sound",
+    "other"
+  ],
+  "findings": [],
+  "gate_blockers": [],
+  "gate_enabled": true,
+  "management_policy": null,
+  "media": [],
+  "outcome": null,
+  "package": null,
+  "release_approval_manifest": {
+    "approval_manifest_sha256": "37d9edea369286bbcb18dc378c12885e32b389b5aecd17fd1f46f5df13e25aa4",
+    "created_at": "2026-10-30T00:00:00Z",
+    "manifest_id": "b76ef9ac-a824-5faa-bff1-5131ed88ec08",
+    "metadata_policy": {
+      "allow_unapproved_content_changes": false,
+      "cooldown_hours": 24,
+      "max_substantive_edits_first_7_days": 2,
+      "mutable_fields": [
+        "title",
+        "caption",
+        "description",
+        "hashtags",
+        "cover",
+        "cta"
+      ],
+      "policy_id": "approved-slot-metadata",
+      "policy_sha256": "8c4f0122ad94170b48941664b84dc1cd2e1583b9995395cded5382022762ef60",
+      "version": 1
+    },
+    "release_package_hash": "7a578c866971514add3f1254c525e99b775cad6bcf1f9fb505216d176301d41b",
+    "release_package_id": "e2a865b2-2246-5d62-b8a9-85caad2852ae",
+    "schema_version": "2.0",
+    "slots": [
+      {
+        "caption": "เรื่องราวต้นฉบับภาษาไทย",
+        "catalog_version": 1,
+        "content_sha256": "c78ada6d6125a3fb58ef9b48f62ddf79741679c97709355ac75e63921d553265",
+        "cover_asset_id": "d421a326-f54d-544a-aa38-5dab008b1510",
+        "cover_asset_sha256": "e8bde4d03a8e307afdf2cae77735d6cdb837e0e7d27e5b470f2f10424f8996ef",
+        "cover_asset_version": 1,
+        "cover_rights": {
+          "commercial_use": true,
+          "evidence_sha256": [
+            "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+          ],
+          "expires_at": null,
+          "output_release_allowed": true,
+          "rights_route_id": "original-fiction",
+          "rights_version": 1,
+          "status": "ELIGIBLE",
+          "subject_kind": "MODEL_OUTPUT",
+          "subject_ref": "original-fiction-output",
+          "territories": [
+            "TH"
+          ]
+        },
+        "created_at": "2026-10-30T00:00:00Z",
+        "cta_text": "ดูตอนต่อไป",
+        "description": "ละครสั้นเรื่องใหม่",
+        "disclosures": [
+          "AI_GENERATED_CONTENT"
+        ],
+        "hashtags": [
+          "ละครไทย"
+        ],
+        "links": [
+          "https://example.invalid/episode/1"
+        ],
+        "locale": "th-TH",
+        "metadata_id": "af2d12ad-acf1-5166-b8b3-ac180c27d858",
+        "metadata_policy_id": "approved-slot-metadata",
+        "metadata_policy_sha256": "8c4f0122ad94170b48941664b84dc1cd2e1583b9995395cded5382022762ef60",
+        "metadata_policy_version": 1,
+        "metadata_version": 1,
+        "record_id": "d0f819ee-6123-510a-85d6-d6d27292433f",
+        "release_package_hash": "7a578c866971514add3f1254c525e99b775cad6bcf1f9fb505216d176301d41b",
+        "release_package_id": "e2a865b2-2246-5d62-b8a9-85caad2852ae",
+        "schema_version": "2.0",
+        "slot_id": "tiktok-acct-main-full_episode",
+        "source": "EXAMPLE",
+        "title": "ร้านของแม่ ตอนที่ 1",
+        "updated_at": "2026-10-30T00:00:00Z",
+        "valid_from": "2026-10-30T00:00:00Z",
+        "valid_until": null,
+        "version": 1
+      }
+    ],
+    "version": 1
+  },
+  "revision": 7,
+  "schema_version": "1.0",
+  "state": "AWAITING_FINAL_REVIEW"
+}

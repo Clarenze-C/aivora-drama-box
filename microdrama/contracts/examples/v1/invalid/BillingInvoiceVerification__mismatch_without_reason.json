@@ -1,0 +1,16 @@
+{
+  "amount_micro_usd": 1000000,
+  "bucket_identity_sha256": "7517c68d39a1f97eb1bc5b1046e3faeea830ccdcd4230b98a84ef0b13e8aa6db",
+  "bucket_observation_id": "66dddccd-b85b-5de1-8c9c-868e6b5cea28",
+  "bucket_revision": 1,
+  "currency": "USD",
+  "evidence_observed_at": "2026-10-21T00:00:00Z",
+  "evidence_sha256": "2c37464e9fbc5a585499a62555ddae2ce9a28ac264a83886990f34bdef9b38fb",
+  "evidence_source": "CONSOLE",
+  "mismatch_reason": null,
+  "provider_account_ref": "acct:runpod-fixture",
+  "result": "MISMATCHED",
+  "schema_version": "1.0",
+  "verification_id": "c8c31cb8-66f5-59e5-98c7-374a7fd204d5",
+  "verified_at": "2026-10-21T00:05:00Z"
+}

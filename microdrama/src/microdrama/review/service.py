@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
@@ -35,6 +35,7 @@ from microdrama.contracts.enums import (
     FeedbackCategory,
     GateType,
     ManagementActionKind,
+    RightsSubjectKind,
     SeasonState,
 )
 from microdrama.contracts.errors import (
@@ -59,6 +60,13 @@ from microdrama.contracts.routes import (
     SeasonView,
 )
 from microdrama.contracts.season import ApprovalCommand, ManagementPolicy, SeasonScope
+from microdrama.contracts.v2 import (
+    ApprovedMetadataPolicy,
+    ApprovedSlotMetadata,
+    ReleaseApprovalManifest,
+    RightsGrant,
+    RightsStatus,
+)
 from microdrama.core.approvals import record_approval_event
 from microdrama.core.auth import require_human_owner
 from microdrama.core.hooks import ApprovalHook
@@ -81,9 +89,28 @@ from microdrama.review.packages import (
     PackageStatus,
     StoredPackage,
     current_package,
+    current_release_approval_manifest,
     record_package_decision,
+    store_approved_slot_metadata,
+    store_release_approval_manifest,
+)
+from microdrama.review.progress import (
+    EpisodeProgressView,
+    ProgressProjection,
+    SeasonProgressView,
+)
+from microdrama.review.scope import (
+    owner_season_rows,
+    require_asset_access,
+    require_episode_access,
+    require_season_access,
+    scoped_owner_id,
+    season_is_owned_by,
 )
 from microdrama.review.signin import SIGNIN_TOKEN_TTL_SECONDS, SignInTokens
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; forms imports this module at runtime
+    from microdrama.review.forms import Gate2CoverChoice, Gate2MetadataForm, Gate2SlotForm
 
 # Repair stages in pipeline order; the smallest affected stage is the one a revision returns to.
 _STAGE_RANK: tuple[EpisodeState, ...] = (
@@ -227,7 +254,13 @@ def _check_gate_fields(gate: GateType, route_entity_id: UUID, command: ApprovalC
 
 
 class ReviewService:
-    """Review reads and the two gate decisions. Construct once per process."""
+    """Owner-scoped review reads, the two gate decisions and progress projections.
+
+    Every read and decision is limited to the seasons the acting owner is linked
+    to through ``season_owners`` (T044a): another owner's — or an unassigned
+    legacy — season answers exactly like a missing one (``NotFound``), and a
+    service credential is refused by the route guard before anything is read.
+    """
 
     def __init__(
         self,
@@ -253,6 +286,7 @@ class ReviewService:
         self._release_conditions_fn = release_conditions_fn
         self._approval_hooks = tuple(approval_hooks)
         self._identity_lock_hook = identity_lock_hook
+        self._progress = ProgressProjection(db, budget)
 
     # --- helpers -------------------------------------------------------------------
 
@@ -309,22 +343,29 @@ class ReviewService:
             uncertainty_notes=list(scope.uncertainty_notes),
         )
 
-    # --- season reads --------------------------------------------------------------
+    # --- season reads (owner-scoped) -------------------------------------------------
 
-    def season_proposals(self) -> list[SeasonProposalSummary]:
-        """Every season with its newest proposal (no secrets: scope text only, no credentials)."""
+    def season_proposals(self, principal: Principal) -> list[SeasonProposalSummary]:
+        """The owner's seasons with their newest proposal (scope text only, no secrets).
+
+        Seasons linked to another owner — or legacy seasons with no verified owner
+        link at all — are absent from the enumeration.
+        """
+        require_human_owner(principal)
         with self._db.transaction(readonly=True) as tx:
             out: list[SeasonProposalSummary] = []
-            for season in tx.fetchall("SELECT * FROM seasons ORDER BY created_at, id"):
+            for season in owner_season_rows(tx, principal):
                 proposal = self._current_proposal(tx, season["id"])
                 if proposal is not None:
                     out.append(self._summary(tx, season, proposal))
         return out
 
-    def season_view(self, season_id: UUID) -> SeasonView:
+    def season_view(self, principal: Principal, season_id: UUID) -> SeasonView:
+        require_human_owner(principal)
         with self._db.transaction(readonly=True) as tx:
+            require_season_access(tx, principal, season_id)
             season = tx.fetchone("SELECT * FROM seasons WHERE id = %s", (season_id,))
-            if season is None:
+            if season is None:  # pragma: no cover - require_season_access raised already
                 raise NotFound(f"season {season_id} not found")
             proposal = self._current_proposal(tx, season_id)
             if proposal is None:
@@ -358,7 +399,9 @@ class ReviewService:
         now = self._now()
         correlation = self._ids.new_id()
         season = tx.fetchone("SELECT * FROM seasons WHERE id = %s FOR UPDATE", (season_id,))
-        if season is None:
+        if season is None or not season_is_owned_by(tx, season_id, scoped_owner_id(tx, principal)):
+            # Another owner's (or an unassigned legacy) season answers exactly
+            # like a missing one: no private bytes, no existence signal.
             raise NotFound(f"season {season_id} not found")
         if season["state"] != SeasonState.PROPOSED.value:
             raise InvalidTransition(
@@ -529,18 +572,31 @@ class ReviewService:
             for row in episode_findings(tx, episode_id)
         ]
 
-    def qa_finding_rows(self, episode_id: UUID) -> list[QaFindingRow]:
+    def qa_finding_rows(self, principal: Principal, episode_id: UUID) -> list[QaFindingRow]:
         """Every QA finding of the episode, all cycles, with its cycle and gate effect."""
+        require_human_owner(principal)
         with self._db.transaction(readonly=True) as tx:
-            if tx.fetchone("SELECT id FROM episodes WHERE id = %s", (episode_id,)) is None:
-                raise NotFound(f"episode {episode_id} not found")
+            require_episode_access(tx, principal, episode_id)
             return self._finding_rows(tx, episode_id)
 
-    def episode_review(self, episode_id: UUID) -> EpisodeReviewView:
+    def episode_review(self, principal: Principal, episode_id: UUID) -> EpisodeReviewView:
         """The Gate 2 review: package, media, QA with every unknown, cost, policy and blockers."""
+        require_human_owner(principal)
         with self._db.transaction() as tx:
+            require_episode_access(tx, principal, episode_id)
             episode, stored, blockers = self._review_state(tx, episode_id)
             package = stored.package if stored is not None else None
+            manifest = (
+                current_release_approval_manifest(
+                    tx, package_id=stored.row_id, package_hash=stored.package_hash
+                )
+                if stored is not None
+                else None
+            )
+            mode = tx.fetchval("SELECT execution_mode FROM md_runtime_mode WHERE singleton = true")
+            view_blockers = list(blockers)
+            if mode != "OFFLINE_MOCK" and manifest is None:
+                view_blockers.append("current V2 Gate 2 release manifest is missing or stale")
             media, _types = self._media_links(tx, package)
             finding_rows = self._finding_rows(tx, episode_id)
             coverage = self._coverage(tx, episode_id)
@@ -552,8 +608,9 @@ class ReviewService:
             outcome=EpisodeOutcome(episode["outcome"]) if episode["outcome"] else None,
             revision=episode["revision"],
             package=package,
-            gate_enabled=not blockers,
-            gate_blockers=blockers,
+            release_approval_manifest=manifest,
+            gate_enabled=not view_blockers,
+            gate_blockers=view_blockers,
             media=media,
             findings=[row.finding for row in finding_rows],
             coverage=coverage,
@@ -561,8 +618,8 @@ class ReviewService:
             management_policy=approved.management_policy if approved is not None else None,
         )
 
-    def episode_page(self, episode_id: UUID) -> EpisodePage:
-        view = self.episode_review(episode_id)
+    def episode_page(self, principal: Principal, episode_id: UUID) -> EpisodePage:
+        view = self.episode_review(principal, episode_id)
         with self._db.transaction(readonly=True) as tx:
             stored = current_package(tx, episode_id)
             _media, media_types = self._media_links(tx, view.package)
@@ -630,21 +687,393 @@ class ReviewService:
             finding_rows=finding_rows,
         )
 
-    def media_file(self, asset_id: UUID) -> MediaFile:
-        """Private object for an owner-authenticated stream; the caller checks the session."""
+    def media_file(self, principal: Principal, asset_id: UUID) -> MediaFile:
+        """Private object for an owner-authenticated stream of the owner's own asset.
+
+        Scope follows the linked episode when the asset carries one (render
+        outputs have no asset season of their own); a season-level asset
+        without an episode follows its own season. Assets with no scope at
+        all — or an inconsistent season/episode pair — answer like missing
+        ones, as does anything outside the owner's seasons.
+        """
+        require_human_owner(principal)
         with self._db.transaction(readonly=True) as tx:
-            row = tx.fetchone(
-                "SELECT object_key, media_type, sha256 FROM assets WHERE id = %s", (asset_id,)
-            )
-        if row is None:
-            raise NotFound(f"asset {asset_id} not found")
+            row = require_asset_access(tx, principal, asset_id)
         return MediaFile(
             path=self._store.local_path(row["object_key"]),
             media_type=row["media_type"],
             sha256=row["sha256"],
         )
 
+    # --- owner progress projection (T044a) ------------------------------------------
+
+    def episode_progress(self, principal: Principal, episode_id: UUID) -> EpisodeProgressView:
+        """The read-only progress projection for one of the owner's episodes."""
+        require_human_owner(principal)
+        with self._db.transaction(readonly=True) as tx:
+            episode = require_episode_access(tx, principal, episode_id)
+            return self._progress.episode_view(dict(episode))
+
+    def season_progress(self, principal: Principal, season_id: UUID) -> SeasonProgressView:
+        """The read-only progress projection for the owner's season and its episodes."""
+        require_human_owner(principal)
+        with self._db.transaction(readonly=True) as tx:
+            require_season_access(tx, principal, season_id)
+            season = tx.fetchone("SELECT * FROM seasons WHERE id = %s", (season_id,))
+            episodes = tx.fetchall(
+                "SELECT * FROM episodes WHERE season_id = %s ORDER BY episode_number, id",
+                (season_id,),
+            )
+            return self._progress.season_view(dict(season), [dict(row) for row in episodes])
+
+    # --- gate 2 owner metadata form (T044b) ------------------------------------------
+
+    def gate2_metadata_form(self, principal: Principal, episode_id: UUID) -> Gate2MetadataForm:
+        """The owner Gate 2 metadata form, loaded server-side from current rows.
+
+        Every identity the owner must not choose is bound here: the package row
+        id/hash, the exact current slots (``slot-<dedupe_key>``), each slot's
+        declared disclosures, the cover assets with their versions/hashes and the
+        rights that back them, the episode's current catalog version/URLs, and
+        the next metadata-policy version. The POST path re-loads this context —
+        under the episode row lock, so no concurrent submission can move these
+        rows between the load and the sealed manifest — and rejects anything a
+        submitted form asserts that these rows do not back.
+        """
+        require_human_owner(principal)
+        with self._db.transaction(readonly=True) as tx:
+            episode = require_episode_access(tx, principal, episode_id)
+            return self._gate2_metadata_context(tx, dict(episode))
+
+    def _gate2_metadata_context(self, tx: Tx, episode: dict[str, Any]) -> Gate2MetadataForm:
+        """The form context for one episode row, inside the caller's transaction.
+
+        The caller has already verified owner scope; on the submit path it also
+        holds the episode row lock, which is what makes the next metadata and
+        policy versions this context derives race-free.
+        """
+        from microdrama.review.forms import Gate2MetadataForm
+
+        episode_id = episode["id"]
+        stored = current_package(tx, episode_id)
+        blockers: list[str] = []
+        if stored is None:
+            blockers.append("no current release package is prepared")
+            slots: tuple[Gate2SlotForm, ...] = ()
+            package_hash = "0" * 64
+            package_version = 0
+            policy_id = "gate2-metadata-unbound"
+            next_policy_version = 1
+        else:
+            at_gate = episode["state"] == EpisodeState.AWAITING_FINAL_REVIEW.value and (
+                episode["outcome"] is None
+            )
+            if not at_gate:
+                blockers.append(f"episode is {episode['state']}, not at Gate 2")
+            if stored.status not in (PackageStatus.READY, PackageStatus.BLOCKED):
+                blockers.append(
+                    f"package v{stored.version} is {stored.status.value}, not an undecided package"
+                )
+            slots = tuple(self._slot_forms(tx, stored))
+            package_hash = stored.package_hash
+            package_version = stored.version
+            policy_id = f"gate2-metadata-{stored.row_id.hex[:24]}"
+            latest = tx.fetchone(
+                "SELECT max(version) AS version FROM release_approval_manifests "
+                "WHERE release_package_id = %s",
+                (stored.row_id,),
+            )
+            next_policy_version = (int(latest["version"]) if latest["version"] else 0) + 1
+        catalog = tx.fetchone(
+            "SELECT catalog_version, public_url, member_url FROM membership_catalog "
+            "WHERE episode_id = %s AND current",
+            (episode_id,),
+        )
+        catalog_version = int(catalog["catalog_version"]) if catalog else None
+        catalog_links = tuple(
+            sorted(
+                {catalog[key] for key in ("public_url", "member_url") if catalog and catalog[key]}
+            )
+        )
+        return Gate2MetadataForm(
+            episode_id=episode_id,
+            release_package_id=stored.row_id if stored is not None else UUID(int=0),
+            package_hash=package_hash,
+            package_version=package_version,
+            slots=slots,
+            catalog_version=catalog_version,
+            catalog_links=catalog_links,
+            policy_id=policy_id,
+            next_policy_version=next_policy_version,
+            open=not blockers,
+            blockers=tuple(blockers),
+        )
+
+    def _slot_forms(self, tx: Tx, stored: StoredPackage) -> list[Gate2SlotForm]:
+        from microdrama.review.forms import Gate2SlotForm
+
+        covers = self._cover_choices(tx, stored)
+        forms: list[Gate2SlotForm] = []
+        for plan in stored.package.release_scope:
+            slot_id = f"slot-{plan.slot.dedupe_key}"
+            counted = tx.fetchone(
+                "SELECT count(*) AS n FROM approved_slot_metadata "
+                "WHERE release_package_id = %s AND slot_id = %s",
+                (stored.row_id, slot_id),
+            )
+            forms.append(
+                Gate2SlotForm(
+                    slot_id=slot_id,
+                    platform=plan.slot.platform.value,
+                    account_ref=plan.slot.account_ref,
+                    slot_kind=plan.slot_kind.value,
+                    locale=plan.slot.locale,
+                    disclosures=tuple(kind.value for kind in plan.disclosures),
+                    covers=covers,
+                    next_metadata_version=int(counted["n"]) + 1,
+                    capability_blockers=self._capability_blockers(tx, plan),
+                )
+            )
+        return forms
+
+    def _capability_blockers(self, tx: Tx, plan: Any) -> tuple[str, ...]:
+        """Why the slot's pinned capability binding cannot carry a metadata preparation.
+
+        The exact (capability_id, version) row the plan pins must exist AND be
+        usable as this slot's binding: still the current record for its route,
+        enabled with verified evidence, and registered for the slot's own
+        platform and account — a row that merely shares the pinned identity is
+        never enough, and the slot's destination is never inferred from the
+        capability id alone. Whether a destination currently supports each
+        declared disclosure stays a live submit condition the publishing lane
+        re-verifies (and HELDs) at transport time; it is not fixed by this form
+        and is not re-decided here.
+        """
+        where = f"{plan.slot.platform.value}/{plan.slot.account_ref}"
+        pin = f"capability {plan.capability_id} v{plan.capability_version} for {where}"
+        row = tx.fetchone(
+            "SELECT platform, account_ref, enabled, current, verified_at, "
+            "jsonb_array_length(evidence_sources) AS evidence_count "
+            "FROM capability_registry WHERE capability_id = %s AND version = %s",
+            (plan.capability_id, plan.capability_version),
+        )
+        if row is None:
+            return (f"{pin} is not registered",)
+        blockers: list[str] = []
+        if (
+            row["platform"] != plan.slot.platform.value
+            or row["account_ref"] != plan.slot.account_ref
+        ):
+            blockers.append(
+                f"{pin} is registered for {row['platform']}/{row['account_ref']}, "
+                "not the platform/account this slot publishes to"
+            )
+        if not row["current"]:
+            blockers.append(f"{pin} is superseded (not the current record for its route)")
+        if not row["enabled"] or not row["verified_at"] or int(row["evidence_count"] or 0) < 1:
+            blockers.append(f"{pin} is not enabled with verified evidence")
+        return tuple(blockers)
+
+    def _cover_choices(self, tx: Tx, stored: StoredPackage) -> tuple[Gate2CoverChoice, ...]:
+        from microdrama.review.forms import Gate2CoverChoice
+
+        choices: list[Gate2CoverChoice] = []
+        for media in stored.package.media:
+            if media.role != "cover":
+                continue
+            asset = tx.fetchone(
+                "SELECT version, sha256, state, license_refs FROM assets WHERE id = %s",
+                (media.asset_id,),
+            )
+            rights: RightsGrant | None = None
+            reason: str | None = None
+            if asset is None or asset["state"] != "ACCEPTED" or asset["sha256"] != media.sha256:
+                reason = "cover asset is missing, stale, or not accepted"
+            else:
+                rights, reason = self._output_rights(tx, asset)
+            choices.append(
+                Gate2CoverChoice(
+                    asset_id=media.asset_id,
+                    version=int(asset["version"]) if asset is not None else 0,
+                    sha256=media.sha256,
+                    rights=rights,
+                    blocked_reason=reason,
+                )
+            )
+        return tuple(choices)
+
+    def _output_rights(
+        self, tx: Tx, asset: dict[str, Any]
+    ) -> tuple[RightsGrant | None, str | None]:
+        """The ELIGIBLE MODEL_OUTPUT grant for the asset's single recorded license route.
+
+        A cover asset names its governing license route(s) in ``license_refs``
+        (the way creative derivatives record their sources' routes). Exactly one
+        route with one current ELIGIBLE ``MODEL_OUTPUT`` record that allows
+        commercial output release and has not expired binds a grant; anything
+        else — no route, several routes, no record, ineligible or expired rights —
+        leaves the cover unselectable, exactly what the live submit path would
+        refuse later. No rights are ever inferred from a title or a worker path.
+        """
+        routes = [str(route) for route in (asset["license_refs"] or [])]
+        if not routes:
+            return None, "the cover asset records no license route"
+        if len(set(routes)) != 1:
+            return None, "the cover asset records more than one license route; it is ambiguous"
+        row = tx.fetchone(
+            "SELECT rights_route_id, version, subject_ref, territories, commercial_use, "
+            "output_release_allowed, expires_at, evidence, status FROM rights_registry "
+            "WHERE rights_route_id = %s AND subject_kind = 'MODEL_OUTPUT' AND current",
+            (routes[0],),
+        )
+        if row is None:
+            return None, "no current MODEL_OUTPUT rights record for the cover's license route"
+        if row["status"] != RightsStatus.ELIGIBLE.value:
+            return None, f"cover rights are {row['status']}, not eligible"
+        if not row["commercial_use"] or not row["output_release_allowed"]:
+            return None, "cover rights do not permit commercial output release"
+        if row["expires_at"] is not None and self._now() >= row["expires_at"]:
+            return None, "cover rights have expired"
+        evidence = list(row["evidence"] or [])
+        hashes = [
+            item["sha256"] for item in evidence if isinstance(item, dict) and item.get("sha256")
+        ]
+        grant = RightsGrant(
+            rights_route_id=row["rights_route_id"],
+            subject_kind=RightsSubjectKind.MODEL_OUTPUT,
+            subject_ref=row["subject_ref"],
+            rights_version=int(row["version"]),
+            status=RightsStatus.ELIGIBLE,
+            territories=list(row["territories"] or []),
+            commercial_use=True,
+            output_release_allowed=True,
+            expires_at=row["expires_at"],
+            evidence_sha256=hashes or [canonical_hash(evidence)],
+        )
+        return grant, None
+
+    def submit_gate2_metadata(
+        self, principal: Principal, episode_id: UUID, form: Any
+    ) -> ReleaseApprovalManifest:
+        """Validate an owner's submitted Gate 2 metadata form and seal its manifest.
+
+        The whole preparation is one transaction under the episode row lock: the
+        form context (package, slots, covers, capability bindings, catalog, next
+        metadata/policy versions) is loaded after the lock, the posted form is
+        converted against that locked context, and the slot metadata and manifest
+        are stored in the same transaction. Two concurrent submissions of one
+        form therefore cannot race on a version — each derives the next versions
+        under the lock — and a submission whose binding has gone stale fails
+        typed (``StaleRevision``/``GateNotReady``) leaving no partial rows.
+        Records no ``ApprovalEvent`` and does not move the Gate 2 decision: the
+        exact owner metadata and policy are persisted as the manifest the same
+        gate's Approve & schedule then binds by hash. A stale package, a
+        missing, duplicate or foreign slot, an unbacked cover/rights/link/
+        disclosure/capability binding, or a malformed policy is rejected before
+        anything is stored.
+        """
+        from microdrama.review.forms import owner_metadata_from_form
+
+        require_human_owner(principal)
+        with self._db.transaction() as tx:
+            episode = tx.fetchone("SELECT * FROM episodes WHERE id = %s FOR UPDATE", (episode_id,))
+            if episode is None or not season_is_owned_by(
+                tx, episode["season_id"], scoped_owner_id(tx, principal)
+            ):
+                raise NotFound(f"episode {episode_id} not found")
+            meta = self._gate2_metadata_context(tx, episode)
+            policy, slots = owner_metadata_from_form(
+                form, meta, new_id=self._ids.new_id, now=self._now()
+            )
+            return self._prepare_locked_manifest(tx, episode, metadata_policy=policy, slots=slots)
+
     # --- gate 2 decisions ----------------------------------------------------------
+
+    def prepare_release_approval_manifest(
+        self,
+        principal: Principal,
+        episode_id: UUID,
+        *,
+        metadata_policy: ApprovedMetadataPolicy,
+        slots: list[ApprovedSlotMetadata],
+    ) -> ReleaseApprovalManifest:
+        """Persist owner-supplied immutable metadata and its exact Gate 2 manifest."""
+        require_human_owner(principal)
+        if not isinstance(metadata_policy, ApprovedMetadataPolicy) or not slots:
+            raise SchemaInvalid("approved metadata policy and at least one slot are required")
+        with self._db.transaction() as tx:
+            episode = tx.fetchone("SELECT * FROM episodes WHERE id = %s FOR UPDATE", (episode_id,))
+            if episode is None or not season_is_owned_by(
+                tx, episode["season_id"], scoped_owner_id(tx, principal)
+            ):
+                raise NotFound(f"episode {episode_id} not found")
+            return self._prepare_locked_manifest(
+                tx, episode, metadata_policy=metadata_policy, slots=slots
+            )
+
+    def _prepare_locked_manifest(
+        self,
+        tx: Tx,
+        episode: dict[str, Any],
+        *,
+        metadata_policy: ApprovedMetadataPolicy,
+        slots: list[ApprovedSlotMetadata],
+    ) -> ReleaseApprovalManifest:
+        """Store slot metadata and the sealed manifest inside the caller's locked tx.
+
+        The caller holds the episode row lock and has verified owner scope, so
+        the version numbers derived here (each slot's metadata version comes
+        from the rows just read, the manifest version from ``max(version) + 1``)
+        cannot interleave with another preparation for the same episode.
+        """
+        episode_id = episode["id"]
+        now = self._now()
+        stored = current_package(tx, episode_id)
+        if stored is None or stored.status not in (PackageStatus.READY, PackageStatus.BLOCKED):
+            raise GateNotReady("metadata can only be prepared for the current undecided package")
+        if episode["state"] != EpisodeState.AWAITING_FINAL_REVIEW.value:
+            raise GateNotReady("metadata can only be prepared while the episode is at Gate 2")
+        expected = {f"slot-{plan.slot.dedupe_key}" for plan in stored.package.release_scope}
+        supplied = {slot.slot_id for slot in slots}
+        if supplied != expected or len(supplied) != len(slots):
+            raise SchemaInvalid("owner metadata must identify every exact release slot once")
+        for slot in slots:
+            if (
+                slot.release_package_id != stored.row_id
+                or slot.release_package_hash != stored.package_hash
+                or slot.source != "OWNER_APPROVED"
+                or (
+                    slot.metadata_policy_id,
+                    slot.metadata_policy_version,
+                    slot.metadata_policy_sha256,
+                )
+                != (
+                    metadata_policy.policy_id,
+                    metadata_policy.version,
+                    metadata_policy.policy_sha256,
+                )
+            ):
+                raise SchemaInvalid(
+                    "slot metadata must be owner supplied and bind this package and policy"
+                )
+            store_approved_slot_metadata(tx, slot)
+        latest = tx.fetchone(
+            "SELECT max(version) AS version FROM release_approval_manifests "
+            "WHERE release_package_id = %s",
+            (stored.row_id,),
+        )
+        manifest = ReleaseApprovalManifest.seal(
+            schema_version="2.0",
+            manifest_id=self._ids.new_id(),
+            version=(int(latest["version"]) if latest and latest["version"] else 0) + 1,
+            created_at=now,
+            release_package_id=stored.row_id,
+            release_package_hash=stored.package_hash,
+            metadata_policy=metadata_policy,
+            slots=slots,
+        )
+        store_release_approval_manifest(tx, manifest)
+        return manifest
 
     def decide_episode(
         self, principal: Principal, episode_id: UUID, command: ApprovalCommand
@@ -698,7 +1127,9 @@ class ReviewService:
         now = self._now()
         correlation = self._ids.new_id()
         episode = tx.fetchone("SELECT * FROM episodes WHERE id = %s FOR UPDATE", (episode_id,))
-        if episode is None:
+        if episode is None or not season_is_owned_by(
+            tx, episode["season_id"], scoped_owner_id(tx, principal)
+        ):
             raise NotFound(f"episode {episode_id} not found")
         if command.expected_revision != episode["revision"]:
             raise StaleRevision(
@@ -710,6 +1141,51 @@ class ReviewService:
         if stored is None:
             raise StaleRevision("no current release package to bind this decision to")
         self._check_binding(command, stored)
+
+        if command.action is ApprovalAction.APPROVE and command.release_manifest_hash is None:
+            mode = tx.fetchval("SELECT execution_mode FROM md_runtime_mode WHERE singleton = true")
+            if mode != "OFFLINE_MOCK":
+                raise GateNotReady("live Gate 2 approval requires a V2 release manifest")
+
+        if command.release_manifest_hash is not None:
+            current_manifest = current_release_approval_manifest(
+                tx, package_id=stored.row_id, package_hash=stored.package_hash
+            )
+            if current_manifest is None or (
+                current_manifest.approval_manifest_sha256 != command.release_manifest_hash
+            ):
+                raise StaleRevision("Gate 2 command does not name the current displayable manifest")
+            manifest_row = tx.fetchone(
+                "SELECT payload FROM release_approval_manifests WHERE manifest_hash = %s "
+                "AND release_package_id = %s AND release_package_hash = %s",
+                (command.release_manifest_hash, stored.row_id, stored.package_hash),
+            )
+            if manifest_row is None:
+                raise StaleRevision(
+                    "Gate 2 release manifest is missing or belongs to another package"
+                )
+            from microdrama.contracts.v2 import ReleaseApprovalManifest
+
+            manifest = ReleaseApprovalManifest.model_validate(manifest_row["payload"])
+            rows = tx.fetchall(
+                "SELECT slot_id, metadata_id, metadata_version, content_sha256, payload "
+                "FROM approved_slot_metadata WHERE release_package_id = %s AND is_current",
+                (stored.row_id,),
+            )
+            current = {row["slot_id"]: row for row in rows}
+            for slot in manifest.slots:
+                row = current.get(slot.slot_id)
+                if row is None or (
+                    row["metadata_id"],
+                    row["metadata_version"],
+                    row["content_sha256"],
+                ) != (slot.metadata_id, slot.metadata_version, slot.content_sha256):
+                    raise StaleRevision(
+                        "Gate 2 manifest contains stale approved slot metadata",
+                        slot_id=slot.slot_id,
+                    )
+            if len(current) != len(manifest.slots):
+                raise StaleRevision("Gate 2 manifest does not cover every current release slot")
 
         if command.action is ApprovalAction.APPROVE:
             blockers = gate2_blockers(

@@ -13,6 +13,7 @@
     "shutdown_reserve_micro_usd": 0,
     "synthetic_fake_micro_usd": 4100000
   },
+  "creative_derivatives": null,
   "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
   "episode_number": 1,
   "gate_blockers": [],

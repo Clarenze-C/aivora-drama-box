@@ -65,6 +65,7 @@ from microdrama.contracts.providers import (
     SourceQuery,
     SourceSearchResult,
 )
+from microdrama.contracts.season import SeasonScope
 from microdrama.persistence.db import Database, insert_row, jsonb, update_with_revision
 from microdrama.research.dedupe import DedupeConfig, cluster_comments, extract_themes
 from microdrama.research.models import (
@@ -236,6 +237,11 @@ class ResearchService:
         return self._config
 
     @property
+    def llm(self) -> LLMProvider | None:
+        """The composed model provider, so callers can fail closed before dispatch."""
+        return self._llm
+
+    @property
     def registry(self) -> dict[str, SourceAdapterRecord]:
         return dict(self._registry)
 
@@ -265,6 +271,14 @@ class ResearchService:
                 (season_id,),
             )
         return [self._entry_view(row) for row in rows]
+
+    def proposal_scope(self, proposal_id: UUID) -> SeasonScope:
+        """Return the exact persisted scope, including provenance fields Gate 1 hashes."""
+        with self._db.transaction(readonly=True) as tx:
+            row = tx.fetchone("SELECT scope FROM season_proposals WHERE id = %s", (proposal_id,))
+        if row is None:
+            raise NotFound("season proposal not found", proposal_id=str(proposal_id))
+        return SeasonScope.model_validate(row["scope"])
 
     @staticmethod
     def _entry_view(row: dict) -> LedgerEntryView:

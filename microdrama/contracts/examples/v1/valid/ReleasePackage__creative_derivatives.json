@@ -1,0 +1,246 @@
+{
+  "caption_track_ids": [
+    "9dea611d-05b5-54db-a58d-5be4aec421a1",
+    "13f3fa60-45e2-5a00-a6fa-2e0169b24c02"
+  ],
+  "cast_package_asset_ids": [
+    "9e4e3788-e27b-51f4-9b61-e36ad4c165ec",
+    "d50ea27e-7384-58dc-b82b-59be51835959"
+  ],
+  "cost": {
+    "accrued_micro_usd": 0,
+    "episode_cap_micro_usd": 10000000,
+    "remaining_micro_usd": 5900000,
+    "reserved_outstanding_micro_usd": 0,
+    "settled_micro_usd": 4100000,
+    "shutdown_reserve_micro_usd": 0,
+    "synthetic_fake_micro_usd": 4100000
+  },
+  "creative_derivatives": [
+    {
+      "approved_reveal_episode": 1,
+      "asset_id": "a92bb089-e25d-5ae9-b4c5-11ec07764794",
+      "asset_sha256": "d7965e2a87d13042006c5253231be84df3f6953309152a6d125fe9750956e848",
+      "asset_version": 1,
+      "cta_text": "Watch episode one",
+      "derivation_manifest_sha256": "9a640af9608c844d97fe0ffcec1a496c98b7cc1e8b8d8e49837d617c11a4ad79",
+      "derivative_type": "POSTER",
+      "duration_ms": null,
+      "no_release_obligation": true,
+      "platform_safe_zones": [
+        {
+          "bottom_bp": 1200,
+          "cta_box": {
+            "height_bp": 900,
+            "width_bp": 5600,
+            "x_bp": 700,
+            "y_bp": 7400
+          },
+          "left_bp": 500,
+          "platform": "TIKTOK",
+          "right_bp": 500,
+          "title_box": {
+            "height_bp": 900,
+            "width_bp": 5600,
+            "x_bp": 700,
+            "y_bp": 1500
+          },
+          "top_bp": 600
+        },
+        {
+          "bottom_bp": 1200,
+          "cta_box": {
+            "height_bp": 900,
+            "width_bp": 5600,
+            "x_bp": 700,
+            "y_bp": 7400
+          },
+          "left_bp": 500,
+          "platform": "YOUTUBE",
+          "right_bp": 500,
+          "title_box": {
+            "height_bp": 900,
+            "width_bp": 5600,
+            "x_bp": 700,
+            "y_bp": 1500
+          },
+          "top_bp": 600
+        }
+      ],
+      "readability_evidence_sha256": "55c82b203c204b593f3227edc87bf1a4425c6c2dd4b2e8c47f360f87cc956c0a",
+      "reveal_boundary_ms": null,
+      "sources": [
+        {
+          "asset_id": "9e4e3788-e27b-51f4-9b61-e36ad4c165ec",
+          "asset_sha256": "1636a61797be3fe8daa9ed3311d6754f57954c11bac4ab56f4be716edf3efca7",
+          "asset_version": 1,
+          "rights": {
+            "commercial_use": true,
+            "evidence_sha256": [
+              "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+            ],
+            "expires_at": null,
+            "output_release_allowed": true,
+            "rights_route_id": "original-fiction",
+            "rights_version": 1,
+            "status": "ELIGIBLE",
+            "subject_kind": "MODEL_OUTPUT",
+            "subject_ref": "original-fiction-output",
+            "territories": [
+              "TH"
+            ]
+          },
+          "role": "CHARACTER",
+          "source_in_ms": null,
+          "source_out_ms": null
+        }
+      ],
+      "title_text": "Mother's Stall"
+    },
+    {
+      "approved_reveal_episode": 1,
+      "asset_id": "938e2992-5ffb-5432-8d9a-431bd2f1ba9d",
+      "asset_sha256": "604020d8f34a3a28c2a0d432e06b36f0287098af50898bc811b0a71c76bbc88f",
+      "asset_version": 1,
+      "cta_text": "Watch the full episode",
+      "derivation_manifest_sha256": "8f6d39bf3bbb2cfdd4a1a0bbd99e6147b37210bbfe126b57c7fe9329538034b2",
+      "derivative_type": "EPISODE_ONE_PREVIEW",
+      "duration_ms": 5000,
+      "no_release_obligation": true,
+      "platform_safe_zones": [
+        {
+          "bottom_bp": 1200,
+          "cta_box": {
+            "height_bp": 900,
+            "width_bp": 5600,
+            "x_bp": 700,
+            "y_bp": 7400
+          },
+          "left_bp": 500,
+          "platform": "TIKTOK",
+          "right_bp": 500,
+          "title_box": null,
+          "top_bp": 600
+        }
+      ],
+      "readability_evidence_sha256": null,
+      "reveal_boundary_ms": 40000,
+      "sources": [
+        {
+          "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+          "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+          "asset_version": 1,
+          "rights": {
+            "commercial_use": true,
+            "evidence_sha256": [
+              "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+            ],
+            "expires_at": null,
+            "output_release_allowed": true,
+            "rights_route_id": "original-fiction",
+            "rights_version": 1,
+            "status": "ELIGIBLE",
+            "subject_kind": "MODEL_OUTPUT",
+            "subject_ref": "original-fiction-output",
+            "territories": [
+              "TH"
+            ]
+          },
+          "role": "FOOTAGE",
+          "source_in_ms": 30000,
+          "source_out_ms": 35000
+        },
+        {
+          "asset_id": "b27acbcf-656f-5126-a803-947b071e3a3a",
+          "asset_sha256": "4abf6ecb7a294f2571edf226ba38430b81a9f2c52b305b00a363898e76cf2ecb",
+          "asset_version": 1,
+          "rights": {
+            "commercial_use": true,
+            "evidence_sha256": [
+              "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+            ],
+            "expires_at": null,
+            "output_release_allowed": true,
+            "rights_route_id": "original-fiction",
+            "rights_version": 1,
+            "status": "ELIGIBLE",
+            "subject_kind": "MODEL_OUTPUT",
+            "subject_ref": "original-fiction-output",
+            "territories": [
+              "TH"
+            ]
+          },
+          "role": "AUDIO",
+          "source_in_ms": 0,
+          "source_out_ms": 5000
+        }
+      ],
+      "title_text": null
+    }
+  ],
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "episode_number": 1,
+  "gate_blockers": [],
+  "hook_experiment_id": "c43a046e-936e-57fd-a3a8-5ad1e686dc91",
+  "management_policy_hash": "3baf0ca0753062c9c6cae100c24cf27c75d3207289dd4164f3a4fd4e07960309",
+  "media": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "role": "master",
+      "sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755"
+    },
+    {
+      "asset_id": "9e4e3788-e27b-51f4-9b61-e36ad4c165ec",
+      "role": "contact_sheet",
+      "sha256": "1636a61797be3fe8daa9ed3311d6754f57954c11bac4ab56f4be716edf3efca7"
+    },
+    {
+      "asset_id": "b27acbcf-656f-5126-a803-947b071e3a3a",
+      "role": "dialogue_audio",
+      "sha256": "4abf6ecb7a294f2571edf226ba38430b81a9f2c52b305b00a363898e76cf2ecb"
+    }
+  ],
+  "package_hash": "a8b61800d755ac5f706620248deb70ed2512747469cd2480de1afc9cf8b38830",
+  "package_id": "4900c0de-87b3-5e0a-8631-b594ecdf5f71",
+  "qa": {
+    "blocking_finding_ids": [],
+    "finding_count": 0,
+    "provenance": "FAKE_SYNTHETIC",
+    "unknown_coverage_check_ids": [
+      "temporal.lip_sync"
+    ]
+  },
+  "release_scope": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+      "capability_id": "1e3bc301-9f3c-5ef9-818c-84880d0f9d4f",
+      "capability_version": 1,
+      "depends_on": [],
+      "disclosures": [
+        "AI_GENERATED_CONTENT",
+        "SYNTHETIC_VOICE"
+      ],
+      "required": true,
+      "schedule": {
+        "fold": null,
+        "iana_zone": "Asia/Bangkok",
+        "local_time": "2026-10-27T19:30:00",
+        "utc_instant": "2026-10-27T12:30:00Z"
+      },
+      "slot": {
+        "account_ref": "acct:youtube-main",
+        "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+        "locale": "th-TH",
+        "part": 0,
+        "platform": "YOUTUBE",
+        "release_slot": "full",
+        "series_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6"
+      },
+      "slot_kind": "FULL_EPISODE"
+    }
+  ],
+  "schema_version": "1.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "version": 1
+}

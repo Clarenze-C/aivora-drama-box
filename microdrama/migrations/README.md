@@ -7,6 +7,10 @@ to an unrelated live database.
 
 | File | Contents |
 |---|---|
+| `0024_season_owner_scope.sql` | T044a: `season_owners` — the explicit season-to-owner relation every review/workbench read and decision scopes to (one owner per season, append-only, backfill provenance trigger citing the season's own human Gate 1 APPROVE); conservative backfill assigns only seasons with a uniquely verified approval, unapproved/ambiguous legacy seasons stay unassigned; also extends the V2 document allowlist with `DirectingManifest` so a required-work denominator can be persisted |
+| `0019_v2_contract_documents.sql` | append-only V2 canonical payload revisions with schema marker, canonical payload hash, optional paired rights-route/version index, validity and integer/audit guards |
+| `0020_season_story_ledger.sql` | extends the V2 contract document type allowlist with the frozen 2.3.0 `SeasonStoryLedger`; preserves all earlier allowed types and rows |
+| `0019_v2_contract_documents.sql` | append-only V2 canonical payload revisions with V2 schema marker, canonical payload hash, exact rights route version, validity, integer and audit deletion guards |
 | `0001_foundation.sql` | trigger helpers (`md_forbid_mutation`, `md_immutable_columns`), `owners`, `human_sessions`, `service_credentials`, `jobs`, `aggregate_sequences`, `domain_events` (append-only outbox), `event_dispatches`, `event_consumptions`, `idempotency_records`, `provider_operations`, `webhook_events`, `manual_interventions` |
 | `0002_story_and_approvals.sql` | `seasons`, `season_proposals`, `canon_versions` (PLANNED / FINAL_APPROVED / PUBLISHED kept separate), `episodes`, `scripts`, `shot_manifests`, `characters`, `voices`, `reference_versions`, `approval_events` (append-only, human-session trigger), `feedback_events`, `identity_locks`, `identity_lock_assets`, `preference_rules` |
 | `0003_budget_and_compute.sql` | `budget_accounts` (cap backstop CHECK), `budget_category_allocations`, `budget_transfers`, `reservations`, `charges` (receipt dedupe), `cost_allocations`, `cost_overruns`, `pod_leases` (single live lease in pilot), `pod_usage_intervals` (EXCLUDE: each paid interval once) |

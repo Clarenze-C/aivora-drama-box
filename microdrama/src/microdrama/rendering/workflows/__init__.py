@@ -15,20 +15,26 @@ evidence; T014's preset registry maps preset ids onto templates through
 
 from microdrama.rendering.workflows.binding import (
     BoundWorkflow,
+    SemanticWorkflowInput,
     bind_workflow,
 )
 from microdrama.rendering.workflows.templates import (
     MOCK_VIDEO_TEMPLATE,
     PRESET_TEMPLATES,
     WorkflowTemplate,
+    semantic_template_sha256,
     template_sha256,
 )
+from microdrama.rendering.workflows.v2_binding import bind_v2_workflow
 
 __all__ = [
     "MOCK_VIDEO_TEMPLATE",
     "PRESET_TEMPLATES",
     "BoundWorkflow",
+    "SemanticWorkflowInput",
     "WorkflowTemplate",
     "bind_workflow",
+    "bind_v2_workflow",
     "template_sha256",
+    "semantic_template_sha256",
 ]

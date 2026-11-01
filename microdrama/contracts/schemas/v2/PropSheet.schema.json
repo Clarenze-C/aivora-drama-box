@@ -1,0 +1,273 @@
+{
+  "$defs": {
+    "RightsGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "commercial_use": {
+          "title": "Commercial Use",
+          "type": "boolean"
+        },
+        "evidence_sha256": {
+          "items": {
+            "description": "Lowercase SHA-256 hex",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Sha256",
+          "type": "array"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "output_release_allowed": {
+          "title": "Output Release Allowed",
+          "type": "boolean"
+        },
+        "rights_route_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Rights Route Id",
+          "type": "string"
+        },
+        "rights_version": {
+          "minimum": 1,
+          "title": "Rights Version",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/RightsStatus"
+        },
+        "subject_kind": {
+          "$ref": "#/$defs/RightsSubjectKind"
+        },
+        "subject_ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Subject Ref",
+          "type": "string"
+        },
+        "territories": {
+          "items": {
+            "pattern": "^[A-Z]{2}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Territories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rights_route_id",
+        "subject_kind",
+        "subject_ref",
+        "rights_version",
+        "status",
+        "territories",
+        "commercial_use",
+        "output_release_allowed",
+        "evidence_sha256"
+      ],
+      "title": "RightsGrant",
+      "type": "object"
+    },
+    "RightsStatus": {
+      "enum": [
+        "ELIGIBLE",
+        "INELIGIBLE",
+        "UNKNOWN",
+        "EXPIRED"
+      ],
+      "title": "RightsStatus",
+      "type": "string"
+    },
+    "RightsSubjectKind": {
+      "enum": [
+        "MODEL",
+        "MODEL_OUTPUT",
+        "VOICE",
+        "MUSIC",
+        "FONT",
+        "REFERENCE",
+        "STOCK"
+      ],
+      "title": "RightsSubjectKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:2.15.0:PropSheet",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "format": "uuid",
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "asset_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Asset Sha256",
+      "type": "string"
+    },
+    "asset_valid_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Asset Valid Until"
+    },
+    "asset_version": {
+      "minimum": 1,
+      "title": "Asset Version",
+      "type": "integer"
+    },
+    "content_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dimensions": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Dimensions",
+      "type": "string"
+    },
+    "known_states": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Known States",
+      "type": "array"
+    },
+    "owner_character_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Character Id"
+    },
+    "prop_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Prop Id",
+      "type": "string"
+    },
+    "purpose": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "record_id": {
+      "format": "uuid",
+      "title": "Record Id",
+      "type": "string"
+    },
+    "rights": {
+      "$ref": "#/$defs/RightsGrant"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "description": "V2 payload; V1 consumers must not treat it as V1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "text_layer_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Text Layer Sha256"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "valid_from": {
+      "format": "date-time",
+      "title": "Valid From",
+      "type": "string"
+    },
+    "valid_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Valid Until"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "visual_anchor": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Visual Anchor",
+      "type": "string"
+    }
+  },
+  "required": [
+    "record_id",
+    "version",
+    "content_sha256",
+    "created_at",
+    "updated_at",
+    "valid_from",
+    "prop_id",
+    "purpose",
+    "visual_anchor",
+    "dimensions",
+    "known_states",
+    "asset_id",
+    "asset_version",
+    "asset_sha256",
+    "rights"
+  ],
+  "title": "PropSheet",
+  "type": "object"
+}

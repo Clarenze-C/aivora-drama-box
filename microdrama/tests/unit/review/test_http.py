@@ -28,7 +28,8 @@ PASSWORD = "a-long-review-password"
 @pytest.fixture
 def api(world: World, offline_settings):
     """A client for the review router, with a live owner session and its CSRF token."""
-    world.auth.create_owner("review.owner", PASSWORD)
+    owner_id = world.auth.create_owner("review.owner", PASSWORD)
+    world.set_owner(owner_id)  # the world's seasons belong to the logged-in owner
     tokens = world.auth.login("review.owner", PASSWORD)
     router = build_router(
         world.service,

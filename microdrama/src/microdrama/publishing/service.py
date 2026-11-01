@@ -39,6 +39,7 @@ from microdrama.contracts.enums import (
     CapabilityOperation,
     CapabilitySupport,
     EpisodeState,
+    EvidenceSource,
     Platform,
     PrincipalKind,
     Provenance,
@@ -371,6 +372,8 @@ class PublishingService:
             raise Conflict("command does not name the slot's approved package")
         if package["status"] != "APPROVED" or package["approval_event_id"] is None:
             raise PolicyDenied("package is not approval-bound; refusing to publish")
+        if package["approval_event_id"] != row["approval_event_id"]:
+            raise Conflict("slot approval event does not match its approved release package")
         if row["approval_event_id"] != command.approval_event_id:
             raise Conflict("command approval event does not match the slot")
         if row["asset_id"] != command.asset_id or row["asset_sha256"] != command.asset_sha256:
@@ -379,6 +382,135 @@ class PublishingService:
             )
         if row["client_token"] != command.client_token:
             raise Conflict("command client token does not match the slot")
+
+        mode = tx.fetchval("SELECT execution_mode FROM md_runtime_mode WHERE singleton = true")
+        if mode != "OFFLINE_MOCK":
+            if not all(
+                (
+                    command.release_manifest_id,
+                    command.release_manifest_version,
+                    command.release_manifest_sha256,
+                    command.approved_metadata_version,
+                    command.approved_metadata_sha256,
+                    command.metadata_policy_id,
+                    command.metadata_policy_version,
+                    command.metadata_policy_sha256,
+                )
+            ):
+                raise PolicyDenied("V1-only approval cannot authorize a live publication")
+            event = tx.fetchone(
+                "SELECT release_manifest_hash FROM approval_events WHERE id = %s "
+                "AND entity_id = %s AND action = 'APPROVE'",
+                (row["approval_event_id"], row["episode_id"]),
+            )
+            if event is None or event["release_manifest_hash"] != command.release_manifest_sha256:
+                raise PolicyDenied(
+                    "publication manifest is not bound to the slot's human Gate 2 event"
+                )
+            manifest_row = tx.fetchone(
+                "SELECT payload FROM release_approval_manifests WHERE manifest_hash = %s "
+                "AND release_package_id = %s AND release_package_hash = %s",
+                (
+                    command.release_manifest_sha256,
+                    row["release_package_id"],
+                    package["package_hash"],
+                ),
+            )
+            approved_row = tx.fetchone(
+                "SELECT payload FROM approved_slot_metadata WHERE release_package_id = %s "
+                "AND slot_id = %s AND is_current",
+                (row["release_package_id"], f"slot-{row['dedupe_key']}"),
+            )
+            if manifest_row is None or approved_row is None:
+                raise PolicyDenied(
+                    "approved release manifest or exact current slot metadata is missing"
+                )
+            from microdrama.contracts.v2 import (
+                ApprovedSlotMetadata,
+                ReleaseApprovalManifest,
+                validate_live_release_metadata,
+            )
+
+            manifest = ReleaseApprovalManifest.model_validate(manifest_row["payload"])
+            approved = ApprovedSlotMetadata.model_validate(approved_row["payload"])
+            if (manifest.manifest_id, manifest.version) != (
+                command.release_manifest_id,
+                command.release_manifest_version,
+            ):
+                raise PolicyDenied("publication manifest identity/version is stale")
+            if (approved.metadata_version, approved.content_sha256) != (
+                command.approved_metadata_version,
+                command.approved_metadata_sha256,
+            ):
+                raise PolicyDenied("publication approved metadata identity/version is stale")
+            if (
+                manifest.metadata_policy.policy_id,
+                manifest.metadata_policy.version,
+                manifest.metadata_policy.policy_sha256,
+            ) != (
+                command.metadata_policy_id,
+                command.metadata_policy_version,
+                command.metadata_policy_sha256,
+            ):
+                raise PolicyDenied("publication metadata policy is stale")
+            try:
+                validated = validate_live_release_metadata(
+                    manifest,
+                    slot_id=f"slot-{row['dedupe_key']}",
+                    metadata_id=approved.metadata_id,
+                    metadata_version=approved.metadata_version,
+                    metadata_sha256=approved.content_sha256,
+                    metadata_projection=command.metadata,
+                )
+            except ValueError as exc:
+                raise PolicyDenied(f"approved metadata failed Gate 2 validation: {exc}") from exc
+            if validated.cover_asset_id is not None:
+                cover = tx.fetchone(
+                    "SELECT version, sha256, state FROM assets WHERE id = %s",
+                    (validated.cover_asset_id,),
+                )
+                if cover is None or (cover["version"], cover["sha256"], cover["state"]) != (
+                    validated.cover_asset_version,
+                    validated.cover_asset_sha256,
+                    "ACCEPTED",
+                ):
+                    raise PolicyDenied("approved cover asset is missing, stale, or not accepted")
+                rights = validated.cover_rights
+                current_rights = tx.fetchone(
+                    "SELECT version, status, territories, commercial_use, output_release_allowed, expires_at "
+                    "FROM rights_registry WHERE rights_route_id = %s AND subject_kind = %s "
+                    "AND subject_ref = %s AND current",
+                    (rights.rights_route_id, rights.subject_kind.value, rights.subject_ref),
+                )
+                if current_rights is None or (
+                    current_rights["version"] != rights.rights_version
+                    or current_rights["status"] != "ELIGIBLE"
+                    or not current_rights["commercial_use"]
+                    or not current_rights["output_release_allowed"]
+                    or current_rights["expires_at"] is not None
+                    and now >= current_rights["expires_at"]
+                    or current_rights["expires_at"] != rights.expires_at
+                    or not all(
+                        "WORLDWIDE" in current_rights["territories"]
+                        or territory in current_rights["territories"]
+                        for territory in rights.territories
+                    )
+                ):
+                    raise PolicyDenied(
+                        "approved cover rights are missing, stale, or no longer eligible"
+                    )
+            catalog = tx.fetchone(
+                "SELECT catalog_version, public_url, member_url FROM membership_catalog "
+                "WHERE episode_id = %s AND current",
+                (row["episode_id"],),
+            )
+            if catalog is None or catalog["catalog_version"] != validated.catalog_version:
+                raise PolicyDenied("approved metadata catalog version is missing or stale")
+            allowed_links = {
+                link for link in (catalog["public_url"], catalog["member_url"]) if link
+            }
+            if any(link not in allowed_links for link in validated.links):
+                raise PolicyDenied("approved metadata link is not present in the current catalog")
         if int(row["attempt"]) >= MAX_SUBMIT_ATTEMPTS:
             raise PolicyDenied(
                 "submit attempt cap reached for this slot", attempts=int(row["attempt"])
@@ -404,6 +536,22 @@ class PublishingService:
             )
         else:
             meta.require_current(tx, row["id"], command.metadata_version_id)
+            metadata_row = tx.fetchone(
+                "SELECT policy_hash FROM metadata_versions WHERE id = %s AND platform_post_id = %s",
+                (command.metadata_version_id, row["id"]),
+            )
+            if (
+                metadata_row is None
+                or metadata_row["policy_hash"] != package["management_policy_hash"]
+            ):
+                raise Conflict("current metadata is not bound to this package's approved policy")
+
+        persisted_current = meta.current_metadata(tx, row["id"])
+        if persisted_current is None or persisted_current != (
+            command.metadata_version_id,
+            command.metadata,
+        ):
+            raise Conflict("persisted current metadata differs from the exact publication command")
 
         self._check_dependencies(tx, row)
         self._check_capability(tx, row, now=now)
@@ -464,6 +612,19 @@ class PublishingService:
         platform = Platform(row["platform"])
         adapter = self._adapter(platform)
         record = adapter.capability(row["account_ref"])
+        current_metadata = meta.current_metadata(tx, row["id"])
+        if current_metadata is not None and meta.has_mock_label(current_metadata[1]):
+            fixture_metadata_allowed = any(
+                evidence.source is EvidenceSource.FAKE_FIXTURE for evidence in record.evidence
+            ) and not any(
+                evidence.source
+                in (EvidenceSource.CONTROLLED_ACCOUNT_TEST, EvidenceSource.MEASURED_BENCHMARK)
+                for evidence in record.evidence
+            )
+            if not fixture_metadata_allowed:
+                raise PolicyDenied(
+                    "mock-labeled title, caption, or description is forbidden on a live route"
+                )
         if record.capability_id != row["capability_id"] or record.version != int(
             row["capability_version"]
         ):

@@ -34,6 +34,13 @@ from microdrama.research.models import (
     SynthesisStatus,
     ThemeCluster,
 )
+from microdrama.research.script_maker import (
+    SCRIPT_MAKER_INSTRUCTION,
+    SCRIPT_MAKER_OUTPUT_SCHEMA,
+    CandidateGenerationResult,
+    ScriptMakerService,
+    build_script_maker_service,
+)
 from microdrama.research.service import (
     LLM_INSTRUCTION,
     ResearchConfig,
@@ -46,6 +53,7 @@ from microdrama.research.sources import SourceAdapterRecord, build_source_regist
 
 __all__ = [
     "CommentCluster",
+    "CandidateGenerationResult",
     "CommentIn",
     "ComparatorCorpus",
     "ConceptDraft",
@@ -62,6 +70,9 @@ __all__ = [
     "ResearchRequest",
     "ResearchResult",
     "ResearchService",
+    "SCRIPT_MAKER_INSTRUCTION",
+    "SCRIPT_MAKER_OUTPUT_SCHEMA",
+    "ScriptMakerService",
     "ResearchTrigger",
     "ResemblanceFinding",
     "ResemblanceKind",
@@ -72,6 +83,7 @@ __all__ = [
     "SynthesisStatus",
     "ThemeCluster",
     "build_research_service",
+    "build_script_maker_service",
     "build_source_registry",
     "normalized_request_hash",
 ]

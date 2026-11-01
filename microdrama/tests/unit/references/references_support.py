@@ -65,7 +65,7 @@ from microdrama.testing.fakes import (
     FakeGenerationProvider,
     SequentialIds,
 )
-from microdrama.testing.seed import seed_episode, seed_gate1_approval
+from microdrama.testing.seed import link_season_owner, seed_episode, seed_gate1_approval
 
 T0 = datetime(2026, 10, 21, tzinfo=UTC)
 FAKE = Provenance.FAKE_SYNTHETIC
@@ -100,6 +100,7 @@ class World:
         self.settings = settings
         self.clock = FakeClock(T0)
         self.ids = SequentialIds("references-tests")
+        self._owner_id: uuid.UUID | None = None
         self.budget = BudgetService(db, self.clock, SequentialIds("references-budget"), settings)
         self.image = FakeGenerationProvider(clock=self.clock, ids=SequentialIds("ref-image"))
         self.voice = FakeGenerationProvider(clock=self.clock, ids=SequentialIds("ref-voice"))
@@ -169,8 +170,11 @@ class World:
             update={"season_id": season_id, "scope_version": 1}
         )
         scope_hash = canonical_hash(scope)
+        owner = self.owner_id()
         with self.db.transaction() as tx:
-            approval_id = seed_gate1_approval(tx, season_id, scope_hash) if approved else None
+            approval_id = (
+                seed_gate1_approval(tx, season_id, scope_hash, owner_id=owner) if approved else None
+            )
             insert_row(
                 tx,
                 "seasons",
@@ -198,6 +202,13 @@ class World:
                     "status": "APPROVED" if approved else "PROPOSED",
                 },
                 returning="id",
+            )
+            link_season_owner(
+                tx,
+                season_id,
+                owner,
+                source="GATE1_APPROVAL_BACKFILL" if approved else "CREATOR_AT_CREATION",
+                approval_event_id=approval_id,
             )
             for character in scope.characters:
                 tx.execute(
@@ -570,13 +581,20 @@ class World:
             store_release_package(tx, package, status="READY", now=self.clock.now())
         return package
 
+    def owner_id(self) -> uuid.UUID:
+        if self._owner_id is None:
+            from microdrama.testing.seed import seed_owner
+
+            with self.db.transaction() as tx:
+                self._owner_id = seed_owner(tx)
+        return self._owner_id
+
     def human(self):
         from microdrama.contracts.principals import Principal
+        from microdrama.testing.seed import seed_human_session
 
+        owner = self.owner_id()
         with self.db.transaction() as tx:
-            from microdrama.testing.seed import seed_human_session, seed_owner
-
-            owner = seed_owner(tx)
             session = seed_human_session(tx, owner)
         return Principal(
             principal_id=f"owner:{owner}",

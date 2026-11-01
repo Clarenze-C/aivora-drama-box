@@ -24,6 +24,12 @@ from microdrama.contracts.catalog import (
     QualificationResult,
 )
 from microdrama.contracts.cost import (
+    BillingAllocationBasis,
+    BillingComponent,
+    BillingFinalityState,
+    BillingInvoiceVerification,
+    BillingQueryState,
+    BillingVerificationResult,
     BudgetReservationRequest,
     ExposureCeilings,
     OutputRef,
@@ -32,7 +38,11 @@ from microdrama.contracts.cost import (
     ProviderOperation,
     ProviderOperationResult,
     RenderRequest,
+    RunpodBillingAllocation,
+    RunpodBillingBucketObservation,
+    RunpodBillingQueryObservation,
     UsageReceipt,
+    runpod_bucket_identity_sha256,
 )
 from microdrama.contracts.enums import (
     ApprovalAction,
@@ -51,6 +61,7 @@ from microdrama.contracts.enums import (
     CriticalTermKind,
     DialogueComplexity,
     DisclosureKind,
+    EpisodeState,
     EvidenceSource,
     FallbackEdit,
     FeedbackCategory,
@@ -115,15 +126,20 @@ from microdrama.contracts.registries import PresetMeasurements, PresetRecord, Ri
 from microdrama.contracts.release import (
     CapabilityRecord,
     CostSummary,
+    CreativeDerivativeRef,
+    DerivativeSourceRef,
     ManagementAction,
     MediaRef,
+    PlatformSafeZone,
     PostMetadata,
     PublicationCommand,
     QASummary,
     ReleasePackage,
     ReleaseSlotKey,
     ReleaseSlotPlan,
+    SafeZoneTextBox,
 )
+from microdrama.contracts.routes import EpisodeReviewView
 from microdrama.contracts.season import (
     ApprovalCommand,
     ArcBeat,
@@ -143,8 +159,52 @@ from microdrama.contracts.season import (
     ShotManifest,
     TimecodedFeedback,
 )
+from microdrama.contracts.v2 import (
+    ApprovedMetadataPolicy,
+    ApprovedSlotMetadata,
+    AssetSheet,
+    ConceptCandidate,
+    ConceptIntake,
+    DirectingManifest,
+    DirectingSection,
+    DirectingShot,
+    EpisodePack,
+    EpisodeScene,
+    LocationLayout,
+    OutfitDefinition,
+    PackBeat,
+    PayoffDebt,
+    ProgressSnapshot,
+    ProgressStage,
+    PromptManifest,
+    PropSheet,
+    ReferenceRole,
+    ReleaseApprovalManifest,
+    RightsGrant,
+    SceneWardrobeAssignment,
+    SeasonEscalation,
+    SeasonStoryLedger,
+    SecretEntry,
+    SecretLedger,
+    ShotReferenceBinding,
+    StateEvent,
+    StateValue,
+    StyleBible,
+    V1ManifestReadback,
+    WardrobeBible,
+)
+from microdrama.contracts.v2 import (
+    CharacterLogic as V2CharacterLogic,
+)
+from microdrama.contracts.v2 import (
+    RightsStatus as V2RightsStatus,
+)
+from microdrama.contracts.v2 import (
+    StoryTime as V2StoryTime,
+)
 
 T0 = datetime(2026, 10, 20, 0, 0, tzinfo=UTC)
+V2_T0 = datetime(2026, 10, 30, 0, 0, tzinfo=UTC)
 FAKE = Provenance.FAKE_SYNTHETIC
 
 
@@ -156,6 +216,503 @@ def uid(name: str) -> UUID:
 def h(name: str) -> str:
     """Deterministic example SHA-256."""
     return canonical_hash({"example": name})
+
+
+def _v2_record(model, name: str, **values):
+    """Build an example with a reproducible hash over the completed record."""
+    defaults = {
+        "record_id": uid(f"v2-{name}"),
+        "version": 1,
+        "content_sha256": h(f"placeholder-{name}"),
+        "created_at": V2_T0,
+        "updated_at": V2_T0,
+        "valid_from": V2_T0,
+    }
+    defaults.update(values)
+    return model.seal(**defaults)
+
+
+def v2_rights() -> RightsGrant:
+    return RightsGrant(
+        rights_route_id="original-fiction",
+        subject_kind="MODEL_OUTPUT",
+        subject_ref="original-fiction-output",
+        rights_version=1,
+        status=V2RightsStatus.ELIGIBLE,
+        territories=["TH"],
+        commercial_use=True,
+        output_release_allowed=True,
+        evidence_sha256=[h("v2-rights-evidence")],
+    )
+
+
+def v2_concept_intake() -> ConceptIntake:
+    return _v2_record(
+        ConceptIntake,
+        "intake",
+        story_idea="A daughter returns to save her mother's stall.",
+        genre_tags=["family_drama"],
+        tone="Warm, grounded",
+        requested_episode_count=10,
+    )
+
+
+def v2_character_logic() -> V2CharacterLogic:
+    return _v2_record(
+        V2CharacterLogic,
+        "character-logic",
+        character_id="fon",
+        season_id=SEASON_ID,
+        observable_goal="Keep the family stall open.",
+        strategy="Negotiate with creditors.",
+        flaw="Hides fear behind control.",
+        secret_id="co_signed_debt",
+        relationship_pressures=["Uncle Lek wants the truth kept quiet."],
+        knowledge_by_episode={"1": ["debt_exists"]},
+    )
+
+
+def v2_concept_candidate() -> ConceptCandidate:
+    intake = v2_concept_intake()
+    return _v2_record(
+        ConceptCandidate,
+        "candidate",
+        intake_id=intake.record_id,
+        title_th="ร้านของแม่",
+        title_en="Mother's Stall",
+        logline="A daughter returns to save a family stall.",
+        promise="Each debt reveals a family choice.",
+        payoff_debt=["Who co-signed the loan"],
+        escalation=["The creditor shortens the deadline."],
+        episode_count=10,
+        scope_sha256=h("candidate-scope"),
+        rights=v2_rights(),
+    )
+
+
+def v2_concept_candidate_pending_rights() -> ConceptCandidate:
+    candidate = v2_concept_candidate()
+    values = candidate.model_dump(mode="python")
+    values["rights"] = {
+        "status": "PENDING",
+        "note": "Confirm commercial output release and territories before production.",
+    }
+    return ConceptCandidate.seal(**values)
+
+
+def v2_secret_ledger() -> SecretLedger:
+    return _v2_record(
+        SecretLedger,
+        "secret-ledger",
+        season_id=SEASON_ID,
+        secrets=[
+            SecretEntry(
+                secret_id="co_signed_debt",
+                held_by_character_id="lek",
+                fact="Lek co-signed the loan.",
+                planned_reveal_episode=2,
+                known_by_character_ids=["lek"],
+            )
+        ],
+    )
+
+
+def v2_season_story_ledger() -> SeasonStoryLedger:
+    character = v2_character_logic()
+    secrets = v2_secret_ledger()
+    return _v2_record(
+        SeasonStoryLedger,
+        "season-story-ledger",
+        season_id=SEASON_ID,
+        approved_scope_hash=h("approved-season-scope"),
+        promise="Each debt reveals a family choice.",
+        payoff_debts=[
+            PayoffDebt(
+                debt_id="co_signed_debt",
+                description="Reveal who co-signed the loan.",
+                due_episode=2,
+                status="OPEN",
+            )
+        ],
+        escalations=[
+            SeasonEscalation(episode_number=1, description="The creditor arrives early."),
+            SeasonEscalation(episode_number=2, description="The deadline is shortened."),
+        ],
+        character_logic_record_ids=[character.record_id],
+        secret_ledger_id=secrets.record_id,
+    )
+
+
+def v2_story_time() -> V2StoryTime:
+    return _v2_record(
+        V2StoryTime, "story-time", story_day=1, local_time="09:30", setting="Morning at the stall"
+    )
+
+
+def v2_state_value(entity: str, field: str, value: str) -> StateValue:
+    return StateValue(entity_id=entity, field=field, value=value)
+
+
+def v2_episode_pack() -> EpisodePack:
+    character = v2_character_logic()
+    scene = EpisodeScene(
+        scene_id="scene-1",
+        scene_number=1,
+        story_time=v2_story_time(),
+        location_id="stall",
+        visible_character_ids=["fon"],
+        beats=[
+            PackBeat(
+                beat_id="beat-1",
+                function="revelation",
+                visible_action="Fon reads the debt ledger.",
+                state_in=[v2_state_value("ledger", "open", "closed")],
+                state_out=[v2_state_value("ledger", "open", "open")],
+            )
+        ],
+        state_in=[v2_state_value("ledger", "open", "closed")],
+        state_out=[v2_state_value("ledger", "open", "open")],
+    )
+    return _v2_record(
+        EpisodePack,
+        "episode-pack",
+        episode_id=EP1_ID,
+        season_id=SEASON_ID,
+        approved_scope_hash=h("approved-season-scope"),
+        episode_number=1,
+        duration_target_ms=220_000,
+        character_logic=[character],
+        promise="Each debt reveals a family choice.",
+        payoff_debt=["Who co-signed"],
+        escalation="The creditor arrives early.",
+        scenes=[scene],
+    )
+
+
+def v2_outfit() -> OutfitDefinition:
+    return OutfitDefinition(
+        outfit_id="fon-apron",
+        version=1,
+        asset_id=uid("fon-apron-asset"),
+        asset_version=1,
+        asset_sha256=h("fon-apron-image"),
+        story_day_from=1,
+        setting_tags=["stall"],
+        rights=v2_rights(),
+    )
+
+
+def v2_wardrobe_bible() -> WardrobeBible:
+    return _v2_record(
+        WardrobeBible, "wardrobe", season_id=SEASON_ID, character_id="fon", outfits=[v2_outfit()]
+    )
+
+
+def v2_wardrobe_assignment() -> SceneWardrobeAssignment:
+    return _v2_record(
+        SceneWardrobeAssignment,
+        "wardrobe-assignment",
+        episode_id=EP1_ID,
+        scene_id="scene-1",
+        character_id="fon",
+        story_day=1,
+        setting="stall",
+        wardrobe_bible_id=uid("v2-wardrobe"),
+        wardrobe_bible_version=1,
+        outfit_id="fon-apron",
+        outfit_version=1,
+        asset_id=uid("fon-apron-asset"),
+        asset_version=1,
+        asset_sha256=h("fon-apron-image"),
+        rights=v2_rights(),
+    )
+
+
+def v2_state_event() -> StateEvent:
+    return _v2_record(
+        StateEvent,
+        "state-event",
+        episode_id=EP1_ID,
+        sequence=1,
+        entity_id="ledger",
+        field="open",
+        before="closed",
+        after="open",
+        scene_id="scene-1",
+        effective_from_ms=0,
+        effective_until_ms=4000,
+        evidence_sha256=h("ledger-state-observation"),
+    )
+
+
+def v2_directing_manifest() -> DirectingManifest:
+    pack = v2_episode_pack()
+    scene = pack.scenes[0]
+    beat = scene.beats[0]
+    event = v2_state_event()
+    scene_source_hash = canonical_hash(scene.model_copy(update={"beats": []}))
+    shot_source_hashes = sorted({scene_source_hash, canonical_hash(beat), event.content_sha256})
+    source_hashes = sorted({pack.content_sha256, *shot_source_hashes})
+    shot_id = "shot-example-1"
+    section_id = "section-example-1"
+    shot = DirectingShot(
+        shot_id=shot_id,
+        scene_id=scene.scene_id,
+        beat_id=beat.beat_id,
+        sequence=1,
+        duration_ms=15_000,
+        section_id=section_id,
+        state_in=beat.state_in,
+        events=[event],
+        state_out=beat.state_out,
+        screen_axis="stall-counter-axis",
+        screen_direction="STATIC",
+        eyeline="Fon looks down at the debt ledger.",
+        action_handoff="Fon opens the ledger and holds on the debt entry.",
+        sound_intent="Quiet stall ambience under the paper movement.",
+        edit_intent="Cut to a close insert on the ledger entry.",
+        framing="medium_close_up",
+        source_dependency_ids=[pack.record_id.hex, scene.scene_id, beat.beat_id],
+        source_hashes=shot_source_hashes,
+    )
+    return _v2_record(
+        DirectingManifest,
+        "directing-manifest",
+        episode_id=pack.episode_id,
+        pack_id=pack.record_id,
+        pack_version=pack.version,
+        pack_hash=pack.content_sha256,
+        approved_scope_hash=pack.approved_scope_hash,
+        shots=[shot],
+        sections=[
+            DirectingSection(
+                section_id=section_id,
+                sequence=1,
+                shot_ids=[shot_id],
+                duration_ms=15_000,
+            )
+        ],
+        source_hashes=source_hashes,
+    )
+
+
+def v2_directing_shot() -> DirectingShot:
+    return v2_directing_manifest().shots[0]
+
+
+def v2_directing_section() -> DirectingSection:
+    return v2_directing_manifest().sections[0]
+
+
+def v2_asset_sheet() -> AssetSheet:
+    return _v2_record(
+        AssetSheet,
+        "asset-sheet",
+        asset_role="outfit",
+        subject_id="fon-apron",
+        asset_id=uid("fon-apron-asset"),
+        asset_version=1,
+        asset_sha256=h("fon-apron-image"),
+        view_name="front",
+        rights=v2_rights(),
+        validity_from=V2_T0,
+    )
+
+
+def v2_prop_sheet() -> PropSheet:
+    return _v2_record(
+        PropSheet,
+        "prop-sheet",
+        prop_id="ledger",
+        purpose="Carries the debt evidence Fon reads.",
+        visual_anchor="Dark green cloth ledger with a brass corner.",
+        owner_character_id="fon",
+        dimensions="A5 notebook",
+        known_states=["closed", "open"],
+        text_layer_sha256=h("ledger-text-layer"),
+        asset_id=uid("ledger-prop-asset"),
+        asset_version=1,
+        asset_sha256=h("ledger-prop-image"),
+        rights=v2_rights(),
+    )
+
+
+def v2_style_bible() -> StyleBible:
+    return _v2_record(
+        StyleBible,
+        "style-bible",
+        season_id=SEASON_ID,
+        medium="Live-action cinematic short drama",
+        realism="Grounded naturalistic performances",
+        palette=["warm rice gold", "deep teal"],
+        lighting_language="Soft window daylight with motivated practicals.",
+        lens_and_movement="Restrained handheld, eye-level lenses, motivated pushes.",
+        material_rules=["Natural fabric texture", "Readable paper and food surfaces"],
+        typography_rules=["Thai captions use approved readable type"],
+        subtitle_safe_top_bp=500,
+        subtitle_safe_bottom_bp=1200,
+        sound_motifs=["Bangkok morning traffic", "Stall kitchen rhythm"],
+        exclusions=["No glossy luxury-ad lighting", "No unreadable generated text"],
+        moving_sample_asset_id=uid("style-moving-sample"),
+        moving_sample_sha256=h("style-moving-sample"),
+        rights=v2_rights(),
+    )
+
+
+def v2_location_layout() -> LocationLayout:
+    return _v2_record(
+        LocationLayout,
+        "location-layout",
+        location_id="stall",
+        geometry_sha256=h("stall-geometry"),
+        entrance_ids=["front-door"],
+        camera_zones=["counter", "door"],
+        light_states=["morning"],
+        prop_ownership={"ledger": "fon"},
+        rights=v2_rights(),
+    )
+
+
+def v2_reference_binding(
+    role: ReferenceRole, subject: str, asset: str, image_hash: str
+) -> ShotReferenceBinding:
+    return _v2_record(
+        ShotReferenceBinding,
+        f"binding-{role.value}-{subject}",
+        role=role,
+        subject_id=subject,
+        asset_id=uid(asset),
+        asset_version=1,
+        asset_sha256=h(image_hash),
+        rights=v2_rights(),
+        valid_from=V2_T0,
+    )
+
+
+def v2_binding_example() -> ShotReferenceBinding:
+    return v2_reference_binding(ReferenceRole.CHARACTER_IDENTITY, "fon", "fon-id", "fon-id-image")
+
+
+def v2_prompt_manifest() -> PromptManifest:
+    return _v2_record(
+        PromptManifest,
+        "prompt-manifest",
+        episode_id=EP1_ID,
+        shot_id="shot-1",
+        shot_sequence=1,
+        shot_duration_ms=10_000,
+        prompt_text="Fon reads the ledger in the morning stall.",
+        bindings=[
+            v2_reference_binding(ReferenceRole.CHARACTER_IDENTITY, "fon", "fon-id", "fon-id-image"),
+            v2_reference_binding(ReferenceRole.OUTFIT, "fon", "fon-apron", "fon-apron-image"),
+            v2_reference_binding(ReferenceRole.LOCATION, "stall", "stall-front", "stall-image"),
+        ],
+        source_hashes=[h("story-source"), h("wardrobe-source")],
+    )
+
+
+def v2_progress_snapshot() -> ProgressSnapshot:
+    return _v2_record(
+        ProgressSnapshot,
+        "progress",
+        aggregate_id=EP1_ID,
+        projection_revision=1,
+        source_event_ids=[uid("event-1")],
+        source_job_ids=[uid("job-1")],
+        production_stage=ProgressStage.RUNNING,
+        release_stage=ProgressStage.PLANNED,
+        accepted_work=1,
+        required_work=4,
+        blocker_ids=[],
+        next_action="Render next shot",
+        progress_bp=2500,
+    )
+
+
+def _v2_release_approval_manifest(source: str) -> ReleaseApprovalManifest:
+    package_id = uid("v2-release-package")
+    package_hash = h("v1-release-package-hash")
+    policy = ApprovedMetadataPolicy.seal(
+        policy_id="approved-slot-metadata",
+        version=1,
+        mutable_fields=["title", "caption", "description", "hashtags", "cover", "cta"],
+    )
+    slot = _v2_record(
+        ApprovedSlotMetadata,
+        "approved-metadata-tiktok",
+        release_package_id=package_id,
+        release_package_hash=package_hash,
+        slot_id="tiktok-acct-main-full_episode",
+        metadata_id=uid("metadata-v1"),
+        metadata_version=1,
+        locale="th-TH",
+        title="ร้านของแม่ ตอนที่ 1",
+        caption="เรื่องราวต้นฉบับภาษาไทย",
+        description="ละครสั้นเรื่องใหม่",
+        hashtags=["ละครไทย"],
+        links=["https://example.invalid/episode/1"],
+        disclosures=[DisclosureKind.AI_GENERATED_CONTENT],
+        catalog_version=1,
+        cover_asset_id=uid("cover-v1"),
+        cover_asset_version=1,
+        cover_asset_sha256=h("cover-image"),
+        cta_text="ดูตอนต่อไป",
+        cover_rights=v2_rights(),
+        metadata_policy_id=policy.policy_id,
+        metadata_policy_version=policy.version,
+        metadata_policy_sha256=policy.policy_sha256,
+        source=source,
+    )
+    return ReleaseApprovalManifest.seal(
+        schema_version="2.0",
+        manifest_id=uid("release-manifest-pre-gate"),
+        version=1,
+        created_at=V2_T0,
+        release_package_id=package_id,
+        release_package_hash=package_hash,
+        metadata_policy=policy,
+        slots=[slot],
+        approval_manifest_sha256=h("placeholder-approval"),
+    )
+
+
+def v2_release_approval_manifest() -> ReleaseApprovalManifest:
+    return _v2_release_approval_manifest("EXAMPLE")
+
+
+def v2_owner_approved_release_approval_manifest() -> ReleaseApprovalManifest:
+    return _v2_release_approval_manifest("OWNER_APPROVED")
+
+
+def v1_manifest_readback() -> V1ManifestReadback:
+    payload = shot_manifest().model_dump(mode="json")
+    return V1ManifestReadback(
+        source_schema_version="1.0", manifest_sha256=canonical_hash(payload), manifest=payload
+    )
+
+
+V2_VALID_BUILDERS: dict[str, Callable[[], BaseModel]] = {
+    "ConceptIntake": v2_concept_intake,
+    "ConceptCandidate": v2_concept_candidate,
+    "CharacterLogic": v2_character_logic,
+    "SecretLedger": v2_secret_ledger,
+    "SeasonStoryLedger": v2_season_story_ledger,
+    "EpisodePack": v2_episode_pack,
+    "DirectingManifest": v2_directing_manifest,
+    "StoryTime": v2_story_time,
+    "WardrobeBible": v2_wardrobe_bible,
+    "SceneWardrobeAssignment": v2_wardrobe_assignment,
+    "StateEvent": v2_state_event,
+    "AssetSheet": v2_asset_sheet,
+    "PropSheet": v2_prop_sheet,
+    "StyleBible": v2_style_bible,
+    "LocationLayout": v2_location_layout,
+    "ShotReferenceBinding": v2_binding_example,
+    "PromptManifest": v2_prompt_manifest,
+    "ProgressSnapshot": v2_progress_snapshot,
+    "ReleaseApprovalManifest": v2_release_approval_manifest,
+    "V1ManifestReadback": v1_manifest_readback,
+}
 
 
 SEASON_ID = uid("season")
@@ -472,6 +1029,148 @@ def budget_reservation_request() -> BudgetReservationRequest:
     )
 
 
+def runpod_billing_bucket_observation() -> RunpodBillingBucketObservation:
+    return RunpodBillingBucketObservation(
+        observation_id=uid("runpod-billing-bucket-r1"),
+        query_id=uid("runpod-billing-query-1"),
+        provider_account_ref="acct:runpod-fixture",
+        pod_id="pod-fixture-001",
+        bucket_start=T0,
+        bucket_end=T0 + timedelta(seconds=3600),
+        bucket_size_seconds=3600,
+        bucket_identity_sha256=runpod_bucket_identity_sha256(
+            "acct:runpod-fixture",
+            "pod-fixture-001",
+            T0,
+            T0 + timedelta(seconds=3600),
+            3600,
+        ),
+        revision=1,
+        provider_resolved_window_start=T0,
+        provider_resolved_window_end=T0 + timedelta(seconds=3600),
+        raw_response_sha256=h("runpod-billing-response-r1"),
+        observed_at=T0 + timedelta(seconds=3601),
+        currency="USD",
+        total_amount_micro_usd=1_000_000,
+        gpu_amount_micro_usd=500_000,
+        cpu_amount_micro_usd=300_000,
+        disk_amount_micro_usd=200_000,
+        finality_state=BillingFinalityState.ALLOCATED_PROVIDER_REPORTED,
+    )
+
+
+def runpod_billing_bucket_invoice_verified() -> RunpodBillingBucketObservation:
+    bucket = runpod_billing_bucket_observation()
+    payload = bucket.model_dump(mode="python")
+    payload.update(
+        finality_state=BillingFinalityState.INVOICE_VERIFIED,
+        invoice_verification_id=uid("runpod-invoice-verification-1"),
+    )
+    return RunpodBillingBucketObservation.model_validate(payload)
+
+
+def runpod_billing_bucket_disputed() -> RunpodBillingBucketObservation:
+    bucket = runpod_billing_bucket_observation().model_dump(mode="python")
+    bucket.update(
+        total_amount_micro_usd=1_000_001,
+        finality_state=BillingFinalityState.DISPUTED,
+        dispute_reason="Provider total differs from component sum.",
+    )
+    return RunpodBillingBucketObservation.model_validate(bucket)
+
+
+def runpod_billing_query_observation() -> RunpodBillingQueryObservation:
+    return RunpodBillingQueryObservation(
+        query_id=uid("runpod-billing-query-1"),
+        provider_account_ref="acct:runpod-fixture",
+        requested_window_start=T0,
+        requested_window_end=T0 + timedelta(hours=1),
+        provider_resolved_window_start=T0,
+        provider_resolved_window_end=T0 + timedelta(hours=1),
+        bucket_size_seconds=3600,
+        raw_response_sha256=h("runpod-billing-response-r1"),
+        observed_at=T0 + timedelta(seconds=3601),
+        result_state=BillingQueryState.BUCKETS,
+        bucket_observation_ids=[uid("runpod-billing-bucket-r1")],
+    )
+
+
+def runpod_billing_query_empty() -> RunpodBillingQueryObservation:
+    query = runpod_billing_query_observation().model_dump(mode="python")
+    query.update(result_state=BillingQueryState.EMPTY, bucket_observation_ids=[])
+    return RunpodBillingQueryObservation.model_validate(query)
+
+
+def runpod_billing_query_unknown() -> RunpodBillingQueryObservation:
+    query = runpod_billing_query_observation().model_dump(mode="python")
+    query.update(
+        result_state=BillingQueryState.UNKNOWN,
+        bucket_observation_ids=[],
+        unknown_reason="Provider response was unavailable.",
+    )
+    return RunpodBillingQueryObservation.model_validate(query)
+
+
+def runpod_billing_allocation(
+    component: BillingComponent = BillingComponent.GPU,
+) -> RunpodBillingAllocation:
+    amounts = {
+        BillingComponent.GPU: 500_000,
+        BillingComponent.CPU: 300_000,
+        BillingComponent.DISK: 200_000,
+    }
+    basis = (
+        BillingAllocationBasis.STORAGE_OWNER
+        if component is BillingComponent.DISK
+        else BillingAllocationBasis.MEASURED_OVERLAP
+    )
+    return RunpodBillingAllocation(
+        allocation_id=uid(f"runpod-allocation-{component.value.lower()}"),
+        bucket_identity_sha256=runpod_billing_bucket_observation().bucket_identity_sha256,
+        bucket_observation_id=uid("runpod-billing-bucket-r1"),
+        bucket_revision=1,
+        component=component,
+        owner_kind="EPISODE",
+        owner_id=EP1_ID,
+        allocation_basis=basis,
+        delta_micro_usd=amounts[component],
+        allocated_at=T0 + timedelta(hours=2),
+    )
+
+
+def runpod_billing_recovery_allocation() -> RunpodBillingAllocation:
+    return RunpodBillingAllocation(
+        allocation_id=uid("runpod-allocation-recovery-gpu"),
+        bucket_identity_sha256=runpod_billing_bucket_observation().bucket_identity_sha256,
+        bucket_observation_id=uid("runpod-billing-bucket-r1"),
+        bucket_revision=1,
+        component=BillingComponent.GPU,
+        owner_kind="RECOVERY",
+        owner_id="recovery_pool",
+        allocation_basis=BillingAllocationBasis.UNCOVERED,
+        delta_micro_usd=500_000,
+        allocated_at=T0 + timedelta(hours=2),
+    )
+
+
+def billing_invoice_verification() -> BillingInvoiceVerification:
+    bucket = runpod_billing_bucket_invoice_verified()
+    return BillingInvoiceVerification(
+        verification_id=uid("runpod-invoice-verification-1"),
+        provider_account_ref=bucket.provider_account_ref,
+        bucket_identity_sha256=bucket.bucket_identity_sha256,
+        bucket_observation_id=bucket.observation_id,
+        bucket_revision=bucket.revision,
+        evidence_source="CONSOLE",
+        evidence_sha256=h("runpod-invoice-evidence"),
+        evidence_observed_at=T0 + timedelta(days=1),
+        verified_at=T0 + timedelta(days=1, minutes=5),
+        currency="USD",
+        amount_micro_usd=bucket.total_amount_micro_usd,
+        result=BillingVerificationResult.MATCHED,
+    )
+
+
 def usage_receipt() -> UsageReceipt:
     return UsageReceipt(
         receipt_id=uid("receipt-1"),
@@ -536,6 +1235,16 @@ def render_request() -> RenderRequest:
         reservation_id=uid("reservation-1"),
         prompt_text="Medium close-up of Fon reading a ledger at a street food stall at dusk.",
     )
+
+
+def render_request_v2_prompt_bound() -> RenderRequest:
+    payload = render_request().model_dump(mode="python")
+    payload.update(
+        prompt_manifest_id=uid("prompt-manifest-v2"),
+        prompt_manifest_sha256=h("prompt-manifest-v2"),
+        semantic_workflow_sha256=h("semantic-workflow-v2"),
+    )
+    return RenderRequest.model_validate(payload)
 
 
 def provider_operation() -> ProviderOperation:
@@ -916,6 +1625,102 @@ def release_package() -> ReleasePackage:
     return ReleasePackage.seal(**draft)
 
 
+def _creative_safe_zone(platform: Platform, *, poster: bool) -> PlatformSafeZone:
+    return PlatformSafeZone(
+        platform=platform,
+        top_bp=600,
+        right_bp=500,
+        bottom_bp=1200,
+        left_bp=500,
+        title_box=(
+            SafeZoneTextBox(x_bp=700, y_bp=1500, width_bp=5600, height_bp=900) if poster else None
+        ),
+        cta_box=SafeZoneTextBox(x_bp=700, y_bp=7400, width_bp=5600, height_bp=900),
+    )
+
+
+def creative_derivative_ref() -> CreativeDerivativeRef:
+    source_id = uid("master-ep1")
+    return CreativeDerivativeRef(
+        derivative_type="EPISODE_ONE_PREVIEW",
+        asset_id=uid("episode-one-preview"),
+        asset_version=1,
+        asset_sha256=h("episode-one-preview"),
+        derivation_manifest_sha256=h("preview-derivation-plan"),
+        approved_reveal_episode=1,
+        sources=[
+            DerivativeSourceRef(
+                role="FOOTAGE",
+                asset_id=source_id,
+                asset_version=1,
+                asset_sha256=h("master-ep1"),
+                source_in_ms=30_000,
+                source_out_ms=35_000,
+                rights=v2_rights(),
+            ),
+            DerivativeSourceRef(
+                role="AUDIO",
+                asset_id=uid("dialogue-audio-ep1"),
+                asset_version=1,
+                asset_sha256=h("dialogue-audio-ep1"),
+                source_in_ms=0,
+                source_out_ms=5_000,
+                rights=v2_rights(),
+            ),
+        ],
+        duration_ms=5_000,
+        reveal_boundary_ms=40_000,
+        platform_safe_zones=[_creative_safe_zone(Platform.TIKTOK, poster=False)],
+        cta_text="Watch the full episode",
+        no_release_obligation=True,
+    )
+
+
+def creative_poster_ref() -> CreativeDerivativeRef:
+    return CreativeDerivativeRef(
+        derivative_type="POSTER",
+        asset_id=uid("poster-ep1"),
+        asset_version=1,
+        asset_sha256=h("poster-ep1"),
+        derivation_manifest_sha256=h("poster-derivation-plan"),
+        approved_reveal_episode=1,
+        readability_evidence_sha256=h("poster-readability-evidence"),
+        sources=[
+            DerivativeSourceRef(
+                role="CHARACTER",
+                asset_id=uid("contact-sheet"),
+                asset_version=1,
+                asset_sha256=h("contact-sheet"),
+                rights=v2_rights(),
+            )
+        ],
+        platform_safe_zones=[
+            _creative_safe_zone(Platform.TIKTOK, poster=True),
+            _creative_safe_zone(Platform.YOUTUBE, poster=True),
+        ],
+        title_text="Mother's Stall",
+        cta_text="Watch episode one",
+        no_release_obligation=True,
+    )
+
+
+def release_package_with_derivatives() -> ReleasePackage:
+    base = release_package()
+    poster = creative_poster_ref()
+    preview = creative_derivative_ref()
+    values = {name: getattr(base, name) for name in ReleasePackage.model_fields}
+    values["media"] = [
+        *base.media,
+        MediaRef(
+            asset_id=uid("dialogue-audio-ep1"),
+            sha256=h("dialogue-audio-ep1"),
+            role="dialogue_audio",
+        ),
+    ]
+    values["creative_derivatives"] = [poster, preview]
+    return ReleasePackage.seal(**values)
+
+
 def publication_command() -> PublicationCommand:
     pkg = release_package()
     return PublicationCommand(
@@ -932,6 +1737,7 @@ def publication_command() -> PublicationCommand:
             title="หนี้ที่ไม่มีใครบอก | EP1",
             description="Original AI-assisted Thai micro-drama.",
             hashtags=["#ละครสั้น"],
+            links=["https://example.invalid/episode/1"],
             disclosures=[DisclosureKind.AI_GENERATED_CONTENT],
             catalog_version=1,
         ),
@@ -940,6 +1746,64 @@ def publication_command() -> PublicationCommand:
         capability_id=uid("cap-youtube"),
         capability_version=1,
         client_token="pub-ep1-youtube-full",
+    )
+
+
+def publication_command_v2_no_cover_no_cta() -> PublicationCommand:
+    manifest = v2_owner_approved_release_approval_manifest()
+    slot = manifest.slots[0]
+    slot_values = slot.model_dump(mode="python")
+    slot_values.update(
+        cover_asset_id=None,
+        cover_asset_version=None,
+        cover_asset_sha256=None,
+        cover_rights=None,
+        cta_text=None,
+    )
+    slot = ApprovedSlotMetadata.seal(**slot_values)
+    manifest_values = manifest.model_dump(mode="python")
+    manifest_values["slots"] = [slot]
+    manifest = ReleaseApprovalManifest.seal(**manifest_values)
+
+    command_values = publication_command().model_dump(mode="python")
+    command_values.update(
+        release_package_id=manifest.release_package_id,
+        release_package_hash=manifest.release_package_hash,
+        metadata_version_id=slot.metadata_id,
+        release_manifest_id=manifest.manifest_id,
+        release_manifest_version=manifest.version,
+        release_manifest_sha256=manifest.approval_manifest_sha256,
+        approved_metadata_version=slot.metadata_version,
+        approved_metadata_sha256=slot.content_sha256,
+        metadata_policy_id=manifest.metadata_policy.policy_id,
+        metadata_policy_version=manifest.metadata_policy.version,
+        metadata_policy_sha256=manifest.metadata_policy.policy_sha256,
+        metadata=PostMetadata(
+            locale=slot.locale,
+            title=slot.title,
+            caption=slot.caption,
+            description=slot.description,
+            hashtags=slot.hashtags,
+            links=slot.links,
+            disclosures=slot.disclosures,
+            catalog_version=slot.catalog_version,
+            cover_asset_id=None,
+            cover_asset_version=None,
+            cover_asset_sha256=None,
+            cta_text=None,
+        ),
+    )
+    return PublicationCommand.model_validate(command_values)
+
+
+def episode_review_view() -> EpisodeReviewView:
+    return EpisodeReviewView(
+        episode_id=EP1_ID,
+        episode_number=1,
+        state=EpisodeState.AWAITING_FINAL_REVIEW,
+        revision=7,
+        gate_enabled=True,
+        release_approval_manifest=v2_release_approval_manifest(),
     )
 
 
@@ -1129,6 +1993,10 @@ VALID_BUILDERS: dict[str, Callable[[], BaseModel]] = {
     "IdentityLock": identity_lock,
     "BudgetReservationRequest": budget_reservation_request,
     "UsageReceipt": usage_receipt,
+    "RunpodBillingQueryObservation": runpod_billing_query_observation,
+    "RunpodBillingBucketObservation": runpod_billing_bucket_observation,
+    "RunpodBillingAllocation": runpod_billing_allocation,
+    "BillingInvoiceVerification": billing_invoice_verification,
     "PodLease": pod_lease,
     "RenderRequest": render_request,
     "ProviderOperation": provider_operation,
@@ -1156,6 +2024,22 @@ EXTRA_VALID: dict[str, Callable[[], BaseModel]] = {
     "ApprovalCommand__gate2_revise": approval_gate2_revise,
     "RightsRecord": rights_record,
     "PresetRecord": preset_record,
+    "ConceptCandidate__pending_rights": v2_concept_candidate_pending_rights,
+    "EpisodeReviewView": episode_review_view,
+    "PublicationCommand__v2_no_cover_no_cta": publication_command_v2_no_cover_no_cta,
+    "CreativeDerivativeRef": creative_derivative_ref,
+    "CreativeDerivativeRef__poster": creative_poster_ref,
+    "DirectingShot": v2_directing_shot,
+    "DirectingSection": v2_directing_section,
+    "ReleasePackage__creative_derivatives": release_package_with_derivatives,
+    "RunpodBillingQueryObservation__empty": runpod_billing_query_empty,
+    "RunpodBillingQueryObservation__unknown": runpod_billing_query_unknown,
+    "RunpodBillingBucketObservation__invoice_verified": runpod_billing_bucket_invoice_verified,
+    "RunpodBillingBucketObservation__disputed": runpod_billing_bucket_disputed,
+    "RunpodBillingAllocation__cpu": lambda: runpod_billing_allocation(BillingComponent.CPU),
+    "RunpodBillingAllocation__disk": lambda: runpod_billing_allocation(BillingComponent.DISK),
+    "RunpodBillingAllocation__recovery": runpod_billing_recovery_allocation,
+    "RenderRequest__v2_prompt_manifest_bound": render_request_v2_prompt_bound,
 }
 
 
@@ -1219,6 +2103,45 @@ def _resealed_without_cast_package() -> dict[str, Any]:
 def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
     """(model_name, case_id, reason, payload) tuples that MUST fail validation."""
     m = _mutate
+
+    def invalid_pack(change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
+        base = v2_episode_pack()
+        payload = _json(base)
+        change(payload)
+        scenes = [EpisodeScene.model_validate(scene) for scene in payload["scenes"]]
+        mutated = base.model_copy(update={"scenes": scenes})
+        mutated = mutated.model_copy(update={"content_sha256": mutated.calculated_content_sha256()})
+        return mutated.model_dump(mode="json")
+
+    def invalid_derivative_package_reveal() -> dict[str, Any]:
+        package = release_package_with_derivatives()
+        poster = package.creative_derivatives[0].model_copy(update={"approved_reveal_episode": 2})
+        mutated = package.model_copy(
+            update={"creative_derivatives": [poster, package.creative_derivatives[1]]}
+        )
+        payload = mutated.model_dump(mode="json")
+        payload["package_hash"] = mutated.compute_hash()
+        return payload
+
+    def cyclic_beats(payload: dict[str, Any]) -> None:
+        first = payload["scenes"][0]["beats"][0]
+        first["dependency_beat_ids"] = ["beat-2"]
+        second = copy.deepcopy(first)
+        second["beat_id"] = "beat-2"
+        second["dependency_beat_ids"] = ["beat-1"]
+        payload["scenes"][0]["beats"].append(second)
+
+    def cyclic_scenes(payload: dict[str, Any]) -> None:
+        first = payload["scenes"][0]
+        first["dependency_scene_ids"] = ["scene-2"]
+        second = copy.deepcopy(first)
+        second["scene_id"] = "scene-2"
+        second["scene_number"] = 2
+        second["dependency_scene_ids"] = ["scene-1"]
+        second["beats"][0]["beat_id"] = "beat-2"
+        second["dependency_scene_ids"] = ["scene-1"]
+        payload["scenes"].append(second)
+
     gate2_approve_no_media = _json(approval_gate1())
     gate2_approve_no_media.update(gate="EPISODE_FINAL", entity_id=str(EP1_ID))
     cases: list[tuple[str, str, str, dict[str, Any]]] = [
@@ -1446,6 +2369,57 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             m(render_request, _set("required_controls", ["TELEPATHY"])),
         ),
         (
+            "RunpodBillingQueryObservation",
+            "empty_query_with_bucket",
+            "EMPTY billing query cannot claim bucket observations",
+            m(runpod_billing_query_observation, _set("result_state", "EMPTY")),
+        ),
+        (
+            "RunpodBillingBucketObservation",
+            "component_total_mismatch",
+            "provider bucket total must equal GPU + CPU + disk",
+            m(runpod_billing_bucket_observation, _set("total_amount_micro_usd", 1_000_001)),
+        ),
+        (
+            "RunpodBillingBucketObservation",
+            "float_component_amount",
+            "billing money is integer micro-USD; floats are rejected",
+            m(runpod_billing_bucket_observation, _set("gpu_amount_micro_usd", 500_000.5)),
+        ),
+        (
+            "RunpodBillingAllocation",
+            "gpu_with_disk_basis",
+            "GPU/CPU allocation must use measured overlap",
+            m(runpod_billing_allocation, _set("allocation_basis", "STORAGE_OWNER")),
+        ),
+        (
+            "BillingInvoiceVerification",
+            "mismatch_without_reason",
+            "mismatched invoice evidence needs an explicit reason",
+            m(billing_invoice_verification, _set("result", "MISMATCHED")),
+        ),
+        (
+            "RenderRequest",
+            "partial_prompt_manifest_binding",
+            "prompt manifest ID and hash must be provided together",
+            m(render_request, _set("prompt_manifest_id", str(uid("prompt-manifest")))),
+        ),
+        (
+            "RenderRequest",
+            "v2_missing_semantic_workflow_hash",
+            "V2 manifest-bound render request needs pinned semantic workflow hash",
+            m(
+                render_request_v2_prompt_bound,
+                _del("semantic_workflow_sha256"),
+            ),
+        ),
+        (
+            "RenderRequest",
+            "semantic_hash_without_manifest",
+            "semantic workflow hash requires a V2 prompt manifest locator",
+            m(render_request, _set("semantic_workflow_sha256", h("semantic-workflow-v2"))),
+        ),
+        (
             "ProviderOperation",
             "missing_client_token",
             "idempotent token required",
@@ -1622,6 +2596,30 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             "utc_mismatch",
             "utc_instant must match zone conversion",
             m(publication_command, _set("schedule.utc_instant", "2026-10-27T19:30:00Z")),
+        ),
+        (
+            "PublicationCommand",
+            "partial_v2_manifest_binding",
+            "V2 stale-queue binding must include exact manifest, metadata and policy",
+            m(publication_command, _set("release_manifest_id", str(uid("manifest-id")))),
+        ),
+        (
+            "PublicationCommand",
+            "partial_v2_cover_binding",
+            "V2 command cover must be fully bound or explicitly absent",
+            m(
+                publication_command_v2_no_cover_no_cta,
+                _set("metadata.cover_asset_id", str(uid("partial-cover"))),
+            ),
+        ),
+        (
+            "EpisodeReviewView",
+            "invalid_release_approval_manifest",
+            "nested review manifest must validate as V2",
+            m(
+                episode_review_view,
+                _set("release_approval_manifest.schema_version", "1.0"),
+            ),
         ),
         (
             "CapabilityRecord",
@@ -1841,4 +2839,208 @@ def invalid_cases() -> list[tuple[str, str, str, dict[str, Any]]]:
             m(preset_record, _set("rights_route_id", None)),
         ),
     ]
+    v2_specific = {
+        "ConceptIntake": (
+            v2_concept_intake,
+            _set("requested_episode_count", 11),
+            "episode count is bounded",
+        ),
+        "ConceptCandidate": (
+            v2_concept_candidate,
+            _set("rights.status", "UNKNOWN"),
+            "rights must be eligible",
+        ),
+        "CharacterLogic": (
+            v2_character_logic,
+            _set("schema_version", "1.0"),
+            "V1 payload is not V2",
+        ),
+        "SecretLedger": (v2_secret_ledger, _set("schema_version", "1.0"), "V1 payload is not V2"),
+        "SeasonStoryLedger": (
+            v2_season_story_ledger,
+            _set("payoff_debts.0.status", "UNKNOWN"),
+            "payoff debt status is closed",
+        ),
+        "EpisodePack": (
+            v2_episode_pack,
+            _set("duration_target_ms", 301_000),
+            "episode duration is 180-300 seconds",
+        ),
+        "DirectingManifest": (
+            v2_directing_manifest,
+            _set("shots.0.duration_ms", 15_001),
+            "renderable directing shots are at most 15 seconds",
+        ),
+        "StoryTime": (v2_story_time, _set("schema_version", "1.0"), "V1 payload is not V2"),
+        "WardrobeBible": (v2_wardrobe_bible, _set("schema_version", "1.0"), "V1 payload is not V2"),
+        "SceneWardrobeAssignment": (
+            v2_wardrobe_assignment,
+            _set("rights.status", "EXPIRED"),
+            "expired outfit rights block use",
+        ),
+        "StateEvent": (v2_state_event, _set("after", "closed"), "state event must change state"),
+        "AssetSheet": (
+            v2_asset_sheet,
+            _set("rights.status", "INELIGIBLE"),
+            "retired/ineligible rights block use",
+        ),
+        "PropSheet": (
+            v2_prop_sheet,
+            _set("known_states", []),
+            "prop requires typed state variants",
+        ),
+        "StyleBible": (
+            v2_style_bible,
+            _set("palette", []),
+            "series style requires a defined palette",
+        ),
+        "LocationLayout": (
+            v2_location_layout,
+            _set("entrance_ids", []),
+            "location requires entrance geometry",
+        ),
+        "ShotReferenceBinding": (
+            v2_binding_example,
+            _set("role", "untyped"),
+            "references require a semantic role",
+        ),
+        "PromptManifest": (
+            v2_prompt_manifest,
+            _set(
+                "bindings",
+                [b for b in _json(v2_prompt_manifest())["bindings"] if b["role"] != "outfit"],
+            ),
+            "assigned outfit reference required",
+        ),
+        "ProgressSnapshot": (
+            v2_progress_snapshot,
+            _set("required_work", 0),
+            "progress cannot invent a denominator",
+        ),
+        "ReleaseApprovalManifest": (
+            v2_release_approval_manifest,
+            _set("slots.0.title", "Changed after approval"),
+            "Gate-2 hash binds exact metadata",
+        ),
+    }
+    for model_name, (builder, mutate, reason) in v2_specific.items():
+        cases.append((model_name, "v2_invalid_" + model_name.lower(), reason, m(builder, mutate)))
+    cases.append(
+        (
+            "ConceptCandidate",
+            "pending_rights_without_status",
+            "candidate rights uncertainty must use an explicit PENDING or UNKNOWN status",
+            m(
+                v2_concept_candidate,
+                _set(
+                    "rights",
+                    {"note": "Rights status has not been established."},
+                ),
+            ),
+        )
+    )
+    cases.extend(
+        [
+            (
+                "CreativeDerivativeRef",
+                "missing_source_rights",
+                "each derivative source needs its own eligible rights grant",
+                m(creative_derivative_ref, _del("sources.0.rights")),
+            ),
+            (
+                "CreativeDerivativeRef",
+                "missing_derivation_manifest",
+                "derivative must bind its deterministic derivation manifest",
+                m(creative_derivative_ref, _del("derivation_manifest_sha256")),
+            ),
+            (
+                "CreativeDerivativeRef",
+                "poster_missing_readability_evidence",
+                "poster requires readability evidence hash",
+                m(creative_poster_ref, _del("readability_evidence_sha256")),
+            ),
+            (
+                "CreativeDerivativeRef",
+                "unsafe_platform_text_box",
+                "CTA text box must remain within its platform mobile safe zone",
+                m(creative_derivative_ref, _set("platform_safe_zones.0.cta_box.x_bp", 4000)),
+            ),
+            (
+                "CreativeDerivativeRef",
+                "unknown_source_role",
+                "derivative source role is closed",
+                m(creative_derivative_ref, _set("sources.1.role", "SFX")),
+            ),
+            (
+                "CreativeDerivativeRef",
+                "preview_without_footage_source",
+                "episode-one preview needs at least one footage source",
+                m(creative_derivative_ref, _set("sources.0.role", "AUDIO")),
+            ),
+            (
+                "CreativeDerivativeRef",
+                "reveal_boundary_outside_footage",
+                "footage source must end before its approved source-timeline cutoff",
+                m(creative_derivative_ref, _set("sources.0.source_out_ms", 41_000)),
+            ),
+            (
+                "EpisodePack",
+                "missing_beat_dependency",
+                "beat dependencies must resolve inside the same pack",
+                invalid_pack(_set("scenes.0.beats.0.dependency_beat_ids", ["missing-beat"])),
+            ),
+            (
+                "ReleasePackage",
+                "episode_one_poster_wrong_reveal_episode",
+                "episode-one poster must bind approved reveal episode 1",
+                invalid_derivative_package_reveal(),
+            ),
+            (
+                "EpisodePack",
+                "cyclic_beat_dependencies",
+                "beat dependency graphs must be acyclic",
+                invalid_pack(cyclic_beats),
+            ),
+            (
+                "EpisodePack",
+                "unknown_proof_object",
+                "proof objects must reference props in the containing scene",
+                invalid_pack(_set("scenes.0.beats.0.proof_object_ids", ["missing-prop"])),
+            ),
+            (
+                "EpisodePack",
+                "missing_scene_dependency",
+                "scene dependencies must resolve inside the same pack",
+                invalid_pack(_set("scenes.0.dependency_scene_ids", ["missing-scene"])),
+            ),
+            (
+                "EpisodePack",
+                "cyclic_scene_dependencies",
+                "scene dependency graphs must be acyclic",
+                invalid_pack(cyclic_scenes),
+            ),
+            (
+                "EpisodePack",
+                "missing_approved_scope_hash",
+                "episode packs must bind the exact Gate 1 approved scope hash",
+                m(v2_episode_pack, _del("approved_scope_hash")),
+            ),
+        ]
+    )
+    cases.append(
+        (
+            "ConceptIntake",
+            "stale_content_hash",
+            "V2 canonical content hash must match payload on readback",
+            m(v2_concept_intake, _set("story_idea", "tampered without resealing")),
+        )
+    )
+    cases.append(
+        (
+            "V1ManifestReadback",
+            "claims_v2_ready",
+            "legacy V1 readback is never V2-ready",
+            _mutate(v1_manifest_readback, _set("v2_ready", True)),
+        )
+    )
     return cases

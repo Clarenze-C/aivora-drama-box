@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "StateValue": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "field": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Field",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "entity_id",
+        "field",
+        "value"
+      ],
+      "title": "StateValue",
+      "type": "object"
+    }
+  },
+  "$id": "urn:microdrama:contracts:2.15.0:PackBeat",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "beat_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Beat Id",
+      "type": "string"
+    },
+    "dependency_beat_ids": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Dependency Beat Ids",
+      "type": "array"
+    },
+    "function": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Function",
+      "type": "string"
+    },
+    "proof_object_ids": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Proof Object Ids",
+      "type": "array"
+    },
+    "required_asset_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Required Asset Ids",
+      "type": "array"
+    },
+    "reveal_ids": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+        "type": "string"
+      },
+      "title": "Reveal Ids",
+      "type": "array"
+    },
+    "state_in": {
+      "items": {
+        "$ref": "#/$defs/StateValue"
+      },
+      "title": "State In",
+      "type": "array"
+    },
+    "state_out": {
+      "items": {
+        "$ref": "#/$defs/StateValue"
+      },
+      "title": "State Out",
+      "type": "array"
+    },
+    "visible_action": {
+      "maxLength": 20000,
+      "minLength": 1,
+      "title": "Visible Action",
+      "type": "string"
+    }
+  },
+  "required": [
+    "beat_id",
+    "function",
+    "visible_action"
+  ],
+  "title": "PackBeat",
+  "type": "object"
+}

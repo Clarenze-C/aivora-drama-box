@@ -10,10 +10,12 @@ from publishing_support import PublishingWorld
 from microdrama.contracts.enums import (
     CapabilityOperation,
     CapabilitySupport,
+    EvidenceSource,
     Platform,
     SlotKind,
 )
 from microdrama.contracts.errors import Conflict, PolicyDenied
+from microdrama.contracts.primitives import EvidenceRef
 from microdrama.publishing.service import MAX_SUBMIT_ATTEMPTS
 
 
@@ -121,6 +123,56 @@ def test_stale_capability_record_holds_the_slot(world: PublishingWorld) -> None:
     updated = world.service.submit_slot(command, job_id=job_id)
     assert updated["state"] == "HELD"
     assert updated["blocker"] == "CAPABILITY_STALE"
+
+
+def test_mock_labeled_metadata_is_refused_by_nonfixture_route(
+    world: PublishingWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _s, _episode, package, approval, _post = _scheduled_single(world)
+    plan = package.release_scope[0]
+    metadata = world.metadata().model_copy(update={"title": "Mock title"})
+    command = world.command(plan, package=package, approval_event_id=approval, metadata=metadata)
+    adapter = world.adapters[Platform.YOUTUBE]
+    live_evidence = EvidenceRef(
+        source=EvidenceSource.CONTROLLED_ACCOUNT_TEST, ref="controlled-test:capability"
+    )
+    mixed_evidence = EvidenceRef(source=EvidenceSource.FAKE_FIXTURE, ref="fixture:capability")
+    fixture_capability = adapter.capability
+    monkeypatch.setattr(
+        adapter,
+        "capability",
+        lambda account_ref: fixture_capability(account_ref).model_copy(
+            update={"evidence": [mixed_evidence, live_evidence]}
+        ),
+    )
+    with pytest.raises(PolicyDenied, match="mock-labeled title"):
+        world.service.submit_slot(command, job_id=world.submit_job(command))
+
+
+def test_mock_labeled_metadata_allows_fixture_plus_documentation_evidence(
+    world: PublishingWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _s, _episode, package, approval, _post = _scheduled_single(world)
+    plan = package.release_scope[0]
+    metadata = world.metadata().model_copy(update={"title": "Mock title"})
+    command = world.command(plan, package=package, approval_event_id=approval, metadata=metadata)
+    adapter = world.adapters[Platform.YOUTUBE]
+    fixture_capability = adapter.capability
+    documentation = EvidenceRef(
+        source=EvidenceSource.OFFICIAL_DOCUMENTATION, ref="docs:upload-capability"
+    )
+
+    def fixture_with_documentation(account_ref: str):
+        record = fixture_capability(account_ref)
+        return record.model_copy(update={"evidence": [*record.evidence, documentation]})
+
+    monkeypatch.setattr(
+        adapter,
+        "capability",
+        fixture_with_documentation,
+    )
+    submitted = world.service.submit_slot(command, job_id=world.submit_job(command))
+    assert submitted["state"] == "SUBMITTED"
 
 
 def test_dependency_waits_for_the_actual_verified_target(world: PublishingWorld) -> None:

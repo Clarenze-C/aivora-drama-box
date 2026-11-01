@@ -32,6 +32,18 @@
 </section>
 {% endif %}
 
+{% if v.release_approval_manifest %}
+<section data-testid="release-approval-manifest">
+  <h2>V2 release approval manifest</h2>
+  <p>Hash <code>{{ v.release_approval_manifest.approval_manifest_sha256 }}</code>. This is the complete metadata and policy record bound by the Gate 2 approval.</p>
+  <pre>{{ v.release_approval_manifest.model_dump(mode='json') | tojson(indent=2) }}</pre>
+</section>
+{% elif 'current V2 Gate 2 release manifest is missing or stale' in v.gate_blockers %}
+<section class="blockers" data-testid="release-approval-manifest-missing">
+  <strong class="warn">No current V2 release manifest is available to review.</strong>
+</section>
+{% endif %}
+
 <section data-testid="preview">
   <h2>Playable episode</h2>
   {% if master %}
@@ -177,11 +189,64 @@
   {% endif %}
 </section>
 
+{% if meta_form and meta_form.open %}
+<section data-testid="gate2-metadata">
+  <h2>Release metadata for every current slot</h2>
+  <p class="hint">These exact values — one field set per current release slot of package v{{ meta_form.package_version }} — are sealed into the V2 release approval manifest that Approve &amp; schedule binds. Nothing is filled in for you: what you submit is what can be published.{% if v.release_approval_manifest %} A manifest is already prepared; submitting again replaces it with a new version.{% endif %}</p>
+  <form method="post" action="/ui/episodes/{{ v.episode_id }}/metadata" data-testid="metadata-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="package_hash" value="{{ meta_form.package_hash }}">
+    <fieldset>
+      <legend>Metadata mutation policy (all slots)</legend>
+      <p class="hint">Which fields may later change within this policy, without a new Gate 2 decision. Unapproved content changes are never allowed.</p>
+      {% for field in policy_fields %}
+      <label class="inline"><input type="checkbox" name="policy_mutable_fields" value="{{ field }}" checked> {{ field }}</label>
+      {% endfor %}
+      <div class="grid">
+        <label>Cooldown hours (24 or more) <input type="number" name="policy_cooldown_hours" value="24" min="24" max="720" required></label>
+        <label>Substantive edits allowed in the first 7 days (0&ndash;2) <input type="number" name="policy_max_substantive_edits" value="2" min="0" max="2" required></label>
+      </div>
+    </fieldset>
+    {% for slot in meta_form.slots %}
+    <fieldset data-testid="metadata-slot" data-slot="{{ slot.slot_id }}">
+      <legend>{{ slot.platform | label }} · {{ slot.account_ref }} · {{ slot.slot_kind | label }} · {{ slot.locale }}</legend>
+      {% if slot.capability_blockers %}<p class="bad">{% for b in slot.capability_blockers %}{{ b }}{% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+      <input type="hidden" name="md_slot" value="{{ slot.slot_id }}">
+      <label>Title <input name="md_{{ slot.slot_id }}_title" maxlength="500" required></label>
+      <div class="grid">
+        <label>Caption <textarea name="md_{{ slot.slot_id }}_caption" maxlength="5000"></textarea></label>
+        <label>Description <textarea name="md_{{ slot.slot_id }}_description" maxlength="5000"></textarea></label>
+      </div>
+      <label>Hashtags (comma or space separated, at most 30) <input name="md_{{ slot.slot_id }}_hashtags"></label>
+      <label>Links, one per line{% if meta_form.catalog_links %} — only the episode's current catalog URLs: {{ meta_form.catalog_links | join(', ') }}{% else %} — none yet: the episode has no current catalog URLs, so links cannot be supplied{% endif %} <textarea name="md_{{ slot.slot_id }}_links" rows="2"></textarea></label>
+      <p>Disclosures for this route (the package's declared set — confirm, do not change):
+        {% for d in slot.disclosures %}
+        <label class="inline"><input type="checkbox" name="md_{{ slot.slot_id }}_disclosures" value="{{ d }}" checked> {{ d | label }}</label>
+        {% endfor %}
+      </p>
+      <label>Cover
+        <select name="md_{{ slot.slot_id }}_cover">
+          <option value="">(no cover — the manifest binds its absence)</option>
+          {% for c in slot.covers %}
+          <option value="{{ c.asset_id }}" {% if c.rights is none %}disabled{% endif %}>cover {{ c.asset_id }} v{{ c.version }} ({{ c.sha256 | short(10) }}){% if c.rights is none %} — not selectable: {{ c.blocked_reason }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% if not slot.covers %}<p class="hint">The package carries no cover assets; a cover may not be added without a new package.</p>{% endif %}
+      <label>Call to action (optional, up to 500 characters) <input name="md_{{ slot.slot_id }}_cta" maxlength="500"></label>
+    </fieldset>
+    {% endfor %}
+    <button type="submit" data-testid="prepare-metadata">Prepare release metadata</button>
+    <p class="hint">Preparing records no approval and does not decide the gate. It seals the manifest shown above; Approve &amp; schedule then binds its exact hash, and a revision or a new package invalidates it.</p>
+  </form>
+</section>
+{% endif %}
+
 {% if can_decide %}
 <section data-testid="decision">
   <h2>Decision</h2>
 
-  {% macro binding() %}
+  {% macro binding(include_manifest=false) %}
     <input type="hidden" name="csrf_token" value="{{ csrf }}">
     <input type="hidden" name="gate" value="EPISODE_FINAL">
     <input type="hidden" name="entity_id" value="{{ v.episode_id }}">
@@ -190,11 +255,12 @@
     {% for h in pkg_hashes %}<input type="hidden" name="media_hash" value="{{ h }}">{% endfor %}
     {% if pkg.management_policy_hash %}<input type="hidden" name="management_policy_hash" value="{{ pkg.management_policy_hash }}">{% endif %}
     <input type="hidden" name="release_scope_hash" value="{{ pkg.release_scope_hash }}">
+    {% if include_manifest and v.release_approval_manifest %}<input type="hidden" name="release_manifest_hash" value="{{ v.release_approval_manifest.approval_manifest_sha256 }}">{% endif %}
   {% endmacro %}
 
   {% if v.gate_enabled %}
   <form method="post" action="/ui/episodes/{{ v.episode_id }}/review" data-testid="approve-form">
-    {{ binding() }}
+    {{ binding(true) }}
     <input type="hidden" name="action" value="APPROVE">
     <input type="hidden" name="idempotency_key" value="{{ keys.approve }}">
     <button type="submit" data-testid="approve">Approve &amp; schedule</button>

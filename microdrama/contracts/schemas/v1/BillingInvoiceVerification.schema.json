@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "BillingVerificationResult": {
+      "enum": [
+        "MATCHED",
+        "MISMATCHED"
+      ],
+      "title": "BillingVerificationResult",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.15.0:BillingInvoiceVerification",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "amount_micro_usd": {
+      "description": "Integer micro-USD (no floats)",
+      "minimum": 0,
+      "title": "Amount Micro Usd",
+      "type": "integer"
+    },
+    "bucket_identity_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bucket Identity Sha256",
+      "type": "string"
+    },
+    "bucket_observation_id": {
+      "format": "uuid",
+      "title": "Bucket Observation Id",
+      "type": "string"
+    },
+    "bucket_revision": {
+      "minimum": 1,
+      "title": "Bucket Revision",
+      "type": "integer"
+    },
+    "currency": {
+      "pattern": "^[A-Z]{3}$",
+      "title": "Currency",
+      "type": "string"
+    },
+    "evidence_observed_at": {
+      "format": "date-time",
+      "title": "Evidence Observed At",
+      "type": "string"
+    },
+    "evidence_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evidence Sha256",
+      "type": "string"
+    },
+    "evidence_source": {
+      "enum": [
+        "INVOICE",
+        "CONSOLE"
+      ],
+      "title": "Evidence Source",
+      "type": "string"
+    },
+    "mismatch_reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mismatch Reason"
+    },
+    "provider_account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Provider Account Ref",
+      "type": "string"
+    },
+    "result": {
+      "$ref": "#/$defs/BillingVerificationResult"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "verification_id": {
+      "format": "uuid",
+      "title": "Verification Id",
+      "type": "string"
+    },
+    "verified_at": {
+      "format": "date-time",
+      "title": "Verified At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "verification_id",
+    "provider_account_ref",
+    "bucket_identity_sha256",
+    "bucket_observation_id",
+    "bucket_revision",
+    "evidence_source",
+    "evidence_sha256",
+    "evidence_observed_at",
+    "verified_at",
+    "currency",
+    "amount_micro_usd",
+    "result"
+  ],
+  "title": "BillingInvoiceVerification",
+  "type": "object"
+}

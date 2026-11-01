@@ -15,7 +15,7 @@ pytestmark = pytest.mark.db
 
 def blockers_of(world: World, episode_id) -> list[str]:
     """The public path (review view) and the function itself must agree; both are asserted."""
-    view = world.service.episode_review(episode_id)
+    view = world.service.episode_review(world.human(), episode_id)
     with world.db.transaction() as tx:
         episode = tx.fetchone("SELECT * FROM episodes WHERE id = %s", (episode_id,))
         stored = current_package(tx, episode_id)
@@ -348,7 +348,7 @@ def test_unknown_coverage_is_shown_but_blocks_only_when_the_package_lists_it(wor
             unknown_checks=["temporal.lip_sync"],
         )
     )
-    view = world.service.episode_review(episode_id)
+    view = world.service.episode_review(world.human(), episode_id)
     assert view.gate_enabled is True
     assert view.package.qa.unknown_coverage_check_ids == ["temporal.lip_sync"]
 
@@ -385,11 +385,11 @@ def test_management_policy_must_match_the_approved_season_scope(world: World) ->
 def test_findings_and_coverage_are_visible_even_when_blocked(world: World) -> None:
     _season_id, episode_id, _package = world.ready_episode()
     world.qa_finding(episode_id, severity=Severity.CRITICAL)
-    view = world.service.episode_review(episode_id)
+    view = world.service.episode_review(world.human(), episode_id)
     assert view.gate_enabled is False
     assert len(view.findings) == 1 and view.findings[0].severity is Severity.CRITICAL
 
 
 def test_unknown_episode_is_not_found(world: World) -> None:
     with pytest.raises(NotFound):
-        world.service.episode_review(uuid.uuid4())
+        world.service.episode_review(world.human(), uuid.uuid4())

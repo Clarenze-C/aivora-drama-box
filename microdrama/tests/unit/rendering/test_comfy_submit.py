@@ -125,6 +125,7 @@ def test_missing_reservation_is_a_typed_refusal(world: ComfyWorld) -> None:
     attempt = world.attempt(ep, reservation_id=uuid.uuid4())
     with pytest.raises(NotFound):
         world.service.submit(attempt.request, job_id=attempt.job_id)
+    assert world.client.calls == []  # reservation is verified before object_info preflight
     assert world.server.submissions == []
 
 

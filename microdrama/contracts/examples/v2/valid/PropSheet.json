@@ -1,0 +1,40 @@
+{
+  "asset_id": "881119f5-30e5-5ad0-a3da-ba93dcf93a3a",
+  "asset_sha256": "b631c772b430b381bc6df7582bb0f3ed9965824f14689aed3a6a751e76eb04dd",
+  "asset_valid_until": null,
+  "asset_version": 1,
+  "content_sha256": "1912bb13296705ba89060ce77632e7c0613afa449c3422deed199ede4e9c3c37",
+  "created_at": "2026-10-30T00:00:00Z",
+  "dimensions": "A5 notebook",
+  "known_states": [
+    "closed",
+    "open"
+  ],
+  "owner_character_id": "fon",
+  "prop_id": "ledger",
+  "purpose": "Carries the debt evidence Fon reads.",
+  "record_id": "ea7bcc5c-1248-5a2f-951a-51a09eeb9790",
+  "rights": {
+    "commercial_use": true,
+    "evidence_sha256": [
+      "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+    ],
+    "expires_at": null,
+    "output_release_allowed": true,
+    "rights_route_id": "original-fiction",
+    "rights_version": 1,
+    "status": "ELIGIBLE",
+    "subject_kind": "MODEL_OUTPUT",
+    "subject_ref": "original-fiction-output",
+    "territories": [
+      "TH"
+    ]
+  },
+  "schema_version": "2.0",
+  "text_layer_sha256": "0e6d5b82ada755ee874e4f9c84e4cf14ddd82308d7f6101f2968b01e18d5b6a4",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1,
+  "visual_anchor": "Dark green cloth ledger with a brass corner."
+}

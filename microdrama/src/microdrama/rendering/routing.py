@@ -23,7 +23,7 @@ request, and submits through the ordinary adapter path.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -36,14 +36,45 @@ from microdrama.contracts.errors import (
     NotFound,
     PolicyDenied,
     SchemaInvalid,
+    UnsupportedControl,
 )
+from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.infra import Clock
 from microdrama.contracts.primitives import DEFAULT_LIMITS, ProductionLimits
 from microdrama.contracts.season import Shot, ShotManifest
+from microdrama.contracts.v2 import (
+    AssetSheet,
+    DirectingManifest,
+    EpisodePack,
+    LocationLayout,
+    PromptManifest,
+    PropSheet,
+    ReferenceRole,
+    SceneWardrobeAssignment,
+    SecretLedger,
+    ShotReferenceBinding,
+    StyleBible,
+    V2Record,
+    WardrobeBible,
+    verify_v2_record_hash,
+)
 from microdrama.core.events import append_event
 from microdrama.core.jobs import JobService
 from microdrama.persistence.db import Database
+from microdrama.references.v2_binding import (
+    ExpectedReference,
+    RightsResolver,
+    resolve_shot_reference_expectations,
+)
 from microdrama.rendering.comfy_jobs import ComfyRenderService, render_id_for
+from microdrama.rendering.keyframe_preflight import (
+    FRAME_ROLES,
+    KeyframePreflightResult,
+    StillMediaInspector,
+    build_expected_keyframe_facts,
+    ensure_keyframe_preflight_allows_dispatch,
+    run_keyframe_preflight,
+)
 from microdrama.rendering.leases import RENDERING_NAMESPACE
 from microdrama.rendering.presets import (
     EligibilityReason,
@@ -52,6 +83,9 @@ from microdrama.rendering.presets import (
     PresetView,
     promoted,
 )
+from microdrama.rendering.v2_preflight import validate_v2_prompt_preflight
+from microdrama.rendering.workflows import BoundWorkflow, bind_v2_workflow
+from microdrama.rendering.workflows.v2_binding import ROLE_CONTROL
 
 #: Aggregate/event names for durable routing decisions (rows in ``domain_events``).
 ROUTING_AGGREGATE_TYPE = "render_routing"
@@ -520,6 +554,63 @@ class RoutedAttempt:
     decision: RouteDecision
 
 
+@dataclass(frozen=True)
+class V2ReferencePreflightContext:
+    """Current typed records prepared by T047's caller before V2 shot dispatch.
+
+    Asset/reference documents in this value must have been loaded from their current
+    rows. The resolver still verifies their frozen hashes, exact relationships, time
+    intervals and state chain; rights are re-read through ``resolve_current_rights``.
+    ``verify_current_asset`` must check the live descriptor is accepted at the exact
+    version/hash and verify its stored bytes before render reservation.
+    """
+
+    episode_pack: EpisodePack
+    directing_manifest: DirectingManifest
+    secret_ledger: SecretLedger
+    wardrobe_assignments: Sequence[SceneWardrobeAssignment]
+    wardrobe_bibles: Sequence[WardrobeBible]
+    style_bible: StyleBible
+    asset_sheets: Sequence[AssetSheet]
+    prop_sheets: Sequence[PropSheet]
+    location_layouts: Sequence[LocationLayout]
+    resolve_current_rights: RightsResolver
+    verify_current_asset: Callable[[UUID, int, str], None]
+    territories: list[str]
+    style_subject_id: str
+    explicit_frames: Sequence[ShotReferenceBinding] = ()
+    required_frame_roles: frozenset[ReferenceRole] = frozenset()
+
+    def expectations_for(
+        self, shot: Shot, *, assert_current: Callable[[V2Record], None] | None = None
+    ) -> dict[tuple[ReferenceRole, str], ExpectedReference]:
+        return resolve_shot_reference_expectations(
+            self.episode_pack,
+            self.directing_manifest,
+            secret_ledger=self.secret_ledger,
+            shot_id=shot.shot_id,
+            shot_prop_ids=shot.prop_ids,
+            wardrobe_assignments=self.wardrobe_assignments,
+            wardrobe_bibles=self.wardrobe_bibles,
+            style_bible=self.style_bible,
+            asset_sheets=self.asset_sheets,
+            prop_sheets=self.prop_sheets,
+            location_layouts=self.location_layouts,
+            explicit_frames=self.explicit_frames,
+            required_frame_roles=self.required_frame_roles,
+            style_subject_id=self.style_subject_id,
+            assert_current=assert_current,
+        )
+
+
+@dataclass(frozen=True)
+class V2RoutedAttempt(RoutedAttempt):
+    """V2 attempt plus the semantic graph receipt derived before reservation."""
+
+    bound_workflow: BoundWorkflow
+    keyframe_preflight: KeyframePreflightResult | None = None
+
+
 def build_render_request(
     decision: RouteDecision,
     shot: Shot,
@@ -577,6 +668,9 @@ def dispatch_routed_attempt(
     reference_asset_ids: list[UUID],
     identity_lock_id: UUID | None,
     prompt_text: str,
+    prompt_manifest: Any | None = None,
+    prop_sheets: tuple[Any, ...] | list[Any] = (),
+    dispatch_at: datetime | None = None,
     submit: bool = True,
 ) -> RoutedAttempt:
     """Pay for and dispatch one routed attempt through the T013 reserve→submit path.
@@ -591,6 +685,27 @@ def dispatch_routed_attempt(
     chosen = decision.chosen
     if chosen is None:
         raise PolicyDenied("cannot dispatch a decision without a chosen preset")
+    if shot.prop_ids and prompt_manifest is None:
+        raise SchemaInvalid(
+            "shot prop IDs require a typed PromptManifest and PropSheet before render dispatch",
+            shot_id=shot.shot_id,
+        )
+    if prompt_manifest is not None:
+        if dispatch_at is None:
+            raise SchemaInvalid("typed V2 prop dispatch requires an explicit current instant")
+        if (
+            prompt_manifest.episode_id != decision.episode_id
+            or prompt_manifest.shot_id != shot.shot_id
+        ):
+            raise SchemaInvalid("PromptManifest does not belong to the routed episode and shot")
+        if prompt_manifest.prompt_text != prompt_text:
+            raise SchemaInvalid("render prompt differs from the hash-bound PromptManifest")
+        from microdrama.references.v2_planning import resolve_shot_prop_bindings
+
+        resolve_shot_prop_bindings(shot, prompt_manifest, prop_sheets, at=dispatch_at)
+        reference_asset_ids = list(
+            dict.fromkeys(binding.asset_id for binding in prompt_manifest.bindings)
+        )
     view = _view_for(catalog, chosen.preset_id)
     key = attempt_semantic_key(episode_number, shot.shot_id, decision.attempt_number)
     reservation = comfy.reserve_attempt(episode_id=decision.episode_id, semantic_key=key)
@@ -611,6 +726,233 @@ def dispatch_routed_attempt(
     if submit:
         comfy.submit(request, job_id=result.job_id)
     return RoutedAttempt(request=request, job_id=result.job_id, decision=decision)
+
+
+def load_current_prompt_manifest(
+    db: Database, *, prompt_manifest_id: UUID, prompt_manifest_sha256: str
+) -> PromptManifest:
+    """Read the current persisted V2 prompt by exact ID/hash; stale rows fail closed."""
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT payload, payload_sha256 FROM v2_contract_documents "
+            "WHERE contract_type = 'PromptManifest' AND record_id = %s AND current",
+            (prompt_manifest_id,),
+        )
+    if row is None:
+        raise NotFound("current PromptManifest not found", record_id=str(prompt_manifest_id))
+    manifest = PromptManifest.model_validate(row["payload"])
+    if canonical_hash(manifest) != row["payload_sha256"]:
+        raise Conflict("persisted PromptManifest payload hash failed integrity check")
+    verify_v2_record_hash(manifest)
+    if (manifest.record_id, manifest.content_sha256) != (
+        prompt_manifest_id,
+        prompt_manifest_sha256,
+    ):
+        raise Conflict("current PromptManifest does not match the exact render request locator")
+    return manifest
+
+
+def assert_current_v2_source_record(db: Database, record: V2Record) -> None:
+    """Require the exact typed source payload to be its current durable document row."""
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT payload, payload_sha256 FROM v2_contract_documents "
+            "WHERE contract_type = %s AND record_id = %s AND current",
+            (type(record).__name__, record.record_id),
+        )
+    if row is None:
+        raise NotFound(
+            "current V2 reference source record not found",
+            contract_type=type(record).__name__,
+            record_id=str(record.record_id),
+        )
+    current = type(record).model_validate(row["payload"])
+    verify_v2_record_hash(current)
+    if canonical_hash(current) != row["payload_sha256"] or current != record:
+        raise Conflict(
+            "V2 reference source is stale or failed persisted hash verification",
+            contract_type=type(record).__name__,
+            record_id=str(record.record_id),
+        )
+
+
+def dispatch_v2_routed_attempt(
+    db: Database,
+    comfy: ComfyRenderService,
+    jobs: JobService,
+    *,
+    decision: RouteDecision,
+    shot: Shot,
+    catalog: PresetCatalog,
+    episode_number: int,
+    identity_lock_id: UUID | None,
+    prompt_manifest_id: UUID,
+    prompt_manifest_sha256: str,
+    semantic_workflow_sha256: str,
+    reference_context: V2ReferencePreflightContext,
+    dispatch_at: datetime,
+    submit: bool = True,
+    still_inspector: StillMediaInspector | None = None,
+    read_frame_bytes: Callable[[UUID, int, str], bytes] | None = None,
+) -> V2RoutedAttempt:
+    """Run all V2 semantic/reference checks before a budget hold or provider operation.
+
+    The V1 Comfy submit method is deliberately not used because it binds flat reference
+    lists positionally. V2 uses only the semantic ``submit_v2`` handoff; offline callers
+    may use ``submit=False`` to persist/inspect the exactly bound typed job.
+
+    T042a: after the T041 exact-reference/rights checks and before
+    ``reserve_attempt``, the pre-motion still-frame keyframe preflight runs.
+    A bound keyframe is never waved through by omission: its verdict must be
+    ``PASS`` (still frames only, never a motion certification) or the dispatch
+    blocks typed before any budget hold.
+    """
+    if decision.chosen is None:
+        raise PolicyDenied("cannot dispatch a decision without a chosen preset")
+    if dispatch_at.tzinfo is None or dispatch_at.utcoffset() is None:
+        raise SchemaInvalid("V2 dispatch requires an aware current instant")
+    view = _view_for(catalog, decision.chosen.preset_id)
+    manifest = load_current_prompt_manifest(
+        db,
+        prompt_manifest_id=prompt_manifest_id,
+        prompt_manifest_sha256=prompt_manifest_sha256,
+    )
+    if (
+        manifest.episode_id != decision.episode_id
+        or manifest.episode_id != reference_context.episode_pack.episode_id
+        or manifest.shot_id != shot.shot_id
+        or manifest.shot_duration_ms != shot.target_duration_ms
+    ):
+        raise SchemaInvalid("PromptManifest does not bind this routed episode/shot/duration")
+    expected = reference_context.expectations_for(
+        shot, assert_current=lambda record: assert_current_v2_source_record(db, record)
+    )
+    for item in expected.values():
+        reference_context.verify_current_asset(item.asset_id, item.asset_version, item.asset_sha256)
+    controls = set(required_controls_for(shot))
+    controls.update(
+        control for binding in manifest.bindings if (control := ROLE_CONTROL.get(binding.role))
+    )
+    ordered_controls = sorted(controls, key=lambda item: item.value)
+    validate_v2_prompt_preflight(
+        manifest,
+        prompt_manifest_id=prompt_manifest_id,
+        prompt_manifest_sha256=prompt_manifest_sha256,
+        expected=expected,
+        resolve_current_rights=reference_context.resolve_current_rights,
+        at=dispatch_at,
+        territories=reference_context.territories,
+        template=view.template,
+        workflow_sha256=view.template_workflow_sha256,
+        semantic_workflow_sha256=semantic_workflow_sha256,
+        required_controls=set(ordered_controls),
+    )
+    reference_asset_ids = list(dict.fromkeys(binding.asset_id for binding in manifest.bindings))
+    semantic_key = attempt_semantic_key(episode_number, shot.shot_id, decision.attempt_number)
+    # Build and fully bind a zero-side-effect request first. The reservation ID is the
+    # sole field not known yet; it is never persisted or sent to a provider.
+    dry_request = build_render_request(
+        decision,
+        shot,
+        view=view,
+        episode_id=decision.episode_id,
+        episode_number=episode_number,
+        reference_asset_ids=reference_asset_ids,
+        identity_lock_id=identity_lock_id,
+        reservation_id=UUID(int=0),
+        attempt_number=decision.attempt_number,
+        prompt_text=manifest.prompt_text,
+    ).model_copy(
+        update={
+            "required_controls": ordered_controls,
+            "prompt_manifest_id": manifest.record_id,
+            "prompt_manifest_sha256": manifest.content_sha256,
+            "semantic_workflow_sha256": semantic_workflow_sha256,
+        }
+    )
+    dry_bound = bind_v2_workflow(view.template, dry_request, manifest)
+    submit_v2 = getattr(comfy, "submit_v2", None)
+    if submit and not callable(submit_v2):
+        raise UnsupportedControl(
+            "render transport does not accept a semantic V2 workflow graph; no reservation made",
+            preset_id=view.preset_id,
+        )
+
+    # T042a pre-motion still-frame preflight: every earlier check above is an
+    # exact-reference/rights or transport-capability check; this is the last
+    # gate before the budget hold. NOT_APPLICABLE is recorded when the route
+    # carries no bound keyframes — never a silent pass.
+    directing_shot = next(
+        (
+            item
+            for item in reference_context.directing_manifest.shots
+            if item.shot_id == shot.shot_id
+        ),
+        None,
+    )
+    scene = (
+        next(
+            (
+                item
+                for item in reference_context.episode_pack.scenes
+                if item.scene_id == directing_shot.scene_id
+            ),
+            None,
+        )
+        if directing_shot is not None
+        else None
+    )
+    if directing_shot is None or scene is None:
+        raise SchemaInvalid(
+            "V2 keyframe preflight cannot resolve the directing shot's scene",
+            shot_id=shot.shot_id,
+        )
+    # Each frame role is verified against the facts of its own state boundary:
+    # the first frame against the shot/scene entry state, the last and handoff
+    # frames against the exit state.
+    keyframe_facts_by_role = {
+        role: build_expected_keyframe_facts(
+            scene=scene,
+            directing_shot=directing_shot,
+            shot_prop_ids=shot.prop_ids,
+            wardrobe_assignments=reference_context.wardrobe_assignments,
+            location_layouts=reference_context.location_layouts,
+            prop_sheets=reference_context.prop_sheets,
+            frame_role=role,
+        )
+        for role in sorted(FRAME_ROLES, key=lambda item: item.value)
+    }
+    keyframe_result = run_keyframe_preflight(
+        db,
+        episode_id=decision.episode_id,
+        shot_id=shot.shot_id,
+        manifest=manifest,
+        expected=expected,
+        facts_by_role=keyframe_facts_by_role,
+        required_frame_roles=reference_context.required_frame_roles,
+        template=view.template,
+        inspector=still_inspector,
+        read_frame_bytes=read_frame_bytes,
+        at=dispatch_at,
+    )
+    ensure_keyframe_preflight_allows_dispatch(keyframe_result)
+
+    reservation = comfy.reserve_attempt(episode_id=decision.episode_id, semantic_key=semantic_key)
+    request = dry_request.model_copy(update={"reservation_id": reservation.id})
+    bound = bind_v2_workflow(view.template, request, manifest)
+    with db.transaction() as tx:
+        result = jobs.enqueue(
+            tx, job_type="render.shot", semantic_key=semantic_key, payload=request
+        )
+    if submit:
+        submit_v2(request, bound, job_id=result.job_id)
+    return V2RoutedAttempt(
+        request=request,
+        job_id=result.job_id,
+        decision=decision,
+        bound_workflow=bound if submit else dry_bound,
+        keyframe_preflight=keyframe_result,
+    )
 
 
 def _view_for(catalog: PresetCatalog, preset_id: str) -> PresetView:
@@ -635,13 +977,17 @@ __all__ = [
     "RoutedAttempt",
     "RoutingPolicy",
     "ShotRouter",
+    "V2ReferencePreflightContext",
+    "V2RoutedAttempt",
     "allowed_tier_classes",
     "attempt_seed",
     "attempt_semantic_key",
     "RouterShotDispatch",
     "build_render_request",
     "dispatch_routed_attempt",
+    "dispatch_v2_routed_attempt",
     "is_critical_shot",
+    "load_current_prompt_manifest",
     "required_controls_for",
     "route_id_for",
     "shot_class_key",
@@ -709,6 +1055,27 @@ class RouterShotDispatch:
         self, *, episode_id: UUID, episode_number: int, shot_id: str, attempt_number: int
     ) -> UUID:
         shot, manifest_version, _ = self._shot(episode_id, shot_id)
+        prompt_text = f"repair re-render for shot {shot_id}"
+        prompt_manifest = None
+        prop_sheets = ()
+        dispatch_at = datetime.now().astimezone()
+        if shot.prop_ids:
+            from microdrama.references.v2_planning import (
+                V2ReferenceRepository,
+                build_prop_prompt_manifest,
+            )
+
+            prompt_manifest, prop_sheets = build_prop_prompt_manifest(
+                self._db,
+                episode_id=episode_id,
+                manifest_version=manifest_version,
+                shot=shot,
+                prompt_text=prompt_text,
+                at=dispatch_at,
+            )
+            prompt_manifest = V2ReferenceRepository(self._db, None).persist_companion_records(
+                [prompt_manifest]
+            )[0]
         decision = self._router.route_shot(
             shot,
             episode_id=episode_id,
@@ -726,6 +1093,9 @@ class RouterShotDispatch:
             episode_number=episode_number,
             reference_asset_ids=list(bindings.reference_asset_ids),
             identity_lock_id=bindings.lock_id,
-            prompt_text=f"repair re-render for shot {shot_id}",
+            prompt_text=prompt_text,
+            prompt_manifest=prompt_manifest,
+            prop_sheets=prop_sheets,
+            dispatch_at=dispatch_at if prompt_manifest is not None else None,
         )
         return attempt.job_id

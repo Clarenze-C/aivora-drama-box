@@ -47,6 +47,47 @@
           "default": null,
           "title": "Cover Asset Id"
         },
+        "cover_asset_sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Asset Sha256"
+        },
+        "cover_asset_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Asset Version"
+        },
+        "cta_text": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cta Text"
+        },
         "description": {
           "default": "",
           "maxLength": 5000,
@@ -209,7 +250,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.6.0:PublicationCommand",
+  "$id": "urn:microdrama:contracts:1.15.0:PublicationCommand",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -217,6 +258,33 @@
       "format": "uuid",
       "title": "Approval Event Id",
       "type": "string"
+    },
+    "approved_metadata_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approved Metadata Sha256"
+    },
+    "approved_metadata_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approved Metadata Version"
     },
     "asset_id": {
       "format": "uuid",
@@ -253,10 +321,90 @@
     "metadata": {
       "$ref": "#/$defs/PostMetadata"
     },
+    "metadata_policy_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metadata Policy Id"
+    },
+    "metadata_policy_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metadata Policy Sha256"
+    },
+    "metadata_policy_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metadata Policy Version"
+    },
     "metadata_version_id": {
       "format": "uuid",
       "title": "Metadata Version Id",
       "type": "string"
+    },
+    "release_manifest_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Manifest Id"
+    },
+    "release_manifest_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Manifest Sha256"
+    },
+    "release_manifest_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Manifest Version"
     },
     "release_package_hash": {
       "description": "Lowercase SHA-256 hex",

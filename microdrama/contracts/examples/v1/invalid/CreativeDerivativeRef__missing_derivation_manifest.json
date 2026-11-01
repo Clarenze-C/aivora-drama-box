@@ -1,0 +1,79 @@
+{
+  "approved_reveal_episode": 1,
+  "asset_id": "938e2992-5ffb-5432-8d9a-431bd2f1ba9d",
+  "asset_sha256": "604020d8f34a3a28c2a0d432e06b36f0287098af50898bc811b0a71c76bbc88f",
+  "asset_version": 1,
+  "cta_text": "Watch the full episode",
+  "derivative_type": "EPISODE_ONE_PREVIEW",
+  "duration_ms": 5000,
+  "no_release_obligation": true,
+  "platform_safe_zones": [
+    {
+      "bottom_bp": 1200,
+      "cta_box": {
+        "height_bp": 900,
+        "width_bp": 5600,
+        "x_bp": 700,
+        "y_bp": 7400
+      },
+      "left_bp": 500,
+      "platform": "TIKTOK",
+      "right_bp": 500,
+      "title_box": null,
+      "top_bp": 600
+    }
+  ],
+  "readability_evidence_sha256": null,
+  "reveal_boundary_ms": 40000,
+  "sources": [
+    {
+      "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+      "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+      "asset_version": 1,
+      "rights": {
+        "commercial_use": true,
+        "evidence_sha256": [
+          "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+        ],
+        "expires_at": null,
+        "output_release_allowed": true,
+        "rights_route_id": "original-fiction",
+        "rights_version": 1,
+        "status": "ELIGIBLE",
+        "subject_kind": "MODEL_OUTPUT",
+        "subject_ref": "original-fiction-output",
+        "territories": [
+          "TH"
+        ]
+      },
+      "role": "FOOTAGE",
+      "source_in_ms": 30000,
+      "source_out_ms": 35000
+    },
+    {
+      "asset_id": "b27acbcf-656f-5126-a803-947b071e3a3a",
+      "asset_sha256": "4abf6ecb7a294f2571edf226ba38430b81a9f2c52b305b00a363898e76cf2ecb",
+      "asset_version": 1,
+      "rights": {
+        "commercial_use": true,
+        "evidence_sha256": [
+          "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+        ],
+        "expires_at": null,
+        "output_release_allowed": true,
+        "rights_route_id": "original-fiction",
+        "rights_version": 1,
+        "status": "ELIGIBLE",
+        "subject_kind": "MODEL_OUTPUT",
+        "subject_ref": "original-fiction-output",
+        "territories": [
+          "TH"
+        ]
+      },
+      "role": "AUDIO",
+      "source_in_ms": 0,
+      "source_out_ms": 5000
+    }
+  ],
+  "title_text": null
+}

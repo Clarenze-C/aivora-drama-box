@@ -114,7 +114,370 @@ below and notifies affected lanes.
 - New required field, removed field, narrowed enum/range: major bump; schema
   version string changes; migration notes required.
 
+## Contract 2.0.0 — V2 creative and continuity family (T038)
+
+Frozen as a major contract line on 2026-10-30. The prior V1 Python payloads,
+their `schema_version: "1.0"`, generated `schemas/v1/` files and V1 examples
+remain unchanged and parseable. V2 canonical records use the separate
+`V2VersionedPayload` base (`schema_version: "2.0"`) and are generated under
+`schemas/v2/` and `examples/v2/`. The registry is the sole generation index.
+Generated `$id` values for V1 remain pinned to `1.6.0`; V2 IDs use `2.0.0`.
+
+The V2 family freezes `ConceptIntake`, `ConceptCandidate`, `CharacterLogic`,
+`SecretLedger`, `EpisodePack`, `StoryTime`, `WardrobeBible`,
+`SceneWardrobeAssignment`, `StateEvent`, `AssetSheet`, `LocationLayout`,
+`PropSheet`, `StyleBible`, `ShotReferenceBinding`, `PromptManifest`, `ProgressSnapshot`, and
+`ReleaseApprovalManifest`. Canonical hashes use `canonical_hash()`; each V2
+record exposes `calculated_content_sha256()` / `content_hash_matches()` and
+`verify_v2_record_hash()` for writers and readback validators; V2 Pydantic
+construction/readback and generated-example validation reject stale hashes.
+Use `V2Record.seal()` to compute the content hash before validation. Rights are
+explicit, versioned and eligible on render-bound records. Outfit selection
+must pass `validate_wardrobe_assignment()` against the exact wardrobe-bible
+revision. Contradictory state transitions are refused by
+`validate_state_event_chain()`. Prompt references carry semantic roles, exact
+asset IDs/versions/hashes, rights and validity; an untyped list is not a V2
+binding.
+
+`RightsGrant` also binds the registry subject kind/reference as well as route
+and version. Payload validation checks shape, declared eligibility and expiry
+only; it cannot establish live currentness. Every render or release dispatch
+must call `validate_current_rights_grant()` with the authoritative live
+registry resolver immediately before dispatch. That resolver must return the
+current record for the exact route/subject tuple; missing, superseded, revoked,
+mismatched or expired records fail closed. V1 readback remains audit-only.
+
+Production-kit crosswalk: its episode pack maps to UUID-backed `EpisodePack`
+and typed scenes/beats; its continuity ledger maps to `StoryTime`, `StateValue`
+and ordered `StateEvent`; its asset registry maps to `AssetSheet`, `PropSheet`,
+`WardrobeBible`, `SceneWardrobeAssignment` and `LocationLayout`; its style
+registry maps to `StyleBible`; storyboard
+reference policy maps to `ShotReferenceBinding` and `PromptManifest`; task
+status maps to event/job/source-backed `ProgressSnapshot`. Kit IDs such as
+`E001`, 15–600 second episodes, free-form state objects, positional reference
+lists and kit lifecycle statuses do not cross the boundary. Drama Box keeps
+UUID episode identity, 180–300 second episodes, ≤15-second generated shots,
+closed role/status enums and exact versioned bindings.
+
+`read_v1_manifest()` first validates with the original V1 `ShotManifest`, then
+returns a hash-bound `V1ManifestReadback` with `v2_ready: false`. It is audit
+readback only; consumers must recompile and bind exact V2 references/rights
+before paid dispatch. No V1 manifest can be relabeled as a V2 prompt.
+
+`ReleaseApprovalManifest` wraps the frozen V1 media package ID/hash with an
+exact versioned `ApprovedSlotMetadata` row per slot and a versioned
+`ApprovedMetadataPolicy`; `approval_manifest_sha256` binds the complete
+manifest. `manifest_id` is minted before Gate 2 and is not the future approval
+event ID: compile and persist the immutable manifest first, then have Gate 2
+create its event referencing `gate2_package_hash`; the event never feeds back
+into the manifest hash. Gate 2 must approve that manifest hash (or a package
+hash that includes it). The persisted metadata hash is
+`ApprovedSlotMetadata.content_sha256`, the canonical typed record hash with
+that field excluded. A live submitter must use
+`validate_live_release_metadata()` to compare slot, metadata ID/version/content
+hash, cover ID/version/hash and CTA with the approved manifest. Example and
+OFFLINE_MOCK metadata are refused for live submission. This is a contract only: T037's live-first-submit path remains
+blocked until its approval event and scheduler use this manifest, and T044/T047
+must retain that binding in the composed Gate-2 flow.
+
+Migration `0019_v2_contract_documents.sql` adds append-only revision storage
+for V2 canonical records, with version, canonical payload hash, optional
+rights-route index (paired route/version) and validity interval. Upgrade is `migrate()` through 0019 and is
+covered by the fresh database/readback test. Migrations are forward-only;
+rollback is restore from a pre-0019 database backup, not destructive DDL or
+deletion of audit history. There are no downstream T039–T044 consumers at
+freeze time; they must build against 2.0.0 after this contract is accepted.
+
+## Contract 2.1.0 — candidate-stage rights uncertainty
+
+Additive, loosening change for `ConceptCandidate.rights` only: it now accepts
+either the existing eligible `RightsGrant` or `PendingRightsAssessment` with
+`status: "PENDING" | "UNKNOWN"` and a human-readable `note`. This lets
+pre-Gate-1 creative proposals state that rights are unresolved without
+inventing a registry route, evidence hash, territory or permission. The
+existing eligible-grant example and V2 canonical readback remain valid.
+
+The change does not loosen any production contract: render-bound records,
+asset sheets, wardrobe assignments, reference bindings and paid dispatch
+continue to require an eligible `RightsGrant`, and dispatch still resolves
+the exact current registry row through `validate_current_rights_grant()`.
+Downstream candidate consumers (T039 and Gate 1 scope conversion) must carry
+the candidate assessment truthfully and must not promote PENDING/UNKNOWN to
+production rights; they must acquire and validate an eligible grant before
+creating production-bound assets or dispatching paid work. V2 records retain
+`schema_version: "2.0"`; generated contract package/schema IDs advance to
+2.1.0. Existing 2.0.0 payloads remain valid under the new candidate union.
+
+## Contract 2.2.0 — explicit pack proof and dependency graph
+
+Additive fields: `PackBeat.proof_object_ids` and `PackBeat.dependency_beat_ids`
+are lists of `Identifier`, and `EpisodeScene.dependency_scene_ids` is a list
+of `Identifier`; each defaults to an empty list. Proof IDs must name props in
+the containing scene (`proof_object_ids` is a subset of `EpisodeScene.prop_ids`).
+This keeps proof objects grounded in the existing typed prop relation rather
+than adding a second object registry.
+
+Beat IDs are unique across an `EpisodePack`; beat dependencies resolve to a
+beat in that same pack. Scene dependencies resolve to a scene in that same
+pack. Neither graph permits self-dependencies, duplicate edges or cycles.
+Existing payloads remain valid because all new lists default empty. V2
+`schema_version` stays `2.0`; generated package/schema IDs advance to 2.2.0.
+T039 producers should emit explicit order/proof links where the story pack
+depends on them; consumers can rely on each link being pack-local and acyclic.
+
+## Contract 2.3.0 / V1 schema set 1.7.0 — Gate 2 live metadata binding
+
+`ApprovalCommand.release_manifest_hash` optionally carries the V2
+`ReleaseApprovalManifest.approval_manifest_sha256` separately from the
+unchanged V1 `package_hash`. When present, it is valid only on Gate 2 APPROVE;
+the legacy V1 package hash remains the value used by existing database approval
+triggers. This field does not grant V2 live authority to old Gate 2 events.
+
+`ApprovedSlotMetadata` now carries `links`, `disclosures` and
+`catalog_version`, so the Gate 2 manifest binds every provider-visible field
+in `PostMetadata`. Defaults preserve parsing of prior V2 readbacks, but
+`validate_live_release_metadata()` rejects a live approval missing disclosures
+or catalog version and compares the complete `PostMetadata` projection with
+the approved slot. `PostMetadata.cover_asset_version`,
+`cover_asset_sha256` and `cta_text` are additive. Legacy V1 payloads may still
+specify only `cover_asset_id`; when V2 command binding is present, publication
+requires the complete cover ID/version/hash tuple.
+
+`PublicationCommand` adds optional exact manifest, approved metadata and
+metadata policy locators/hashes. They must be either all absent (legacy
+command) or all present (V2 queue command); V2 commands require a complete
+cover tuple. The existing `release_package_id`, `release_package_hash`,
+`approval_event_id` and `metadata_version_id` retain their meaning. V1
+`schema_version` remains `1.0`, V2 remains `2.0`; the package version advances
+to 2.3.0 and generated V1 schema IDs to 1.7.0.
+
+The V2 family adds `SeasonStoryLedger` with a promise, ordered payoff debts
+and escalation-by-episode entries, approved-scope hash, character-logic record
+IDs, and a secret-ledger ID. Payoff and escalation lists must be nonempty and
+ordered; cross-record validation requires exact same-season CharacterLogic
+and SecretLedger records, exact approved-scope hash, and due/escalation episode
+bounds. `CharacterLogic.season_id` is optional for old readback, but T039
+writers must populate it; ledger validation rejects unbound or cross-season
+records. Existing V2 record schema version remains `2.0`.
+
+## Contract 2.4.0 — EpisodePack approved-scope binding
+
+`EpisodePack.approved_scope_hash: Sha256Hex` is required. Producers must copy
+the exact Gate 1 approved `SeasonScope` hash into every episode pack; readers
+and replay paths can then reject packs compiled against a stale or different
+approval. This is a V2 additive required field, so pre-2.4 EpisodePack records
+without the field remain audit data but do not validate as current V2 packs.
+The package version advances to 2.4.0; V2 `schema_version` remains `2.0` and
+the V1 schema set remains 1.7.0.
+
+## Contract 2.5.0 / V1 schema set 1.8.0 — Gate 2 manifest review projection
+
+`EpisodeReviewView.release_approval_manifest: ReleaseApprovalManifest | None`
+exposes the exact V2 metadata manifest to the owner-scoped Gate 2 review view.
+It defaults to `None`, so prior V1 review responses/readbacks remain valid and
+cannot acquire V2 authority by being re-read. The nested manifest is typed and
+retains its own V2 schema version and canonical approval hash. Package version
+advances to 2.5.0 and generated V1 schema IDs to 1.8.0; V1 `schema_version`
+remains `1.0`, V2 remains `2.0`.
+
+## Contract 2.6.0 — optional approved cover and CTA in V2 queues
+
+The complete V2 `PublicationCommand` stale-queue binding now permits its
+provider metadata projection to match an approved slot with no cover and/or
+no CTA. The cover tuple must be either wholly absent or contain exact asset
+ID, version and hash; partial tuples remain invalid. A populated projection
+continues to be compared field-for-field with `ApprovedSlotMetadata`, so
+omission or substitution cannot bypass the Gate 2 manifest. Legacy V1
+`PostMetadata` parsing is unchanged. Package version advances to 2.6.0, V1
+schema IDs remain 1.8.0, and V1/V2 schema versions remain 1.0/2.0.
+
+## Contract 2.7.0 / V1 schema set 1.9.0 — Gate 2 creative derivatives
+
+`ReleasePackage.creative_derivatives` optionally carries typed `POSTER` and
+`EPISODE_ONE_PREVIEW` derivatives, separate from existing hook experiments and
+release slots. Each derivative binds its output asset ID/version/hash, source
+IDs/hashes and optional source ranges, per-source eligible rights, platform
+safe-zone margins and title/CTA boxes, reveal boundary and no-release-obligation
+assertion. Source references identify character, footage, audio, prop, title,
+CTA or background roles and carry an eligible grant for that source, exact
+version and hash. Previews require at least one ranged footage source and allow
+ranged audio sources; the reveal boundary is on a footage source timeline.
+Posters require
+at least one character source, title/CTA boxes and no duration; previews require
+source ranges, reveal boundary and duration at or below 90 seconds. Package
+validation binds source hashes to accepted media (poster sources may also be
+approved cast-package assets), limits previews to episode one, rejects duplicate
+derivative types/IDs, and refuses derivative assets in release slots.
+
+The field defaults to `None` so pre-2.7 package hashes and V1 readbacks remain
+valid; when populated, the derivative list is included in `ReleasePackage`
+`compute_hash()`. No publication obligation or hook slot is created. Package
+version advances to 2.7.0, generated V1 schema IDs to 1.9.0; V1
+`schema_version` remains `1.0` and V2 remains `2.0`.
+
+## Contract 2.8.0 / V1 schema set 1.10.0 — preview audio lineage
+
+`DerivativeSourceRef` now carries an exact source asset version and supports
+the `AUDIO` role. Episode-one previews may combine accepted FOOTAGE and AUDIO
+sources; every source requires an ID, version, hash, source range and eligible
+rights grant, and at least one ranged FOOTAGE source is mandatory. The reveal
+boundary is measured against a FOOTAGE source interval. Poster source roles,
+character requirement and safe-zone constraints are unchanged. V1 packages
+without derivatives remain hash/readback compatible. Package version advances
+to 2.8.0 and V1 schema IDs to 1.10.0; V1/V2 schema versions remain 1.0/2.0.
+
+## Contract 2.9.0 / V1 schema set 1.11.0 — derivation and poster review evidence
+
+Each creative derivative now requires `derivation_manifest_sha256` and
+`approved_reveal_episode`; the package rejects a derivative that reveals beyond
+its episode, and an episode-one poster must bind reveal episode 1. Posters also
+require `readability_evidence_sha256`. A poster without FOOTAGE cannot carry a
+timecode reveal boundary; if it uses FOOTAGE, each footage source needs a source
+range and any boundary must fall within one of those ranges. These fields join
+the exact references/layout in the containing `ReleasePackage` hash. Packages
+without derivatives remain V1 hash/readback compatible. Package version
+advances to 2.9.0 and V1 schema IDs to 1.11.0; V1/V2 schema versions remain
+1.0/2.0.
+
+## Contract 2.10.0 / V1 schema set 1.12.0 — source-timeline reveal cutoff
+
+`CreativeDerivativeRef.reveal_boundary_ms` is an approved FOOTAGE source-time
+cutoff, not output-local time and not a point that must occur inside a used
+source range. Preview output duration remains independently capped at 90 seconds.
+Every preview FOOTAGE source must end at or before the cutoff; AUDIO ranges use
+their own timebases and are not compared with it. This allows a 30–35 second
+source excerpt to produce a 5-second preview with a 40-second cutoff. Poster
+footage follows the same source-time cutoff rule; posters without footage cannot
+carry a timecode boundary. V1 packages without derivatives remain compatible.
+Package version advances to 2.10.0 and generated V1 schema IDs to 1.12.0; V1/V2
+schema versions remain 1.0/2.0.
+
+## Contract 2.11.0 — canonical directing manifest
+
+`DirectingManifest` is a hash-bound V2 record for compiled shot directing. It
+binds exact episode-pack ID/version/hash and approved scope, ordered sections,
+shots and aggregate source hashes. `DirectingShot` uses stable shot/scene/beat/
+section IDs, contiguous sequence, a maximum 15-second duration, typed state-in,
+state events and state-out, screen axis/direction, eyeline, action handoff,
+sound/edit intent, framing, dependency IDs and shot-local source hashes.
+`DirectingSection` groups ordered shots with an exact summed duration capped at
+45 seconds. A validator checks one-to-one shot membership, section order and
+duration, embedded event/state consistency, exact EpisodePack scene/beat/entity
+references, pack/scope freshness and required local source hashes. Pack hash is
+bound at manifest level only; per-shot hashes stay local so targeted source
+changes do not invalidate unrelated shots. The scene dependency hash omits the
+beat list, while each shot separately binds its own beat hash. Package version advances to 2.11.0;
+V2 `schema_version` remains `2.0`, V1 remains `1.0`.
+
+## Contract 2.12.0 / V1 schema set 1.13.0 — render prompt-manifest locator
+
+`RenderRequest` optionally carries `prompt_manifest_id` and
+`prompt_manifest_sha256` together. Both absent preserves all existing V1
+examples and readbacks; exactly one present is invalid. V2 paid dispatch must
+provide both, load the matching `PromptManifest`, and verify its canonical
+content hash before budget reservation or provider submission. The locator does
+not replace the flat V1 `reference_asset_ids`; the V2 caller must derive those
+references from the validated typed manifest. Package version advances to
+2.12.0 and generated V1 schema IDs to 1.13.0; V1/V2 schema versions remain
+1.0/2.0.
+
+## Contract 2.13.0 / V1 schema set 1.14.0 — Runpod bucket billing reconciliation
+
+The billing contracts keep provider query results, raw bucket revisions,
+allocations and invoice verification as separate records. Query results preserve
+requested and provider-resolved UTC windows, bucket size and raw response hash;
+EMPTY and UNKNOWN are explicit states and cannot produce buckets or allocations
+or imply a zero charge. Bucket observations bind account/pod/window/size identity,
+monotonic revision/prior observation link, exact integer micro-USD GPU/CPU/disk/
+total components, currency, raw response hash, observation time and finality.
+Non-USD or component-total mismatches are accepted only as DISPUTED with a reason.
+
+Allocations bind bucket revision, GPU/CPU/DISK component, EPISODE/RECOVERY owner,
+MEASURED_OVERLAP/STORAGE_OWNER/UNCOVERED basis and signed micro-USD delta. Cross-
+record validation requires each component's allocation deltas to sum exactly to
+the current-minus-prior component amount; revision one sums to the full component.
+Invoice/console verification links its exact evidence hash/time/amount to a bucket
+revision. PROVIDER_REPORTED allocations do not become BILLED without a matched
+INVOICE_VERIFIED bucket/evidence pair. V1 `UsageReceipt` schema and readback behavior
+remain unchanged. Package version advances to 2.13.0 and generated V1 schema IDs
+to 1.14.0; V1/V2 schema versions remain 1.0/2.0.
+
+## Contract 2.14.0 — query-level bucket revision context
+
+`validate_runpod_billing_query()` accepts an optional mapping from each current
+bucket observation ID to its exact prior observation. Revision-one buckets
+retain their no-prior path; later revisions fail closed without the mapping,
+then verify monotonic revision, stable bucket identity, prior observation ID
+and prior raw-response hash before validating signed component deltas. The V1
+payload schema set is unchanged at 1.14.0; package version advances to 2.14.0.
+
+## Contract 2.15.0 / V1 schema set 1.15.0 — semantic workflow mapping pin
+
+`RenderRequest.semantic_workflow_sha256` is optional for legacy V1 calls, but
+required exactly when the paired `prompt_manifest_id` and
+`prompt_manifest_sha256` fields are present. The V2 worker must resolve and
+hash-check that exact `PromptManifest`, compare the semantic-workflow hash to
+the selected pinned code-native template/mapping, and persist the matching
+RenderRequest before budget reservation and provider submission. Restart/replay
+must load the same immutable mapping or persisted bound graph; a changed mapping
+fails the new attempt closed. Legacy V1 requests with all three locator/hash
+fields absent remain valid. Package version advances to 2.15.0; V1 schema IDs
+advance to 1.15.0, with V1/V2 schema versions still 1.0/2.0.
+
 ## Change log
+
+- **2.15.0 / V1 schema set 1.15.0** (2026-10-31, guardian): manifest-bound V2
+  render requests also pin the semantic workflow/template mapping hash.
+
+- **2.14.0** (2026-10-31, guardian): query-level validation now requires exact
+  prior-observation context for bucket revisions after revision one.
+
+- **2.13.0 / V1 schema set 1.14.0** (2026-10-31, guardian): add typed query,
+  raw bucket revision, allocation-delta and invoice-verification payloads.
+
+- **2.12.0 / V1 schema set 1.13.0** (2026-10-30, guardian): optional paired
+  prompt-manifest ID/hash on render requests for V2 paid dispatch binding.
+
+- **2.11.0** (2026-10-30, guardian): add hash-bound `DirectingManifest`,
+  `DirectingShot` and `DirectingSection` contracts for T041a.
+
+- **2.10.0 / V1 schema set 1.12.0** (2026-10-30, guardian): reveal boundaries
+  are source-timeline cutoffs independent of derivative output duration.
+
+- **2.9.0 / V1 schema set 1.11.0** (2026-10-30, guardian): derivative plans and
+  poster readability/reveal approval are hash-bound in Gate 2 packages.
+
+- **2.8.0 / V1 schema set 1.10.0** (2026-10-30, guardian): preview derivatives
+  may bind dialogue/ambience audio lineage with source-specific rights.
+
+- **2.7.0 / V1 schema set 1.9.0** (2026-10-30, guardian): Gate 2 packages may
+  bind hash-bound poster and optional preview derivatives without creating
+  release slots; see compatibility section.
+
+- **2.6.0** (2026-10-30, guardian): V2 queue commands can faithfully represent
+  manifest-approved absence of cover and CTA; partial cover bindings still fail.
+
+- **2.5.0 / V1 schema set 1.8.0** (2026-10-30, guardian): optional typed
+  `EpisodeReviewView.release_approval_manifest` for Gate 2 owner inspection.
+
+- **2.4.0** (2026-10-30, guardian): `EpisodePack` requires
+  `approved_scope_hash` for durable Gate 1 scope binding.
+
+- **2.3.0 / V1 schema set 1.7.0** (2026-10-30, guardian): Gate 2 commands can
+  carry a V2 release manifest hash separately from the V1 package hash;
+  publication commands can carry exact manifest, metadata and policy locators;
+  provider metadata projections now include complete cover/CTA fields, and V2
+  slot metadata binds links, disclosures and catalog version; V2 adds a
+  season-level story ledger. Legacy V1 metadata may still carry only a cover ID;
+  V2 live validation requires the exact tuple.
+
+- **2.1.0** (2026-10-30, guardian): `ConceptCandidate.rights` accepts an explicit
+  pending/unknown assessment as well as the unchanged eligible `RightsGrant`;
+  production rights gates remain strict. See the compatibility section above.
+
+- **2.2.0** (2026-10-30, guardian): pack beats and scenes expose proof-object and
+  dependency IDs, with same-pack resolution and acyclic graph checks. See the
+  compatibility section above.
 
 - **1.5.0** (2026-10-21, guardian, T012 warm-pod transfer): additive —
   `cost.PodLease.transferred_from: UUID | None = None` names the lease a warm-pod

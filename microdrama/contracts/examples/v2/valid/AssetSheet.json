@@ -1,0 +1,34 @@
+{
+  "asset_id": "36e4a68f-4012-5b4a-896b-6b8dae7d8b66",
+  "asset_role": "outfit",
+  "asset_sha256": "4a373d8b4943851a1e019c4de61f0ede4a279425de4bd06a03e24365e943cec7",
+  "asset_version": 1,
+  "content_sha256": "4a69eb7e620af38f671acf34a6a0f4c990c48fcd692e85b6e4103e36fc0f56ca",
+  "created_at": "2026-10-30T00:00:00Z",
+  "record_id": "8d92c242-5dc2-5f2b-8ea9-d4ecc1b68594",
+  "rights": {
+    "commercial_use": true,
+    "evidence_sha256": [
+      "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+    ],
+    "expires_at": null,
+    "output_release_allowed": true,
+    "rights_route_id": "original-fiction",
+    "rights_version": 1,
+    "status": "ELIGIBLE",
+    "subject_kind": "MODEL_OUTPUT",
+    "subject_ref": "original-fiction-output",
+    "territories": [
+      "TH"
+    ]
+  },
+  "schema_version": "2.0",
+  "subject_id": "fon-apron",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "validity_from": "2026-10-30T00:00:00Z",
+  "validity_until": null,
+  "version": 1,
+  "view_name": "front"
+}

@@ -2,8 +2,9 @@
 
 T012 (this build): pod acquisition/reconciliation, timed leases with cost accrual on
 declared bases, verified shutdown, warm-pod transfer and the independent janitor. The
-ComfyUI adapter (T013) and routing/presets (T014) land in their own modules later.
-Module owners export factories; route/job registration belongs to the integrator.
+ComfyUI adapter (T013), route/preset support (T014), and fixture-backed live transports
+(T045) live in focused modules. Live Runpod composition remains attestation- and effect-gated;
+route/job registration belongs to the integrator.
 """
 
 from microdrama.rendering.janitor import (
@@ -37,6 +38,12 @@ from microdrama.rendering.pods import (
     check_acquisition_filters,
     resolve_pod_provider,
 )
+from microdrama.rendering.runpod_transport import (
+    RunpodBillingHistory,
+    RunpodBillingRecord,
+    RunpodQuoteAttestation,
+    RunpodRestProvider,
+)
 
 __all__ = [
     "HUMAN_WAIT_STATES",
@@ -52,6 +59,10 @@ __all__ = [
     "PodManager",
     "PodSpec",
     "RunpodLiveAdapter",
+    "RunpodBillingHistory",
+    "RunpodBillingRecord",
+    "RunpodQuoteAttestation",
+    "RunpodRestProvider",
     "STOP_OPERATION_KIND",
     "ShutdownResult",
     "TERMINAL_LEASE_STATES",

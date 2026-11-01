@@ -17,14 +17,14 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from microdrama.contracts.enums import QAOutcome
+from microdrama.contracts.enums import CoverageStatus, QAOutcome
 from microdrama.contracts.errors import Conflict
 from microdrama.contracts.primitives import Identifier
 from microdrama.contracts.qa import CoverageWindow, QAFinding
 from microdrama.core.events import append_event
 from microdrama.persistence.db import Database, Tx, insert_row, jsonb
 from microdrama.qa.coverage import summarize_coverage
-from microdrama.qa.models import QAReportView
+from microdrama.qa.models import CheckCoverageWindow, QAReportView
 
 RUN_EVENT = "qa.technical.completed"
 _BAD_OUTCOMES = (QAOutcome.REPAIRABLE, QAOutcome.BLOCKED, QAOutcome.UNKNOWN)
@@ -150,6 +150,34 @@ def load_run_coverage(db: Database, episode_id: UUID, run_key: str) -> list[Cove
     return coverage
 
 
+def load_run_check_coverage(
+    db: Database, episode_id: UUID, run_key: str
+) -> list[CheckCoverageWindow]:
+    """Per-check coverage windows persisted on the run event (T042b).
+
+    Old run events predate the per-check record and replay with an empty list;
+    the family-level ``load_run_coverage`` never stood for check-level claims.
+    """
+    row = find_run(db, episode_id, run_key)
+    if row is None:
+        return []
+    payload = dict(row["payload"])
+    asset_id = UUID(payload["asset_id"])
+    coverage: list[CheckCoverageWindow] = []
+    for check_id, summary in (payload.get("per_check_coverage") or {}).items():
+        for start_ms, end_ms, status in summary.get("windows", []):
+            coverage.append(
+                CheckCoverageWindow(
+                    asset_id=asset_id,
+                    check_id=check_id,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    status=CoverageStatus(status),
+                )
+            )
+    return coverage
+
+
 def green_summary(
     findings: list[QAFinding], critical_check_ids: tuple[str, ...]
 ) -> tuple[bool, list[Identifier], list[Identifier]]:
@@ -199,6 +227,7 @@ __all__ = [
     "green_summary",
     "load_cycles",
     "load_findings",
+    "load_run_check_coverage",
     "load_run_coverage",
     "persist_run",
 ]

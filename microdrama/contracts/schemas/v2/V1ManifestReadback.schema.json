@@ -1,0 +1,43 @@
+{
+  "$id": "urn:microdrama:contracts:2.15.0:V1ManifestReadback",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Audit wrapper: accepts a V1 manifest as data, never attests V2 readiness.",
+  "properties": {
+    "compatibility_note": {
+      "const": "V1 audit readback only; recompile to satisfy V2 bindings",
+      "default": "V1 audit readback only; recompile to satisfy V2 bindings",
+      "title": "Compatibility Note",
+      "type": "string"
+    },
+    "manifest": {
+      "additionalProperties": true,
+      "title": "Manifest",
+      "type": "object"
+    },
+    "manifest_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "source_schema_version": {
+      "const": "1.0",
+      "title": "Source Schema Version",
+      "type": "string"
+    },
+    "v2_ready": {
+      "const": false,
+      "default": false,
+      "title": "V2 Ready",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "source_schema_version",
+    "manifest_sha256",
+    "manifest"
+  ],
+  "title": "V1ManifestReadback",
+  "type": "object"
+}

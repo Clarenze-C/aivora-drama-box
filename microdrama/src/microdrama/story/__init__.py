@@ -12,6 +12,7 @@ Public surface:
 
 from microdrama.story.compiler import compile_episode
 from microdrama.story.critics import check_draft
+from microdrama.story.directing import BeatIntent, compile_episode_pack, invalidated_shot_ids
 from microdrama.story.models import (
     BibleFact,
     CompileResult,
@@ -40,10 +41,27 @@ from microdrama.story.playbook import (
 from microdrama.story.prompts import (
     CRITIC_INSTRUCTION,
     CRITIC_OUTPUT_SCHEMA,
+    V2_BIBLE_INSTRUCTION,
+    V2_BIBLE_OUTPUT_SCHEMA,
+    V2_EPISODE_PACK_INSTRUCTION,
+    V2_EPISODE_PACK_OUTPUT_SCHEMA,
     WRITER_INSTRUCTION,
     WRITER_OUTPUT_SCHEMA,
     build_shot_prompt,
     estimate_line_ms,
+)
+from microdrama.story.script_maker import (
+    CandidateScopeBinding,
+    EpisodePackDraft,
+    RichBible,
+    ScriptMakerStoryResult,
+    ScriptMakerStoryService,
+    build_candidate,
+    build_episode_pack,
+    build_rich_bible,
+    build_script_maker_story_service,
+    first_three_and_later_map,
+    rebind_candidate_to_proposal,
 )
 from microdrama.story.service import (
     DEFAULT_SUPPORTED_CONTROLS,
@@ -62,10 +80,18 @@ from microdrama.story.service import (
 
 __all__ = [
     "BibleFact",
+    "BeatIntent",
     "CanonKind",
     "CompileResult",
     "CRITIC_INSTRUCTION",
     "CRITIC_OUTPUT_SCHEMA",
+    "CandidateScopeBinding",
+    "EpisodePackDraft",
+    "RichBible",
+    "V2_BIBLE_INSTRUCTION",
+    "V2_BIBLE_OUTPUT_SCHEMA",
+    "V2_EPISODE_PACK_INSTRUCTION",
+    "V2_EPISODE_PACK_OUTPUT_SCHEMA",
     "CriticSeverity",
     "CriticVerdict",
     "DEFAULT_SUPPORTED_CONTROLS",
@@ -80,6 +106,8 @@ __all__ = [
     "RawScene",
     "RawStaging",
     "SeasonBible",
+    "ScriptMakerStoryResult",
+    "ScriptMakerStoryService",
     "StagingSimplification",
     "StoryConfig",
     "StoryService",
@@ -91,15 +119,23 @@ __all__ = [
     "WriterDraft",
     "budget_key_prefix",
     "build_shot_prompt",
+    "build_candidate",
+    "build_episode_pack",
+    "build_script_maker_story_service",
+    "compile_episode_pack",
+    "invalidated_shot_ids",
+    "build_rich_bible",
     "build_story_service",
     "check_draft",
     "compile_episode",
     "critic_client_token",
     "default_playbook_path",
     "estimate_line_ms",
+    "first_three_and_later_map",
     "estimated_runtime_ms",
     "load_playbook_example",
     "parse_critic_verdict",
     "parse_writer_draft",
+    "rebind_candidate_to_proposal",
     "writer_client_token",
 ]

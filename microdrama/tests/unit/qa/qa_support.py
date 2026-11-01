@@ -29,7 +29,12 @@ from microdrama.qa.config import QAConfig
 from microdrama.qa.service import TechnicalQAService
 from microdrama.testing.fakes import FakeClock, SequentialIds
 from microdrama.testing.media import FixtureTruth, FixtureTruthRegistry, probe
-from microdrama.testing.seed import seed_episode, seed_gate1_approval
+from microdrama.testing.seed import (
+    link_season_owner,
+    seed_episode,
+    seed_gate1_approval,
+    seed_owner,
+)
 
 T0 = datetime(2026, 10, 21, tzinfo=UTC)
 
@@ -139,6 +144,7 @@ class QAWorld:
         self.clock = FakeClock(T0)
         self.ids = SequentialIds("qa-tests")
         self.budget = BudgetService(db, self.clock, SequentialIds("qa-budget"), settings)
+        self._owner_id: uuid.UUID | None = None
 
     def observer(self) -> OfflineMediaObserver:
         return OfflineMediaObserver(self.truth, self.settings)
@@ -170,13 +176,21 @@ class QAWorld:
 
         scope = season_scope().model_copy(update={"season_id": season_id, "scope_version": 1})
         scope_hash = canonical_hash(scope)
+        owner = self.owner_id()
         with self.db.transaction() as tx:
-            approval = seed_gate1_approval(tx, season_id, scope_hash)
+            approval = seed_gate1_approval(tx, season_id, scope_hash, owner_id=owner)
             tx.execute(
                 "INSERT INTO seasons (id, state, title_th, title_en, approved_scope_version, "
                 "approved_scope_hash, approval_event_id, approved_at) VALUES (%s, "
                 "'SEASON_APPROVED', %s, 'Test season', 1, %s, %s, %s)",
                 (season_id, scope.title_th, scope_hash, approval, T0),
+            )
+            link_season_owner(
+                tx,
+                season_id,
+                owner,
+                source="GATE1_APPROVAL_BACKFILL",
+                approval_event_id=approval,
             )
             tx.execute(
                 "INSERT INTO season_proposals (id, season_id, scope_version, scope, scope_hash, "
@@ -184,6 +198,13 @@ class QAWorld:
                 (uuid.uuid4(), season_id, jsonb(scope), scope_hash),
             )
         return season_id
+
+    def owner_id(self) -> uuid.UUID:
+        """The canonical owner the QA world's seasons are linked to (T044a scope)."""
+        if self._owner_id is None:
+            with self.db.transaction() as tx:
+                self._owner_id = seed_owner(tx)
+        return self._owner_id
 
     def episode(self, season_id: uuid.UUID | None = None, *, state: str = "AI_REVIEW") -> uuid.UUID:
         season_id = season_id or self.season()

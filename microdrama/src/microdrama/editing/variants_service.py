@@ -32,6 +32,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -50,6 +51,7 @@ from microdrama.contracts.enums import (
     Platform,
     Provenance,
     QueueName,
+    RightsStatus,
     TrackKind,
 )
 from microdrama.contracts.errors import Conflict, MicrodramaError, NotFound, SchemaInvalid
@@ -66,15 +68,24 @@ from microdrama.contracts.media import (
 from microdrama.contracts.primitives import (
     AccountRef,
     ContractModel,
+    EvidenceRef,
     Identifier,
     MicroUSD,
     Sha256Hex,
     ShortText,
 )
-from microdrama.contracts.release import MediaRef
+from microdrama.contracts.registries import RightsRecord
+from microdrama.contracts.release import (
+    CreativeDerivativeRef,
+    DerivativeSourceRef,
+    MediaRef,
+    PlatformSafeZone,
+    SafeZoneTextBox,
+)
 from microdrama.contracts.season import Script, SeasonScope, ShotManifest
+from microdrama.contracts.v2 import validate_current_rights_grant
 from microdrama.core.events import append_event
-from microdrama.core.registry import CapabilityRegistry
+from microdrama.core.registry import CapabilityRegistry, RightsRegistry
 from microdrama.editing.captions import (
     SpeechObserver,
     spot_caption_track,
@@ -88,6 +99,12 @@ from microdrama.editing.covers import (
     CoverSpec,
     plan_cover_specs,
     run_cover_extract,
+)
+from microdrama.editing.creative_derivatives import (
+    PosterPlan,
+    PreviewPlan,
+    run_poster_export,
+    run_preview_export,
 )
 from microdrama.editing.export import run_burned_export
 from microdrama.editing.ffmpeg import FFmpegRunner, stage_bytes, stage_file
@@ -108,7 +125,13 @@ from microdrama.editing.variants import (
     variant_semantic_hash,
 )
 from microdrama.persistence.assets import register_asset
-from microdrama.persistence.db import Database, Tx, insert_row, jsonb, update_with_revision
+from microdrama.persistence.db import (
+    Database,
+    Tx,
+    insert_row,
+    jsonb,
+    update_with_revision,
+)
 
 VARIANTS_OPERATION = "editing.variants_export"
 COVERS_OPERATION = "editing.covers_export"
@@ -215,6 +238,8 @@ class FinalReviewMedia(ContractModel):
     hook_experiment_id: UUID | None = None
     variant_keys: list[Identifier] = Field(default_factory=list)
     hook_candidate_ids: list[Identifier] = Field(default_factory=list)
+    creative_derivatives: list[CreativeDerivativeRef] | None = None
+    creative_derivation_manifests: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # --- service -----------------------------------------------------------------------------
@@ -317,7 +342,10 @@ class VariantsService:
         return edl
 
     def _episode_row(self, episode_id: UUID) -> dict[str, Any]:
-        row = self._row("SELECT e.id, e.season_id FROM episodes e WHERE e.id = %s", (episode_id,))
+        row = self._row(
+            "SELECT e.id, e.season_id, e.episode_number FROM episodes e WHERE e.id = %s",
+            (episode_id,),
+        )
         if row is None:
             raise NotFound("episode not found", episode_id=str(episode_id))
         return row
@@ -1109,6 +1137,510 @@ class VariantsService:
                     )
         return results
 
+    # --- V2 poster and episode-one preview ------------------------------------------------
+
+    def _creative_sources_current(
+        self, sources: Sequence[DerivativeSourceRef]
+    ) -> list[AssetDescriptor]:
+        current: list[AssetDescriptor] = []
+        for source in sources:
+            descriptor = self._asset(source.asset_id)
+            if descriptor.sha256 != source.asset_sha256:
+                raise Conflict(
+                    "creative source changed after planning",
+                    asset_id=str(source.asset_id),
+                    expected=source.asset_sha256,
+                    actual=descriptor.sha256,
+                )
+            if descriptor.version != source.asset_version:
+                raise Conflict(
+                    "creative source version changed after planning",
+                    asset_id=str(source.asset_id),
+                    expected=source.asset_version,
+                    actual=descriptor.version,
+                )
+            if self._asset_state(source.asset_id) not in _ACCEPTED_ASSET_STATES:
+                raise Conflict(
+                    "creative source is not accepted or locked", asset_id=str(source.asset_id)
+                )
+            if (
+                sha256(self._store.get_bytes(descriptor.object_key)).hexdigest()
+                != descriptor.sha256
+            ):
+                raise Conflict(
+                    "creative source bytes do not match the accepted asset hash",
+                    asset_id=str(source.asset_id),
+                )
+            rights = source.rights
+            at = self._now()
+            decision = RightsRegistry(self._db, self._clock, self._settings).evaluate(
+                rights_route_id=rights.rights_route_id,
+                subjects=[(rights.subject_kind, rights.subject_ref)],
+                territories=rights.territories,
+                at=at,
+            )
+            if not decision.eligible:
+                raise Conflict(
+                    "creative source rights are not currently eligible",
+                    asset_id=str(source.asset_id),
+                    blockers=decision.blockers,
+                )
+            rights_row = self._row(
+                "SELECT id, rights_route_id, version, subject_kind, subject_ref, territories, "
+                "commercial_use, output_release_allowed, required_disclosures, expires_at, "
+                "evidence, status, created_at FROM rights_registry WHERE rights_route_id = %s "
+                "AND subject_kind = %s AND subject_ref = %s AND current",
+                (rights.rights_route_id, rights.subject_kind.value, rights.subject_ref),
+            )
+            evidence = rights_row["evidence"] if rights_row is not None else []
+            current_record = (
+                RightsRecord(
+                    record_id=rights_row["id"],
+                    rights_route_id=rights_row["rights_route_id"],
+                    version=rights_row["version"],
+                    subject_kind=rights_row["subject_kind"],
+                    subject_ref=rights_row["subject_ref"],
+                    territories=rights_row["territories"],
+                    commercial_use=rights_row["commercial_use"],
+                    output_release_allowed=rights_row["output_release_allowed"],
+                    required_disclosures=rights_row["required_disclosures"],
+                    expires_at=rights_row["expires_at"],
+                    evidence=[EvidenceRef.model_validate(item) for item in evidence],
+                    status=RightsStatus(rights_row["status"]),
+                    recorded_at=rights_row["created_at"],
+                )
+                if rights_row is not None
+                else None
+            )
+            try:
+                validate_current_rights_grant(
+                    rights,
+                    lambda _route, _kind, _ref, record=current_record: record,
+                    at=at,
+                    territories=list(rights.territories),
+                )
+            except ValueError as exc:
+                raise Conflict(
+                    "creative source rights do not match current eligible registry evidence",
+                    asset_id=str(source.asset_id),
+                ) from exc
+            current.append(descriptor)
+        return current
+
+    def _creative_records(self, episode_id: UUID) -> list[CreativeDerivativeRef]:
+        records: list[CreativeDerivativeRef] = []
+        for row in self._rows(
+            "SELECT payload FROM domain_events WHERE aggregate_type = 'episode' "
+            "AND aggregate_id = %s AND event_type = 'editing.creative_derivative_created' "
+            "ORDER BY sequence",
+            (episode_id,),
+        ):
+            payload = row["payload"]
+            if isinstance(payload, dict) and "creative_derivative" in payload:
+                records.append(CreativeDerivativeRef.model_validate(payload["creative_derivative"]))
+        return records
+
+    @staticmethod
+    def _zone_text_box(box: Any) -> SafeZoneTextBox:
+        return SafeZoneTextBox(
+            x_bp=box.left,
+            y_bp=box.top,
+            width_bp=box.right - box.left,
+            height_bp=box.bottom - box.top,
+        )
+
+    @staticmethod
+    def _platform_zone(plan: Any, *, poster: bool) -> PlatformSafeZone:
+        safe = plan.safe_zone
+        return PlatformSafeZone(
+            platform=plan.platform,
+            top_bp=safe.top,
+            right_bp=10_000 - safe.right,
+            bottom_bp=10_000 - safe.bottom,
+            left_bp=safe.left,
+            title_box=VariantsService._zone_text_box(plan.title_box) if poster else None,
+            cta_box=VariantsService._zone_text_box(plan.cta_box),
+        )
+
+    def derive_poster(self, plan: PosterPlan) -> CreativeDerivativeRef:
+        """Render, verify, and persist the poster and its exact Gate 2 reference."""
+        episode = self._episode_row(plan.episode_id)
+        if int(episode["episode_number"]) < plan.approved_reveal_episode:
+            raise SchemaInvalid("poster reveals story beyond this episode's approved boundary")
+        if int(episode["episode_number"]) == 1 and plan.approved_reveal_episode != 1:
+            raise SchemaInvalid("episode-one poster must use the episode-one approved reveal")
+        sources = [
+            DerivativeSourceRef(
+                role="CHARACTER",
+                asset_id=plan.character.asset.asset_id,
+                asset_sha256=plan.character.asset.sha256,
+                asset_version=plan.character.asset.version,
+                rights=plan.character.rights,
+            ),
+            DerivativeSourceRef(
+                role="TITLE",
+                asset_id=plan.title.asset.asset_id,
+                asset_sha256=plan.title.asset.sha256,
+                asset_version=plan.title.asset.version,
+                rights=plan.title.rights,
+            ),
+            DerivativeSourceRef(
+                role="CTA",
+                asset_id=plan.cta.asset.asset_id,
+                asset_sha256=plan.cta.asset.sha256,
+                asset_version=plan.cta.asset.version,
+                rights=plan.cta.rights,
+            ),
+        ]
+        self._creative_sources_current(sources)
+        with TemporaryDirectory(prefix="md-poster-") as tmp:
+            runner = FFmpegRunner(workdir=Path(tmp), timeout_ms=self._config.ffmpeg_timeout_ms)
+            names: dict[UUID, str] = {}
+            for source in sources:
+                desc = self._asset(source.asset_id)
+                name = f"{source.asset_id.hex}.png"
+                stage_bytes(runner, name=name, data=self._store.get_bytes(desc.object_key))
+                names[source.asset_id] = name
+            run_poster_export(runner, source_names=names, plan=plan, output="poster.jpg")
+            output = (runner.workdir / "poster.jpg").read_bytes()
+        zone = self._platform_zone(plan, poster=True)
+        return self._persist_creative_derivative(
+            episode_id=plan.episode_id,
+            derivative_type="POSTER",
+            output=output,
+            media=None,
+            sources=sources,
+            zones=[zone],
+            title_text=plan.title_text,
+            cta_text=plan.cta_text,
+            approved_reveal_episode=plan.approved_reveal_episode,
+            readability_evidence_sha256=plan.readability_evidence_sha256,
+            derivation_manifest={
+                "plan_sha256": plan.package_hash,
+                "approved_reveal_episode": plan.approved_reveal_episode,
+                "source_ranges_ms": [],
+                "readability_check": plan.readability_check,
+                "readability_evidence_sha256": plan.readability_evidence_sha256,
+                "variant_key": plan.variant_key,
+            },
+        )
+
+    def derive_episode_one_preview(self, plan: PreviewPlan) -> CreativeDerivativeRef:
+        """Export accepted footage and persist its measured, optional preview reference."""
+        episode = self._episode_row(plan.source_edl.episode_id)
+        if int(episode["episode_number"]) != 1:
+            raise SchemaInvalid("episode-one preview is permitted only for episode one")
+        source_by_id = {source.asset.asset_id: source for source in plan.sources}
+        if len(source_by_id) != len(plan.sources):
+            raise SchemaInvalid("preview source descriptors must be unique by asset")
+        if set(source_by_id) != {clip.source_asset_id for clip in plan.source_edl.clips}:
+            raise SchemaInvalid("preview source descriptors must exactly cover every EDL input")
+        sources: list[DerivativeSourceRef] = []
+        for clip in plan.source_edl.clips:
+            source = source_by_id[clip.source_asset_id]
+            sources.append(
+                DerivativeSourceRef(
+                    role="FOOTAGE" if clip.track.value == "VIDEO" else "AUDIO",
+                    asset_id=source.asset.asset_id,
+                    asset_sha256=source.asset.sha256,
+                    asset_version=source.asset.version,
+                    source_in_ms=clip.source_in_ms,
+                    source_out_ms=clip.source_out_ms,
+                    rights=source.rights,
+                )
+            )
+        self._creative_sources_current(sources)
+        video_ids = {
+            clip.source_asset_id for clip in plan.source_edl.clips if clip.track.value == "VIDEO"
+        }
+        if not video_ids:
+            raise SchemaInvalid("episode-one preview requires at least one footage source")
+        self._accepted_guard(video_ids, what="episode-one preview")
+        all_ids = {clip.source_asset_id for clip in plan.source_edl.clips}
+        for clip in plan.source_edl.clips:
+            descriptor = self._asset(clip.source_asset_id)
+            if descriptor.media is None or clip.source_out_ms > descriptor.media.duration_ms:
+                raise SchemaInvalid(
+                    "preview source range exceeds measured source media",
+                    asset_id=str(clip.source_asset_id),
+                    source_out_ms=clip.source_out_ms,
+                    media_duration_ms=descriptor.media.duration_ms if descriptor.media else None,
+                )
+        with TemporaryDirectory(prefix="md-preview-") as tmp:
+            runner = FFmpegRunner(workdir=Path(tmp), timeout_ms=self._config.ffmpeg_timeout_ms)
+            names: dict[UUID, str] = {}
+            for asset_id in sorted(all_ids):
+                descriptor = self._asset(asset_id)
+                suffix = _STAGE_SUFFIX.get(descriptor.asset_kind, ".bin")
+                name = f"{asset_id.hex}{suffix}"
+                stage_bytes(runner, name=name, data=self._store.get_bytes(descriptor.object_key))
+                names[asset_id] = name
+            run_preview_export(runner, source_names=names, plan=plan, output="preview.mp4")
+            preview_path = runner.workdir / "preview.mp4"
+            media = runner.probe(preview_path)
+            if not media.has_video or media.duration_ms > 90_000:
+                raise SchemaInvalid("preview output failed measured stream/duration checks")
+            output = preview_path.read_bytes()
+        zone = self._platform_zone(plan, poster=False)
+        return self._persist_creative_derivative(
+            episode_id=plan.source_edl.episode_id,
+            derivative_type="EPISODE_ONE_PREVIEW",
+            output=output,
+            media=media,
+            sources=sources,
+            zones=[zone],
+            title_text=None,
+            cta_text=plan.cta_text,
+            approved_reveal_episode=plan.approved_reveal_episode,
+            duration_ms=media.duration_ms,
+            reveal_boundary_ms=plan.reveal_boundary_ms,
+            derivation_manifest={
+                "plan_sha256": plan.package_hash,
+                "source_edl": plan.source_edl.model_dump(mode="json"),
+                "source_ranges_ms": plan.source_ranges_ms,
+                "variant_key": plan.variant_key,
+            },
+        )
+
+    def _persist_creative_derivative(
+        self,
+        *,
+        episode_id: UUID | None,
+        derivative_type: str,
+        output: bytes,
+        media: MediaInfo | None,
+        sources: list[DerivativeSourceRef],
+        zones: list[PlatformSafeZone],
+        title_text: str | None,
+        cta_text: str,
+        approved_reveal_episode: int,
+        readability_evidence_sha256: str | None = None,
+        duration_ms: int | None = None,
+        reveal_boundary_ms: int | None = None,
+        derivation_manifest: dict[str, Any],
+    ) -> CreativeDerivativeRef:
+        if episode_id is None:
+            raise SchemaInvalid("creative derivative source is not bound to an episode")
+        self._creative_sources_current(sources)
+        source_body = [source.model_dump(mode="json") for source in sources]
+        digest = sha256(output).hexdigest()
+        semantic_fields = {
+            "type": derivative_type,
+            "output_sha256": digest,
+            "sources": source_body,
+            "zones": [zone.model_dump(mode="json") for zone in zones],
+            "title_text": title_text,
+            "cta_text": cta_text,
+            "duration_ms": duration_ms,
+            "reveal_boundary_ms": reveal_boundary_ms,
+            "approved_reveal_episode": approved_reveal_episode,
+            "readability_evidence_sha256": readability_evidence_sha256,
+            "derivation_manifest": derivation_manifest,
+        }
+        semantic_key = canonical_hash(semantic_fields)
+        prior = self._creative_records(episode_id)
+        manifests_by_id = {
+            str(payload["creative_derivative"]["asset_id"]): payload.get("derivation_manifest")
+            for row in self._rows(
+                "SELECT payload FROM domain_events WHERE aggregate_type = 'episode' "
+                "AND aggregate_id = %s AND event_type = 'editing.creative_derivative_created'",
+                (episode_id,),
+            )
+            if isinstance((payload := row["payload"]), dict)
+            and isinstance(payload.get("creative_derivative"), dict)
+        }
+        replay = next(
+            (
+                record
+                for record in prior
+                if canonical_hash(
+                    {
+                        "type": record.derivative_type,
+                        "output_sha256": record.asset_sha256,
+                        "sources": [source.model_dump(mode="json") for source in record.sources],
+                        "zones": [
+                            zone.model_dump(mode="json") for zone in record.platform_safe_zones
+                        ],
+                        "title_text": record.title_text,
+                        "cta_text": record.cta_text,
+                        "duration_ms": record.duration_ms,
+                        "reveal_boundary_ms": record.reveal_boundary_ms,
+                        "approved_reveal_episode": record.approved_reveal_episode,
+                        "readability_evidence_sha256": record.readability_evidence_sha256,
+                        "derivation_manifest": manifests_by_id.get(str(record.asset_id)),
+                    }
+                )
+                == semantic_key
+            ),
+            None,
+        )
+        if replay is not None:
+            if self._asset_state(replay.asset_id) == AssetState.ACCEPTED.value:
+                return replay
+        version = (
+            max(
+                (item.asset_version for item in prior if item.derivative_type == derivative_type),
+                default=0,
+            )
+            + 1
+        )
+        asset_id = uuid5_name("creative-derivative", f"{semantic_key}:{version}")
+        ref = CreativeDerivativeRef(
+            derivative_type=derivative_type,
+            asset_id=asset_id,
+            asset_version=version,
+            asset_sha256=digest,
+            sources=sources,
+            duration_ms=duration_ms,
+            reveal_boundary_ms=reveal_boundary_ms,
+            platform_safe_zones=zones,
+            title_text=title_text,
+            cta_text=cta_text,
+            derivation_manifest_sha256=canonical_hash(derivation_manifest),
+            approved_reveal_episode=approved_reveal_episode,
+            readability_evidence_sha256=readability_evidence_sha256,
+        )
+        # Supersede only historical derivatives that depended on a source whose
+        # exact accepted hash has changed. Unrelated derivatives remain accepted.
+        for old in prior:
+            if old.asset_id == asset_id:
+                continue
+            changed = False
+            for old_source in old.sources:
+                try:
+                    now_source = self._asset(old_source.asset_id)
+                except NotFound:
+                    changed = True
+                    break
+                if (
+                    now_source.sha256 != old_source.asset_sha256
+                    or now_source.version != old_source.asset_version
+                    or self._asset_state(old_source.asset_id) not in _ACCEPTED_ASSET_STATES
+                ):
+                    changed = True
+                    break
+            if not changed:
+                try:
+                    self._creative_sources_current(old.sources)
+                except Conflict:
+                    changed = True
+            if changed:
+                self._supersede_creative_asset(old.asset_id)
+        now = self._now()
+        media_type = "image/jpeg" if derivative_type == "POSTER" else "video/mp4"
+        suffix = ".jpg" if derivative_type == "POSTER" else ".mp4"
+        stored = self._store.put_bytes(
+            f"edits/{episode_id}/creatives/{asset_id.hex}{suffix}", output, media_type=media_type
+        )
+        if stored.sha256 != digest:
+            raise Conflict("creative derivative object store returned a different output hash")
+        lineage = sorted({source.asset_id for source in sources}, key=str)
+        descriptor = AssetDescriptor(
+            asset_id=asset_id,
+            asset_kind=AssetKind.IMAGE if derivative_type == "POSTER" else AssetKind.VIDEO,
+            object_key=stored.key,
+            sha256=stored.sha256,
+            size_bytes=stored.size_bytes,
+            media_type=media_type,
+            media=media,
+            state=AssetState.ACCEPTED,
+            provenance=Provenance.DERIVED_LOCAL,
+            episode_id=episode_id,
+            season_id=self._episode_row(episode_id)["season_id"],
+            version=version,
+            lineage=lineage,
+            license_refs=sorted({source.rights.rights_route_id for source in sources}),
+            created_at=now,
+        )
+        ref = ref.model_copy(update={"asset_sha256": stored.sha256})
+        with self._db.transaction() as tx:
+            register_asset(tx, descriptor)
+            append_event(
+                tx,
+                aggregate_type="episode",
+                aggregate_id=episode_id,
+                event_type="editing.creative_derivative_created",
+                payload={
+                    "creative_derivative": ref.model_dump(mode="json"),
+                    "derivation_manifest": derivation_manifest,
+                },
+                correlation_id=self._new_id(),
+                occurred_at=now,
+            )
+        return ref
+
+    def _supersede_creative_asset(self, asset_id: UUID) -> None:
+        with self._db.transaction() as tx:
+            row = tx.fetchone("SELECT state, revision FROM assets WHERE id = %s", (asset_id,))
+            if row is None or row["state"] != AssetState.ACCEPTED.value:
+                return
+            update_with_revision(
+                tx,
+                "assets",
+                asset_id,
+                int(row["revision"]),
+                {"state": AssetState.SUPERSEDED.value},
+                now=self._now(),
+            )
+
+    def final_review_creatives(self, episode_id: UUID) -> list[CreativeDerivativeRef]:
+        """Return current persisted derivatives for T044/T047's Gate 2 projection."""
+        latest: dict[str, CreativeDerivativeRef] = {}
+        records = sorted(self._creative_records(episode_id), key=lambda item: item.asset_version)
+        manifest_by_asset = {
+            str(payload["creative_derivative"]["asset_id"]): payload.get("derivation_manifest")
+            for row in self._rows(
+                "SELECT payload FROM domain_events WHERE aggregate_type = 'episode' "
+                "AND aggregate_id = %s AND event_type = 'editing.creative_derivative_created'",
+                (episode_id,),
+            )
+            if isinstance((payload := row["payload"]), dict)
+            and isinstance(payload.get("creative_derivative"), dict)
+        }
+        for record in records:
+            try:
+                descriptor = self._asset(record.asset_id)
+                manifest = manifest_by_asset.get(str(record.asset_id))
+                if (
+                    self._asset_state(record.asset_id) != AssetState.ACCEPTED.value
+                    or descriptor.sha256 != record.asset_sha256
+                    or descriptor.version != record.asset_version
+                    or sha256(self._store.get_bytes(descriptor.object_key)).hexdigest()
+                    != record.asset_sha256
+                    or not isinstance(manifest, dict)
+                    or canonical_hash(manifest) != record.derivation_manifest_sha256
+                ):
+                    raise Conflict("creative derivative bytes or state changed")
+                self._creative_sources_current(record.sources)
+            except (Conflict, NotFound):
+                self._supersede_creative_asset(record.asset_id)
+                continue
+            previous = latest.get(record.derivative_type)
+            if previous is None or record.asset_version > previous.asset_version:
+                latest[record.derivative_type] = record
+        return [latest[key] for key in sorted(latest)]
+
+    def final_review_creative_manifests(self, episode_id: UUID) -> list[dict[str, Any]]:
+        """Lineage and QA evidence not represented by the frozen Gate 2 derivative ref."""
+        manifests: list[dict[str, Any]] = []
+        valid_ids = {str(record.asset_id) for record in self.final_review_creatives(episode_id)}
+        for row in self._rows(
+            "SELECT payload FROM domain_events WHERE aggregate_type = 'episode' "
+            "AND aggregate_id = %s AND event_type = 'editing.creative_derivative_created' "
+            "ORDER BY sequence",
+            (episode_id,),
+        ):
+            payload = row["payload"]
+            manifest = payload.get("derivation_manifest") if isinstance(payload, dict) else None
+            derivative = payload.get("creative_derivative") if isinstance(payload, dict) else None
+            if (
+                isinstance(manifest, dict)
+                and isinstance(derivative, dict)
+                and str(derivative.get("asset_id")) in valid_ids
+            ):
+                manifests.append(manifest)
+        return manifests
+
     # --- hooks -------------------------------------------------------------------------
 
     def generate_hook_candidates(
@@ -1533,6 +2065,24 @@ class VariantsService:
             burned = self._burned_derivative(descriptor.asset_id)
             if burned is not None:
                 _add(MediaRef(asset_id=burned.asset_id, sha256=burned.sha256, role="variant"))
+        creative_derivatives = self.final_review_creatives(episode_id)
+        for derivative in creative_derivatives:
+            for source in derivative.sources:
+                _add(
+                    MediaRef(
+                        asset_id=source.asset_id,
+                        sha256=source.asset_sha256,
+                        role="creative_source",
+                    )
+                )
+            role = "poster" if derivative.derivative_type == "POSTER" else "preview"
+            _add(
+                MediaRef(
+                    asset_id=derivative.asset_id,
+                    sha256=derivative.asset_sha256,
+                    role=role,
+                )
+            )
         for row in self._rows(
             "SELECT descriptor FROM assets WHERE episode_id = %s AND asset_kind = 'IMAGE' "
             "AND provenance = 'DERIVED_LOCAL' ORDER BY id",
@@ -1556,6 +2106,8 @@ class VariantsService:
             hook_experiment_id=experiment.experiment_id if experiment else None,
             variant_keys=sorted(set(variant_keys)),
             hook_candidate_ids=sorted(set(hook_ids)),
+            creative_derivatives=creative_derivatives or None,
+            creative_derivation_manifests=self.final_review_creative_manifests(episode_id),
         )
 
     # --- events ---------------------------------------------------------------------------

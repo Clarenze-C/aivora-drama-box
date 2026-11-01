@@ -89,6 +89,24 @@ class LineAlignment(ContractModel):
     ratio: float = Field(ge=0.0, le=1.0)
 
 
+class CheckCoverageWindow(ContractModel):
+    """Check-level coverage evidence (T042b).
+
+    The canonical ``CoverageWindow`` carries only ``check_family`` and cannot
+    distinguish checks inside one family, so the QA lane persists per-check
+    coverage in this module-local record (bounded, on the run event payload).
+    The same honesty rules apply: a check is CHECKED only where it actually
+    ran; UNSAMPLED/UNAVAILABLE ranges can never carry a PASS finding.
+    """
+
+    asset_id: UUID
+    check_id: Identifier
+    start_ms: DurationMs
+    end_ms: DurationMs
+    status: CoverageStatus
+    note: ShortText | None = None
+
+
 class TechnicalQARun(ContractModel):
     """What one ``run_episode_qa`` call returns. Failed attempts keep their spend."""
 
@@ -101,6 +119,7 @@ class TechnicalQARun(ContractModel):
     duration_ms: DurationMs
     findings: list[QAFinding] = Field(default_factory=list)
     coverage: list[CoverageWindow] = Field(default_factory=list)
+    per_check_coverage: list[CheckCoverageWindow] = Field(default_factory=list)
     all_checks_green: bool
     blocking_check_ids: list[Identifier] = Field(default_factory=list)
     unknown_check_ids: list[Identifier] = Field(default_factory=list)
@@ -192,6 +211,7 @@ __all__ = [
     "QA_NAMESPACE",
     "QARunStatus",
     "QAReportView",
+    "CheckCoverageWindow",
     "LineAlignment",
     "MediaObservation",
     "ObservedIdentity",

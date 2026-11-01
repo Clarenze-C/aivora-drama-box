@@ -77,7 +77,7 @@ def test_review_reads_return_the_contract_models_and_decisions_return_json_comma
             else:
                 assert route.response_model is None, spec.path  # returns a JSONResponse
                 assert spec.request_model is ApprovalCommand, spec.path
-    assert checked == 5
+    assert checked == 5  # the five contract review routes; progress reads are /ui-local
 
 
 def test_review_never_registers_routers_or_imports_composition_roots() -> None:

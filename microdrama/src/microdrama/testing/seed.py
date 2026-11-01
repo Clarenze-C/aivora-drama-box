@@ -64,10 +64,16 @@ def seed_human_session(
     return session_id
 
 
-def seed_gate1_approval(tx: Tx, season_id: UUID, scope_hash: str) -> UUID:
-    """A real Gate 1 APPROVE recorded by a live test owner session (no fabricated ids)."""
-    owner_id = seed_owner(tx)
-    session_id = seed_human_session(tx, owner_id)
+def seed_gate1_approval(
+    tx: Tx, season_id: UUID, scope_hash: str, *, owner_id: UUID | None = None
+) -> UUID:
+    """A real Gate 1 APPROVE recorded by a live test owner session (no fabricated ids).
+
+    With ``owner_id`` the approval's actor is exactly that owner (a session is
+    seeded for it), so a season-owner link can cite this event.
+    """
+    owner = owner_id or seed_owner(tx)
+    session_id = seed_human_session(tx, owner)
     approval_id = uuid.uuid4()
     payload = {"season_id": str(season_id), "scope_hash": scope_hash}
     insert_row(
@@ -81,7 +87,7 @@ def seed_gate1_approval(tx: Tx, season_id: UUID, scope_hash: str) -> UUID:
             "entity_id": season_id,
             "expected_revision": 0,
             "package_hash": scope_hash,
-            "actor_owner_id": owner_id,
+            "actor_owner_id": owner,
             "actor_session_id": session_id,
             "idempotency_key": f"seed-gate1-{approval_id.hex}",
             "command_hash": canonical_hash(payload),
@@ -91,11 +97,50 @@ def seed_gate1_approval(tx: Tx, season_id: UUID, scope_hash: str) -> UUID:
     return approval_id
 
 
-def seed_season(tx: Tx, *, state: str = "PROPOSED", approved_scope_hash: str | None = None) -> UUID:
+def link_season_owner(
+    tx: Tx,
+    season_id: UUID,
+    owner_id: UUID,
+    *,
+    source: str = "CREATOR_AT_CREATION",
+    approval_event_id: UUID | None = None,
+) -> None:
+    """Insert a ``season_owners`` row with real provenance (T044a).
+
+    A ``GATE1_APPROVAL_BACKFILL`` link must cite the season's own human Gate 1
+    approval whose actor is this owner — the database trigger enforces it.
+    """
+    insert_row(
+        tx,
+        "season_owners",
+        {
+            "season_id": season_id,
+            "owner_id": owner_id,
+            "source": source,
+            "approval_event_id": approval_event_id,
+        },
+    )
+
+
+def seed_season(
+    tx: Tx,
+    *,
+    state: str = "PROPOSED",
+    approved_scope_hash: str | None = None,
+    owner_id: UUID | None = None,
+) -> UUID:
+    """A season row; with ``owner_id`` the season is linked to that owner at creation.
+
+    Without ``owner_id`` the season stays UNASSIGNED — the legacy shape the
+    review reads must hide until an audited assignment links it.
+    """
     season_id = uuid.uuid4()
     approved = state in ("SEASON_APPROVED", "ACTIVE", "COMPLETE")
     scope_hash = approved_scope_hash or canonical_hash(season_scope())
-    approval_id = seed_gate1_approval(tx, season_id, scope_hash) if approved else None
+    if approved:
+        approval_id = seed_gate1_approval(tx, season_id, scope_hash, owner_id=owner_id)
+    else:
+        approval_id = None
     insert_row(
         tx,
         "seasons",
@@ -111,6 +156,14 @@ def seed_season(tx: Tx, *, state: str = "PROPOSED", approved_scope_hash: str | N
         },
         returning="id",
     )
+    if owner_id is not None:
+        link_season_owner(
+            tx,
+            season_id,
+            owner_id,
+            source="GATE1_APPROVAL_BACKFILL" if approved else "CREATOR_AT_CREATION",
+            approval_event_id=approval_id,
+        )
     return season_id
 
 

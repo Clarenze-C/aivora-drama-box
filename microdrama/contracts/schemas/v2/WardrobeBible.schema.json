@@ -1,0 +1,267 @@
+{
+  "$defs": {
+    "OutfitDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "asset_version": {
+          "minimum": 1,
+          "title": "Asset Version",
+          "type": "integer"
+        },
+        "outfit_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Outfit Id",
+          "type": "string"
+        },
+        "rights": {
+          "$ref": "#/$defs/RightsGrant"
+        },
+        "setting_tags": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Setting Tags",
+          "type": "array"
+        },
+        "story_day_from": {
+          "minimum": 1,
+          "title": "Story Day From",
+          "type": "integer"
+        },
+        "story_day_until": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Story Day Until"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outfit_id",
+        "version",
+        "asset_id",
+        "asset_version",
+        "asset_sha256",
+        "story_day_from",
+        "setting_tags",
+        "rights"
+      ],
+      "title": "OutfitDefinition",
+      "type": "object"
+    },
+    "RightsGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "commercial_use": {
+          "title": "Commercial Use",
+          "type": "boolean"
+        },
+        "evidence_sha256": {
+          "items": {
+            "description": "Lowercase SHA-256 hex",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Sha256",
+          "type": "array"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "output_release_allowed": {
+          "title": "Output Release Allowed",
+          "type": "boolean"
+        },
+        "rights_route_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Rights Route Id",
+          "type": "string"
+        },
+        "rights_version": {
+          "minimum": 1,
+          "title": "Rights Version",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/RightsStatus"
+        },
+        "subject_kind": {
+          "$ref": "#/$defs/RightsSubjectKind"
+        },
+        "subject_ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Subject Ref",
+          "type": "string"
+        },
+        "territories": {
+          "items": {
+            "pattern": "^[A-Z]{2}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Territories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rights_route_id",
+        "subject_kind",
+        "subject_ref",
+        "rights_version",
+        "status",
+        "territories",
+        "commercial_use",
+        "output_release_allowed",
+        "evidence_sha256"
+      ],
+      "title": "RightsGrant",
+      "type": "object"
+    },
+    "RightsStatus": {
+      "enum": [
+        "ELIGIBLE",
+        "INELIGIBLE",
+        "UNKNOWN",
+        "EXPIRED"
+      ],
+      "title": "RightsStatus",
+      "type": "string"
+    },
+    "RightsSubjectKind": {
+      "enum": [
+        "MODEL",
+        "MODEL_OUTPUT",
+        "VOICE",
+        "MUSIC",
+        "FONT",
+        "REFERENCE",
+        "STOCK"
+      ],
+      "title": "RightsSubjectKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:2.15.0:WardrobeBible",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "character_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Character Id",
+      "type": "string"
+    },
+    "content_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "outfits": {
+      "items": {
+        "$ref": "#/$defs/OutfitDefinition"
+      },
+      "minItems": 1,
+      "title": "Outfits",
+      "type": "array"
+    },
+    "record_id": {
+      "format": "uuid",
+      "title": "Record Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "description": "V2 payload; V1 consumers must not treat it as V1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "season_id": {
+      "format": "uuid",
+      "title": "Season Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "valid_from": {
+      "format": "date-time",
+      "title": "Valid From",
+      "type": "string"
+    },
+    "valid_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Valid Until"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "record_id",
+    "version",
+    "content_sha256",
+    "created_at",
+    "updated_at",
+    "valid_from",
+    "season_id",
+    "character_id",
+    "outfits"
+  ],
+  "title": "WardrobeBible",
+  "type": "object"
+}

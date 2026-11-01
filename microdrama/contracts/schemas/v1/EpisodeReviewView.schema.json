@@ -1,5 +1,322 @@
 {
   "$defs": {
+    "ApprovedMetadataPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_unapproved_content_changes": {
+          "const": false,
+          "default": false,
+          "title": "Allow Unapproved Content Changes",
+          "type": "boolean"
+        },
+        "cooldown_hours": {
+          "default": 24,
+          "minimum": 24,
+          "title": "Cooldown Hours",
+          "type": "integer"
+        },
+        "max_substantive_edits_first_7_days": {
+          "default": 2,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Max Substantive Edits First 7 Days",
+          "type": "integer"
+        },
+        "mutable_fields": {
+          "items": {
+            "enum": [
+              "title",
+              "caption",
+              "description",
+              "hashtags",
+              "cover",
+              "cta"
+            ],
+            "type": "string"
+          },
+          "title": "Mutable Fields",
+          "type": "array"
+        },
+        "policy_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "policy_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Policy Sha256",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "policy_id",
+        "version",
+        "policy_sha256"
+      ],
+      "title": "ApprovedMetadataPolicy",
+      "type": "object"
+    },
+    "ApprovedSlotMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "caption": {
+          "default": "",
+          "maxLength": 5000,
+          "title": "Caption",
+          "type": "string"
+        },
+        "catalog_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Catalog Version"
+        },
+        "content_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Sha256",
+          "type": "string"
+        },
+        "cover_asset_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Asset Id"
+        },
+        "cover_asset_sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Asset Sha256"
+        },
+        "cover_asset_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Asset Version"
+        },
+        "cover_rights": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RightsGrant"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "cta_text": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cta Text"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 5000,
+          "title": "Description",
+          "type": "string"
+        },
+        "disclosures": {
+          "items": {
+            "$ref": "#/$defs/DisclosureKind"
+          },
+          "title": "Disclosures",
+          "type": "array"
+        },
+        "hashtags": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Hashtags",
+          "type": "array"
+        },
+        "links": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "locale": {
+          "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$",
+          "title": "Locale",
+          "type": "string"
+        },
+        "metadata_id": {
+          "format": "uuid",
+          "title": "Metadata Id",
+          "type": "string"
+        },
+        "metadata_policy_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Metadata Policy Id",
+          "type": "string"
+        },
+        "metadata_policy_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Metadata Policy Sha256",
+          "type": "string"
+        },
+        "metadata_policy_version": {
+          "minimum": 1,
+          "title": "Metadata Policy Version",
+          "type": "integer"
+        },
+        "metadata_version": {
+          "minimum": 1,
+          "title": "Metadata Version",
+          "type": "integer"
+        },
+        "record_id": {
+          "format": "uuid",
+          "title": "Record Id",
+          "type": "string"
+        },
+        "release_package_hash": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Release Package Hash",
+          "type": "string"
+        },
+        "release_package_id": {
+          "format": "uuid",
+          "title": "Release Package Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "description": "V2 payload; V1 consumers must not treat it as V1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slot_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Slot Id",
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "OWNER_APPROVED",
+            "OFFLINE_MOCK",
+            "EXAMPLE"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "valid_from": {
+          "format": "date-time",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid Until"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "record_id",
+        "version",
+        "content_sha256",
+        "created_at",
+        "updated_at",
+        "valid_from",
+        "release_package_id",
+        "release_package_hash",
+        "slot_id",
+        "metadata_id",
+        "metadata_version",
+        "locale",
+        "title",
+        "metadata_policy_id",
+        "metadata_policy_version",
+        "metadata_policy_sha256",
+        "source"
+      ],
+      "title": "ApprovedSlotMetadata",
+      "type": "object"
+    },
     "CatalogPublicState": {
       "enum": [
         "NOT_RELEASED",
@@ -142,6 +459,218 @@
         "status"
       ],
       "title": "CoverageWindow",
+      "type": "object"
+    },
+    "CreativeDerivativeRef": {
+      "additionalProperties": false,
+      "properties": {
+        "approved_reveal_episode": {
+          "minimum": 1,
+          "title": "Approved Reveal Episode",
+          "type": "integer"
+        },
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "asset_version": {
+          "minimum": 1,
+          "title": "Asset Version",
+          "type": "integer"
+        },
+        "cta_text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Cta Text",
+          "type": "string"
+        },
+        "derivation_manifest_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Derivation Manifest Sha256",
+          "type": "string"
+        },
+        "derivative_type": {
+          "enum": [
+            "POSTER",
+            "EPISODE_ONE_PREVIEW"
+          ],
+          "title": "Derivative Type",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "maximum": 90000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "no_release_obligation": {
+          "const": true,
+          "default": true,
+          "title": "No Release Obligation",
+          "type": "boolean"
+        },
+        "platform_safe_zones": {
+          "items": {
+            "$ref": "#/$defs/PlatformSafeZone"
+          },
+          "minItems": 1,
+          "title": "Platform Safe Zones",
+          "type": "array"
+        },
+        "readability_evidence_sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Readability Evidence Sha256"
+        },
+        "reveal_boundary_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reveal Boundary Ms"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/DerivativeSourceRef"
+          },
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "title_text": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title Text"
+        }
+      },
+      "required": [
+        "derivative_type",
+        "asset_id",
+        "asset_version",
+        "asset_sha256",
+        "derivation_manifest_sha256",
+        "approved_reveal_episode",
+        "sources",
+        "platform_safe_zones",
+        "cta_text"
+      ],
+      "title": "CreativeDerivativeRef",
+      "type": "object"
+    },
+    "DerivativeSourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "asset_version": {
+          "minimum": 1,
+          "title": "Asset Version",
+          "type": "integer"
+        },
+        "rights": {
+          "$ref": "#/$defs/RightsGrant"
+        },
+        "role": {
+          "enum": [
+            "CHARACTER",
+            "FOOTAGE",
+            "AUDIO",
+            "PROP",
+            "TITLE",
+            "CTA",
+            "BACKGROUND"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "source_in_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source In Ms"
+        },
+        "source_out_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Out Ms"
+        }
+      },
+      "required": [
+        "role",
+        "asset_id",
+        "asset_version",
+        "asset_sha256",
+        "rights"
+      ],
+      "title": "DerivativeSourceRef",
       "type": "object"
     },
     "DisclosureKind": {
@@ -602,6 +1131,73 @@
       "title": "Platform",
       "type": "string"
     },
+    "PlatformSafeZone": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Bottom Bp",
+          "type": "integer"
+        },
+        "cta_box": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeZoneTextBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "left_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Left Bp",
+          "type": "integer"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "right_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Right Bp",
+          "type": "integer"
+        },
+        "title_box": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeZoneTextBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "top_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Top Bp",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "platform",
+        "top_bp",
+        "right_bp",
+        "bottom_bp",
+        "left_bp"
+      ],
+      "title": "PlatformSafeZone",
+      "type": "object"
+    },
     "Provenance": {
       "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
       "enum": [
@@ -811,6 +1407,74 @@
       "title": "QASummary",
       "type": "object"
     },
+    "ReleaseApprovalManifest": {
+      "additionalProperties": false,
+      "description": "V2 Gate-2 binding for immutable slot metadata, policy and V1 media package.",
+      "properties": {
+        "approval_manifest_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Approval Manifest Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "manifest_id": {
+          "format": "uuid",
+          "title": "Manifest Id",
+          "type": "string"
+        },
+        "metadata_policy": {
+          "$ref": "#/$defs/ApprovedMetadataPolicy"
+        },
+        "release_package_hash": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Release Package Hash",
+          "type": "string"
+        },
+        "release_package_id": {
+          "format": "uuid",
+          "title": "Release Package Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "description": "V2 payload; V1 consumers must not treat it as V1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slots": {
+          "items": {
+            "$ref": "#/$defs/ApprovedSlotMetadata"
+          },
+          "minItems": 1,
+          "title": "Slots",
+          "type": "array"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "manifest_id",
+        "version",
+        "created_at",
+        "release_package_id",
+        "release_package_hash",
+        "metadata_policy",
+        "slots",
+        "approval_manifest_sha256"
+      ],
+      "title": "ReleaseApprovalManifest",
+      "type": "object"
+    },
     "ReleasePackage": {
       "additionalProperties": false,
       "description": "What Gate 2 reviews. ``package_hash`` covers every immutable field.",
@@ -835,6 +1499,21 @@
         },
         "cost": {
           "$ref": "#/$defs/CostSummary"
+        },
+        "creative_derivatives": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CreativeDerivativeRef"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Creative Derivatives"
         },
         "episode_id": {
           "format": "uuid",
@@ -1110,6 +1789,148 @@
       "title": "ReviewMediaLink",
       "type": "object"
     },
+    "RightsGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "commercial_use": {
+          "title": "Commercial Use",
+          "type": "boolean"
+        },
+        "evidence_sha256": {
+          "items": {
+            "description": "Lowercase SHA-256 hex",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Sha256",
+          "type": "array"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "output_release_allowed": {
+          "title": "Output Release Allowed",
+          "type": "boolean"
+        },
+        "rights_route_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Rights Route Id",
+          "type": "string"
+        },
+        "rights_version": {
+          "minimum": 1,
+          "title": "Rights Version",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/RightsStatus"
+        },
+        "subject_kind": {
+          "$ref": "#/$defs/RightsSubjectKind"
+        },
+        "subject_ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Subject Ref",
+          "type": "string"
+        },
+        "territories": {
+          "items": {
+            "pattern": "^[A-Z]{2}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Territories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rights_route_id",
+        "subject_kind",
+        "subject_ref",
+        "rights_version",
+        "status",
+        "territories",
+        "commercial_use",
+        "output_release_allowed",
+        "evidence_sha256"
+      ],
+      "title": "RightsGrant",
+      "type": "object"
+    },
+    "RightsStatus": {
+      "enum": [
+        "ELIGIBLE",
+        "INELIGIBLE",
+        "UNKNOWN",
+        "EXPIRED"
+      ],
+      "title": "RightsStatus",
+      "type": "string"
+    },
+    "RightsSubjectKind": {
+      "enum": [
+        "MODEL",
+        "MODEL_OUTPUT",
+        "VOICE",
+        "MUSIC",
+        "FONT",
+        "REFERENCE",
+        "STOCK"
+      ],
+      "title": "RightsSubjectKind",
+      "type": "string"
+    },
+    "SafeZoneTextBox": {
+      "additionalProperties": false,
+      "properties": {
+        "height_bp": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Height Bp",
+          "type": "integer"
+        },
+        "width_bp": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Width Bp",
+          "type": "integer"
+        },
+        "x_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "X Bp",
+          "type": "integer"
+        },
+        "y_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Y Bp",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x_bp",
+        "y_bp",
+        "width_bp",
+        "height_bp"
+      ],
+      "title": "SafeZoneTextBox",
+      "type": "object"
+    },
     "ScheduleInstant": {
       "additionalProperties": false,
       "description": "A schedule point: IANA zone + local wall time + the concrete UTC instant.\n\nValidation rejects nonexistent local times (DST gaps) and ambiguous local times\n(DST overlaps) unless ``fold`` is given, and requires ``utc_instant`` to equal\nthe conversion, so a DST change can never silently move an announced time.",
@@ -1175,7 +1996,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.6.0:EpisodeReviewView",
+  "$id": "urn:microdrama:contracts:1.15.0:EpisodeReviewView",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -1277,6 +2098,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/ReleasePackage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "release_approval_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReleaseApprovalManifest"
         },
         {
           "type": "null"

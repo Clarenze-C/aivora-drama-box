@@ -31,6 +31,7 @@ from pydantic import (
 from microdrama.contracts.enums import BudgetCategory, EvidenceSource
 
 SCHEMA_VERSION = "1.0"
+V2_SCHEMA_VERSION = "2.0"
 
 EPISODE_CAP_MICRO_USD = 10_000_000
 MICRO_USD_PER_USD = 1_000_000
@@ -168,6 +169,14 @@ class VersionedPayload(ContractModel):
 
     schema_version: Literal["1.0"] = Field(
         default=SCHEMA_VERSION, description="Unsupported/stale versions are rejected"
+    )
+
+
+class V2VersionedPayload(ContractModel):
+    """Base for the deliberately separate V2 creative and projection contracts."""
+
+    schema_version: Literal["2.0"] = Field(
+        default=V2_SCHEMA_VERSION, description="V2 payload; V1 consumers must not treat it as V1"
     )
 
 

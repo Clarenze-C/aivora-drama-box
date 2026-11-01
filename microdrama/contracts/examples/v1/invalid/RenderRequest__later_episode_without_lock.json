@@ -10,6 +10,8 @@
   "manifest_version": 1,
   "negative_prompt_text": "",
   "preset_id": "fake-quality-8step",
+  "prompt_manifest_id": null,
+  "prompt_manifest_sha256": null,
   "prompt_text": "Medium close-up of Fon reading a ledger at a street food stall at dusk.",
   "reference_asset_ids": [
     "c3bcd991-5a5b-57d9-bf58-ace7aa00e2a1"
@@ -23,6 +25,7 @@
   "schema_version": "1.0",
   "seed": 1234,
   "semantic_key": "render.shot:ep1:sh1:attempt1",
+  "semantic_workflow_sha256": null,
   "shot_id": "sh1",
   "tier": "quality_eight_step",
   "width": 720,

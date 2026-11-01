@@ -58,6 +58,218 @@
       "title": "CostSummary",
       "type": "object"
     },
+    "CreativeDerivativeRef": {
+      "additionalProperties": false,
+      "properties": {
+        "approved_reveal_episode": {
+          "minimum": 1,
+          "title": "Approved Reveal Episode",
+          "type": "integer"
+        },
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "asset_version": {
+          "minimum": 1,
+          "title": "Asset Version",
+          "type": "integer"
+        },
+        "cta_text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Cta Text",
+          "type": "string"
+        },
+        "derivation_manifest_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Derivation Manifest Sha256",
+          "type": "string"
+        },
+        "derivative_type": {
+          "enum": [
+            "POSTER",
+            "EPISODE_ONE_PREVIEW"
+          ],
+          "title": "Derivative Type",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "maximum": 90000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "no_release_obligation": {
+          "const": true,
+          "default": true,
+          "title": "No Release Obligation",
+          "type": "boolean"
+        },
+        "platform_safe_zones": {
+          "items": {
+            "$ref": "#/$defs/PlatformSafeZone"
+          },
+          "minItems": 1,
+          "title": "Platform Safe Zones",
+          "type": "array"
+        },
+        "readability_evidence_sha256": {
+          "anyOf": [
+            {
+              "description": "Lowercase SHA-256 hex",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Readability Evidence Sha256"
+        },
+        "reveal_boundary_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reveal Boundary Ms"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/DerivativeSourceRef"
+          },
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "title_text": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title Text"
+        }
+      },
+      "required": [
+        "derivative_type",
+        "asset_id",
+        "asset_version",
+        "asset_sha256",
+        "derivation_manifest_sha256",
+        "approved_reveal_episode",
+        "sources",
+        "platform_safe_zones",
+        "cta_text"
+      ],
+      "title": "CreativeDerivativeRef",
+      "type": "object"
+    },
+    "DerivativeSourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "format": "uuid",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_sha256": {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Asset Sha256",
+          "type": "string"
+        },
+        "asset_version": {
+          "minimum": 1,
+          "title": "Asset Version",
+          "type": "integer"
+        },
+        "rights": {
+          "$ref": "#/$defs/RightsGrant"
+        },
+        "role": {
+          "enum": [
+            "CHARACTER",
+            "FOOTAGE",
+            "AUDIO",
+            "PROP",
+            "TITLE",
+            "CTA",
+            "BACKGROUND"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "source_in_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source In Ms"
+        },
+        "source_out_ms": {
+          "anyOf": [
+            {
+              "description": "Integer milliseconds > 0",
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Out Ms"
+        }
+      },
+      "required": [
+        "role",
+        "asset_id",
+        "asset_version",
+        "asset_sha256",
+        "rights"
+      ],
+      "title": "DerivativeSourceRef",
+      "type": "object"
+    },
     "DisclosureKind": {
       "enum": [
         "AI_GENERATED_CONTENT",
@@ -106,6 +318,73 @@
       ],
       "title": "Platform",
       "type": "string"
+    },
+    "PlatformSafeZone": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Bottom Bp",
+          "type": "integer"
+        },
+        "cta_box": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeZoneTextBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "left_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Left Bp",
+          "type": "integer"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "right_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Right Bp",
+          "type": "integer"
+        },
+        "title_box": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeZoneTextBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "top_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Top Bp",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "platform",
+        "top_bp",
+        "right_bp",
+        "bottom_bp",
+        "left_bp"
+      ],
+      "title": "PlatformSafeZone",
+      "type": "object"
     },
     "Provenance": {
       "description": "Where data/media came from. Fakes are always FAKE_SYNTHETIC.",
@@ -276,6 +555,148 @@
       "title": "ReleaseSlotPlan",
       "type": "object"
     },
+    "RightsGrant": {
+      "additionalProperties": false,
+      "properties": {
+        "commercial_use": {
+          "title": "Commercial Use",
+          "type": "boolean"
+        },
+        "evidence_sha256": {
+          "items": {
+            "description": "Lowercase SHA-256 hex",
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Sha256",
+          "type": "array"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "output_release_allowed": {
+          "title": "Output Release Allowed",
+          "type": "boolean"
+        },
+        "rights_route_id": {
+          "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+          "title": "Rights Route Id",
+          "type": "string"
+        },
+        "rights_version": {
+          "minimum": 1,
+          "title": "Rights Version",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/RightsStatus"
+        },
+        "subject_kind": {
+          "$ref": "#/$defs/RightsSubjectKind"
+        },
+        "subject_ref": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Subject Ref",
+          "type": "string"
+        },
+        "territories": {
+          "items": {
+            "pattern": "^[A-Z]{2}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Territories",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rights_route_id",
+        "subject_kind",
+        "subject_ref",
+        "rights_version",
+        "status",
+        "territories",
+        "commercial_use",
+        "output_release_allowed",
+        "evidence_sha256"
+      ],
+      "title": "RightsGrant",
+      "type": "object"
+    },
+    "RightsStatus": {
+      "enum": [
+        "ELIGIBLE",
+        "INELIGIBLE",
+        "UNKNOWN",
+        "EXPIRED"
+      ],
+      "title": "RightsStatus",
+      "type": "string"
+    },
+    "RightsSubjectKind": {
+      "enum": [
+        "MODEL",
+        "MODEL_OUTPUT",
+        "VOICE",
+        "MUSIC",
+        "FONT",
+        "REFERENCE",
+        "STOCK"
+      ],
+      "title": "RightsSubjectKind",
+      "type": "string"
+    },
+    "SafeZoneTextBox": {
+      "additionalProperties": false,
+      "properties": {
+        "height_bp": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Height Bp",
+          "type": "integer"
+        },
+        "width_bp": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Width Bp",
+          "type": "integer"
+        },
+        "x_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "X Bp",
+          "type": "integer"
+        },
+        "y_bp": {
+          "description": "0..10000",
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Y Bp",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x_bp",
+        "y_bp",
+        "width_bp",
+        "height_bp"
+      ],
+      "title": "SafeZoneTextBox",
+      "type": "object"
+    },
     "ScheduleInstant": {
       "additionalProperties": false,
       "description": "A schedule point: IANA zone + local wall time + the concrete UTC instant.\n\nValidation rejects nonexistent local times (DST gaps) and ambiguous local times\n(DST overlaps) unless ``fold`` is given, and requires ``utc_instant`` to equal\nthe conversion, so a DST change can never silently move an announced time.",
@@ -331,7 +752,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.6.0:ReleasePackage",
+  "$id": "urn:microdrama:contracts:1.15.0:ReleasePackage",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "What Gate 2 reviews. ``package_hash`` covers every immutable field.",
@@ -356,6 +777,21 @@
     },
     "cost": {
       "$ref": "#/$defs/CostSummary"
+    },
+    "creative_derivatives": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/CreativeDerivativeRef"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Creative Derivatives"
     },
     "episode_id": {
       "format": "uuid",

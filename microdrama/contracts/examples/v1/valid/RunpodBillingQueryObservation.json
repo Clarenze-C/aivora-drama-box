@@ -1,0 +1,17 @@
+{
+  "bucket_observation_ids": [
+    "66dddccd-b85b-5de1-8c9c-868e6b5cea28"
+  ],
+  "bucket_size_seconds": 3600,
+  "observed_at": "2026-10-20T01:00:01Z",
+  "provider_account_ref": "acct:runpod-fixture",
+  "provider_resolved_window_end": "2026-10-20T01:00:00Z",
+  "provider_resolved_window_start": "2026-10-20T00:00:00Z",
+  "query_id": "eb311a78-edb1-5536-8732-22bccee8b6d0",
+  "raw_response_sha256": "d03d06166f8b8c8e1b18023f352add379f6617539537becf4b330ed3a06dc85f",
+  "requested_window_end": "2026-10-20T01:00:00Z",
+  "requested_window_start": "2026-10-20T00:00:00Z",
+  "result_state": "BUCKETS",
+  "schema_version": "1.0",
+  "unknown_reason": null
+}

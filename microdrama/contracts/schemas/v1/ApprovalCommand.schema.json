@@ -112,7 +112,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:1.6.0:ApprovalCommand",
+  "$id": "urn:microdrama:contracts:1.15.0:ApprovalCommand",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "A human gate decision. The actor comes from the authenticated session, not here.",
@@ -190,6 +190,21 @@
       ],
       "default": null,
       "title": "Reason"
+    },
+    "release_manifest_hash": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "V2 Gate 2 manifest hash, separate from the legacy V1 package_hash",
+      "title": "Release Manifest Hash"
     },
     "release_scope_hash": {
       "anyOf": [

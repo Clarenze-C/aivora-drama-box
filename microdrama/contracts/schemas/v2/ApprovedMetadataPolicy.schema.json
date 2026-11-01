@@ -1,0 +1,64 @@
+{
+  "$id": "urn:microdrama:contracts:2.15.0:ApprovedMetadataPolicy",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "allow_unapproved_content_changes": {
+      "const": false,
+      "default": false,
+      "title": "Allow Unapproved Content Changes",
+      "type": "boolean"
+    },
+    "cooldown_hours": {
+      "default": 24,
+      "minimum": 24,
+      "title": "Cooldown Hours",
+      "type": "integer"
+    },
+    "max_substantive_edits_first_7_days": {
+      "default": 2,
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Max Substantive Edits First 7 Days",
+      "type": "integer"
+    },
+    "mutable_fields": {
+      "items": {
+        "enum": [
+          "title",
+          "caption",
+          "description",
+          "hashtags",
+          "cover",
+          "cta"
+        ],
+        "type": "string"
+      },
+      "title": "Mutable Fields",
+      "type": "array"
+    },
+    "policy_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "policy_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Policy Sha256",
+      "type": "string"
+    },
+    "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "policy_id",
+    "version",
+    "policy_sha256"
+  ],
+  "title": "ApprovedMetadataPolicy",
+  "type": "object"
+}

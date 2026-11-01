@@ -1,0 +1,54 @@
+{
+  "content_sha256": "42cd9766c1b15f20d3953e7c2a7f65d6569e60e7a73b84698606eacda68c70d2",
+  "created_at": "2026-10-30T00:00:00Z",
+  "exclusions": [
+    "No glossy luxury-ad lighting",
+    "No unreadable generated text"
+  ],
+  "lens_and_movement": "Restrained handheld, eye-level lenses, motivated pushes.",
+  "lighting_language": "Soft window daylight with motivated practicals.",
+  "material_rules": [
+    "Natural fabric texture",
+    "Readable paper and food surfaces"
+  ],
+  "medium": "Live-action cinematic short drama",
+  "moving_sample_asset_id": "a2674e39-3fc8-5a30-a57f-6beb4f47e30f",
+  "moving_sample_sha256": "ff263075c34fadd7c38b3bc3fe829800bb31e6dcf5024489052011e3264bef9c",
+  "palette": [
+    "warm rice gold",
+    "deep teal"
+  ],
+  "realism": "Grounded naturalistic performances",
+  "record_id": "0edd9321-b4e8-5c90-a751-c316f7864916",
+  "rights": {
+    "commercial_use": true,
+    "evidence_sha256": [
+      "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+    ],
+    "expires_at": null,
+    "output_release_allowed": true,
+    "rights_route_id": "original-fiction",
+    "rights_version": 1,
+    "status": "ELIGIBLE",
+    "subject_kind": "MODEL_OUTPUT",
+    "subject_ref": "original-fiction-output",
+    "territories": [
+      "TH"
+    ]
+  },
+  "schema_version": "2.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "sound_motifs": [
+    "Bangkok morning traffic",
+    "Stall kitchen rhythm"
+  ],
+  "subtitle_safe_bottom_bp": 1200,
+  "subtitle_safe_top_bp": 500,
+  "typography_rules": [
+    "Thai captions use approved readable type"
+  ],
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

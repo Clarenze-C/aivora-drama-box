@@ -30,10 +30,13 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid5
+
+from pydantic import ValidationError
 
 from microdrama.budget import BudgetService, Reservation, ReservationState
 from microdrama.config import Settings
@@ -46,6 +49,7 @@ from microdrama.contracts.cost import (
     ProviderOperationResult,
     RenderRequest,
     UsageReceipt,
+    validate_render_request_prompt_binding,
 )
 from microdrama.contracts.enums import (
     BudgetCategory,
@@ -74,6 +78,7 @@ from microdrama.contracts.hashing import canonical_hash, sha256_hex
 from microdrama.contracts.infra import Clock, IdGenerator, ObjectStore
 from microdrama.contracts.media import AssetDescriptor
 from microdrama.contracts.providers import ComfyClient, ComfyOutputFile, ComfyProgressEvent
+from microdrama.contracts.v2 import PromptManifest, verify_v2_record_hash
 from microdrama.core.provider_ops import begin, needs_reconcile, record_result
 from microdrama.persistence.db import Database, Tx
 from microdrama.rendering.comfy_assets import persist_output, prepare_output
@@ -83,7 +88,10 @@ from microdrama.rendering.workflows import (
     PRESET_TEMPLATES,
     WorkflowTemplate,
     bind_workflow,
+    semantic_template_sha256,
 )
+from microdrama.rendering.workflows.binding import BoundWorkflow
+from microdrama.rendering.workflows.v2_binding import verify_bound_v2_workflow
 
 #: Durable operation kind for one paid prompt submission (matches the frozen contract
 #: example ``contracts.examples.provider_operation``).
@@ -438,6 +446,9 @@ class ComfyRenderService:
             # reservation may legitimately be terminal already.
             return self.poll(existing["id"])
         try:
+            # Reservation validation must precede even the live Comfy object-info GET:
+            # graph validation reads the server catalog before prompt submission.
+            self._verify_reservation(request)
             template = self._template_for(request)
             bound = bind_workflow(template, request)
             missing = [
@@ -451,13 +462,126 @@ class ComfyRenderService:
                     required=list(self._config.required_media_kinds),
                     produced=list(template.produced_media_kinds),
                 )
-            validate_api_graph(bound.graph, self._client.object_info())
-            self._verify_reservation(request)
+            with self._provider_authorization(request, job_id=job_id, operation_id=None):
+                node_catalog = self._client.object_info()
+            validate_api_graph(bound.graph, node_catalog)
         except MicrodramaError:
             # A request that can never dispatch frees its own unused hold immediately;
             # it would otherwise sit as reserved exposure until expiry.
             self._release_attempt_hold_quietly(request)
             raise
+        return self._submit_bound_graph(request, bound, job_id=job_id, token=token)
+
+    def submit_v2(
+        self,
+        request: RenderRequest,
+        bound_workflow: BoundWorkflow,
+        *,
+        job_id: UUID,
+    ) -> ComfyAttemptStatus:
+        """Submit a pre-bound semantic graph without the legacy positional binder.
+
+        The V2 manifest locator, source rows, template hashes, semantic input receipts
+        and graph request hash are verified before object-info/provider access. All
+        operation idempotency, authorization, prompt-ID persistence, polling and output
+        recovery then use the same path as V1.
+        """
+        if request.prompt_manifest_id is None or request.prompt_manifest_sha256 is None:
+            raise SchemaInvalid("V2 Comfy submit requires the paired PromptManifest locator")
+        if self._config.price is None:
+            raise UnknownPrice(
+                "render attempt price is unknown; paid dispatch blocked",
+                operation_kind=RENDER_OPERATION_KIND,
+            )
+        try:
+            self._verify_job(job_id, request)
+            manifest = self._load_current_prompt_manifest(request)
+        except MicrodramaError:
+            self._release_attempt_hold_quietly(request)
+            raise
+        token = render_client_token(request.semantic_key)
+        existing = self._find_by_token(token)
+        if existing is not None:
+            # The immutable job input pins the original semantic-template hash. Once
+            # an operation exists, a code-map change across restart must not rebuild or
+            # compare against today's graph; recover the already queued prompt by ID.
+            if existing["job_id"] != job_id or not existing["request_hash"]:
+                raise IdempotencyConflict(
+                    "V2 operation does not match the durable job of this attempt",
+                    operation_id=str(existing["id"]),
+                )
+            return self.poll(existing["id"])
+        try:
+            template = self._template_for(request)
+            try:
+                validate_render_request_prompt_binding(
+                    request,
+                    prompt_manifest_id=manifest.record_id,
+                    prompt_manifest_sha256=manifest.content_sha256,
+                    semantic_workflow_sha256=semantic_template_sha256(template),
+                )
+            except ValueError as exc:
+                raise SchemaInvalid(
+                    "V2 RenderRequest semantic pin does not match template"
+                ) from exc
+            verify_bound_v2_workflow(template, request, manifest, bound_workflow)
+            self._verify_reservation(request)
+            missing = [
+                kind
+                for kind in self._config.required_media_kinds
+                if kind not in template.produced_media_kinds
+            ]
+            if missing:
+                raise UnsupportedControl(
+                    "workflow template cannot produce the required output media kinds",
+                    required=list(self._config.required_media_kinds),
+                    produced=list(template.produced_media_kinds),
+                )
+            with self._provider_authorization(request, job_id=job_id, operation_id=None):
+                node_catalog = self._client.object_info()
+            validate_api_graph(bound_workflow.graph, node_catalog)
+        except MicrodramaError:
+            self._release_attempt_hold_quietly(request)
+            raise
+        return self._submit_bound_graph(request, bound_workflow, job_id=job_id, token=token)
+
+    def _load_current_prompt_manifest(self, request: RenderRequest) -> PromptManifest:
+        """Load the current exact manifest and verify both document and V2 content hashes."""
+        assert request.prompt_manifest_id is not None
+        assert request.prompt_manifest_sha256 is not None
+        with self._db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT payload, payload_sha256 FROM v2_contract_documents "
+                "WHERE contract_type = 'PromptManifest' AND record_id = %s AND current",
+                (request.prompt_manifest_id,),
+            )
+        if row is None:
+            raise NotFound(
+                "current PromptManifest not found", record_id=str(request.prompt_manifest_id)
+            )
+        try:
+            manifest = PromptManifest.model_validate(row["payload"])
+            verify_v2_record_hash(manifest)
+        except (ValueError, ValidationError) as exc:
+            raise SchemaInvalid("persisted PromptManifest failed typed/hash validation") from exc
+        if canonical_hash(manifest) != row["payload_sha256"]:
+            raise Conflict("persisted PromptManifest payload hash failed integrity check")
+        if (manifest.record_id, manifest.content_sha256) != (
+            request.prompt_manifest_id,
+            request.prompt_manifest_sha256,
+        ):
+            raise Conflict("current PromptManifest differs from the request's exact locator")
+        return manifest
+
+    def _submit_bound_graph(
+        self,
+        request: RenderRequest,
+        bound: BoundWorkflow,
+        *,
+        job_id: UUID,
+        token: str,
+    ) -> ComfyAttemptStatus:
+        """Begin operation, queue the supplied graph and persist its external prompt ID."""
         now = self._now()
         deadline = now + timedelta(milliseconds=self._config.timeout_ms)
         with self._db.transaction() as tx:
@@ -473,19 +597,16 @@ class ComfyRenderService:
                 reservation_id=request.reservation_id,
                 episode_id=request.episode_id,
             )
-
         if operation.state not in _DISPATCHABLE:
-            # Lost a race to a concurrent begin: the winner owns the dispatch.
             return self.poll(operation.operation_id)
-
         try:
-            prompt_id = self._client.queue_prompt(
-                bound.graph, client_id=render_client_id(request.semantic_key)
-            )
+            with self._provider_authorization(
+                request, job_id=job_id, operation_id=operation.operation_id
+            ):
+                prompt_id = self._client.queue_prompt(
+                    bound.graph, client_id=render_client_id(request.semantic_key)
+                )
         except (SchemaInvalid, UnsupportedControl) as exc:
-            # The server refused the graph before queueing anything: nothing was
-            # dispatched and nothing was spent. The hold is released, the typed error
-            # propagates, and the operation stays FAILED for this attempt's key.
             self._fail_without_dispatch(operation.operation_id, exc)
             raise
         except NeedsReconciliation:
@@ -510,6 +631,24 @@ class ComfyRenderService:
                 "SELECT * FROM provider_operations WHERE provider = %s AND client_token = %s",
                 (self._client.provider_id, token),
             )
+
+    def _provider_authorization(
+        self, request: RenderRequest, *, job_id: UUID, operation_id: UUID | None
+    ):
+        """Give a live Comfy client the reservation/operation it must authorize per request.
+
+        T007 fakes have no HTTP surface, so they need no authorization context. A live
+        client exposes ``authorization_scope`` and refuses any network call outside it.
+        """
+        scope = getattr(self._client, "authorization_scope", None)
+        if scope is None:
+            return nullcontext()
+        return scope(
+            reservation_id=request.reservation_id,
+            episode_id=request.episode_id,
+            job_id=job_id,
+            operation_id=operation_id,
+        )
 
     def _release_attempt_hold_quietly(self, request: RenderRequest) -> None:
         """Release this attempt's hold after a pre-dispatch refusal, when it is ours.
@@ -656,7 +795,9 @@ class ComfyRenderService:
                 )
             return self._status(row)
 
-        events = self._client.progress_events(prompt_id)
+        request = self._request_for_row(row)
+        with self._provider_authorization(request, job_id=row["job_id"], operation_id=operation_id):
+            events = self._client.progress_events(prompt_id)
         progress = events[-1] if events else None
         if state is ProviderOperationState.SUBMITTED and any(
             event.event in _PROGRESS_EVENTS for event in events
@@ -674,9 +815,14 @@ class ComfyRenderService:
                 )
             row = self._load_row(operation_id)
 
-        history = self._client.history(prompt_id)
+        with self._provider_authorization(request, job_id=row["job_id"], operation_id=operation_id):
+            history = self._client.history(prompt_id)
         if history is None:
-            if self._client.in_queue(prompt_id):
+            with self._provider_authorization(
+                request, job_id=row["job_id"], operation_id=operation_id
+            ):
+                in_queue = self._client.in_queue(prompt_id)
+            if in_queue:
                 if needs_reconcile(self._op(row), now=self._now()):
                     self._mark_unknown(operation_id, now=self._now())
                     raise NeedsReconciliation(
@@ -746,7 +892,8 @@ class ComfyRenderService:
     ) -> tuple[AssetDescriptor, ...]:
         """Fetch+verify outside the transaction, then persist durably inside it."""
         request = self._request_for_row(row)
-        prepared = [prepare_output(self._client, output) for output in outputs]
+        with self._provider_authorization(request, job_id=row["job_id"], operation_id=row["id"]):
+            prepared = [prepare_output(self._client, output) for output in outputs]
         now = self._now()
         assets: list[AssetDescriptor] = []
         with self._db.transaction() as tx:

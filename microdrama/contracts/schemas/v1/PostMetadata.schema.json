@@ -11,7 +11,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.6.0:PostMetadata",
+  "$id": "urn:microdrama:contracts:1.15.0:PostMetadata",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -38,6 +38,47 @@
       ],
       "default": null,
       "title": "Cover Asset Id"
+    },
+    "cover_asset_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cover Asset Sha256"
+    },
+    "cover_asset_version": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cover Asset Version"
+    },
+    "cta_text": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cta Text"
     },
     "description": {
       "default": "",

@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from microdrama.contracts.catalog import MetricValue
+from microdrama.contracts.cost import RenderRequest, validate_render_request_prompt_binding
 from microdrama.contracts.enums import (
     CapabilityOperation,
     CapabilitySupport,
@@ -20,6 +21,8 @@ from microdrama.contracts.examples import (
     capability_record,
     qa_finding,
     release_package,
+    render_request,
+    render_request_v2_prompt_bound,
     usage_receipt,
 )
 from microdrama.contracts.primitives import (
@@ -59,6 +62,46 @@ def test_utc_datetime_requires_awareness_and_normalizes() -> None:
         adapter.validate_python(datetime(2026, 1, 1))
     value = adapter.validate_python(datetime(2026, 1, 1, 7, tzinfo=timezone(timedelta(hours=7))))
     assert value.tzinfo is UTC and value.hour == 0
+
+
+def test_render_request_prompt_manifest_binding_is_optional_only_as_a_pair() -> None:
+    legacy = render_request()
+    legacy_payload = legacy.model_dump(mode="json")
+    legacy_payload.pop("prompt_manifest_id")
+    legacy_payload.pop("prompt_manifest_sha256")
+    assert RenderRequest.model_validate(legacy_payload).prompt_manifest_id is None
+
+    bound = legacy.model_dump(mode="json")
+    bound["prompt_manifest_id"] = str(uuid.uuid4())
+    bound["prompt_manifest_sha256"] = "a" * 64
+    bound["semantic_workflow_sha256"] = "b" * 64
+    assert RenderRequest.model_validate(bound).prompt_manifest_sha256 == "a" * 64
+
+    partial = legacy.model_dump(mode="json")
+    partial["prompt_manifest_id"] = str(uuid.uuid4())
+    with pytest.raises(ValidationError, match="must be provided together"):
+        RenderRequest.model_validate(partial)
+
+
+def test_v2_render_request_binds_manifest_and_semantic_workflow_hashes() -> None:
+    request = render_request_v2_prompt_bound()
+    validate_render_request_prompt_binding(
+        request,
+        prompt_manifest_id=request.prompt_manifest_id,
+        prompt_manifest_sha256=request.prompt_manifest_sha256,
+        semantic_workflow_sha256=request.semantic_workflow_sha256,
+    )
+    with pytest.raises(ValidationError, match="semantic workflow hash is required"):
+        RenderRequest.model_validate(
+            {**request.model_dump(mode="json"), "semantic_workflow_sha256": None}
+        )
+    with pytest.raises(ValueError, match="differs from the pinned mapping"):
+        validate_render_request_prompt_binding(
+            request,
+            prompt_manifest_id=request.prompt_manifest_id,
+            prompt_manifest_sha256=request.prompt_manifest_sha256,
+            semantic_workflow_sha256="c" * 64,
+        )
 
 
 def test_iana_zone_validation() -> None:

@@ -17,6 +17,21 @@ from microdrama.qa.audio import (
     as_speech_observer,
 )
 from microdrama.qa.config import CRITICAL_CHECK_IDS, QAConfig
+from microdrama.qa.continuity import (
+    CALIBRATION_LABEL,
+    CONTINUITY_CHECK_IDS,
+    ContinuityCalibrationReport,
+    ContinuityDimension,
+    ContinuityEvaluator,
+    ContinuityObservation,
+    ContinuityObserver,
+    EpisodeContinuityExpectations,
+    FixtureContinuityObserver,
+    LabeledContinuityCase,
+    continuity_findings,
+    run_continuity_calibration,
+    summarize_check_coverage,
+)
 from microdrama.qa.coverage import (
     checked_ranges,
     coverage_for,
@@ -34,6 +49,7 @@ from microdrama.qa.report import (
     build_report_view,
     green_summary,
     load_findings,
+    load_run_check_coverage,
     load_run_coverage,
 )
 from microdrama.qa.service import (
@@ -46,6 +62,8 @@ from microdrama.qa.service import (
 from microdrama.qa.visual import identity_findings, prop_findings
 
 __all__ = [
+    "CALIBRATION_LABEL",
+    "CONTINUITY_CHECK_IDS",
     "CRITICAL_CHECK_IDS",
     "MISMATCH_CODE",
     "OBSERVE_OPERATION",
@@ -53,6 +71,14 @@ __all__ = [
     "OBSERVER_MODEL_REF",
     "RUN_EVENT",
     "CaptionSource",
+    "ContinuityCalibrationReport",
+    "ContinuityDimension",
+    "ContinuityEvaluator",
+    "ContinuityObservation",
+    "ContinuityObserver",
+    "EpisodeContinuityExpectations",
+    "FixtureContinuityObserver",
+    "LabeledContinuityCase",
     "MediaObserver",
     "OfflineMediaObserver",
     "QAConfig",
@@ -68,12 +94,16 @@ __all__ = [
     "build_report_view",
     "build_technical_qa_service",
     "checked_ranges",
+    "continuity_findings",
     "coverage_for",
     "green_summary",
     "identity_findings",
     "load_findings",
+    "load_run_check_coverage",
     "load_run_coverage",
     "partition_coverage",
     "prop_findings",
+    "run_continuity_calibration",
+    "summarize_check_coverage",
     "summarize_coverage",
 ]

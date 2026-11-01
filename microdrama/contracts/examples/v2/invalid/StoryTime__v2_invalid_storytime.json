@@ -1,0 +1,14 @@
+{
+  "content_sha256": "b5e4037dd263132bb3fb0d0e06f33853d3413108c27154ac90cb0e467f774cd4",
+  "created_at": "2026-10-30T00:00:00Z",
+  "local_time": "09:30",
+  "record_id": "53d8a6be-ab98-5539-9495-aae40e6198cb",
+  "schema_version": "1.0",
+  "setting": "Morning at the stall",
+  "story_day": 1,
+  "timezone": "Asia/Bangkok",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

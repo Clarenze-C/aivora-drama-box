@@ -1,0 +1,57 @@
+{
+  "approval_event_id": "93e94673-46ae-5784-b41d-fc0c9af4861f",
+  "approved_metadata_sha256": "22c2fd572c1f0acd67139aee26ce68857ee58fcd380757264c70aefa9538c9fe",
+  "approved_metadata_version": 1,
+  "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
+  "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
+  "capability_id": "1e3bc301-9f3c-5ef9-818c-84880d0f9d4f",
+  "capability_version": 1,
+  "client_token": "pub-ep1-youtube-full",
+  "command_id": "423247cb-c6c4-5595-a817-be8158ba4780",
+  "metadata": {
+    "caption": "เรื่องราวต้นฉบับภาษาไทย",
+    "catalog_version": 1,
+    "cover_asset_id": null,
+    "cover_asset_sha256": null,
+    "cover_asset_version": null,
+    "cta_text": null,
+    "description": "ละครสั้นเรื่องใหม่",
+    "disclosures": [
+      "AI_GENERATED_CONTENT"
+    ],
+    "hashtags": [
+      "ละครไทย"
+    ],
+    "links": [
+      "https://example.invalid/episode/1"
+    ],
+    "locale": "th-TH",
+    "title": "ร้านของแม่ ตอนที่ 1"
+  },
+  "metadata_policy_id": "approved-slot-metadata",
+  "metadata_policy_sha256": "8c4f0122ad94170b48941664b84dc1cd2e1583b9995395cded5382022762ef60",
+  "metadata_policy_version": 1,
+  "metadata_version_id": "af2d12ad-acf1-5166-b8b3-ac180c27d858",
+  "release_manifest_id": "b76ef9ac-a824-5faa-bff1-5131ed88ec08",
+  "release_manifest_sha256": "ef997c11495952f768246f824d7dfedbf4817c768839853fd5a7d4f1ecf62717",
+  "release_manifest_version": 1,
+  "release_package_hash": "7a578c866971514add3f1254c525e99b775cad6bcf1f9fb505216d176301d41b",
+  "release_package_id": "e2a865b2-2246-5d62-b8a9-85caad2852ae",
+  "schedule": {
+    "fold": null,
+    "iana_zone": "Asia/Bangkok",
+    "local_time": "2026-10-27T19:30:00",
+    "utc_instant": "2026-10-27T12:30:00Z"
+  },
+  "schema_version": "1.0",
+  "slot": {
+    "account_ref": "acct:youtube-main",
+    "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+    "locale": "th-TH",
+    "part": 0,
+    "platform": "YOUTUBE",
+    "release_slot": "full",
+    "series_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6"
+  },
+  "slot_kind": "FULL_EPISODE"
+}

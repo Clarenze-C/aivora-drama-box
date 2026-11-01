@@ -1,0 +1,31 @@
+{
+  "asset_id": "dccdf5a3-8b92-5ce0-b646-7f19bd89b14a",
+  "asset_sha256": "262bc8e8a7b3f75fb5699ea674dbf246a859db853a391ec3d62e4c2079db3166",
+  "asset_version": 1,
+  "content_sha256": "1bd1b75480e0a834fa408bda40881f9efe57b718ac498510b14fd7e443c9515b",
+  "created_at": "2026-10-30T00:00:00Z",
+  "record_id": "9c28258b-8f4a-5b9f-8a13-d41f5656441c",
+  "rights": {
+    "commercial_use": true,
+    "evidence_sha256": [
+      "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+    ],
+    "expires_at": null,
+    "output_release_allowed": true,
+    "rights_route_id": "original-fiction",
+    "rights_version": 1,
+    "status": "ELIGIBLE",
+    "subject_kind": "MODEL_OUTPUT",
+    "subject_ref": "original-fiction-output",
+    "territories": [
+      "TH"
+    ]
+  },
+  "role": "untyped",
+  "schema_version": "2.0",
+  "subject_id": "fon",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

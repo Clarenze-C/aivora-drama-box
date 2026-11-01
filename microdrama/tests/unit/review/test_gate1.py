@@ -157,10 +157,10 @@ def test_non_human_principals_cannot_decide_gate1(world: World, kind: PrincipalK
 
 def test_the_season_list_and_view_show_the_proposal_without_secrets(world: World) -> None:
     season_id, scope = world.season(approved=False)
-    rows = world.service.season_proposals()
+    rows = world.service.season_proposals(world.human())
     row = next(r for r in rows if r.season_id == season_id)
     assert row.scope_hash == canonical_hash(scope)
     assert row.state.value == "PROPOSED"
-    view = world.service.season_view(season_id)
+    view = world.service.season_view(world.human(), season_id)
     assert view.scope.title_en == scope.title_en
     assert view.summary.revision == 0

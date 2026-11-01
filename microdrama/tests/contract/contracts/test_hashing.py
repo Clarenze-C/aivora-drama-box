@@ -6,7 +6,11 @@ from uuid import UUID
 
 import pytest
 
-from microdrama.contracts.examples import release_package, season_scope
+from microdrama.contracts.examples import (
+    release_package,
+    release_package_with_derivatives,
+    season_scope,
+)
 from microdrama.contracts.hashing import (
     CanonicalizationError,
     canonical_hash,
@@ -72,7 +76,21 @@ def test_model_hash_is_stable_and_sensitive() -> None:
     assert canonical_hash(changed) != canonical_hash(scope)
 
 
-def test_release_package_hash_excludes_only_its_own_hash_cost_and_blockers() -> None:
+def test_release_package_hash_preserves_legacy_absence_and_binds_derivatives() -> None:
     pkg = release_package()
     assert pkg.package_hash == pkg.compute_hash()
-    assert model_hash(pkg, exclude={"package_hash", "gate_blockers", "cost"}) == pkg.package_hash
+    assert (
+        model_hash(
+            pkg,
+            exclude={"package_hash", "gate_blockers", "cost", "creative_derivatives"},
+        )
+        == pkg.package_hash
+    )
+    derivative_package = release_package_with_derivatives()
+    assert (
+        model_hash(
+            derivative_package,
+            exclude={"package_hash", "gate_blockers", "cost"},
+        )
+        == derivative_package.package_hash
+    )

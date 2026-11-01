@@ -1,0 +1,39 @@
+{
+  "camera_zones": [
+    "counter",
+    "door"
+  ],
+  "content_sha256": "9b06bb5a8333ab3fe41c707d1362dd681fe5f31dba23e7f1ede37ad9a88c99c6",
+  "created_at": "2026-10-30T00:00:00Z",
+  "entrance_ids": [],
+  "geometry_sha256": "f3af301b98f887e043b6e5e46caa7a72c659d2ce065bc35bdfe07c7ce05394b9",
+  "light_states": [
+    "morning"
+  ],
+  "location_id": "stall",
+  "prop_ownership": {
+    "ledger": "fon"
+  },
+  "record_id": "9bb93044-7c7f-5c7c-ad0b-04d91cd3ddfe",
+  "rights": {
+    "commercial_use": true,
+    "evidence_sha256": [
+      "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+    ],
+    "expires_at": null,
+    "output_release_allowed": true,
+    "rights_route_id": "original-fiction",
+    "rights_version": 1,
+    "status": "ELIGIBLE",
+    "subject_kind": "MODEL_OUTPUT",
+    "subject_ref": "original-fiction-output",
+    "territories": [
+      "TH"
+    ]
+  },
+  "schema_version": "2.0",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

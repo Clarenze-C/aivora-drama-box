@@ -61,6 +61,38 @@ def test_later_command_must_name_the_current_version(world: PublishingWorld) -> 
             meta.require_current(tx, post_id, command.metadata_version_id)
 
 
+def test_current_metadata_must_remain_bound_to_approved_package_policy(
+    world: PublishingWorld,
+) -> None:
+    package, post_id, command = _submitted(world)
+    changed_metadata = world.metadata(title="A current but wrong-policy title")
+    wrong_policy_hash = "0" * 64
+    version_id = uuid.uuid4()
+    with world.db.transaction() as tx:
+        meta.create_version(
+            tx,
+            post_id=post_id,
+            version_id=version_id,
+            metadata=changed_metadata,
+            policy_hash=wrong_policy_hash,
+            now=world.clock.now(),
+        )
+
+    stale_command = command.model_copy(
+        update={"metadata": changed_metadata, "metadata_version_id": version_id}
+    )
+    with world.db.transaction() as tx:
+        job = world.jobs.enqueue(
+            tx,
+            job_type="publish.submit_slot",
+            semantic_key=f"test:wrong-policy:{version_id}",
+            payload=stale_command,
+            episode_id=command.slot.episode_id,
+        )
+    with pytest.raises(Conflict, match="not bound to this package's approved policy"):
+        world.service.submit_slot(stale_command, job_id=job.job_id)
+
+
 def test_substantive_and_cosmetic_changes_are_distinguished(world: PublishingWorld) -> None:
     _pkg, post_id, _cmd = _submitted(world)
     cosmetic = world.metadata().model_copy(update={"catalog_version": 2})

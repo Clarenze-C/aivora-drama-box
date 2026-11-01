@@ -47,6 +47,7 @@ from microdrama.contracts.primitives import (
 from microdrama.contracts.qa import CoverageWindow, QAFinding
 from microdrama.contracts.release import CostSummary, ReleasePackage
 from microdrama.contracts.season import ApprovalCommand, ManagementPolicy, SeasonScope
+from microdrama.contracts.v2 import ReleaseApprovalManifest
 
 
 class AuthKind(StrEnum):
@@ -128,6 +129,7 @@ class EpisodeReviewView(VersionedPayload):
     outcome: EpisodeOutcome | None = None
     revision: Revision
     package: ReleasePackage | None = None
+    release_approval_manifest: ReleaseApprovalManifest | None = None
     gate_enabled: bool
     gate_blockers: list[ShortText] = Field(default_factory=list)
     media: list[ReviewMediaLink] = Field(default_factory=list)

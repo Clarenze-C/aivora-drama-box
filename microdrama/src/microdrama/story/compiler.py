@@ -380,8 +380,10 @@ def compile_episode(
                     framing=raw_line.staging.framing or "medium shot, static composition",
                     eyelines=raw_line.staging.eyelines or "speaker faces the listener",
                     location_id=scene.location_id,
-                    outfit_ids=_identifiers(raw_line.staging.prop_ids),
-                    prop_ids=[],
+                    # V1 has no wardrobe assignment field in the writer schema.
+                    # Preserve dialogue staging props as props; never infer an outfit.
+                    outfit_ids=[],
+                    prop_ids=_identifiers(raw_line.staging.prop_ids),
                     required_reference_asset_ids=[],
                     sound=raw_line.staging.sound or "room tone",
                     acceptance_criteria=[

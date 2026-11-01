@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">Your intake and its original candidates. Selecting a candidate prepares the Gate 1 proposal
+for that exact scope; nothing is approved until you decide at Gate 1.</p>
+
+<section data-testid="intake">
+  <h2>Intake</h2>
+  <p><strong>{{ view.story_idea }}</strong></p>
+  <p>Tone: {{ view.tone }}</p>
+  <p>{% for tag in view.genre_tags %}<span class="chip">{{ tag }}</span>{% endfor %}
+     <span class="chip">{{ view.requested_episode_count }} episode(s)</span></p>
+  <div>
+    <span class="chip">season {{ view.season_state | label }}</span>
+    <span class="chip">intake hash {{ view.intake_sha256 | short(16) }}</span>
+    <span class="chip">research spend {{ view.research_spend_micro_usd | usd }}</span>
+  </div>
+</section>
+
+{% if view.blockers %}
+<section class="blockers" data-testid="intake-blockers">
+  {% if view.jobs %}
+  <h2>Configuration problems present now</h2>
+  <p class="hint">Work already recorded above may fail or stay incomplete until these are fixed;
+     nothing new dispatches while they remain.</p>
+  {% else %}
+  <h2>Blocked — nothing was dispatched</h2>
+  <p class="hint">This deployment has not configured the values above; no spend can occur until it does.</p>
+  {% endif %}
+  <ul>{% for b in view.blockers %}<li>{{ b }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if view.jobs %}
+<section data-testid="intake-jobs">
+  <h2>Background work</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Job</th><th>Trigger</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for job in view.jobs %}
+    <tr>
+      <td>{{ job.job_id | string | short(8) }}</td>
+      <td>{{ job.trigger | string | short(24) }}</td>
+      <td>{{ job.status | label }}</td>
+      <td>{{ job.error_code or '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
+{% if view.candidates %}
+<section data-testid="candidates">
+  <h2>Original candidates</h2>
+  {% for card in view.candidates %}
+  <div class="card" data-testid="candidate" data-candidate="{{ card.record_id }}">
+    <h3>{{ card.title_th }} / {{ card.title_en }}</h3>
+    <p>{{ card.logline }}</p>
+    <p class="muted">Promise: {{ card.promise }}</p>
+    <p class="muted">Escalation: {{ card.escalation | join(' → ') }}</p>
+    <div>
+      <span class="chip">{{ card.episode_count }} episode(s)</span>
+      <span class="chip">scope hash {{ card.scope_sha256 | short(16) }}</span>
+      <span class="chip">rights {{ card.rights_status | label }}</span>
+      {% if card.rank %}<span class="chip">research rank {{ card.rank }}</span>{% endif %}
+      {% if card.originality_status %}<span class="chip">originality {{ card.originality_status | label }}</span>{% endif %}
+      {% if card.is_current_proposal %}<span class="chip ok">current Gate 1 proposal</span>{% endif %}
+    </div>
+    <p class="hint">{{ card.rights_note }}</p>
+    {% if card.originality_note %}<p class="hint">{{ card.originality_note }}</p>{% endif %}
+    {% if view.season_state == 'PROPOSED' %}
+    <form method="post" action="/ui/intake/{{ view.season_id }}/selection">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="candidate_id" value="{{ card.record_id }}">
+      <input type="hidden" name="intake_sha256" value="{{ view.intake_sha256 }}">
+      <button type="submit" {% if card.is_current_proposal %}class="secondary"{% endif %}
+        data-testid="select-candidate">{{ 'Re-select (already proposed)' if card.is_current_proposal else 'Select this candidate for Gate 1' }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if view.research_uncertainty or view.research_evidence %}
+<section data-testid="research">
+  <h2>Research provenance and uncertainty</h2>
+  {% if view.research_uncertainty %}<p class="warn">Uncertain:</p>
+  <ul>{% for note in view.research_uncertainty %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
+  {% if view.research_evidence %}<p>Evidence:</p>
+  <ul>{% for ref in view.research_evidence %}<li>{{ ref }}</li>{% endfor %}</ul>{% endif %}
+</section>
+{% endif %}
+
+{% if view.proposal_id %}
+<section data-testid="gate1-link">
+  <h2>Current Gate 1 proposal</h2>
+  <p>
+    <span class="chip">{{ view.proposal_status | label }}</span>
+    <span class="chip">hash {{ view.proposal_scope_hash | short(16) }}</span>
+  </p>
+  {% if view.season_state == 'PROPOSED' %}
+  <p><a href="/ui/seasons/{{ view.season_id }}">Open the Gate 1 approval page →</a></p>
+  {% else %}
+  <p><a href="/ui/seasons/{{ view.season_id }}">Season page →</a></p>
+  {% endif %}
+</section>
+{% elif view.phase == 'CANDIDATES_READY' %}
+<section><p class="warn">No Gate 1 proposal yet: select a candidate above.</p></section>
+{% endif %}
+{% endblock %}

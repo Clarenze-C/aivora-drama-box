@@ -24,11 +24,25 @@ import jsonschema
 from pydantic import BaseModel, ValidationError
 
 from microdrama.contracts import CONTRACT_VERSION
-from microdrama.contracts.examples import EXTRA_VALID, VALID_BUILDERS, invalid_cases
+from microdrama.contracts.examples import (
+    EXTRA_VALID,
+    V2_VALID_BUILDERS,
+    VALID_BUILDERS,
+    invalid_cases,
+)
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.registry import ALL_MODELS, CORE_PAYLOADS
+from microdrama.contracts.v2 import V2Record, verify_v2_record_hash
 
 ROOT = Path(__file__).resolve().parents[3] / "contracts"
+LEGACY_CONTRACT_VERSION = "1.15.0"
+
+
+def _schema_generation(model: type[BaseModel]) -> tuple[str, str]:
+    if model.__module__.endswith(".contracts.v2"):
+        return "v2", CONTRACT_VERSION
+    return "v1", LEGACY_CONTRACT_VERSION
+
 
 # Invalid examples whose defect is structural (unknown field, enum, pattern, length,
 # required field, range on a non-float value). The published JSON Schema itself must
@@ -54,6 +68,25 @@ SCHEMA_MUST_REJECT = frozenset(
         "ComparisonRequest__bad_hash",
         "QualificationResult__required_not_ten",
         "DomainEvent__bad_event_type",
+        "ConceptIntake__v2_invalid_conceptintake",
+        "CharacterLogic__v2_invalid_characterlogic",
+        "SeasonStoryLedger__v2_invalid_seasonstoryledger",
+        "EpisodePack__missing_approved_scope_hash",
+        "DirectingManifest__v2_invalid_directingmanifest",
+        "RunpodBillingBucketObservation__float_component_amount",
+        "EpisodeReviewView__invalid_release_approval_manifest",
+        "CreativeDerivativeRef__missing_source_rights",
+        "CreativeDerivativeRef__missing_derivation_manifest",
+        "CreativeDerivativeRef__unknown_source_role",
+        "SecretLedger__v2_invalid_secretledger",
+        "EpisodePack__v2_invalid_episodepack",
+        "StoryTime__v2_invalid_storytime",
+        "WardrobeBible__v2_invalid_wardrobebible",
+        "PropSheet__v2_invalid_propsheet",
+        "StyleBible__v2_invalid_stylebible",
+        "LocationLayout__v2_invalid_locationlayout",
+        "ConceptCandidate__pending_rights_without_status",
+        "ShotReferenceBinding__v2_invalid_shotreferencebinding",
     }
 )
 
@@ -71,18 +104,21 @@ def render() -> dict[str, str]:
     """All generated files as {relative path: text}."""
     files: dict[str, str] = {"VERSION": CONTRACT_VERSION + "\n"}
     for name, model in sorted(ALL_MODELS.items()):
+        schema_dir, id_version = _schema_generation(model)
         schema = model.model_json_schema(mode="validation")
         schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-        schema["$id"] = f"urn:microdrama:contracts:{CONTRACT_VERSION}:{name}"
-        files[f"schemas/v1/{name}.schema.json"] = _dump(schema)
+        schema["$id"] = f"urn:microdrama:contracts:{id_version}:{name}"
+        files[f"schemas/{schema_dir}/{name}.schema.json"] = _dump(schema)
 
     manifest: dict[str, dict[str, object]] = {}
     valid = {name: builder for name, builder in VALID_BUILDERS.items()}
     valid.update(EXTRA_VALID)
+    valid.update(V2_VALID_BUILDERS)
     for example_name, builder in sorted(valid.items()):
         model_name = example_name.split("__", 1)[0]
         instance = builder()
-        path = f"examples/v1/valid/{example_name}.json"
+        schema_dir, _ = _schema_generation(type(instance))
+        path = f"examples/{schema_dir}/valid/{example_name}.json"
         files[path] = _dump(instance.model_dump(mode="json"))
         manifest[path] = {
             "model": model_name,
@@ -90,22 +126,35 @@ def render() -> dict[str, str]:
             "canonical_sha256": canonical_hash(instance),
         }
     for model_name, case, reason, payload in invalid_cases():
-        path = f"examples/v1/invalid/{model_name}__{case}.json"
+        schema_dir, _ = _schema_generation(ALL_MODELS[model_name])
+        path = f"examples/{schema_dir}/invalid/{model_name}__{case}.json"
         files[path] = _dump(payload)
-        schema = json.loads(files[f"schemas/v1/{model_name}.schema.json"])
+        schema = json.loads(files[f"schemas/{schema_dir}/{model_name}.schema.json"])
         manifest[path] = {
             "model": model_name,
             "expect": "invalid",
             "reason": reason,
             "json_schema_rejects": _schema_rejects(schema, payload),
         }
-    files["examples/v1/manifest.json"] = _dump(manifest)
+    for version_dir in ("v1", "v2"):
+        subset = {
+            path: entry
+            for path, entry in manifest.items()
+            if path.startswith(f"examples/{version_dir}/")
+        }
+        if subset:
+            files[f"examples/{version_dir}/manifest.json"] = _dump(subset)
     return files
 
 
 def validate(files: dict[str, str]) -> list[str]:
     problems: list[str] = []
-    manifest = json.loads(files["examples/v1/manifest.json"])
+    manifests = [
+        json.loads(files[path])
+        for path in ("examples/v1/manifest.json", "examples/v2/manifest.json")
+        if path in files
+    ]
+    manifest = {path: entry for subset in manifests for path, entry in subset.items()}
     for path, entry in manifest.items():
         model: type[BaseModel] = ALL_MODELS[entry["model"]]
         text = files[path]
@@ -115,9 +164,16 @@ def validate(files: dict[str, str]) -> list[str]:
             except ValidationError as exc:
                 problems.append(f"{path}: valid example rejected: {exc.errors()[:1]}")
                 continue
+            if isinstance(instance, V2Record):
+                try:
+                    verify_v2_record_hash(instance)
+                except ValueError as exc:
+                    problems.append(f"{path}: invalid V2 content hash: {exc}")
+                    continue
             if canonical_hash(instance) != entry["canonical_sha256"]:
                 problems.append(f"{path}: canonical hash not reproducible")
-            schema = json.loads(files[f"schemas/v1/{entry['model']}.schema.json"])
+            schema_dir, _ = _schema_generation(model)
+            schema = json.loads(files[f"schemas/{schema_dir}/{entry['model']}.schema.json"])
             try:
                 jsonschema.validate(json.loads(text), schema, cls=jsonschema.Draft202012Validator)
             except jsonschema.ValidationError as exc:
@@ -132,7 +188,8 @@ def validate(files: dict[str, str]) -> list[str]:
         name = path.rsplit("/", 1)[-1].removesuffix(".json")
         if name not in SCHEMA_MUST_REJECT:
             continue
-        schema = json.loads(files[f"schemas/v1/{entry['model']}.schema.json"])
+        schema_dir, _ = _schema_generation(ALL_MODELS[entry["model"]])
+        schema = json.loads(files[f"schemas/{schema_dir}/{entry['model']}.schema.json"])
         if not _schema_rejects(schema, json.loads(files[path])):
             problems.append(f"{path}: structural defect not rejected by the published JSON Schema")
     missing = SCHEMA_MUST_REJECT - {

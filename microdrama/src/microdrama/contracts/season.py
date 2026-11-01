@@ -274,6 +274,10 @@ class ApprovalCommand(VersionedPayload):
     entity_id: UUID = Field(description="season_id for Gate 1, episode_id for Gate 2")
     expected_revision: Revision
     package_hash: Sha256Hex = Field(description="Gate 1 scope hash / Gate 2 release package hash")
+    release_manifest_hash: Sha256Hex | None = Field(
+        default=None,
+        description="V2 Gate 2 manifest hash, separate from the legacy V1 package_hash",
+    )
     media_hashes: list[Sha256Hex] = Field(default_factory=list)
     management_policy_hash: Sha256Hex | None = None
     release_scope_hash: Sha256Hex | None = None
@@ -285,6 +289,10 @@ class ApprovalCommand(VersionedPayload):
     def _gate_rules(self) -> ApprovalCommand:
         if self.action not in GATE_ACTIONS[self.gate]:
             raise ValueError(f"{self.action.value} is not a valid action for {self.gate.value}")
+        if self.release_manifest_hash is not None and (
+            self.gate is not GateType.EPISODE_FINAL or self.action is not ApprovalAction.APPROVE
+        ):
+            raise ValueError("V2 release manifest hash is only valid on Gate 2 APPROVE")
         if self.gate is GateType.EPISODE_FINAL and self.action is ApprovalAction.APPROVE:
             if not self.media_hashes:
                 raise ValueError("Gate 2 approval must bind the immutable media hashes")

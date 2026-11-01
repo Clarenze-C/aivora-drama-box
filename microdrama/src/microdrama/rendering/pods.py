@@ -11,10 +11,10 @@ adapter only after T031 qualification). Rules implemented in this module:
 - Stop is verified: after ``stop_pod``/``terminate_pod`` the pod is re-read and its state
   must be terminal. Transient stop failures are retried a bounded number of times and then
   escalated to termination.
-- The live Runpod adapter is structurally disabled: without a configured credential
-  reference every effectful call raises ``EffectDenied``, and even with one the real HTTP
-  surface stays unimplemented until T031 records rights/cost/quality evidence. No network
-  code exists in this build.
+- The legacy ``RunpodLiveAdapter`` resolver remains structurally disabled. T045's separate
+  ``RunpodRestProvider`` is fixture-testable and requires an explicit current quote/rights/
+  preset attestation, effect flags, durable reservation/cleanup guards, and explicit
+  activation. Its default attestation is disabled; no bootstrap enables it automatically.
 """
 
 from __future__ import annotations
@@ -168,31 +168,27 @@ class PodManager:
     def acquire_or_reconcile(self, spec: PodSpec, *, name: str, client_token: str) -> PodInfo:
         """Create a pod, or adopt the one an ambiguous create already made.
 
-        ``NeedsReconciliation`` from the provider triggers an immediate reconciliation by
-        client token; only when that proves nothing exists is another create attempted with
-        the *same* token (idempotent at the provider). A create that stays ambiguous after
-        the bounded attempts raises ``NeedsReconciliation`` — never a blind re-create.
+        ``NeedsReconciliation`` from the provider triggers one immediate reconciliation by
+        client token. If no matching owned pod is visible, the outcome remains unknown:
+        provider list consistency is not proof the create failed, so never issue a second
+        create from this worker. The independent janitor/operator reconciles later.
         """
         adopted = self.reconcile_by_token(client_token)
         if adopted is not None:
             return adopted
-        attempts = 0
-        while attempts < self._create_attempts:
-            attempts += 1
-            try:
-                pod = self._provider.create_pod(
-                    self.create_request(spec, name=name, client_token=client_token)
-                )
-            except NeedsReconciliation:
-                found = self.reconcile_by_token(client_token)
-                if found is not None:
-                    return found
-                continue
-            return pod
-        raise NeedsReconciliation(
-            "pod create outcome is still ambiguous after bounded attempts; reconcile before retry",
-            client_token=client_token,
-        )
+        try:
+            return self._provider.create_pod(
+                self.create_request(spec, name=name, client_token=client_token)
+            )
+        except NeedsReconciliation as exc:
+            found = self.reconcile_by_token(client_token)
+            if found is not None:
+                return found
+            raise NeedsReconciliation(
+                "pod create outcome is unknown; no owned match is currently visible; "
+                "reconcile before any retry",
+                client_token=client_token,
+            ) from exc
 
     # --- verification -----------------------------------------------------------------
 
@@ -302,13 +298,12 @@ class PodManager:
 
 
 class RunpodLiveAdapter:
-    """The real Runpod adapter slot — structurally disabled in this build (T031 owns it).
+    """Legacy default Runpod resolver slot — intentionally disabled.
 
     Without a configured credential reference (a ``credref:`` name in
     ``MICRODRAMA_RUNPOD_CREDREF``) every effectful call raises ``EffectDenied``. With one,
-    the settings must additionally allow ``CLOUD_RESOURCE`` effects — and even then the
-    HTTP surface is deliberately unimplemented until T031 records rights/cost/quality
-    evidence, so the call still refuses. There is no network code in this class.
+    the settings must additionally allow ``CLOUD_RESOURCE`` effects — and this compatibility
+    slot still has no network methods. Explicit T045 composition uses ``RunpodRestProvider``.
     """
 
     provider_id = "runpod"

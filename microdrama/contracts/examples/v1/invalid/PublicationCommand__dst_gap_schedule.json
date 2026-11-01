@@ -1,5 +1,7 @@
 {
   "approval_event_id": "93e94673-46ae-5784-b41d-fc0c9af4861f",
+  "approved_metadata_sha256": null,
+  "approved_metadata_version": null,
   "asset_id": "871ee2c7-1e03-5deb-810e-d1a0691b0caf",
   "asset_sha256": "6fa24b41c7f16ec1617e2ed89113cceb5acc9ea47245800525ec4853d9930755",
   "capability_id": "1e3bc301-9f3c-5ef9-818c-84880d0f9d4f",
@@ -10,6 +12,9 @@
     "caption": "",
     "catalog_version": 1,
     "cover_asset_id": null,
+    "cover_asset_sha256": null,
+    "cover_asset_version": null,
+    "cta_text": null,
     "description": "Original AI-assisted Thai micro-drama.",
     "disclosures": [
       "AI_GENERATED_CONTENT"
@@ -17,11 +22,19 @@
     "hashtags": [
       "#ละครสั้น"
     ],
-    "links": [],
+    "links": [
+      "https://example.invalid/episode/1"
+    ],
     "locale": "th-TH",
     "title": "หนี้ที่ไม่มีใครบอก | EP1"
   },
+  "metadata_policy_id": null,
+  "metadata_policy_sha256": null,
+  "metadata_policy_version": null,
   "metadata_version_id": "af2d12ad-acf1-5166-b8b3-ac180c27d858",
+  "release_manifest_id": null,
+  "release_manifest_sha256": null,
+  "release_manifest_version": null,
   "release_package_hash": "86507ed091e685696d9e41f2bc7a6a861b8f059f1f4b2cdd5f4ed7327e1321ac",
   "release_package_id": "4900c0de-87b3-5e0a-8631-b594ecdf5f71",
   "schedule": {

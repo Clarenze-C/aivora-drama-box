@@ -244,7 +244,7 @@ def test_a_blocked_gate_refuses_approve_and_keeps_the_preview(world: World, scen
     assert world.episode_state(episode_id) == before
     assert world.approvals(episode_id) == []
     assert world.jobs_of("publish.schedule_release") == []
-    view = world.service.episode_review(episode_id)
+    view = world.service.episode_review(world.human(), episode_id)
     assert view.gate_enabled is False
     assert view.media, "the preview stays visible even when blocked"
 
@@ -493,7 +493,10 @@ def test_silence_never_approves_even_after_days(world: World) -> None:
     _season, episode_id, package = world.ready_episode()
     world.clock.advance(seconds=30 * 24 * 3600)
     assert world.episode_state(episode_id)[0] == "AWAITING_FINAL_REVIEW"
-    assert world.service.episode_review(episode_id).state is EpisodeState.AWAITING_FINAL_REVIEW
+    assert (
+        world.service.episode_review(world.human(), episode_id).state
+        is EpisodeState.AWAITING_FINAL_REVIEW
+    )
     assert world.approvals(episode_id) == []
     assert package_row(world, package)["status"] == "READY"
 

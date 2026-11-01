@@ -18,6 +18,7 @@ from microdrama.contracts import (
 )
 from microdrama.contracts.principals import Principal
 from microdrama.contracts.registries import PresetMeasurements, PresetRecord, RightsRecord
+from microdrama.contracts.v2 import V2_CORE_PAYLOADS, V2_SUPPORTING_PAYLOADS
 
 # SPEC §4.2 cross-module payloads (each has valid and invalid examples).
 CORE_PAYLOADS: dict[str, type[BaseModel]] = {
@@ -29,6 +30,10 @@ CORE_PAYLOADS: dict[str, type[BaseModel]] = {
     "IdentityLock": season.IdentityLock,
     "BudgetReservationRequest": cost.BudgetReservationRequest,
     "UsageReceipt": cost.UsageReceipt,
+    "RunpodBillingQueryObservation": cost.RunpodBillingQueryObservation,
+    "RunpodBillingBucketObservation": cost.RunpodBillingBucketObservation,
+    "RunpodBillingAllocation": cost.RunpodBillingAllocation,
+    "BillingInvoiceVerification": cost.BillingInvoiceVerification,
     "PodLease": cost.PodLease,
     "RenderRequest": cost.RenderRequest,
     "ProviderOperation": cost.ProviderOperation,
@@ -60,6 +65,7 @@ SUPPORTING_PAYLOADS: dict[str, type[BaseModel]] = {
     "PresetMeasurements": PresetMeasurements,
     "PublishResult": release.PublishResult,
     "PostMetadata": release.PostMetadata,
+    "CreativeDerivativeRef": release.CreativeDerivativeRef,
     "SourceQuery": providers.SourceQuery,
     "SourceSearchResult": providers.SourceSearchResult,
     "LLMRequest": providers.LLMRequest,
@@ -97,4 +103,6 @@ SUPPORTING_PAYLOADS: dict[str, type[BaseModel]] = {
     "JobStatusView": routes.JobStatusView,
 }
 
+CORE_PAYLOADS.update(V2_CORE_PAYLOADS)
+SUPPORTING_PAYLOADS.update(V2_SUPPORTING_PAYLOADS)
 ALL_MODELS: dict[str, type[BaseModel]] = {**CORE_PAYLOADS, **SUPPORTING_PAYLOADS}

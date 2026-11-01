@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from microdrama.budget import policy
 from microdrama.budget.ledger import (
@@ -33,8 +33,22 @@ from microdrama.budget.ledger import (
 )
 from microdrama.budget.reports import cost_view_for_episode, summary_for_episode
 from microdrama.config import Settings
-from microdrama.contracts.cost import BudgetReservationRequest, UsageReceipt
-from microdrama.contracts.enums import BudgetCategory, BudgetScopeKind
+from microdrama.contracts.cost import (
+    BillingInvoiceVerification,
+    BudgetReservationRequest,
+    RunpodBillingAllocation,
+    RunpodBillingBucketObservation,
+    UsageReceipt,
+    validate_billing_invoice_verification,
+)
+from microdrama.contracts.enums import (
+    BudgetCategory,
+    BudgetScopeKind,
+    CostBasis,
+    PriceUnit,
+    Provenance,
+    ReceiptKind,
+)
 from microdrama.contracts.errors import (
     BudgetExhausted,
     Conflict,
@@ -344,6 +358,17 @@ class BudgetService:
             request.is_shutdown_or_cleanup,
         )
         with self._db.transaction() as tx:
+            if request.provider.casefold() == "runpod" and not cleanup:
+                unresolved_recovery = tx.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM runpod_billing_allocations a "
+                    "LEFT JOIN runpod_billing_recovery_resolutions r USING (allocation_id) "
+                    "WHERE a.owner_kind='RECOVERY' AND a.delta_micro_usd>0 AND r.allocation_id IS NULL)"
+                )
+                if unresolved_recovery:
+                    raise BudgetExhausted(
+                        "Runpod paid dispatch is blocked by unresolved provider billing recovery exposure",
+                        provider="runpod",
+                    )
             if request.scope_kind is BudgetScopeKind.EPISODE:
                 account_id = episode_account_id(tx, request.episode_id)
             else:
@@ -535,6 +560,253 @@ class BudgetService:
         return expired_total
 
     # --- usage -------------------------------------------------------------------------
+
+    def reconcile_provider_allocation(
+        self,
+        bucket: RunpodBillingBucketObservation,
+        allocation: RunpodBillingAllocation,
+    ) -> ChargeResult | None:
+        with self._db.transaction() as tx:
+            return self.reconcile_provider_allocation_in_transaction(tx, bucket, allocation)
+
+    def reconcile_provider_allocation_in_transaction(
+        self,
+        tx: Tx,
+        bucket: RunpodBillingBucketObservation,
+        allocation: RunpodBillingAllocation,
+    ) -> ChargeResult | None:
+        """Idempotently accrue a positive provider-reported allocation delta.
+
+        Negative revisions are retained as evidence only: they never decrement committed
+        spend or restore allowance. Recovery allocations remain unassigned and block new
+        Runpod reservations until an audited explicit reassignment is recorded.
+        """
+        if allocation.bucket_observation_id != bucket.observation_id:
+            raise SchemaInvalid("billing allocation does not match bucket observation")
+        if (
+            allocation.bucket_identity_sha256 != bucket.bucket_identity_sha256
+            or allocation.bucket_revision != bucket.revision
+        ):
+            raise SchemaInvalid("billing allocation does not match bucket identity and revision")
+        if bucket.finality_state.value not in ("ALLOCATED_PROVIDER_REPORTED", "INVOICE_VERIFIED"):
+            raise Conflict("pending or disputed provider bucket cannot accrue budget usage")
+        tx.fetchval(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,451047))",
+            (str(allocation.allocation_id),),
+        )
+        existing = tx.fetchone(
+            "SELECT * FROM runpod_billing_budget_postings WHERE allocation_id=%s FOR UPDATE",
+            (allocation.allocation_id,),
+        )
+        if existing is not None:
+            if existing["delta_micro_usd"] != allocation.delta_micro_usd:
+                raise IdempotencyConflict("billing allocation posting replay differs")
+            charge_id = existing["charge_id"]
+            return (
+                ChargeResult(
+                    charge_id=charge_id,
+                    receipt_id=uuid5(NAMESPACE_URL, f"runpod-billing:{allocation.allocation_id}"),
+                    account_id=existing["account_id"],
+                    replayed=True,
+                )
+                if charge_id
+                else None
+            )
+        if allocation.owner_kind == "RECOVERY":
+            tx.execute(
+                "INSERT INTO runpod_billing_budget_postings "
+                "(allocation_id,delta_micro_usd,posting_state) VALUES (%s,%s,'RECOVERY_PENDING')",
+                (allocation.allocation_id, allocation.delta_micro_usd),
+            )
+            return None
+
+        episode_id = UUID(str(allocation.owner_id))
+        category = (
+            BudgetCategory.GPU_GENERATION
+            if allocation.component.value == "GPU"
+            else BudgetCategory.CPU_STORAGE_TRANSFER
+        )
+        positive = allocation.delta_micro_usd > 0
+        if positive:
+            account_id = episode_account_id(tx, episode_id)
+            account = lock_account(tx, account_id)
+            categories = lock_categories(tx, account_id)
+            candidate = tx.fetchone(
+                "SELECT * FROM reservations WHERE account_id=%s AND lower(provider)='runpod' "
+                "AND category=%s ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+                (account_id, category.value),
+            )
+            reservation = reservation_from_row(candidate) if candidate else None
+            receipt = UsageReceipt(
+                receipt_id=uuid5(NAMESPACE_URL, f"runpod-billing:{allocation.allocation_id}"),
+                provider="runpod",
+                provider_receipt_id=f"billing-allocation:{allocation.allocation_id}",
+                kind=ReceiptKind.ADJUSTMENT,
+                cost_basis=CostBasis.PROVIDER_REPORTED,
+                reservation_id=reservation.id if reservation else None,
+                episode_id=episode_id,
+                category=category,
+                amount_micro_usd=allocation.delta_micro_usd,
+                units=0,
+                unit=PriceUnit.GIGABYTE
+                if allocation.component.value == "DISK"
+                else PriceUnit.GPU_SECOND,
+                observed_at=bucket.observed_at,
+                provenance=Provenance.LIVE_PROVIDER,
+            )
+            policy.check_receipt_admissible(receipt, self._settings)
+            result = self._post_charge(
+                tx, self._ledger(tx, account, categories), receipt, reservation
+            )
+            tx.execute(
+                "INSERT INTO runpod_billing_budget_postings "
+                "(allocation_id,account_id,reservation_id,charge_id,delta_micro_usd,posting_state) "
+                "VALUES (%s,%s,%s,%s,%s,'PROVIDER_REPORTED')",
+                (
+                    allocation.allocation_id,
+                    account_id,
+                    reservation.id if reservation else None,
+                    result.charge_id,
+                    allocation.delta_micro_usd,
+                ),
+            )
+            return result
+
+        account_id = episode_account_id(tx, episode_id)
+        tx.execute(
+            "INSERT INTO runpod_billing_budget_postings "
+            "(allocation_id,account_id,delta_micro_usd,posting_state) VALUES (%s,%s,%s,'NEGATIVE_EVIDENCE')",
+            (allocation.allocation_id, account_id, allocation.delta_micro_usd),
+        )
+        return None
+
+    def record_provider_invoice_verification(
+        self,
+        bucket: RunpodBillingBucketObservation,
+        verification: BillingInvoiceVerification,
+    ) -> None:
+        """Record matched invoice finality without reducing any previously committed spend."""
+        validate_billing_invoice_verification(bucket, verification)
+        if verification.result.value != "MATCHED":
+            raise Conflict("mismatched billing evidence cannot finalize budget accruals")
+        with self._db.transaction() as tx:
+            self.record_provider_invoice_verification_in_transaction(tx, bucket, verification)
+
+    def record_provider_invoice_verification_in_transaction(
+        self,
+        tx: Tx,
+        bucket: RunpodBillingBucketObservation,
+        verification: BillingInvoiceVerification,
+    ) -> None:
+        """Persist matched finality in the same transaction as invoice evidence ingestion."""
+        validate_billing_invoice_verification(bucket, verification)
+        if verification.result.value != "MATCHED":
+            raise Conflict("mismatched billing evidence cannot finalize budget accruals")
+        tx.fetchval(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,451048))",
+            (str(bucket.observation_id),),
+        )
+        row = tx.fetchone(
+            "SELECT verification_id,billed_amount_micro_usd FROM runpod_billing_budget_finalizations "
+            "WHERE bucket_observation_id=%s FOR UPDATE",
+            (bucket.observation_id,),
+        )
+        expected = (verification.verification_id, bucket.total_amount_micro_usd)
+        if row is not None:
+            if (row["verification_id"], row["billed_amount_micro_usd"]) != expected:
+                raise IdempotencyConflict("billing finalization replay differs")
+            return
+        tx.execute(
+            "INSERT INTO runpod_billing_budget_finalizations "
+            "(bucket_observation_id,verification_id,billed_amount_micro_usd) VALUES (%s,%s,%s)",
+            (bucket.observation_id, verification.verification_id, bucket.total_amount_micro_usd),
+        )
+
+    def resolve_billing_recovery(
+        self,
+        allocation_id: UUID,
+        *,
+        assigned_episode_id: UUID,
+        actor_ref: str,
+        reason: str,
+    ) -> None:
+        """Audited human reassignment removes one recovery-pool paid-dispatch blocker."""
+        if not actor_ref.strip() or not reason.strip():
+            raise SchemaInvalid("recovery reassignment requires actor and reason")
+        with self._db.transaction() as tx:
+            tx.fetchval(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,451049))",
+                (str(allocation_id),),
+            )
+            existing = tx.fetchone(
+                "SELECT assigned_episode_id,actor_ref,reason FROM runpod_billing_recovery_resolutions "
+                "WHERE allocation_id=%s",
+                (allocation_id,),
+            )
+            if existing is not None:
+                if (existing["assigned_episode_id"], existing["actor_ref"], existing["reason"]) != (
+                    assigned_episode_id,
+                    actor_ref.strip(),
+                    reason.strip(),
+                ):
+                    raise IdempotencyConflict("recovery reassignment replay differs")
+                return
+            row = tx.fetchone(
+                "SELECT a.owner_kind,a.delta_micro_usd,a.component,a.payload AS allocation,b.payload AS bucket "
+                "FROM runpod_billing_allocations a JOIN runpod_billing_buckets b "
+                "ON b.observation_id=a.bucket_observation_id WHERE a.allocation_id=%s FOR UPDATE OF a",
+                (allocation_id,),
+            )
+            if row is None or row["owner_kind"] != "RECOVERY":
+                raise NotFound(
+                    "recovery billing allocation not found", allocation_id=str(allocation_id)
+                )
+            account_id = episode_account_id(tx, assigned_episode_id)
+            charge_id: UUID | None = None
+            if row["delta_micro_usd"] > 0:
+                bucket = RunpodBillingBucketObservation.model_validate(row["bucket"])
+                category = (
+                    BudgetCategory.GPU_GENERATION
+                    if row["component"] == "GPU"
+                    else BudgetCategory.CPU_STORAGE_TRANSFER
+                )
+                receipt = UsageReceipt(
+                    receipt_id=uuid5(NAMESPACE_URL, f"runpod-billing:{allocation_id}"),
+                    provider="runpod",
+                    provider_receipt_id=f"billing-allocation:{allocation_id}",
+                    kind=ReceiptKind.ADJUSTMENT,
+                    cost_basis=CostBasis.PROVIDER_REPORTED,
+                    episode_id=assigned_episode_id,
+                    category=category,
+                    amount_micro_usd=row["delta_micro_usd"],
+                    units=0,
+                    unit=PriceUnit.GIGABYTE if row["component"] == "DISK" else PriceUnit.GPU_SECOND,
+                    observed_at=bucket.observed_at,
+                    provenance=Provenance.LIVE_PROVIDER,
+                )
+                policy.check_receipt_admissible(receipt, self._settings)
+                account = lock_account(tx, account_id)
+                categories = lock_categories(tx, account_id)
+                replay = self._replay(tx, receipt, account_id)
+                if replay is not None:
+                    charge_id = replay.charge_id
+                else:
+                    charge_id = self._post_charge(
+                        tx, self._ledger(tx, account, categories), receipt, None
+                    ).charge_id
+            tx.execute(
+                "INSERT INTO runpod_billing_recovery_resolutions "
+                "(allocation_id,assigned_episode_id,charge_id,actor_ref,reason,resolved_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (
+                    allocation_id,
+                    assigned_episode_id,
+                    charge_id,
+                    actor_ref.strip(),
+                    reason.strip(),
+                    self._now(),
+                ),
+            )
 
     def record_usage(self, receipt: UsageReceipt) -> ChargeResult:
         """Record one usage receipt. Replays are idempotent; overruns are recorded, never hidden.

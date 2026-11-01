@@ -8,7 +8,10 @@ evidence); run the ffmpeg detectors (decode/streams/duration/audio/silence/peaks
 black/freeze) and pull the embedded captions out of the actual file; observe speech
 and identities through the ``MediaObserver`` seam — the only metered step, reserved
 in the QA_CAPTIONS category before dispatch and settled after it, with a failed
-observation keeping its charge; compare observed against expected into typed
+observation keeping its charge (a returned continuity observation that does not
+describe the staged bytes or the configured evaluator settles the same way, and
+any configured continuity observer is refused outright outside OFFLINE_MOCK);
+compare observed against expected into typed
 findings (flag or UNKNOWN — a pristine script never makes an unchecked or defective
 media green); persist findings plus a bounded coverage event in one transaction.
 
@@ -53,6 +56,7 @@ from microdrama.contracts.enums import (
 )
 from microdrama.contracts.errors import (
     Conflict,
+    EffectDenied,
     NotFound,
     ProviderError,
     SchemaInvalid,
@@ -74,6 +78,13 @@ from microdrama.qa.audio import (
     speech_findings,
 )
 from microdrama.qa.config import QAConfig
+from microdrama.qa.continuity import (
+    ContinuityExpectations,
+    ContinuityObservation,
+    ContinuityObserver,
+    continuity_findings,
+    summarize_check_coverage,
+)
 from microdrama.qa.coverage import partition_coverage
 from microdrama.qa.models import (
     QA_NAMESPACE,
@@ -86,6 +97,7 @@ from microdrama.qa.report import (
     find_run,
     green_summary,
     load_findings,
+    load_run_check_coverage,
     load_run_coverage,
     persist_run,
 )
@@ -132,6 +144,8 @@ class TechnicalQAService:
         config: QAConfig | None = None,
         observer: MediaObserver | None = None,
         caption_source: CaptionSource | None = None,
+        continuity_observer: ContinuityObserver | None = None,
+        continuity_expectations: ContinuityExpectations | None = None,
     ) -> None:
         self._db = db
         self._clock = clock
@@ -142,6 +156,8 @@ class TechnicalQAService:
         self._config = config or QAConfig()
         self._observer = observer
         self._caption_source = caption_source
+        self._continuity_observer = continuity_observer
+        self._continuity_expectations = continuity_expectations
         self._id_lock = threading.Lock()
 
     # --- plumbing --------------------------------------------------------------------
@@ -190,6 +206,15 @@ class TechnicalQAService:
     # --- the run ----------------------------------------------------------------------
 
     def run_episode_qa(self, episode_id: UUID, *, asset_id: UUID) -> TechnicalQARun:
+        # No continuity detector is qualified outside OFFLINE_MOCK (T031 owns the
+        # real-model evidence), so ANY configured observer — not just the fixture
+        # one — is refused before a reservation or provider call can happen. A
+        # run without a continuity observer may proceed and stay honest UNKNOWN.
+        if self._continuity_observer is not None and not self._settings.is_offline_mock:
+            raise EffectDenied(
+                "a configured continuity observer may run only in OFFLINE_MOCK; a "
+                "real continuity detector must be qualified by T031 evidence first",
+            )
         episode = self._row("SELECT season_id FROM episodes WHERE id = %s", (episode_id,))
         if episode is None:
             raise NotFound("episode not found", episode_id=str(episode_id))
@@ -204,7 +229,35 @@ class TechnicalQAService:
                 duration_ms=descriptor.media.duration_ms,
                 ceiling_ms=self._config.max_media_duration_ms,
             )
-        run_key = _run_key(episode_id, descriptor, script, self._config)
+        # The continuity lane's result inputs bind to the run key up front: a
+        # changed evaluator calibration or a changed typed expectation (e.g. a
+        # new outfit assignment) invalidates any cached result for this media.
+        continuity_expectations = (
+            self._continuity_expectations.continuity_expectations(episode_id)
+            if self._continuity_expectations is not None
+            else None
+        )
+        if continuity_expectations is not None:
+            # A seam that returns another episode's expectations — or windows
+            # beyond the measured exported-media duration — is rejected before
+            # anything is hashed into a run key, compared or cached.
+            continuity_expectations.validate_binding(episode_id, descriptor.media.duration_ms)
+        run_key = _run_key(
+            episode_id,
+            descriptor,
+            script,
+            self._config,
+            continuity_evaluator_sha256=(
+                None
+                if self._continuity_observer is None
+                else self._continuity_observer.evaluator.capability_sha256()
+            ),
+            continuity_expectations_sha256=(
+                None
+                if continuity_expectations is None
+                else continuity_expectations.expectations_sha256()
+            ),
+        )
         replay = self._replay(episode_id, asset_id, descriptor, run_key)
         if replay is not None:
             return replay
@@ -243,7 +296,7 @@ class TechnicalQAService:
                     ) from exc
 
             reservation = self._maybe_reserve(episode_id, descriptor, facts.duration_ms)
-            observation, settled_micro_usd = self._observe(
+            observation, continuity_observation, settled_micro_usd = self._observe(
                 episode_id, descriptor, staged, facts.duration_ms, reservation
             )
 
@@ -284,6 +337,24 @@ class TechnicalQAService:
                 asset_id=asset_id,
                 duration_ms=facts.duration_ms,
             )
+            continuity_findings_result = continuity_findings(
+                run_key=run_key,
+                episode_id=episode_id,
+                asset_id=asset_id,
+                asset_sha256=descriptor.sha256,
+                duration_ms=facts.duration_ms,
+                observation=continuity_observation,
+                frozen_sha256=(
+                    None
+                    if continuity_observation is None
+                    else continuity_observation.observation_sha256()
+                ),
+                expectations=continuity_expectations,
+                safe_area_bp=self._config.subtitle_safe_area_bp,
+            )
+            findings += continuity_findings_result[0]
+            check_coverage = continuity_findings_result[1]
+            continuity_evidence = continuity_findings_result[2]
             findings, notes = self._caption_checks(
                 run_key, episode_id, asset_id, descriptor, script, facts, observation,
                 embedded, findings,
@@ -312,6 +383,8 @@ class TechnicalQAService:
                         "reservation_id": str(reservation.id) if reservation else None,
                         "settled_micro_usd": settled_micro_usd,
                         "notes": notes[:5],
+                        "continuity": continuity_evidence,
+                        "per_check_coverage": summarize_check_coverage(check_coverage),
                     },
                     now=now,
                     correlation_id=correlation,
@@ -326,6 +399,7 @@ class TechnicalQAService:
                 duration_ms=facts.duration_ms,
                 findings=findings,
                 coverage=coverage,
+                per_check_coverage=check_coverage,
                 all_checks_green=all_green,
                 blocking_check_ids=blocking,
                 unknown_check_ids=unknown,
@@ -343,8 +417,19 @@ class TechnicalQAService:
         staged: Path,
         duration_ms: int,
         reservation: Any,
-    ) -> tuple[MediaObservation, int]:
-        if self._observer is None:
+    ) -> tuple[MediaObservation, ContinuityObservation | None, int]:
+        """Both media-only observations run inside one metered envelope.
+
+        The continuity observer runs after the speech/identity observer and
+        before settling, so a failed continuity observation keeps the charge of
+        the dispatched observation step (the same discipline as the media one).
+        A returned continuity observation is also bound to THIS run before the
+        envelope settles: it must describe the staged asset's bytes and carry
+        the configured observer's evaluator capability, so a forged result
+        (clean windows for unrelated bytes, or another evaluator) can never
+        settle into a CHECKED/PASS claim.
+        """
+        if self._observer is None and self._continuity_observer is None:
             coverage: list[CoverageWindow] = [
                 window
                 for family in (CheckFamily.ASR, CheckFamily.VISUAL_IDENTITY)
@@ -363,15 +448,58 @@ class TechnicalQAService:
                     provenance=Provenance.DERIVED_LOCAL,
                     source_label=SOURCE_UNREGISTERED,
                 ),
+                None,
                 0,
             )
         try:
-            observation = self._observer.observe(
-                asset_id=descriptor.asset_id,
-                asset_sha256=descriptor.sha256,
-                media_path=staged,
-                duration_ms=duration_ms,
+            if self._observer is None:
+                observation = MediaObservation(
+                    coverage=[
+                        window
+                        for family in (CheckFamily.ASR, CheckFamily.VISUAL_IDENTITY)
+                        for window in partition_coverage(
+                            descriptor.asset_id,
+                            family,
+                            max(duration_ms, 1),
+                            (),
+                            outside=CoverageStatus.UNAVAILABLE,
+                            note="no speech/identity observation source configured",
+                        )
+                    ],
+                    provenance=Provenance.DERIVED_LOCAL,
+                    source_label=SOURCE_UNREGISTERED,
+                )
+            else:
+                observation = self._observer.observe(
+                    asset_id=descriptor.asset_id,
+                    asset_sha256=descriptor.sha256,
+                    media_path=staged,
+                    duration_ms=duration_ms,
+                )
+            continuity_observation = (
+                None
+                if self._continuity_observer is None
+                else self._continuity_observer.observe_continuity(
+                    asset_id=descriptor.asset_id,
+                    asset_sha256=descriptor.sha256,
+                    media_path=staged,
+                    duration_ms=duration_ms,
+                )
             )
+            if continuity_observation is not None:
+                _require_continuity_binding(
+                    continuity_observation, descriptor, self._continuity_observer
+                )
+        except _UnboundContinuityObservation as exc:
+            # the observation was dispatched (its charge is kept) but its result
+            # does not describe this run: no PASS, no persisted QA claim
+            settled = self._settle_failure(reservation, episode_id, duration_ms)
+            raise ProviderError(
+                "continuity observation rejected: it describes other media bytes "
+                "or a different evaluator; the charge is kept",
+                provider=OBSERVE_PROVIDER,
+                settled_micro_usd=settled,
+            ) from exc
         except Exception as exc:  # the model call was dispatched; its charge is kept
             settled = self._settle_failure(reservation, episode_id, duration_ms)
             raise ProviderError(
@@ -380,7 +508,7 @@ class TechnicalQAService:
                 settled_micro_usd=settled,
             ) from exc
         settled = self._settle_success(reservation, episode_id, duration_ms)
-        return observation, settled
+        return observation, continuity_observation, settled
 
     # --- budget hook ---------------------------------------------------------------------
 
@@ -593,6 +721,7 @@ class TechnicalQAService:
         cycle = int(payload["qa_cycle"])
         findings = load_findings(self._db, episode_id, cycle=cycle)
         coverage = load_run_coverage(self._db, episode_id, run_key)
+        per_check_coverage = load_run_check_coverage(self._db, episode_id, run_key)
         all_green, blocking, unknown = green_summary(findings, self._config.critical_check_ids)
         return TechnicalQARun(
             episode_id=episode_id,
@@ -604,12 +733,44 @@ class TechnicalQAService:
             duration_ms=int(payload.get("duration_ms", 0)),
             findings=findings,
             coverage=coverage,
+            per_check_coverage=per_check_coverage,
             all_checks_green=all_green,
             blocking_check_ids=blocking,
             unknown_check_ids=unknown,
             reservation_id=None,
             settled_micro_usd=0,
             notes=["identical run already persisted; nothing re-analyzed"],
+        )
+
+
+class _UnboundContinuityObservation(Exception):
+    """Internal: a returned continuity observation does not describe this run."""
+
+
+def _require_continuity_binding(
+    observation: ContinuityObservation,
+    descriptor: AssetDescriptor,
+    configured_observer: ContinuityObserver,
+) -> None:
+    """Bind a returned continuity observation to this run before settlement.
+
+    The run key is derived from the CONFIGURED observer's evaluator capability
+    and the staged bytes are hashed to the registered asset sha256 before
+    dispatch; an observer that returns windows keyed to other bytes, or stamped
+    with another evaluator/source, is a forged result. It settles through the
+    failed-observation path (charge kept) and can never become a finding.
+    """
+    if observation.media_sha256 != descriptor.sha256:
+        raise _UnboundContinuityObservation(
+            f"observation media_sha256={observation.media_sha256[:16]} but the "
+            f"staged asset hashes to {descriptor.sha256[:16]}"
+        )
+    configured = configured_observer.evaluator.capability_sha256()
+    returned = observation.evaluator.capability_sha256()
+    if returned != configured:
+        raise _UnboundContinuityObservation(
+            f"observation evaluator capability={returned[:16]} but the configured "
+            f"observer declares {configured[:16]}"
         )
 
 
@@ -644,7 +805,13 @@ def _observation_receipt(
 
 
 def _run_key(
-    episode_id: UUID, descriptor: AssetDescriptor, script: Script, config: QAConfig
+    episode_id: UUID,
+    descriptor: AssetDescriptor,
+    script: Script,
+    config: QAConfig,
+    *,
+    continuity_evaluator_sha256: str | None = None,
+    continuity_expectations_sha256: str | None = None,
 ) -> str:
     return canonical_hash(
         {
@@ -653,6 +820,8 @@ def _run_key(
             "script": canonical_hash(script),
             "config": _config_fingerprint(config),
             "lane": "qa.technical",
+            "continuity_evaluator": continuity_evaluator_sha256,
+            "continuity_expectations": continuity_expectations_sha256,
         }
     )
 
@@ -695,6 +864,8 @@ def build_technical_qa_service(
     config: QAConfig | None = None,
     observer: MediaObserver | None = None,
     caption_source: CaptionSource | None = None,
+    continuity_observer: ContinuityObserver | None = None,
+    continuity_expectations: ContinuityExpectations | None = None,
 ) -> TechnicalQAService:
     """Composition-time factory (the integrator registers routes/jobs, not this module)."""
     return TechnicalQAService(
@@ -707,6 +878,8 @@ def build_technical_qa_service(
         config=config,
         observer=observer,
         caption_source=caption_source,
+        continuity_observer=continuity_observer,
+        continuity_expectations=continuity_expectations,
     )
 
 

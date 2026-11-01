@@ -33,7 +33,7 @@ from microdrama.core.idempotency import IdempotencyService
 from microdrama.core.jobs import JobService
 from microdrama.persistence.db import Database
 from microdrama.persistence.object_store import FilesystemObjectStore
-from microdrama.review import ReviewService, not_configured_release_conditions
+from microdrama.review import IntakeService, ReviewService, not_configured_release_conditions
 from microdrama.review import build_router as build_review_router
 from microdrama.review.gate_conditions import ReleaseConditionsFn
 
@@ -52,6 +52,10 @@ class Services:
     budget: BudgetService
     store: ObjectStore | None = None
     review: ReviewService | None = None
+    # The three-step Script Maker intake (T044b2): optional — an integrator that
+    # has not composed the research/script-maker services simply gets no intake
+    # routes, exactly like the review service itself without an object store.
+    intake: IntakeService | None = None
 
 
 def build_services(
@@ -64,6 +68,7 @@ def build_services(
     release_conditions_fn: ReleaseConditionsFn = not_configured_release_conditions,
     approval_hooks: Sequence[ApprovalHook] = (),
     identity_lock_hook: ApprovalHook | None = None,
+    intake: IntakeService | None = None,
 ) -> Services:
     """Construct every accepted service once.
 
@@ -103,6 +108,7 @@ def build_services(
         budget=budget,
         store=store,
         review=review,
+        intake=intake,
     )
 
 
@@ -164,6 +170,7 @@ def build_routers(services: Services, *, cookie_secure: bool = True) -> list[API
                 human_session=human_session_dependency(auth),
                 auth=auth,
                 cookie_secure=cookie_secure,
+                intake=services.intake,
             )
         )
     return routers

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tempfile
 import threading
 import uuid
@@ -11,7 +12,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from microdrama.contracts.examples import asset_descriptor
+from microdrama.contracts.examples import asset_descriptor, v2_episode_pack, v2_season_story_ledger
+from microdrama.contracts.hashing import canonical_hash
 from microdrama.persistence import (
     Database,
     FilesystemObjectStore,
@@ -40,6 +42,7 @@ EXPECTED_TABLES = {
     "webhook_events",
     "manual_interventions",
     "seasons",
+    "season_owners",
     "season_proposals",
     "canon_versions",
     "episodes",
@@ -86,6 +89,7 @@ EXPECTED_TABLES = {
     "preset_registry",
     "policy_versions",
     "schema_migrations",
+    "v2_contract_documents",
 }
 
 
@@ -128,6 +132,154 @@ def test_upgrade_preserves_existing_data(pg_server_dsn: str) -> None:
             "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
             (uuid.uuid4(), season_id, episode_id),
         )
+
+
+def test_v2_contract_document_migration_and_json_readback(pg_server_dsn: str) -> None:
+    dsn = _fresh_db(pg_server_dsn)
+    assert migrate(dsn, target="0018")[-1] == "0018"
+    with psycopg.connect(dsn) as conn:
+        assert conn.execute("SELECT to_regclass('v2_contract_documents')").fetchone()[0] is None
+    assert migrate(dsn) == ["0019", "0020", "0021", "0022", "0023", "0024"]
+    with psycopg.connect(dsn) as conn:
+        assert conn.execute("SELECT to_regclass('approved_slot_metadata')").fetchone()[0]
+        assert conn.execute("SELECT to_regclass('release_approval_manifests')").fetchone()[0]
+        assert "release_manifest_hash" in {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'approval_events'"
+            ).fetchall()
+        }
+    record = v2_episode_pack()
+    body = record.model_dump(mode="json")
+    body_hash = canonical_hash(record)
+    with psycopg.connect(dsn) as conn:
+        conn.execute(
+            """INSERT INTO v2_contract_documents
+               (contract_type, record_id, version, payload, payload_sha256,
+                rights_route_id, rights_version, valid_from, current)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true)""",
+            (
+                "EpisodePack",
+                record.record_id,
+                record.version,
+                psycopg.types.json.Jsonb(body),
+                body_hash,
+                "original-fiction",
+                1,
+                record.valid_from,
+            ),
+        )
+        stored = conn.execute(
+            "SELECT payload, payload_sha256 FROM v2_contract_documents WHERE record_id = %s",
+            (record.record_id,),
+        ).fetchone()
+        readback = type(record).model_validate(stored[0])
+        assert stored[1] == canonical_hash(readback) == body_hash
+        assert readback == record
+        with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
+            conn.execute(
+                """INSERT INTO v2_contract_documents
+                   (contract_type, record_id, version, payload, payload_sha256,
+                    rights_route_id, rights_version, valid_from)
+                   VALUES ('EpisodePack', %s, 1, %s, %s, 'original-fiction', 1, now())""",
+                (uuid.uuid4(), psycopg.types.json.Jsonb({"schema_version": "1.0"}), "0" * 64),
+            )
+    assert migrate(dsn) == []
+
+
+def test_season_story_ledger_migration_preserves_existing_document(pg_server_dsn: str) -> None:
+    dsn = _fresh_db(pg_server_dsn)
+    assert migrate(dsn, target="0019")[-1] == "0019"
+    existing = v2_episode_pack()
+    existing_body = existing.model_dump(mode="json")
+    existing_hash = canonical_hash(existing)
+    with psycopg.connect(dsn) as conn:
+        conn.execute(
+            """INSERT INTO v2_contract_documents
+               (contract_type, record_id, version, payload, payload_sha256,
+                rights_route_id, rights_version, valid_from, current)
+               VALUES ('EpisodePack', %s, %s, %s, %s, 'original-fiction', 1, %s, true)""",
+            (
+                existing.record_id,
+                existing.version,
+                psycopg.types.json.Jsonb(existing_body),
+                existing_hash,
+                existing.valid_from,
+            ),
+        )
+
+    assert migrate(dsn) == ["0020", "0021", "0022", "0023", "0024"]
+    ledger = v2_season_story_ledger()
+    ledger_body = ledger.model_dump(mode="json")
+    ledger_hash = canonical_hash(ledger)
+    with psycopg.connect(dsn) as conn:
+        preserved = conn.execute(
+            "SELECT payload, payload_sha256 FROM v2_contract_documents WHERE record_id = %s",
+            (existing.record_id,),
+        ).fetchone()
+        assert preserved == (existing_body, existing_hash)
+        conn.execute(
+            """INSERT INTO v2_contract_documents
+               (contract_type, record_id, version, payload, payload_sha256,
+                rights_route_id, rights_version, valid_from, current)
+               VALUES ('SeasonStoryLedger', %s, %s, %s, %s, 'original-fiction', 1, %s, true)""",
+            (
+                ledger.record_id,
+                ledger.version,
+                psycopg.types.json.Jsonb(ledger_body),
+                ledger_hash,
+                ledger.valid_from,
+            ),
+        )
+        stored = conn.execute(
+            "SELECT payload, payload_sha256 FROM v2_contract_documents WHERE record_id = %s",
+            (ledger.record_id,),
+        ).fetchone()
+        readback = type(ledger).model_validate(stored[0])
+        assert stored[1] == canonical_hash(readback) == ledger_hash
+        assert readback == ledger
+        with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
+            conn.execute(
+                """INSERT INTO v2_contract_documents
+                   (contract_type, record_id, version, payload, payload_sha256,
+                    rights_route_id, rights_version, valid_from)
+                   VALUES ('UnknownDocument', %s, 1, %s, %s, 'original-fiction', 1, now())""",
+                (uuid.uuid4(), psycopg.types.json.Jsonb({"schema_version": "2.0"}), "0" * 64),
+            )
+
+
+def test_pre_0019_backup_restore_recovers_checkpoint(pg_server_dsn: str, tmp_path: Path) -> None:
+    pg_dump = shutil.which("pg_dump")
+    pg_restore = shutil.which("pg_restore")
+    if pg_dump is None or pg_restore is None:
+        pytest.skip("pg_dump and pg_restore are required for backup-restore acceptance")
+
+    source_dsn = _fresh_db(pg_server_dsn)
+    assert migrate(source_dsn, target="0018")[-1] == "0018"
+    with Database(source_dsn) as db, db.transaction() as tx:
+        season_id = seed_season(tx)
+        episode_id = seed_episode(tx, season_id)
+
+    backup = tmp_path / "pre-0019.dump"
+    subprocess.run([pg_dump, "--format=custom", "--file", str(backup), source_dsn], check=True)
+    assert backup.is_file() and backup.stat().st_size > 0
+
+    assert migrate(source_dsn) == ["0019", "0020", "0021", "0022", "0023", "0024"]
+    restored_dsn = _fresh_db(pg_server_dsn)
+    subprocess.run(
+        [pg_restore, "--exit-on-error", "--dbname", restored_dsn, str(backup)], check=True
+    )
+
+    restored_tables = _tables(restored_dsn)
+    assert "episodes" in restored_tables
+    assert "v2_contract_documents" not in restored_tables
+    with psycopg.connect(restored_dsn) as conn:
+        assert conn.execute(
+            "SELECT season_id FROM episodes WHERE id = %s", (episode_id,)
+        ).fetchone() == (season_id,)
+        assert conn.execute(
+            "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
+        ).fetchone() == ("0018",)
 
 
 def test_restart_round_trip_keeps_rows_assets_and_hashes(tmp_path: Path) -> None:

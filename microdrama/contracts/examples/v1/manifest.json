@@ -35,6 +35,12 @@
     "model": "AssetDescriptor",
     "reason": "measured media facts required"
   },
+  "examples/v1/invalid/BillingInvoiceVerification__mismatch_without_reason.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "BillingInvoiceVerification",
+    "reason": "mismatched invoice evidence needs an explicit reason"
+  },
   "examples/v1/invalid/BudgetReservationRequest__community_cleanup_flag.json": {
     "expect": "invalid",
     "json_schema_rejects": false,
@@ -125,6 +131,48 @@
     "model": "ComparisonRequest",
     "reason": "sha256 hex"
   },
+  "examples/v1/invalid/CreativeDerivativeRef__missing_derivation_manifest.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "CreativeDerivativeRef",
+    "reason": "derivative must bind its deterministic derivation manifest"
+  },
+  "examples/v1/invalid/CreativeDerivativeRef__missing_source_rights.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "CreativeDerivativeRef",
+    "reason": "each derivative source needs its own eligible rights grant"
+  },
+  "examples/v1/invalid/CreativeDerivativeRef__poster_missing_readability_evidence.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "CreativeDerivativeRef",
+    "reason": "poster requires readability evidence hash"
+  },
+  "examples/v1/invalid/CreativeDerivativeRef__preview_without_footage_source.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "CreativeDerivativeRef",
+    "reason": "episode-one preview needs at least one footage source"
+  },
+  "examples/v1/invalid/CreativeDerivativeRef__reveal_boundary_outside_footage.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "CreativeDerivativeRef",
+    "reason": "footage source must end before its approved source-timeline cutoff"
+  },
+  "examples/v1/invalid/CreativeDerivativeRef__unknown_source_role.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "CreativeDerivativeRef",
+    "reason": "derivative source role is closed"
+  },
+  "examples/v1/invalid/CreativeDerivativeRef__unsafe_platform_text_box.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "CreativeDerivativeRef",
+    "reason": "CTA text box must remain within its platform mobile safe zone"
+  },
   "examples/v1/invalid/DomainEvent__bad_event_type.json": {
     "expect": "invalid",
     "json_schema_rejects": true,
@@ -154,6 +202,12 @@
     "json_schema_rejects": false,
     "model": "EpisodePlan",
     "reason": "max three featured speaking characters"
+  },
+  "examples/v1/invalid/EpisodeReviewView__invalid_release_approval_manifest.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "EpisodeReviewView",
+    "reason": "nested review manifest must validate as V2"
   },
   "examples/v1/invalid/HookExperiment__hook_too_long.json": {
     "expect": "invalid",
@@ -311,6 +365,18 @@
     "model": "PublicationCommand",
     "reason": "nonexistent local time"
   },
+  "examples/v1/invalid/PublicationCommand__partial_v2_cover_binding.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PublicationCommand",
+    "reason": "V2 command cover must be fully bound or explicitly absent"
+  },
+  "examples/v1/invalid/PublicationCommand__partial_v2_manifest_binding.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PublicationCommand",
+    "reason": "V2 stale-queue binding must include exact manifest, metadata and policy"
+  },
   "examples/v1/invalid/PublicationCommand__utc_mismatch.json": {
     "expect": "invalid",
     "json_schema_rejects": false,
@@ -371,6 +437,12 @@
     "model": "ReleasePackage",
     "reason": "IMP-01 cast package"
   },
+  "examples/v1/invalid/ReleasePackage__episode_one_poster_wrong_reveal_episode.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "ReleasePackage",
+    "reason": "episode-one poster must bind approved reveal episode 1"
+  },
   "examples/v1/invalid/ReleasePackage__missing_ai_disclosure.json": {
     "expect": "invalid",
     "json_schema_rejects": false,
@@ -395,11 +467,29 @@
     "model": "RenderRequest",
     "reason": "IMP-01"
   },
+  "examples/v1/invalid/RenderRequest__partial_prompt_manifest_binding.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RenderRequest",
+    "reason": "prompt manifest ID and hash must be provided together"
+  },
+  "examples/v1/invalid/RenderRequest__semantic_hash_without_manifest.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RenderRequest",
+    "reason": "semantic workflow hash requires a V2 prompt manifest locator"
+  },
   "examples/v1/invalid/RenderRequest__unknown_control.json": {
     "expect": "invalid",
     "json_schema_rejects": true,
     "model": "RenderRequest",
     "reason": "unknown control"
+  },
+  "examples/v1/invalid/RenderRequest__v2_missing_semantic_workflow_hash.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RenderRequest",
+    "reason": "V2 manifest-bound render request needs pinned semantic workflow hash"
   },
   "examples/v1/invalid/RepairPlan__over_budget.json": {
     "expect": "invalid",
@@ -442,6 +532,30 @@
     "json_schema_rejects": false,
     "model": "RightsRecord",
     "reason": "unknown commercial use cannot be ELIGIBLE"
+  },
+  "examples/v1/invalid/RunpodBillingAllocation__gpu_with_disk_basis.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RunpodBillingAllocation",
+    "reason": "GPU/CPU allocation must use measured overlap"
+  },
+  "examples/v1/invalid/RunpodBillingBucketObservation__component_total_mismatch.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RunpodBillingBucketObservation",
+    "reason": "provider bucket total must equal GPU + CPU + disk"
+  },
+  "examples/v1/invalid/RunpodBillingBucketObservation__float_component_amount.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "RunpodBillingBucketObservation",
+    "reason": "billing money is integer micro-USD; floats are rejected"
+  },
+  "examples/v1/invalid/RunpodBillingQueryObservation__empty_query_with_bucket.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "RunpodBillingQueryObservation",
+    "reason": "EMPTY billing query cannot claim bucket observations"
   },
   "examples/v1/invalid/Script__duplicate_line_id.json": {
     "expect": "invalid",
@@ -528,12 +642,12 @@
     "reason": "non-negative micro-USD"
   },
   "examples/v1/valid/ApprovalCommand.json": {
-    "canonical_sha256": "daf2fdb0410f8a38c8b1e5a74e0973601f20d27ca0ffa3d2624e5cc8f518e183",
+    "canonical_sha256": "16b9dc2bfcb953e0ec31eb49456c1ba87db881972ad5ad9ece99bac0b66c0305",
     "expect": "valid",
     "model": "ApprovalCommand"
   },
   "examples/v1/valid/ApprovalCommand__gate2_revise.json": {
-    "canonical_sha256": "24f85dcc25b9359776f587ddf89fd2c8289c5b5be5d8158cc6a75fc7841bd1a5",
+    "canonical_sha256": "ac297a638bb53bf42c7fd6c21df914948d98ad65166e64987890cec6adfd5ddf",
     "expect": "valid",
     "model": "ApprovalCommand"
   },
@@ -541,6 +655,11 @@
     "canonical_sha256": "05fd568b783dd37e0a6eabd541dde26e96d308c16775f8faf2451ef438e26876",
     "expect": "valid",
     "model": "AssetDescriptor"
+  },
+  "examples/v1/valid/BillingInvoiceVerification.json": {
+    "canonical_sha256": "87f8d63c20dd871371206c420d5e2905d997489c3b13c9eaf51d29c2008040ee",
+    "expect": "valid",
+    "model": "BillingInvoiceVerification"
   },
   "examples/v1/valid/BudgetReservationRequest.json": {
     "canonical_sha256": "029705dc5882230aa01d9f58846bcdfe94b2b850d6ffb4d6df5191177e5ff154",
@@ -562,6 +681,16 @@
     "expect": "valid",
     "model": "ComparisonRequest"
   },
+  "examples/v1/valid/CreativeDerivativeRef.json": {
+    "canonical_sha256": "2a835a0e46d5efe59fb073b32257c728d9aba230c8150a00a922f43a772c0667",
+    "expect": "valid",
+    "model": "CreativeDerivativeRef"
+  },
+  "examples/v1/valid/CreativeDerivativeRef__poster.json": {
+    "canonical_sha256": "18c924d3ac984a5c7df70f97b9cec639edb06f83b46d872907139c5d74bb1eeb",
+    "expect": "valid",
+    "model": "CreativeDerivativeRef"
+  },
   "examples/v1/valid/DomainEvent.json": {
     "canonical_sha256": "d04aa18a2cb611b00ea2485104b49fb745479036fc8ff47b0815987497392f74",
     "expect": "valid",
@@ -576,6 +705,11 @@
     "canonical_sha256": "41491eaaefa08a2ff4c5ad4bf606fbe31ebdd0544c47c5514698eb346104ac34",
     "expect": "valid",
     "model": "EpisodePlan"
+  },
+  "examples/v1/valid/EpisodeReviewView.json": {
+    "canonical_sha256": "6ab12fc3e80d66144ba8e88b3111f44299e1b9d5ec30284e932dd24fa145c110",
+    "expect": "valid",
+    "model": "EpisodeReviewView"
   },
   "examples/v1/valid/HookExperiment.json": {
     "canonical_sha256": "b336bb2beb0c2c8d7e6f0ac0fd875d743fb5012740e8c89cb9cafab492e2a483",
@@ -623,7 +757,7 @@
     "model": "PresetRecord"
   },
   "examples/v1/valid/ProviderOperation.json": {
-    "canonical_sha256": "f1cc92684b330115ed86bd43f4234b59ce43d069e0c9483030e7cd3d9cf71d2f",
+    "canonical_sha256": "c60fd7e81600a7bfb5cd5f4f30470be9005cdd84a64c92cc7df2390c081c0adf",
     "expect": "valid",
     "model": "ProviderOperation"
   },
@@ -633,7 +767,12 @@
     "model": "ProviderOperationResult"
   },
   "examples/v1/valid/PublicationCommand.json": {
-    "canonical_sha256": "fad7cd92c90fc74d65b378cb5bb182718269f4f5be4de7613c3cf4a9cb6c6207",
+    "canonical_sha256": "63ec1a2476544cf65ea6c07f5125b70c0e910f3e6ee39f7505e8979b94378f72",
+    "expect": "valid",
+    "model": "PublicationCommand"
+  },
+  "examples/v1/valid/PublicationCommand__v2_no_cover_no_cta.json": {
+    "canonical_sha256": "6359bdb9d80b5ede36500136cc7fbbe90974f0f82dd2cc3a7bcb8a5c7e079f0e",
     "expect": "valid",
     "model": "PublicationCommand"
   },
@@ -648,12 +787,22 @@
     "model": "QualificationResult"
   },
   "examples/v1/valid/ReleasePackage.json": {
-    "canonical_sha256": "d4f1962c3cd056b1ac6f5d7fdbc87f4b82fb011f3fd09080a4f4ababb1f59945",
+    "canonical_sha256": "bd6eaf71ae266f4e64b129913fe3f5862ee04e9c6e9829dfeb7de1571da33699",
+    "expect": "valid",
+    "model": "ReleasePackage"
+  },
+  "examples/v1/valid/ReleasePackage__creative_derivatives.json": {
+    "canonical_sha256": "af3ef5291d6d622a7b33edcc0ceb18b392d11376874fdfbccda2462f3b8abd57",
     "expect": "valid",
     "model": "ReleasePackage"
   },
   "examples/v1/valid/RenderRequest.json": {
-    "canonical_sha256": "e10dcce162ea73eab242495f581d70748e5b7851bf430c0287260bfeef87ed70",
+    "canonical_sha256": "7799b79fa8235c0f3ed10adebaa62c8e4a5f9f54b2055a8ade8e1a391bd87fd3",
+    "expect": "valid",
+    "model": "RenderRequest"
+  },
+  "examples/v1/valid/RenderRequest__v2_prompt_manifest_bound.json": {
+    "canonical_sha256": "c4e5be39eb72e002d594d18ff9093fae6661dc3fe8c3720a9ed6b132be8b6dc6",
     "expect": "valid",
     "model": "RenderRequest"
   },
@@ -666,6 +815,56 @@
     "canonical_sha256": "69e9083bf467917d1ebb69c1a1698e73c9c6c6cdd74d6ee3b0c0baf0020cf312",
     "expect": "valid",
     "model": "RightsRecord"
+  },
+  "examples/v1/valid/RunpodBillingAllocation.json": {
+    "canonical_sha256": "e3ffc236eb55c07a03a8962fa7e773d5c53ccd1cce1e699d92078083c937a457",
+    "expect": "valid",
+    "model": "RunpodBillingAllocation"
+  },
+  "examples/v1/valid/RunpodBillingAllocation__cpu.json": {
+    "canonical_sha256": "02316cd9e158be420fa8d433aa8f84eca057a115d99ef6cf5debac6c8928e87d",
+    "expect": "valid",
+    "model": "RunpodBillingAllocation"
+  },
+  "examples/v1/valid/RunpodBillingAllocation__disk.json": {
+    "canonical_sha256": "106ecd4f8a616ac77ab556165c8458a8da18a0f7670cd4811f77d9a74908f3fd",
+    "expect": "valid",
+    "model": "RunpodBillingAllocation"
+  },
+  "examples/v1/valid/RunpodBillingAllocation__recovery.json": {
+    "canonical_sha256": "3cb24cd6c6ec880238d93dcaad7ea33a4526e39b3f256d6f08b42ab10a7d54b1",
+    "expect": "valid",
+    "model": "RunpodBillingAllocation"
+  },
+  "examples/v1/valid/RunpodBillingBucketObservation.json": {
+    "canonical_sha256": "4abe0dd4ab79a81f71cdc672a18dd1e0023941a1b473fa3d0091c1b68b5f9cb7",
+    "expect": "valid",
+    "model": "RunpodBillingBucketObservation"
+  },
+  "examples/v1/valid/RunpodBillingBucketObservation__disputed.json": {
+    "canonical_sha256": "b29791a23536430422bb67f7a786eb54237b35c0cf62fb1f082146a4730debf7",
+    "expect": "valid",
+    "model": "RunpodBillingBucketObservation"
+  },
+  "examples/v1/valid/RunpodBillingBucketObservation__invoice_verified.json": {
+    "canonical_sha256": "89dc0ba0180c33e090bf046c311573c973e432ce146a55be51eab5af6f9290b0",
+    "expect": "valid",
+    "model": "RunpodBillingBucketObservation"
+  },
+  "examples/v1/valid/RunpodBillingQueryObservation.json": {
+    "canonical_sha256": "5ff1224a2660b8a4eb1bac9b8d5740093c02e0ab378d52e97ad7a7c1ec378fef",
+    "expect": "valid",
+    "model": "RunpodBillingQueryObservation"
+  },
+  "examples/v1/valid/RunpodBillingQueryObservation__empty.json": {
+    "canonical_sha256": "dce40475109135915dcfeae2826f5396cabff7c77625795253595e18b1f6b0c0",
+    "expect": "valid",
+    "model": "RunpodBillingQueryObservation"
+  },
+  "examples/v1/valid/RunpodBillingQueryObservation__unknown.json": {
+    "canonical_sha256": "5d013247261478b43e836bd7dea194f4ac04961ccce4f68c925525b6aa47e924",
+    "expect": "valid",
+    "model": "RunpodBillingQueryObservation"
   },
   "examples/v1/valid/Script.json": {
     "canonical_sha256": "add5afa37555124fb7c696364ef1c3f5078ed87d38875485ccbdb520c59a6047",

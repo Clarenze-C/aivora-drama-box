@@ -23,6 +23,11 @@ from uuid import UUID
 from microdrama.contracts.enums import EpisodeState
 from microdrama.contracts.errors import Conflict, NotFound, SchemaInvalid
 from microdrama.contracts.release import ReleasePackage
+from microdrama.contracts.v2 import (
+    ApprovedSlotMetadata,
+    ReleaseApprovalManifest,
+    verify_v2_record_hash,
+)
 from microdrama.persistence.db import Tx, insert_row, jsonb, update_with_revision
 
 # Episode states in which a new release package may still be stored. From RELEASE_APPROVED on the
@@ -52,6 +57,107 @@ class PackageStatus(StrEnum):
 
 _NEW_STATUSES = frozenset({PackageStatus.DRAFT, PackageStatus.READY, PackageStatus.BLOCKED})
 _OPEN_STATUSES = ("DRAFT", "READY", "BLOCKED")
+
+
+def store_approved_slot_metadata(tx: Tx, metadata: ApprovedSlotMetadata) -> None:
+    """Append immutable canonical slot metadata before Gate 2 manifest compilation."""
+    verify_v2_record_hash(metadata)
+    package = tx.fetchone(
+        "SELECT package_hash, body FROM release_packages WHERE id = %s",
+        (metadata.release_package_id,),
+    )
+    if package is None or package["package_hash"] != metadata.release_package_hash:
+        raise Conflict("approved slot metadata names a missing or stale release package")
+    body = ReleasePackage.model_validate(package["body"])
+    expected_slot_ids = {f"slot-{plan.slot.dedupe_key}" for plan in body.release_scope}
+    if metadata.slot_id not in expected_slot_ids:
+        raise Conflict("approved slot metadata identity does not match an exact package slot")
+    tx.execute(
+        "UPDATE approved_slot_metadata SET is_current = false "
+        "WHERE release_package_id = %s AND slot_id = %s AND is_current",
+        (metadata.release_package_id, metadata.slot_id),
+    )
+    insert_row(
+        tx,
+        "approved_slot_metadata",
+        {
+            "metadata_id": metadata.metadata_id,
+            "metadata_version": metadata.metadata_version,
+            "release_package_id": metadata.release_package_id,
+            "release_package_hash": metadata.release_package_hash,
+            "slot_id": metadata.slot_id,
+            "content_sha256": metadata.content_sha256,
+            "payload": jsonb(metadata.model_dump(mode="json")),
+            "is_current": True,
+            "created_at": metadata.created_at,
+        },
+    )
+
+
+def store_release_approval_manifest(tx: Tx, manifest: ReleaseApprovalManifest) -> None:
+    """Persist the sealed manifest shown to the human reviewer before Gate 2."""
+    package = tx.fetchone(
+        "SELECT package_hash FROM release_packages WHERE id = %s", (manifest.release_package_id,)
+    )
+    if package is None or package["package_hash"] != manifest.release_package_hash:
+        raise Conflict("release manifest names a missing or stale V1 package")
+    rows = tx.fetchall(
+        "SELECT payload FROM approved_slot_metadata WHERE release_package_id = %s AND is_current",
+        (manifest.release_package_id,),
+    )
+    current = {row["payload"]["slot_id"]: row["payload"] for row in rows}
+    supplied = {slot.slot_id: slot.model_dump(mode="json") for slot in manifest.slots}
+    if not current or current != supplied:
+        raise Conflict(
+            "release manifest must contain every exact current approved slot metadata row"
+        )
+    insert_row(
+        tx,
+        "release_approval_manifests",
+        {
+            "manifest_hash": manifest.approval_manifest_sha256,
+            "manifest_id": manifest.manifest_id,
+            "version": manifest.version,
+            "release_package_id": manifest.release_package_id,
+            "release_package_hash": manifest.release_package_hash,
+            "payload": jsonb(manifest.model_dump(mode="json")),
+            "created_at": manifest.created_at,
+        },
+    )
+
+
+def current_release_approval_manifest(
+    tx: Tx, *, package_id: UUID, package_hash: str
+) -> ReleaseApprovalManifest | None:
+    """Return the newest manifest only while it exactly covers current slot metadata."""
+    row = tx.fetchone(
+        "SELECT payload, manifest_hash FROM release_approval_manifests "
+        "WHERE release_package_id = %s AND release_package_hash = %s "
+        "ORDER BY created_at DESC, version DESC LIMIT 1",
+        (package_id, package_hash),
+    )
+    if row is None:
+        return None
+    try:
+        manifest = ReleaseApprovalManifest.model_validate(row["payload"])
+    except ValueError:
+        return None
+    if manifest.approval_manifest_sha256 != row["manifest_hash"]:
+        return None
+    current_rows = tx.fetchall(
+        "SELECT slot_id, metadata_id, metadata_version, content_sha256 "
+        "FROM approved_slot_metadata WHERE release_package_id = %s AND is_current",
+        (package_id,),
+    )
+    current = {
+        item["slot_id"]: (item["metadata_id"], item["metadata_version"], item["content_sha256"])
+        for item in current_rows
+    }
+    manifested = {
+        item.slot_id: (item.metadata_id, item.metadata_version, item.content_sha256)
+        for item in manifest.slots
+    }
+    return manifest if current and current == manifested else None
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,13 @@
+{
+  "allocated_at": "2026-10-20T02:00:00Z",
+  "allocation_basis": "STORAGE_OWNER",
+  "allocation_id": "9f9b8c6d-ff6f-5602-84b7-91c82e8b5aeb",
+  "bucket_identity_sha256": "7517c68d39a1f97eb1bc5b1046e3faeea830ccdcd4230b98a84ef0b13e8aa6db",
+  "bucket_observation_id": "66dddccd-b85b-5de1-8c9c-868e6b5cea28",
+  "bucket_revision": 1,
+  "component": "DISK",
+  "delta_micro_usd": 200000,
+  "owner_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "owner_kind": "EPISODE",
+  "schema_version": "1.0"
+}

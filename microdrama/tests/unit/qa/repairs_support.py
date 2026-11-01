@@ -55,7 +55,7 @@ from microdrama.qa.repairs import (
 )
 from microdrama.references.anchors import ref_id_for
 from microdrama.review.packages import store_release_package
-from microdrama.testing.seed import seed_episode, seed_human_session, seed_owner
+from microdrama.testing.seed import seed_episode, seed_human_session
 
 # The example script's first two lines (contracts.examples.script).
 L1 = "s1-l1"
@@ -325,7 +325,7 @@ class RepairsWorld(QAWorld):
             store_release_package(tx, package, status="READY", now=T0)
 
         with self.db.transaction() as tx:
-            owner = seed_owner(tx)
+            owner = self.owner_id()
             session = seed_human_session(tx, owner)
             revision = tx.fetchone("SELECT revision FROM episodes WHERE id = %s", (episode_id,))[
                 "revision"
@@ -413,7 +413,7 @@ class RepairsWorld(QAWorld):
     ) -> UUID:
         """A REAL Gate 2 REVISE decision (the only feedback_events writer)."""
         with self.db.transaction() as tx:
-            owner = seed_owner(tx)
+            owner = self.owner_id()
             session = seed_human_session(tx, owner)
             revision = tx.fetchone("SELECT revision FROM episodes WHERE id = %s", (episode_id,))[
                 "revision"

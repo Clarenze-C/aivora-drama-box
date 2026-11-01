@@ -152,7 +152,11 @@ def test_gate2_replays_never_re_release_or_requeue_publish(pilot) -> None:
             idempotency_key=key,
         )
 
-    human = world.human_owner("t030-replay-owner", "t030-not-a-real-password")
+    # The replay comes from the owner whose season it is (T044a: a foreign owner
+    # would be refused before the replay semantics even apply).
+    human = world.auth.authenticate_session(
+        world.auth.login("pilot-owner", "pilot-not-a-real-password").session_token
+    )
     publish_jobs_before = _count(
         world, "SELECT count(*) FROM jobs WHERE job_type LIKE 'publish.%%'", ()
     )

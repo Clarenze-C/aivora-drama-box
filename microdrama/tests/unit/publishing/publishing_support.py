@@ -53,6 +53,7 @@ from microdrama.review.service import ReviewService
 from microdrama.testing.fakes.common import FakeClock, SequentialIds
 from microdrama.testing.fakes.publishing import FakePublisherAdapter
 from microdrama.testing.seed import (
+    link_season_owner,
     seed_episode,
     seed_gate1_approval,
     seed_human_session,
@@ -73,8 +74,10 @@ def new_key(prefix: str = "key") -> str:
 class PublishingWorld:
     def __init__(self, db: Database, tmp: Path, settings) -> None:
         self.db = db
+        self.settings = settings
         self.clock = FakeClock(T0)
         self.ids = SequentialIds("publishing")
+        self._owner_id: uuid.UUID | None = None
         self.store = FilesystemObjectStore(tmp / "objects")
         self.jobs = JobService(self.db, self.clock, self.ids)
         self.idempotency = IdempotencyService(self.db)
@@ -98,9 +101,15 @@ class PublishingWorld:
 
     # --- principals ------------------------------------------------------------------
 
+    def owner_id(self) -> uuid.UUID:
+        if self._owner_id is None:
+            with self.db.transaction() as tx:
+                self._owner_id = seed_owner(tx)
+        return self._owner_id
+
     def human(self) -> Principal:
+        owner = self.owner_id()
         with self.db.transaction() as tx:
-            owner = seed_owner(tx)
             session = seed_human_session(tx, owner)
         return Principal(
             principal_id=f"owner:{owner}", kind=PrincipalKind.HUMAN_OWNER, session_id=session
@@ -115,13 +124,21 @@ class PublishingWorld:
         season_id = uuid.uuid4()
         scope = season_scope().model_copy(update={"season_id": season_id, "scope_version": 1})
         scope_hash = canonical_hash(scope)
+        owner = self.owner_id()
         with self.db.transaction() as tx:
-            approval_id = seed_gate1_approval(tx, season_id, scope_hash)
+            approval_id = seed_gate1_approval(tx, season_id, scope_hash, owner_id=owner)
             tx.execute(
                 "INSERT INTO seasons (id, state, title_th, title_en, approved_scope_version, "
                 "approved_scope_hash, approval_event_id, approved_at) VALUES (%s, "
                 "'SEASON_APPROVED', %s, 'Test season', 1, %s, %s, %s)",
                 (season_id, scope.title_th, scope_hash, approval_id, self.clock.now()),
+            )
+            link_season_owner(
+                tx,
+                season_id,
+                owner,
+                source="GATE1_APPROVAL_BACKFILL",
+                approval_event_id=approval_id,
             )
             insert_row(
                 tx,
@@ -311,7 +328,7 @@ class PublishingWorld:
         with self.db.transaction() as tx:
             store_release_package(tx, package, status="READY", now=self.clock.now())
         with self.db.transaction() as tx:
-            owner = seed_owner(tx)
+            owner = self.owner_id()
             session = seed_human_session(tx, owner)
             revision = tx.fetchone("SELECT revision FROM episodes WHERE id = %s", (episode_id,))[
                 "revision"

@@ -6,7 +6,7 @@
   "operation_id": "d17b2edf-68d7-5728-8f0d-51c64eb4853b",
   "operation_kind": "comfy.queue_prompt",
   "provider": "fake-comfy",
-  "request_sha256": "e10dcce162ea73eab242495f581d70748e5b7851bf430c0287260bfeef87ed70",
+  "request_sha256": "7799b79fa8235c0f3ed10adebaa62c8e4a5f9f54b2055a8ade8e1a391bd87fd3",
   "reservation_id": "839fda3f-9020-52fd-a127-0286cc8840cd",
   "schema_version": "1.0",
   "state": "SUBMITTED",

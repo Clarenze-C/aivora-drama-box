@@ -1,0 +1,107 @@
+{
+  "$defs": {
+    "RightsStatus": {
+      "enum": [
+        "ELIGIBLE",
+        "INELIGIBLE",
+        "UNKNOWN",
+        "EXPIRED"
+      ],
+      "title": "RightsStatus",
+      "type": "string"
+    },
+    "RightsSubjectKind": {
+      "enum": [
+        "MODEL",
+        "MODEL_OUTPUT",
+        "VOICE",
+        "MUSIC",
+        "FONT",
+        "REFERENCE",
+        "STOCK"
+      ],
+      "title": "RightsSubjectKind",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:2.15.0:RightsGrant",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "commercial_use": {
+      "title": "Commercial Use",
+      "type": "boolean"
+    },
+    "evidence_sha256": {
+      "items": {
+        "description": "Lowercase SHA-256 hex",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Evidence Sha256",
+      "type": "array"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "output_release_allowed": {
+      "title": "Output Release Allowed",
+      "type": "boolean"
+    },
+    "rights_route_id": {
+      "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",
+      "title": "Rights Route Id",
+      "type": "string"
+    },
+    "rights_version": {
+      "minimum": 1,
+      "title": "Rights Version",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/RightsStatus"
+    },
+    "subject_kind": {
+      "$ref": "#/$defs/RightsSubjectKind"
+    },
+    "subject_ref": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Subject Ref",
+      "type": "string"
+    },
+    "territories": {
+      "items": {
+        "pattern": "^[A-Z]{2}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Territories",
+      "type": "array"
+    }
+  },
+  "required": [
+    "rights_route_id",
+    "subject_kind",
+    "subject_ref",
+    "rights_version",
+    "status",
+    "territories",
+    "commercial_use",
+    "output_release_allowed",
+    "evidence_sha256"
+  ],
+  "title": "RightsGrant",
+  "type": "object"
+}

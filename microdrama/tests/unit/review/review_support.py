@@ -57,6 +57,7 @@ from microdrama.review.packages import store_release_package
 from microdrama.review.service import ReviewService
 from microdrama.testing.fakes import fake_price_quote
 from microdrama.testing.seed import (
+    link_season_owner,
     seed_episode,
     seed_gate1_approval,
     seed_human_session,
@@ -126,7 +127,13 @@ class IdentityLockHook:
 
 
 class World:
-    """Builds a review scenario on the real database and exposes the service under test."""
+    """Builds a review scenario on the real database and exposes the service under test.
+
+    The world has ONE canonical owner: every season it creates is linked to that
+    owner at creation (T044a owner scope), and ``human()`` is a session of that
+    owner. Tests that need a second owner or an unassigned legacy season pass an
+    explicit ``owner_id``/``unassigned`` to :meth:`season`.
+    """
 
     def __init__(self, db: Database, store: ObjectStore, clock, ids, settings) -> None:
         self.db = db
@@ -140,6 +147,7 @@ class World:
         self.budget = BudgetService(db, clock, ids, settings)
         self.approval_hooks: list[Any] = []
         self.identity_lock_hook: Any = IdentityLockHook()
+        self._owner_id: uuid.UUID | None = None
         # Tests stand in for T006: every rights/capability condition is satisfied unless a test
         # injects blockers. The fail-closed default is exercised separately.
         self.release_conditions: Any = lambda tx, episode_row, package: []
@@ -162,12 +170,38 @@ class World:
 
     # --- principals --------------------------------------------------------------------
 
+    def set_owner(self, owner_id: uuid.UUID) -> uuid.UUID:
+        """Adopt an existing owner (e.g. one created through AuthService) as the
+        canonical owner the world's seasons are linked to."""
+        self._owner_id = owner_id
+        return owner_id
+
+    def ensure_owner(self) -> uuid.UUID:
+        if self._owner_id is None:
+            with self.db.transaction() as tx:
+                self._owner_id = seed_owner(tx)
+        return self._owner_id
+
+    @property
+    def owner_id(self) -> uuid.UUID:
+        return self.ensure_owner()
+
     def human(self) -> Principal:
+        owner = self.ensure_owner()
         with self.db.transaction() as tx:
-            owner = seed_owner(tx)
             session = seed_human_session(tx, owner)
         return Principal(
             principal_id=f"owner:{owner}", kind=PrincipalKind.HUMAN_OWNER, session_id=session
+        )
+
+    def human_for(self, owner_id: uuid.UUID) -> Principal:
+        """A session of a specific owner (the other owner in cross-owner tests)."""
+        with self.db.transaction() as tx:
+            session = seed_human_session(tx, owner_id)
+        return Principal(
+            principal_id=f"owner:{owner_id}",
+            kind=PrincipalKind.HUMAN_OWNER,
+            session_id=session,
         )
 
     def service_principal(self, kind: PrincipalKind = PrincipalKind.SERVICE_WORKER) -> Principal:
@@ -182,15 +216,31 @@ class World:
 
     # --- seasons and episodes ----------------------------------------------------------
 
-    def season(self, *, approved: bool, scope_version: int = 1) -> tuple[uuid.UUID, Any]:
-        """A season with one proposal (PROPOSED, or APPROVED with the Gate 1 approval bound)."""
+    def season(
+        self,
+        *,
+        approved: bool,
+        scope_version: int = 1,
+        owner_id: uuid.UUID | None = None,
+        unassigned: bool = False,
+    ) -> tuple[uuid.UUID, Any]:
+        """A season with one proposal (PROPOSED, or APPROVED with the Gate 1 approval bound).
+
+        The season is linked to the world's canonical owner at creation (or to
+        ``owner_id``); ``unassigned=True`` leaves it unlinked — the legacy shape
+        owner scope must hide.
+        """
         season_id = uuid.uuid4()
         scope = season_scope().model_copy(
             update={"season_id": season_id, "scope_version": scope_version}
         )
         scope_hash = canonical_hash(scope)
+        owner = None if unassigned else (owner_id or self.ensure_owner())
         with self.db.transaction() as tx:
-            approval_id = seed_gate1_approval(tx, season_id, scope_hash) if approved else None
+            if approved:
+                approval_id = seed_gate1_approval(tx, season_id, scope_hash, owner_id=owner)
+            else:
+                approval_id = None
             insert_row(
                 tx,
                 "seasons",
@@ -219,6 +269,14 @@ class World:
                 },
                 returning="id",
             )
+            if owner is not None:
+                link_season_owner(
+                    tx,
+                    season_id,
+                    owner,
+                    source="GATE1_APPROVAL_BACKFILL" if approved else "CREATOR_AT_CREATION",
+                    approval_event_id=approval_id,
+                )
         return season_id, scope
 
     def episode(

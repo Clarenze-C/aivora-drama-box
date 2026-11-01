@@ -28,7 +28,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:1.6.0:RenderRequest",
+  "$id": "urn:microdrama:contracts:1.15.0:RenderRequest",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "One paid shot-generation attempt. Required controls cannot be dropped.",
@@ -106,6 +106,33 @@
       "title": "Preset Id",
       "type": "string"
     },
+    "prompt_manifest_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prompt Manifest Id"
+    },
+    "prompt_manifest_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Prompt Manifest Sha256"
+    },
     "prompt_text": {
       "description": "Data passed to the graph, never executed",
       "maxLength": 4000,
@@ -156,6 +183,20 @@
       "pattern": "^[A-Za-z0-9._:/\\-|=]+$",
       "title": "Semantic Key",
       "type": "string"
+    },
+    "semantic_workflow_sha256": {
+      "anyOf": [
+        {
+          "description": "Lowercase SHA-256 hex",
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Semantic Workflow Sha256"
     },
     "shot_id": {
       "pattern": "^[a-z0-9][a-z0-9_.\\-]{0,119}$",

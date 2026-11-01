@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">Three answers. Everything else — original Thai fiction, the 180–300&nbsp;s episode band,
+destinations, rights and budget policy — stays the approved default and cannot be set from this page.</p>
+
+{% if defaults.configured %}
+<section data-testid="defaults">
+  <h2>Advanced defaults (locked)</h2>
+  <p>
+    <span class="chip">Thai performance language</span>
+    <span class="chip">original fiction only</span>
+    <span class="chip">{{ defaults.episode_min_duration_ms // 1000 }}–{{ defaults.episode_max_duration_ms // 1000 }} s episodes</span>
+    {% for d in defaults.destinations %}<span class="chip">{{ d }}</span>{% endfor %}
+    <span class="chip">episode cap {{ defaults.episode_cap_micro_usd | usd }}</span>
+    <span class="chip">paid advertising {{ defaults.paid_advertising_budget_micro_usd | usd }}</span>
+  </p>
+</section>
+{% else %}
+<section><p class="warn">Advanced defaults are not configured on this deployment; submissions will record a blocker instead of dispatching.</p></section>
+{% endif %}
+
+{% if step == 1 %}
+<section data-testid="wizard-step" data-step="1">
+  <h2>Step 1 of 3 — your original story idea</h2>
+  <form method="post" action="/ui/intake">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="wizard_key" value="{{ wizard_key }}">
+    <input type="hidden" name="step" value="1">
+    <label for="story_idea">Story idea (Thai or English)</label>
+    <textarea id="story_idea" name="story_idea" maxlength="20000" required
+      placeholder="เช่น ครอบครัวพยายามรักษาร้านอาหารของแม่จากหนี้ที่ไม่มีใครเคยพูดถึง">{{ story_idea }}</textarea>
+    <button type="submit">Next: genre and tone</button>
+  </form>
+</section>
+{% elif step == 2 %}
+<section data-testid="wizard-step" data-step="2">
+  <h2>Step 2 of 3 — genre and tone</h2>
+  <form method="post" action="/ui/intake">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="wizard_key" value="{{ wizard_key }}">
+    <input type="hidden" name="step" value="2">
+    <input type="hidden" name="story_idea" value="{{ story_idea }}">
+    <label for="genre_tags">Genre tags (lowercase, space or comma separated, e.g. <code>family-drama romance</code>)</label>
+    <input id="genre_tags" name="genre_tags" value="{{ genre_tags }}" maxlength="200" required>
+    <label for="tone">Tone (Thai or English)</label>
+    <input id="tone" name="tone" value="{{ tone }}" maxlength="500" required placeholder="อบอุ่นแต่มีความลุ้น">
+    <button type="submit">Next: episode count</button>
+  </form>
+</section>
+{% else %}
+<section data-testid="wizard-step" data-step="3">
+  <h2>Step 3 of 3 — how many episodes?</h2>
+  <form method="post" action="/ui/intake">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="wizard_key" value="{{ wizard_key }}">
+    <input type="hidden" name="step" value="submit">
+    <input type="hidden" name="story_idea" value="{{ story_idea }}">
+    <input type="hidden" name="genre_tags" value="{{ genre_tags }}">
+    <input type="hidden" name="tone" value="{{ tone }}">
+    <label for="episode_count">Episodes (1–10)</label>
+    <select id="episode_count" name="episode_count" required>
+      {% for n in range(1, 11) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
+    </select>
+    <p class="hint">Submitting creates a proposed season and dispatches bounded candidate generation.
+    Nothing is approved here; Gate 1 stays yours.</p>
+    <button type="submit" data-testid="wizard-submit">Create intake</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

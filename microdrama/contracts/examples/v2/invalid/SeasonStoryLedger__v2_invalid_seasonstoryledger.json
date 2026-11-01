@@ -1,0 +1,35 @@
+{
+  "approved_scope_hash": "383045e52c0276a94440e9ebbfd95f2e40a1a014e9c92fb7cc293a99606715a2",
+  "character_logic_record_ids": [
+    "3d11afe3-37d6-5f67-b9ec-8c912f3cee3d"
+  ],
+  "content_sha256": "27dbced399d397a27da8cd6d6f843166d7225e78a44a5ed7b883eff903320999",
+  "created_at": "2026-10-30T00:00:00Z",
+  "escalations": [
+    {
+      "description": "The creditor arrives early.",
+      "episode_number": 1
+    },
+    {
+      "description": "The deadline is shortened.",
+      "episode_number": 2
+    }
+  ],
+  "payoff_debts": [
+    {
+      "debt_id": "co_signed_debt",
+      "description": "Reveal who co-signed the loan.",
+      "due_episode": 2,
+      "status": "UNKNOWN"
+    }
+  ],
+  "promise": "Each debt reveals a family choice.",
+  "record_id": "14f35906-09f1-5392-8fc4-b8d1367ecbc8",
+  "schema_version": "2.0",
+  "season_id": "8d76997a-d050-5046-8d62-79e1b12ac9e6",
+  "secret_ledger_id": "878ac7ab-439e-5fdc-a9bd-3466dfdec5e6",
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

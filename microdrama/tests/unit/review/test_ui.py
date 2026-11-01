@@ -31,7 +31,7 @@ def _client(world: World, offline_settings, *, cookie_secure: bool = False) -> T
 
 @pytest.fixture
 def web(world: World, offline_settings) -> TestClient:
-    world.auth.create_owner("review.owner", PASSWORD)
+    world.set_owner(world.auth.create_owner("review.owner", PASSWORD))
     return _client(world, offline_settings)
 
 

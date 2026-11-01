@@ -4,7 +4,17 @@ import pytest
 from review_support import World
 
 from microdrama.contracts.errors import Conflict, SchemaInvalid
-from microdrama.review.packages import PackageStatus, current_package, store_release_package
+from microdrama.contracts.examples import v2_owner_approved_release_approval_manifest
+from microdrama.contracts.season import ApprovalCommand
+from microdrama.contracts.v2 import ApprovedSlotMetadata, ReleaseApprovalManifest
+from microdrama.review.packages import (
+    PackageStatus,
+    current_package,
+    current_release_approval_manifest,
+    store_approved_slot_metadata,
+    store_release_approval_manifest,
+    store_release_package,
+)
 
 pytestmark = pytest.mark.db
 
@@ -161,3 +171,105 @@ def test_store_helper_is_used_inside_a_caller_transaction(world: World) -> None:
     with world.db.transaction() as tx:
         row_id = store_release_package(tx, package, status=PackageStatus.READY)
     assert row_id == package.package_id
+
+
+def _bound_v2_manifest(package):
+    source = v2_owner_approved_release_approval_manifest()
+    slot_fields = source.slots[0].model_dump(mode="python")
+    slot_fields.update(
+        release_package_id=package.package_id,
+        release_package_hash=package.package_hash,
+        slot_id=f"slot-{package.release_scope[0].slot.dedupe_key}",
+    )
+    slot = ApprovedSlotMetadata.seal(**slot_fields)
+    manifest_fields = source.model_dump(mode="python")
+    manifest_fields.update(
+        release_package_id=package.package_id,
+        release_package_hash=package.package_hash,
+        slots=[slot],
+    )
+    return slot, ReleaseApprovalManifest.seal(**manifest_fields)
+
+
+def test_gate2_manifest_is_current_only_while_it_covers_exact_slot_metadata(world: World) -> None:
+    season_id, _scope = world.season(approved=True)
+    episode_id = world.episode_with_budget(season_id)
+    master = world.asset(season_id=season_id, episode_id=episode_id)
+    package = world.package(season_id=season_id, episode_id=episode_id, master=master)
+    world.store_package(package)
+    slot, manifest = _bound_v2_manifest(package)
+    with world.db.transaction() as tx:
+        store_approved_slot_metadata(tx, slot)
+        store_release_approval_manifest(tx, manifest)
+    with world.db.transaction(readonly=True) as tx:
+        assert (
+            current_release_approval_manifest(
+                tx, package_id=package.package_id, package_hash=package.package_hash
+            )
+            == manifest
+        )
+
+    changed = ApprovedSlotMetadata.seal(
+        **{
+            **slot.model_dump(mode="python"),
+            "version": 2,
+            "metadata_version": 2,
+            "caption": "A substantively changed caption",
+        }
+    )
+    with world.db.transaction() as tx:
+        store_approved_slot_metadata(tx, changed)
+    with world.db.transaction(readonly=True) as tx:
+        assert (
+            current_release_approval_manifest(
+                tx, package_id=package.package_id, package_hash=package.package_hash
+            )
+            is None
+        )
+
+
+def test_owner_can_prepare_a_displayable_manifest_for_the_current_gate2_package(
+    world: World,
+) -> None:
+    _season_id, episode_id, package = world.ready_episode()
+    slot, draft_manifest = _bound_v2_manifest(package)
+    manifest = world.service.prepare_release_approval_manifest(
+        world.human(),
+        episode_id,
+        metadata_policy=draft_manifest.metadata_policy,
+        slots=[slot],
+    )
+    assert manifest.release_package_id == package.package_id
+    assert manifest.slots == [slot]
+    assert manifest.approval_manifest_sha256
+    view = world.service.episode_review(world.human(), episode_id)
+    assert view.release_approval_manifest == manifest
+    assert view.gate_enabled
+
+
+def test_gate2_event_atomically_binds_v1_package_and_v2_manifest_hash(world: World) -> None:
+    _season_id, episode_id, package = world.ready_episode()
+    slot, draft_manifest = _bound_v2_manifest(package)
+    manifest = world.service.prepare_release_approval_manifest(
+        world.human(),
+        episode_id,
+        metadata_policy=draft_manifest.metadata_policy,
+        slots=[slot],
+    )
+    command_fields = world.gate2_command(episode_id, package).model_dump(mode="python")
+    command_fields["release_manifest_hash"] = manifest.approval_manifest_sha256
+    command = ApprovalCommand.model_validate(command_fields)
+    result = world.service.decide_episode(world.human(), episode_id, command)
+    event = world.row(
+        "SELECT package_hash, release_manifest_hash FROM approval_events WHERE id = %s",
+        (result.body["event_id"],),
+    )
+    assert event == {
+        "package_hash": package.package_hash,
+        "release_manifest_hash": manifest.approval_manifest_sha256,
+    }
+    with pytest.raises(Conflict), world.db.transaction() as tx:
+        tx.execute(
+            "UPDATE approval_events SET release_manifest_hash = NULL WHERE id = %s",
+            (result.body["event_id"],),
+        )

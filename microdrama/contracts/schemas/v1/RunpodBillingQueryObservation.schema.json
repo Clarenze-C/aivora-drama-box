@@ -1,0 +1,110 @@
+{
+  "$defs": {
+    "BillingQueryState": {
+      "enum": [
+        "BUCKETS",
+        "EMPTY",
+        "UNKNOWN"
+      ],
+      "title": "BillingQueryState",
+      "type": "string"
+    }
+  },
+  "$id": "urn:microdrama:contracts:1.15.0:RunpodBillingQueryObservation",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bucket_observation_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "title": "Bucket Observation Ids",
+      "type": "array"
+    },
+    "bucket_size_seconds": {
+      "minimum": 1,
+      "title": "Bucket Size Seconds",
+      "type": "integer"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "provider_account_ref": {
+      "pattern": "^acct:[a-z0-9][a-z0-9._\\-]{1,120}$",
+      "title": "Provider Account Ref",
+      "type": "string"
+    },
+    "provider_resolved_window_end": {
+      "format": "date-time",
+      "title": "Provider Resolved Window End",
+      "type": "string"
+    },
+    "provider_resolved_window_start": {
+      "format": "date-time",
+      "title": "Provider Resolved Window Start",
+      "type": "string"
+    },
+    "query_id": {
+      "format": "uuid",
+      "title": "Query Id",
+      "type": "string"
+    },
+    "raw_response_sha256": {
+      "description": "Lowercase SHA-256 hex",
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Response Sha256",
+      "type": "string"
+    },
+    "requested_window_end": {
+      "format": "date-time",
+      "title": "Requested Window End",
+      "type": "string"
+    },
+    "requested_window_start": {
+      "format": "date-time",
+      "title": "Requested Window Start",
+      "type": "string"
+    },
+    "result_state": {
+      "$ref": "#/$defs/BillingQueryState"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "description": "Unsupported/stale versions are rejected",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "unknown_reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unknown Reason"
+    }
+  },
+  "required": [
+    "query_id",
+    "provider_account_ref",
+    "requested_window_start",
+    "requested_window_end",
+    "provider_resolved_window_start",
+    "provider_resolved_window_end",
+    "bucket_size_seconds",
+    "raw_response_sha256",
+    "observed_at",
+    "result_state"
+  ],
+  "title": "RunpodBillingQueryObservation",
+  "type": "object"
+}

@@ -11,6 +11,8 @@ until a fresh QA cycle proves the fix.
 
 from __future__ import annotations
 
+import copy
+from hashlib import sha256
 from uuid import uuid4
 
 import pytest
@@ -23,8 +25,10 @@ from microdrama.contracts.enums import (
     Provenance,
     QAOutcome,
     RepairTarget,
+    RuntimeRole,
     Severity,
 )
+from microdrama.contracts.errors import SchemaInvalid
 from microdrama.contracts.jobs import EpisodeStepInput
 from microdrama.persistence import Database
 from microdrama.persistence.db import insert_row, jsonb
@@ -47,6 +51,241 @@ def _run_to_assembled(world_db, settings, tmp):
     runner.w05_render(episode)
     runner.w06_edit(episode)
     return world, runner, episode
+
+
+def test_w05_pipeline_prop_shot_fails_closed_before_reservation(
+    db: Database, tmp_path, offline_settings: Settings
+) -> None:
+    """The normal W05 caller cannot bypass typed prop preflight."""
+    world = build_pipeline_world(offline_settings, db)
+    runner = MockPipelineRunner(world)
+    season = runner.w01_research()
+    runner.gate1(season)
+    runner.w02_compile(season)
+    episode = runner.create_episode(season)
+    from microdrama.pipeline.mocks import mock_writer_output
+
+    writer_output = copy.deepcopy(mock_writer_output())
+    writer_output["scenes"][0]["staging"]["prop_ids"] = ["ledger"]
+    writer_output["scenes"][0]["lines"][0]["staging"] = {"prop_ids": ["ledger"]}
+    world.fakes.llm.script_role(RuntimeRole.STORY_ARCHITECT, writer_output)
+    runner.w03_write(episode)
+    runner.w04_references(episode)
+    manifest = world.story.manifest(episode)
+    assert any(shot.prop_ids for shot in manifest.shots)
+    reservations_before = runner._row(
+        "SELECT count(*) AS c FROM reservations WHERE episode_id = %s", (episode,)
+    )["c"]
+    operations_before = runner._row(
+        "SELECT count(*) AS c FROM provider_operations WHERE episode_id = %s", (episode,)
+    )["c"]
+    with pytest.raises(SchemaInvalid, match="one current typed PropSheet"):
+        runner.w05_render(episode)
+    assert (
+        runner._row("SELECT count(*) AS c FROM reservations WHERE episode_id = %s", (episode,))["c"]
+        == reservations_before
+    )
+    assert (
+        runner._row(
+            "SELECT count(*) AS c FROM provider_operations WHERE episode_id = %s", (episode,)
+        )["c"]
+        == operations_before
+    )
+
+
+def test_w05_and_repair_dispatch_use_current_typed_prop_packet(
+    db: Database, tmp_path, offline_settings: Settings
+) -> None:
+    """W05 and the ordinary repair port carry exact V2 prop packets to render jobs."""
+    from microdrama.contracts.cost import RenderRequest
+    from microdrama.contracts.examples import (
+        v2_outfit,
+        v2_reference_binding,
+        v2_rights,
+        v2_wardrobe_assignment,
+        v2_wardrobe_bible,
+    )
+    from microdrama.contracts.hashing import canonical_hash
+    from microdrama.contracts.media import AssetDescriptor
+    from microdrama.contracts.season import ShotManifest
+    from microdrama.contracts.v2 import PromptManifest, ReferenceRole
+    from microdrama.references.v2_planning import (
+        AssetDemand,
+        MockAsset,
+        V2ReferenceRepository,
+    )
+    from microdrama.rendering.routing import RouterShotDispatch
+
+    world = build_pipeline_world(offline_settings, db)
+    runner = MockPipelineRunner(world)
+    season = runner.w01_research()
+    runner.gate1(season)
+    runner.w02_compile(season)
+    episode = runner.create_episode(season)
+    from microdrama.pipeline.mocks import mock_writer_output
+
+    writer_output = copy.deepcopy(mock_writer_output())
+    writer_output["scenes"][0]["staging"]["prop_ids"] = ["ledger"]
+    writer_output["scenes"][0]["lines"][0]["staging"] = {"prop_ids": ["ledger"]}
+    world.fakes.llm.script_role(RuntimeRole.STORY_ARCHITECT, writer_output)
+    runner.w03_write(episode)
+    runner.w04_references(episode)
+    manifest = world.story.manifest(episode)
+    prop_shots = [shot for shot in manifest.shots if shot.prop_ids]
+    assert len(prop_shots) == 2  # one establishing shot and one dialogue shot
+    at = world.fakes.clock.now()
+
+    def current(record, **changes):
+        fields = record.model_dump(mode="python")
+        fields.update(created_at=at, updated_at=at, valid_from=at)
+        fields.update(changes)
+        return type(record).seal(**fields)
+
+    repository = V2ReferenceRepository(world.db, world.store)
+    prop_bytes = b"typed offline ledger prop reference"
+    prop_demand = AssetDemand(
+        role="prop",
+        subject_id="ledger",
+        view_name="detail",
+        prompt="approved ledger prop sheet",
+        cache_key=canonical_hash({"fixture": "ledger-prop", "episode": str(episode)}),
+        rights=v2_rights(),
+        estimated_micro_usd=50,
+    )
+    prop_asset = repository.persist_generated(
+        prop_demand,
+        MockAsset(prop_demand.cache_key, prop_bytes, sha256(prop_bytes).hexdigest()),
+        episode_id=episode,
+        season_id=season,
+        now=at,
+    )
+    prop = repository.make_prop_sheet(
+        prop_id="ledger",
+        asset=prop_asset,
+        purpose="evidence of the hidden debt",
+        visual_anchor="dark green cloth ledger",
+        dimensions="A5 notebook",
+        known_states=["closed", "open"],
+        owner_character_id="fon",
+        now=at,
+    )
+
+    def current_reference(ref_kind, ref_key, role, subject_id):
+        with world.db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT rv.asset_id, a.descriptor FROM reference_versions rv "
+                "JOIN assets a ON a.id = rv.asset_id WHERE rv.season_id = %s "
+                "AND rv.ref_kind = %s AND rv.ref_key = %s "
+                "AND rv.state IN ('PROVISIONAL', 'ACCEPTED', 'LOCKED') "
+                "ORDER BY rv.version DESC LIMIT 1",
+                (season, ref_kind, ref_key),
+            )
+        asset = AssetDescriptor.model_validate(row["descriptor"])
+        sample = v2_reference_binding(role, subject_id, "unused", "unused")
+        return type(sample).seal(
+            **{
+                **sample.model_dump(mode="python"),
+                "created_at": at,
+                "updated_at": at,
+                "valid_from": at,
+                "asset_id": asset.asset_id,
+                "asset_version": asset.version,
+                "asset_sha256": asset.sha256,
+            }
+        ), asset
+
+    identity, _identity_asset = current_reference(
+        "FACE", "face.fon", ReferenceRole.CHARACTER_IDENTITY, "fon"
+    )
+    outfit_binding, outfit_asset = current_reference(
+        "WARDROBE", "wardrobe.fon.1", ReferenceRole.OUTFIT, "fon"
+    )
+    location, _location_asset = current_reference(
+        "LOCATION", "location.stall", ReferenceRole.LOCATION, "stall"
+    )
+    outfit = v2_outfit().model_copy(
+        update={
+            "asset_id": outfit_asset.asset_id,
+            "asset_version": outfit_asset.version,
+            "asset_sha256": outfit_asset.sha256,
+        }
+    )
+    wardrobe = current(v2_wardrobe_bible(), outfits=[outfit])
+    assignment = current(
+        v2_wardrobe_assignment(),
+        episode_id=episode,
+        scene_id="sc1",
+        setting="stall",
+        wardrobe_bible_id=wardrobe.record_id,
+        wardrobe_bible_version=wardrobe.version,
+        asset_id=outfit.asset_id,
+        asset_version=outfit.asset_version,
+        asset_sha256=outfit.asset_sha256,
+    )
+    repository.persist_companion_records(
+        [prop, wardrobe, assignment, identity, outfit_binding, location]
+    )
+
+    runner.w05_render(episode)
+    with world.db.transaction(readonly=True) as tx:
+        request_rows = tx.fetchall(
+            "SELECT input FROM jobs WHERE job_type = 'render.shot' AND episode_id = %s",
+            (episode,),
+        )
+        prompt_rows = tx.fetchall(
+            "SELECT payload FROM v2_contract_documents WHERE contract_type = 'PromptManifest' "
+            "AND current AND payload->>'episode_id' = %s",
+            (str(episode),),
+        )
+    requests = [RenderRequest.model_validate(row["input"]) for row in request_rows]
+    prompts = [PromptManifest.model_validate(row["payload"]) for row in prompt_rows]
+    for shot in prop_shots:
+        request = next(item for item in requests if item.shot_id == shot.shot_id)
+        prompt = next(item for item in prompts if item.shot_id == shot.shot_id)
+        prop_binding = next(
+            binding for binding in prompt.bindings if binding.role is ReferenceRole.PROP
+        )
+        assert prop_binding.subject_id == shot.prop_ids[0]
+        assert (prop_binding.asset_id, prop_binding.asset_version, prop_binding.asset_sha256) == (
+            prop.asset_id,
+            prop.asset_version,
+            prop.asset_sha256,
+        )
+        assert prop.asset_sha256 in prompt.source_hashes
+        assert request.reference_asset_ids == list(
+            dict.fromkeys(binding.asset_id for binding in prompt.bindings)
+        )
+        assert assignment.asset_id in request.reference_asset_ids
+        assert prompt.content_hash_matches()
+
+    repair = RouterShotDispatch(
+        world.db,
+        world.comfy,
+        world.jobs,
+        world.router,
+        world.catalog,
+        manifest_for=lambda _episode_id: ShotManifest.model_validate(
+            world.story.manifest(episode).model_dump(mode="python")
+        ),
+        bindings_for=world.references.render_request_bindings,
+    )
+    repair_job_id = repair.dispatch_repair(
+        episode_id=episode,
+        episode_number=1,
+        shot_id=prop_shots[0].shot_id,
+        attempt_number=2,
+    )
+    with world.db.transaction(readonly=True) as tx:
+        repair_job = tx.fetchone("SELECT input FROM jobs WHERE id = %s", (repair_job_id,))
+    repair_request = RenderRequest.model_validate(repair_job["input"])
+    assert repair_request.reference_asset_ids == list(
+        dict.fromkeys(
+            binding.asset_id
+            for binding in next(
+                prompt for prompt in prompts if prompt.shot_id == prop_shots[0].shot_id
+            ).bindings
+        )
+    )
 
 
 def _finding(world, episode_id, asset_id, *, check_id, targets, start_ms, end_ms, family):

@@ -1,0 +1,26 @@
+{
+  "accepted_work": 1,
+  "aggregate_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "blocker_ids": [],
+  "content_sha256": "4529c2e7086c9dcd20c7a53342f388ad326f0f3bccec7c62c96e6b039898118b",
+  "created_at": "2026-10-30T00:00:00Z",
+  "next_action": "Render next shot",
+  "production_stage": "RUNNING",
+  "progress_bp": 2500,
+  "projection_revision": 1,
+  "record_id": "501c5d1a-8b3d-573c-a7b5-d980ef8827ae",
+  "release_stage": "PLANNED",
+  "required_work": 4,
+  "schema_version": "2.0",
+  "source_asset_ids": [],
+  "source_event_ids": [
+    "96d55d7a-e83b-5d68-8c91-5a3e46ab4731"
+  ],
+  "source_job_ids": [
+    "1cc8d22d-60a2-51f8-ba64-4d3361d23fcb"
+  ],
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1
+}

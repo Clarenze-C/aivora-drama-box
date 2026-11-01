@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted">
+  Durable progress, computed from current rows on every view: plan revisions, accepted work,
+  job ledger, QA, cost and release slots. No ETA, no provider-internal percentages — an
+  unknown is shown as unknown.
+</p>
+{% if not progress.episodes %}
+<section><p>No episodes yet.</p></section>
+{% endif %}
+{% for episode in progress.episodes %}
+<section data-testid="progress-episode">
+  <h2>
+    <a href="/ui/episodes/{{ episode.episode_id }}">Episode {{ episode.episode_number }}</a>
+    <span class="chip">state {{ episode.state | label }}</span>
+    {% if episode.outcome %}<span class="chip">outcome {{ episode.outcome | label }}</span>{% endif %}
+    <span class="chip">revision {{ episode.revision }}</span>
+  </h2>
+  <table>
+    <tr>
+      <th>Production</th>
+      <td>
+        <span class="chip">{{ episode.production_stage | label }}</span>
+        {% if episode.production.indeterminate %}
+          <span class="muted">{{ episode.production.indeterminate_reason or "progress unknown" }}</span>
+        {% else %}
+          accepted {{ episode.production.accepted }} / required {{ episode.production.required }}
+          ({{ (episode.production.progress_bp / 100) | round(1) }}%)
+        {% endif %}
+        {% if episode.plan %}
+          <span class="chip">plan v{{ episode.plan.version }} r{{ episode.plan.plan_revision }} ({{ episode.plan.plan_fingerprint | short }})</span>
+          {% if episode.plan.denominator_changed %}
+            {% if episode.plan.previous_version %}
+              <span class="chip warn">plan changed v{{ episode.plan.previous_version }} &rarr; v{{ episode.plan.version }}</span>
+            {% else %}
+              <span class="chip warn">plan replaced by v{{ episode.plan.version }}</span>
+            {% endif %}
+          {% endif %}
+          <p class="hint">{{ episode.plan.denominator_basis }}</p>
+          {% if episode.plan.change_reason %}<p class="hint">{{ episode.plan.change_reason }}</p>{% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Release</th>
+      <td>
+        <span class="chip">{{ episode.release_stage | label }}</span>
+        {% if episode.release_slots %}
+          {% for slot in episode.release_slots %}
+            <span class="chip">{{ slot.platform | label }}/{{ slot.release_slot }}:
+              {{ slot.state | label }}{% if slot.blocker %} — {{ slot.blocker }}{% endif %}</span>
+          {% endfor %}
+        {% else %}
+          <span class="muted">no release slots yet</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Jobs</th>
+      <td>
+        {% if episode.jobs.by_status %}
+          {% for status, count in episode.jobs.by_status.items() %}
+            <span class="chip">{{ status | label }}: {{ count }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="muted">no jobs recorded</span>
+        {% endif %}
+        {% if episode.jobs.retried_jobs %}<span class="chip">retried: {{ episode.jobs.retried_jobs }}</span>{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>QA</th>
+      <td>
+        <span class="chip">open blocking findings: {{ episode.open_blocking_findings }}</span>
+        {% if episode.unknown_coverage %}
+          <span class="chip">unknown coverage windows: {{ episode.unknown_coverage }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Cost</th>
+      <td>
+        {% if episode.cost %}
+          settled {{ episode.cost.settled_micro_usd | usd }},
+          accrued {{ episode.cost.accrued_micro_usd | usd }},
+          held {{ episode.cost.reserved_outstanding_micro_usd | usd }}
+        {% else %}<span class="muted">unknown</span>{% endif %}
+      </td>
+    </tr>
+    {% if episode.next_action %}
+    <tr><th>Next</th><td>{{ episode.next_action }}</td></tr>
+    {% endif %}
+    {% if episode.indeterminate %}
+    <tr>
+      <th>Unknowns</th>
+      <td><ul>{% for item in episode.indeterminate %}<li>{{ item }}</li>{% endfor %}</ul></td>
+    </tr>
+    {% endif %}
+    {% if episode.blockers %}
+    <tr>
+      <th>Blockers</th>
+      <td><ul>{% for blocker in episode.blockers %}<li>{{ blocker }}</li>{% endfor %}</ul></td>
+    </tr>
+    {% endif %}
+  </table>
+  {% if episode.snapshot %}
+  <p class="hint">
+    Canonical progress snapshot {{ episode.snapshot.content_sha256 | short }} bound to episode
+    revision {{ episode.snapshot.projection_revision }} with {{ episode.snapshot.source_event_ids | length }}
+    source event(s).
+  </p>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

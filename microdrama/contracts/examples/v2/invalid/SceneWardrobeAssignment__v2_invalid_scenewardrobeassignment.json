@@ -1,0 +1,39 @@
+{
+  "asset_id": "36e4a68f-4012-5b4a-896b-6b8dae7d8b66",
+  "asset_sha256": "4a373d8b4943851a1e019c4de61f0ede4a279425de4bd06a03e24365e943cec7",
+  "asset_version": 1,
+  "character_id": "fon",
+  "content_sha256": "ff4b45bc1efa703c89bf12b4f5dc90f1268cc5656bbcb93cb447b4fbdbf17f57",
+  "created_at": "2026-10-30T00:00:00Z",
+  "episode_id": "4bf974d9-e535-5031-8e5b-b1e7d75d88cf",
+  "outfit_id": "fon-apron",
+  "outfit_version": 1,
+  "record_id": "28119cd5-7fea-536c-b3c5-d109b45877f5",
+  "reuse_reason": null,
+  "rights": {
+    "commercial_use": true,
+    "evidence_sha256": [
+      "e9a3964d9c2c06c69e9a0038b88b03787d4ad208389b913333048d591e9322f6"
+    ],
+    "expires_at": null,
+    "output_release_allowed": true,
+    "rights_route_id": "original-fiction",
+    "rights_version": 1,
+    "status": "EXPIRED",
+    "subject_kind": "MODEL_OUTPUT",
+    "subject_ref": "original-fiction-output",
+    "territories": [
+      "TH"
+    ]
+  },
+  "scene_id": "scene-1",
+  "schema_version": "2.0",
+  "setting": "stall",
+  "story_day": 1,
+  "updated_at": "2026-10-30T00:00:00Z",
+  "valid_from": "2026-10-30T00:00:00Z",
+  "valid_until": null,
+  "version": 1,
+  "wardrobe_bible_id": "365dc478-aa49-562f-9558-4f7f6aab58cd",
+  "wardrobe_bible_version": 1
+}

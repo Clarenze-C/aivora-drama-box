@@ -1,0 +1,285 @@
+{
+  "examples/v2/invalid/AssetSheet__v2_invalid_assetsheet.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "AssetSheet",
+    "reason": "retired/ineligible rights block use"
+  },
+  "examples/v2/invalid/CharacterLogic__v2_invalid_characterlogic.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "CharacterLogic",
+    "reason": "V1 payload is not V2"
+  },
+  "examples/v2/invalid/ConceptCandidate__pending_rights_without_status.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "ConceptCandidate",
+    "reason": "candidate rights uncertainty must use an explicit PENDING or UNKNOWN status"
+  },
+  "examples/v2/invalid/ConceptCandidate__v2_invalid_conceptcandidate.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "ConceptCandidate",
+    "reason": "rights must be eligible"
+  },
+  "examples/v2/invalid/ConceptIntake__stale_content_hash.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "ConceptIntake",
+    "reason": "V2 canonical content hash must match payload on readback"
+  },
+  "examples/v2/invalid/ConceptIntake__v2_invalid_conceptintake.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "ConceptIntake",
+    "reason": "episode count is bounded"
+  },
+  "examples/v2/invalid/DirectingManifest__v2_invalid_directingmanifest.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "DirectingManifest",
+    "reason": "renderable directing shots are at most 15 seconds"
+  },
+  "examples/v2/invalid/EpisodePack__cyclic_beat_dependencies.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "EpisodePack",
+    "reason": "beat dependency graphs must be acyclic"
+  },
+  "examples/v2/invalid/EpisodePack__cyclic_scene_dependencies.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "EpisodePack",
+    "reason": "scene dependency graphs must be acyclic"
+  },
+  "examples/v2/invalid/EpisodePack__missing_approved_scope_hash.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "EpisodePack",
+    "reason": "episode packs must bind the exact Gate 1 approved scope hash"
+  },
+  "examples/v2/invalid/EpisodePack__missing_beat_dependency.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "EpisodePack",
+    "reason": "beat dependencies must resolve inside the same pack"
+  },
+  "examples/v2/invalid/EpisodePack__missing_scene_dependency.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "EpisodePack",
+    "reason": "scene dependencies must resolve inside the same pack"
+  },
+  "examples/v2/invalid/EpisodePack__unknown_proof_object.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "EpisodePack",
+    "reason": "proof objects must reference props in the containing scene"
+  },
+  "examples/v2/invalid/EpisodePack__v2_invalid_episodepack.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "EpisodePack",
+    "reason": "episode duration is 180-300 seconds"
+  },
+  "examples/v2/invalid/LocationLayout__v2_invalid_locationlayout.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "LocationLayout",
+    "reason": "location requires entrance geometry"
+  },
+  "examples/v2/invalid/ProgressSnapshot__v2_invalid_progresssnapshot.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "ProgressSnapshot",
+    "reason": "progress cannot invent a denominator"
+  },
+  "examples/v2/invalid/PromptManifest__v2_invalid_promptmanifest.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "PromptManifest",
+    "reason": "assigned outfit reference required"
+  },
+  "examples/v2/invalid/PropSheet__v2_invalid_propsheet.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "PropSheet",
+    "reason": "prop requires typed state variants"
+  },
+  "examples/v2/invalid/ReleaseApprovalManifest__v2_invalid_releaseapprovalmanifest.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "ReleaseApprovalManifest",
+    "reason": "Gate-2 hash binds exact metadata"
+  },
+  "examples/v2/invalid/SceneWardrobeAssignment__v2_invalid_scenewardrobeassignment.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "SceneWardrobeAssignment",
+    "reason": "expired outfit rights block use"
+  },
+  "examples/v2/invalid/SeasonStoryLedger__v2_invalid_seasonstoryledger.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "SeasonStoryLedger",
+    "reason": "payoff debt status is closed"
+  },
+  "examples/v2/invalid/SecretLedger__v2_invalid_secretledger.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "SecretLedger",
+    "reason": "V1 payload is not V2"
+  },
+  "examples/v2/invalid/ShotReferenceBinding__v2_invalid_shotreferencebinding.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "ShotReferenceBinding",
+    "reason": "references require a semantic role"
+  },
+  "examples/v2/invalid/StateEvent__v2_invalid_stateevent.json": {
+    "expect": "invalid",
+    "json_schema_rejects": false,
+    "model": "StateEvent",
+    "reason": "state event must change state"
+  },
+  "examples/v2/invalid/StoryTime__v2_invalid_storytime.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "StoryTime",
+    "reason": "V1 payload is not V2"
+  },
+  "examples/v2/invalid/StyleBible__v2_invalid_stylebible.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "StyleBible",
+    "reason": "series style requires a defined palette"
+  },
+  "examples/v2/invalid/V1ManifestReadback__claims_v2_ready.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "V1ManifestReadback",
+    "reason": "legacy V1 readback is never V2-ready"
+  },
+  "examples/v2/invalid/WardrobeBible__v2_invalid_wardrobebible.json": {
+    "expect": "invalid",
+    "json_schema_rejects": true,
+    "model": "WardrobeBible",
+    "reason": "V1 payload is not V2"
+  },
+  "examples/v2/valid/AssetSheet.json": {
+    "canonical_sha256": "3697fa700f3dd6cddb5a924dcfa5e0b221c022a11693f64fe0746dc4ce423f3e",
+    "expect": "valid",
+    "model": "AssetSheet"
+  },
+  "examples/v2/valid/CharacterLogic.json": {
+    "canonical_sha256": "7df89ddbdc4dd31c708d522b546a91cdd1634aa6a668badef6ba78341cc366b6",
+    "expect": "valid",
+    "model": "CharacterLogic"
+  },
+  "examples/v2/valid/ConceptCandidate.json": {
+    "canonical_sha256": "8165652b43b41a9b6a951d7e3bd12768b4a8c88d4c38c51bfde0b7cd18493750",
+    "expect": "valid",
+    "model": "ConceptCandidate"
+  },
+  "examples/v2/valid/ConceptCandidate__pending_rights.json": {
+    "canonical_sha256": "5ab5629a5220df63b826271e52913fbda3d5d77466714ec81eace05f2aebefe2",
+    "expect": "valid",
+    "model": "ConceptCandidate"
+  },
+  "examples/v2/valid/ConceptIntake.json": {
+    "canonical_sha256": "f278ee7193608d064fe06f79139fa43ce1ace265f9b25de9929676b7f03cf5a2",
+    "expect": "valid",
+    "model": "ConceptIntake"
+  },
+  "examples/v2/valid/DirectingManifest.json": {
+    "canonical_sha256": "aa6d91dda515fd60b173fea936204f66490a77f2b10e0d100a1f2f7f6e3e4d50",
+    "expect": "valid",
+    "model": "DirectingManifest"
+  },
+  "examples/v2/valid/DirectingSection.json": {
+    "canonical_sha256": "b010a4499b527828464fbce37ff4b974d997e96dd0124384fa951b513bdc07c4",
+    "expect": "valid",
+    "model": "DirectingSection"
+  },
+  "examples/v2/valid/DirectingShot.json": {
+    "canonical_sha256": "387cc5d40fae1746ff6b017ec6f53c19bb5eb25c43d1fa9dd6b3e6c3a3c2a79e",
+    "expect": "valid",
+    "model": "DirectingShot"
+  },
+  "examples/v2/valid/EpisodePack.json": {
+    "canonical_sha256": "3bd572d5def4e65d5824dd76d8d52e0ce2cd273b6a6f54f4467197ba584e8adb",
+    "expect": "valid",
+    "model": "EpisodePack"
+  },
+  "examples/v2/valid/LocationLayout.json": {
+    "canonical_sha256": "bae15a7bc4d25c41fea4465c1110bfcb520f4f233a5af1c7de870786110d7c01",
+    "expect": "valid",
+    "model": "LocationLayout"
+  },
+  "examples/v2/valid/ProgressSnapshot.json": {
+    "canonical_sha256": "2a0277438ac92b4aeb881c7042541e3721f7eba1003572270efecfe074babb10",
+    "expect": "valid",
+    "model": "ProgressSnapshot"
+  },
+  "examples/v2/valid/PromptManifest.json": {
+    "canonical_sha256": "2bff9226a3a3f65b0e1dde5687c6c389170bc5ce31a3e495bba23b54ad3aaccf",
+    "expect": "valid",
+    "model": "PromptManifest"
+  },
+  "examples/v2/valid/PropSheet.json": {
+    "canonical_sha256": "4c684659a6e07ffb3d0302bd8dea40b04b6a503f887a21af638aff5e33b78e97",
+    "expect": "valid",
+    "model": "PropSheet"
+  },
+  "examples/v2/valid/ReleaseApprovalManifest.json": {
+    "canonical_sha256": "3162f37ac72efe1100bbb90a0d7cbcb47a77b087c20b390b0aff588e0e839dd6",
+    "expect": "valid",
+    "model": "ReleaseApprovalManifest"
+  },
+  "examples/v2/valid/SceneWardrobeAssignment.json": {
+    "canonical_sha256": "cb604f3948760d0ed43ab84e6037fec7cf0c4b31b368cd12e8a07772e9f8e757",
+    "expect": "valid",
+    "model": "SceneWardrobeAssignment"
+  },
+  "examples/v2/valid/SeasonStoryLedger.json": {
+    "canonical_sha256": "91ca2aae85bfc69343072aa4e96ea077094b17218ae38d07bfe8b2dbd6bfce92",
+    "expect": "valid",
+    "model": "SeasonStoryLedger"
+  },
+  "examples/v2/valid/SecretLedger.json": {
+    "canonical_sha256": "7b5dc5ceae9617cc44ae1d91b5df3df4082a13bebeef9772eef0a80edb8bddeb",
+    "expect": "valid",
+    "model": "SecretLedger"
+  },
+  "examples/v2/valid/ShotReferenceBinding.json": {
+    "canonical_sha256": "d4a96f33ee90ba29461d085936950cadfabfd1ef1349029f87320568a89c1703",
+    "expect": "valid",
+    "model": "ShotReferenceBinding"
+  },
+  "examples/v2/valid/StateEvent.json": {
+    "canonical_sha256": "db6532e101deaa1799dadd437763863ddc3d75fd64477b50ba556edd6e370dda",
+    "expect": "valid",
+    "model": "StateEvent"
+  },
+  "examples/v2/valid/StoryTime.json": {
+    "canonical_sha256": "178e6f6f1a7d205440591a9036c8ca14e0189e7e4f7561ab01af23282f369c04",
+    "expect": "valid",
+    "model": "StoryTime"
+  },
+  "examples/v2/valid/StyleBible.json": {
+    "canonical_sha256": "0783be2372a0308051cedbb34218eef109b27b80fa478601fdd4f7e9398559f0",
+    "expect": "valid",
+    "model": "StyleBible"
+  },
+  "examples/v2/valid/V1ManifestReadback.json": {
+    "canonical_sha256": "e7d03fa93e4345a8c926d0274ec28ab10d6023dd8271a19b6417dcf76cf98ac6",
+    "expect": "valid",
+    "model": "V1ManifestReadback"
+  },
+  "examples/v2/valid/WardrobeBible.json": {
+    "canonical_sha256": "0a49f72868981258c9c08834bbb2df6700546f29095ce3695a7dd4e9bb091e6b",
+    "expect": "valid",
+    "model": "WardrobeBible"
+  }
+}
