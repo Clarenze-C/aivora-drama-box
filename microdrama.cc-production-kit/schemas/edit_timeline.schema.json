@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/edit_timeline.schema.json",
+  "title": "Edit Timeline",
+  "type": "object",
+  "required": ["edit_id", "episode_id", "status", "video_clips", "audio_tracks", "subtitle_events", "exports"],
+  "properties": {
+    "edit_id": { "type": "string" },
+    "episode_id": { "type": "string", "pattern": "^E[0-9]{3}$" },
+    "version": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["assembly", "rough", "fine", "picture_locked", "mastered", "exported"]
+    },
+    "frame_rate": { "type": ["string", "number"] },
+    "duration_seconds": { "type": "number", "minimum": 0 },
+    "video_clips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timeline_in", "timeline_out", "source", "source_range", "purpose"],
+        "properties": {
+          "timeline_in": { "type": "string" },
+          "timeline_out": { "type": "string" },
+          "source": { "type": "string" },
+          "source_range": { "type": "string" },
+          "purpose": { "type": "string" },
+          "continuity_note": { "type": "string" },
+          "hidden_defect": { "type": "string" },
+          "transition_in": { "type": "string" },
+          "transition_out": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "audio_tracks": { "type": "array", "items": { "type": "object" } },
+    "subtitle_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "start", "end", "text"],
+        "properties": {
+          "id": { "type": "string" },
+          "start": { "type": "string" },
+          "end": { "type": "string" },
+          "speaker": { "type": "string" },
+          "text": { "type": "string" },
+          "emphasis": { "type": "string" },
+          "position": { "type": "string" },
+          "avoid": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "graphic_events": { "type": "array", "items": { "type": "object" } },
+    "color_pass": { "type": "object" },
+    "picture_lock": { "type": "object" },
+    "hidden_defect_log": { "type": "array", "items": { "type": "object" } },
+    "exports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["deliverable_id", "type", "file"],
+        "properties": {
+          "deliverable_id": { "type": "string" },
+          "type": { "type": "string" },
+          "file": { "type": "string" },
+          "resolution": { "type": "string" },
+          "frame_rate": { "type": ["string", "number"] },
+          "checksum": { "type": "string" },
+          "technical_qc": { "type": "string" },
+          "platform_verification": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "change_log": { "type": "array", "items": { "type": "object" } }
+  },
+  "additionalProperties": true
+}

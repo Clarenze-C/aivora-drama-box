@@ -1,0 +1,7 @@
+# T045 billing migration guard brief — 31 October 2026
+
+Goal: make the eight new billing tables obey the existing schema-wide database invariants. The current full `make check` passed 2452 unit and 462 contract tests; integration had exactly two failures in `tests/integration/persistence/test_schema_catalog.py:62,75` because migrations 0022–0023 omitted `BEFORE TRUNCATE` via `md_forbid_mutation()` and `BEFORE INSERT OR UPDATE` via `md_forbid_non_integer_numbers()` on all eight tables.
+
+Edit only `microdrama/migrations/0022_runpod_billing_reconciliation.sql:1-86` and `microdrama/migrations/0023_runpod_budget_reconciliation.sql:1-38`. Cover `runpod_billing_queries`, `runpod_billing_buckets`, `runpod_billing_allocations`, `runpod_billing_invoice_verifications`, `pod_storage_ownership`, `runpod_billing_budget_postings`, `runpod_billing_recovery_resolutions`, and `runpod_billing_budget_finalizations`. Keep existing append-only/identity guards and table definitions. Follow trigger pattern in `migrations/0021_t037_release_metadata.sql:30-48`; do not edit schema catalog tests or earlier migrations. These two migrations are uncommitted offline work and have not been deployed.
+
+Test from `microdrama/` with isolated PostgreSQL: `PYTHONPATH=src .venv/bin/pytest -q --tb=short tests/integration/persistence/test_schema_catalog.py tests/integration/persistence/test_billing_schema.py tests/integration/persistence/test_migrations.py`. Also run `git diff --check`. Do not run the full suite; parent handles it. No commit, stage, push, provider call or deployment.

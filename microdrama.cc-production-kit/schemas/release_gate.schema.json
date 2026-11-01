@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/release_gate.schema.json",
+  "title": "Release Gate",
+  "type": "object",
+  "required": ["release_candidate", "artifacts", "evidence", "open_issue_counts", "decision"],
+  "properties": {
+    "release_candidate": { "type": "string" },
+    "version": { "type": "string" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "file", "checksum"],
+        "properties": {
+          "artifact_id": { "type": "string" },
+          "type": { "type": "string" },
+          "file": { "type": "string" },
+          "checksum": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["story_qc", "continuity_qc", "technical_qc", "rights_qc", "phone_preview"],
+      "properties": {
+        "story_qc": { "type": "string" },
+        "continuity_qc": { "type": "string" },
+        "technical_qc": { "type": "string" },
+        "commercial_qc": { "type": "string" },
+        "rights_qc": { "type": "string" },
+        "phone_preview": { "type": "string" },
+        "platform_package_qc": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "open_issue_counts": {
+      "type": "object",
+      "required": ["P0", "P1", "P2", "P3"],
+      "properties": {
+        "P0": { "type": "integer", "minimum": 0 },
+        "P1": { "type": "integer", "minimum": 0 },
+        "P2": { "type": "integer", "minimum": 0 },
+        "P3": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "waivers": { "type": "array", "items": { "type": "object" } },
+    "approvals": { "type": "array", "items": { "type": "object" } },
+    "decision": {
+      "type": "string",
+      "enum": ["blocked", "approved", "approved_with_waivers", "released", "rolled_back"]
+    },
+    "online_verification": { "type": "object" },
+    "rollback_candidate": { "type": "string" },
+    "change_log": { "type": "array", "items": { "type": "object" } }
+  },
+  "additionalProperties": true
+}

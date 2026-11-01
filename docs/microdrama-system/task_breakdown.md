@@ -1,8 +1,8 @@
-# Automated Thai Micro-Drama — Multi-Agent Task Breakdown
+# Automated Thai Micro-Drama — V2 Task Breakdown
 
-Version 1.0 · 19 October 2026 · Executes [SPEC.md](SPEC.md) v1.0.
+Version 2.0 · 28 October 2026 · Executes [SPEC.md](SPEC.md) v2.0. Current code contracts remain 1.6.0 until the V2 contract task is accepted.
 
-All tasks start **TODO / unassigned**. This is an orchestration-ready implementation backlog, not an implementation or deployment receipt. The user requested these documents; do not infer permission to deploy, rent GPUs, spend through providers or post to accounts from their existence.
+T001–T030 are historical accepted V1 software tasks. The [26 October remediation record](../../microdrama/evidence/build-review-2026-10-25-remediation.md) closes the prior F01–F09 review. The current full offline check fails at the fixed-date human-session integration fixture (V2-F12), which T048 must repair. T031–T035 remain pending live/reliability tasks; T036–T048 are V2 work defined by the [current-build review](build-review-v2-2026-10-28.md). A task entry is not an implementation or deployment receipt. A review/plan does not itself launch a pod, spend through providers or post to accounts.
 
 ## 1. Orchestrator instructions
 
@@ -59,8 +59,11 @@ Waves express readiness, not mandatory batches; tasks may start earlier only whe
 | M2 Production services | Story T009 → T010 → T011; GPU T012 → T013; media T015 → T016/T017 → T018; T014 once its dependencies pass | Accepted module handoffs, complete fake media flow, real-provider mode still disabled |
 | M3 Distribution/social | T020 → T021/T022/T023/T024; T025 and T026 after their dependencies; T019 feedback repair | Supported adapters implemented offline, one release protocol and no speculative capabilities enabled |
 | M4 System integration | T027, T028 → T029 → T030 | Full two-gate mock path, isolated queues, retries/cost/approval/security/fault evidence |
-| M5 Provider readiness | T031, followed by T032 when external conditions permit | Real rights/preset/account capability evidence; no “mock passed” substitution |
-| M6 First episode | T033 | One actual original Thai episode, actual costs, only the agreed runtime gates, supported verified release and management evidence |
+| M4.5 V1 correctness | T036, T037 and T048 | Prop/outfit mapping, metadata/rearmed publication recovery, and repeatable offline approval-session tests |
+| M5 V1 provider readiness | T045 → T031; T032 follows qualified routes and authorized accounts | Bounded manual Runpod canary plus real V1 adapter/Thai/quality/rights/cost evidence; mock or manual-only success is insufficient |
+| M5 V2 production semantics | T038 → T039/T040 → T041 → T042/T043 → T044 → T047 | Canonical V2 contracts, story/asset/shot state, QC/creatives, owner progress and composed mock integration |
+| M5 V2 private app staging | T046 after T044/T047 | Authenticated, durable private deployment and restart/progress evidence; proposed domain is not public until separately configured |
+| M6 First episode | T033 after T031/T032/T047 | One actual original Thai episode, actual costs, only the agreed runtime gates, supported verified release and management evidence |
 | M7 Reliability qualification | T034 → T035 final closeout | Ten consecutive qualifying productions plus corresponding seven-day management windows; honest blocked/pending statuses |
 
 The two-week pilot reaches as far as evidence allows; M7 can require the season's real release cadence and must not be compressed into a false completion claim.
@@ -101,13 +104,26 @@ The two-week pilot reaches as far as evidence allows; M7 can require the season'
 | T028 | Queue isolation/shared rate limiter/worker runtime | L | T004, T005, T012, T020, T025 | Integrator / workers |
 | T029 | In-app scheduling/composition/complete two-gate mock workflow | L | T008–T028 | Integrator |
 | T030 | Independent invariants/fault/security/readiness validation | L | T029 | Validator |
-| T031 | Real rights/Thai quality/GPU cost/provider configuration qualification | L / Live | T014, T018, T030 | GPU + QA + registry |
-| T032 | Controlled real publication/community/membership tests | L / Live | T021–T026, T030, T031 | Distribution + social |
-| T033 | First actual end-to-end episode and asset lock | L / Live | T031, T032 | Integrator |
+| T031 | Real rights/Thai quality/GPU cost/provider configuration qualification | L / Live | T014, T018, T030, T045 | GPU + QA + registry |
+| T032 | Controlled real publication/community/membership tests | L / Live | T021–T026, T030, T031, T037 | Distribution + social |
+| T033 | First actual end-to-end episode and asset lock | L / Live | T031, T032, T047 | Integrator |
 | T034 | Ten-episode production and seven-day management qualification | L / Live | T033, T027 | Operations + analytics |
-| T035 | Final traceability, evidence and operational handoff | M | T030, T031, T032, T033, T034 | Integrator + independent reviewer |
+| T035 | Final traceability, evidence and operational handoff | M | T030, T031, T032, T033, T034, T046 | Integrator + independent reviewer |
+| T036 | Correct V1 prop/outfit routing and pin draft-to-render regression | M | T010, T011 | Story / references |
+| T037 | Repair W09 absent-post rearm and remove live mock metadata fallback | M | T020, T030 | Distribution |
+| T038 | V2 contract/kit crosswalk, migrations and compatibility | L | T002, T030 | Contract guardian |
+| T039 | Three-step Script Maker, candidate concepts, rich bible and episode packs | L | T038, T009, T010 | Story |
+| T040 | Style/asset sheets and per-character wardrobe/prop/location state | L | T038, T039, T011 | References |
+| T041 | Typed shot state/reference resolver and prompt compiler | L | T036, T038, T039, T040, T014 | Story + references + GPU |
+| T042 | Keyframe preflight and actual-media continuity coverage | L | T041, T017, T018 | GPU + QA |
+| T043 | Poster, optional preview and creative lineage | M | T039, T040, T016 | Media |
+| T044 | Owner workbench and durable progress projection | L | T038, T041, T042, T043, T008 | Review + API |
+| T045 | Real Runpod/Comfy/provider composition and paid benchmark path | L / Live-ready | T036, T048, T012, T013, T030 | GPU + integrator |
+| T046 | Private staging/deployment and proposed domain readiness | M | T044, T047 | Operations |
+| T047 | Independent V2 composed mock/fault acceptance | L | T036–T044, T048 | Validator |
+| T048 | Time-independent integration pilot fixture and approval regression | M | T030 | Integrator + validator |
 
-Ranges mean every task in the inclusive range. T029 requires all T008 through T028; T032 requires T021 through T026. No consumer redefines shared contracts merely because another lane is still busy.
+Ranges mean every task in the inclusive range. T029 requires all T008 through T028; T032 requires T021 through T026 plus T031/T037; T047 requires T036 through T044 and T048. Do not infer that T045 launches a pod: it builds the live-capable path; T031 contains the bounded authorized canary and measured qualification. No consumer redefines shared contracts merely because another lane is still busy.
 
 ## 5. Detailed work packets and acceptance
 
@@ -281,8 +297,8 @@ For each: implement the common T020 interface without local alternate approval/b
 ### T031 — real provider/rights/preset qualification
 
 - **Writes:** assigned `evidence/provider-qualification/` and registry input records; no global policy edits without guardian.
-- **Prerequisites:** actual rights route and credentials, expressly authorized bounded paid benchmarks, prospectively reserved costs and hardware/workflow configuration. Until present, status is `BLOCKED_EXTERNAL`; useful tools/fixtures remain complete.
-- **Execute when authorized:** resolve H3 global output rights or select a separately eligible route; verify Thai voice/reference controls; compare representative dialogue/emotional/prop/scene-reset shots using matching compatible presets. Record full cold/warm timings, all attempts, critical errors, quality/coverage, actual usage and billed cost. Respect the confirmed cap; do not launch an oversized benchmark that assumes an extra budget.
+- **Prerequisites:** T045 live-capable adapter/composition; actual rights route and credentials; expressly authorized bounded paid benchmark; prospectively reserved costs and pinned hardware/workflow configuration. External prerequisites remain honest blockers; T045 and other offline work can proceed meanwhile.
+- **Execute when authorized:** resolve H3 global output rights or select a separately eligible route; do one bounded manual pod/model canary to learn hardware/graph feasibility; then verify V1's own Runpod/Comfy lease, reservation, submit, poll, durable output and verified shutdown path with generic references. Verify Thai voice/reference controls and compare representative dialogue/emotional/prop/scene-reset shots using matching compatible presets. Record full cold/warm timings, all attempts, critical errors, quality/coverage, actual usage and billed cost. The manual canary alone does not pass T031. Respect the confirmed cap; do not launch an oversized benchmark that assumes an extra budget.
 - **Accept:** enabled registry profiles have actual reproducible rights/quality/cost evidence at intended settings; unresolved routes remain disabled. Vendor demos and 5090 speed figures cannot certify a cheaper GPU or a different mode. If no profile meets quality/cap, report feasibility failure rather than mark ready.
 
 ### T032 — controlled real publishing/social/member tests
@@ -295,7 +311,7 @@ For each: implement the common T020 interface without local alternate approval/b
 ### T033 — first real episode
 
 - **Writes:** first-episode runtime records and redacted `evidence/first-episode/`; media belongs in private storage.
-- **Execute when authorized:** actual application Gate 1 for season concept/arc; automated original Thai script→references→shots→FFmpeg/captions/hooks→observation/comparison/repair→Gate 2 package; human final action; automatic supported release and management. Record costs for every attempt, QA coverage and manual interventions.
+- **Execute when authorized:** actual application Gate 1 for season concept/arc; automated original Thai script→typed scene/wardrobe/prop references→keyframes/shots→FFmpeg/captions/hooks/poster/preview when selected→observation/comparison/repair→Gate 2 package; human final action; automatic supported release and management. Record costs for every attempt, QA coverage and manual interventions. T047 must already show the V2 mock path works without hidden manual operators.
 - **Accept:** AT-14 and two-gate workflow work on actual outputs, episode-one identity lock created through Gate 2, pods off during human wait, costs fit configured cap, no hidden manual edit/upload to fake success. If intervention is required, record failed qualification even if the episode is eventually published.
 
 ### T034 — sustained qualification
@@ -307,8 +323,86 @@ For each: implement the common T020 interface without local alternate approval/b
 ### T035 — final handoff and traceability
 
 - **Writes:** operational README/runbooks, requirement/evidence matrix and final task ledger; guardian handles accepted contract changes.
-- **Deliver:** reproduce software checks, documented setup/config/restore/rotation/cancel procedures, required capability/rights/preset evidence, fixed/variable/full cost reporting, owner-review instructions and remaining risks. Independent reviewer assesses the final integrated implementation.
+- **Deliver:** reproduce software checks, documented setup/config/restore/rotation/cancel procedures, required capability/rights/preset evidence, fixed/variable/full cost reporting, V2 owner-app and domain operations, owner-review instructions and remaining risks. Independent reviewer assesses the final integrated implementation.
 - **Accept:** every MD/IMP/AT row mapped to code, tests and real evidence where required. M4 software-only handoff may be documented early, but overall completion remains pending until M5–M7 evidence is satisfied or explicitly reported as incomplete. No “fully automated and viable” claim from implementation alone.
+
+### T036 — V1 prop/outfit routing correction (V2-F01)
+
+- **Writes:** story compiler and scoped tests; references lane owns any changed binding behavior. Contract changes, if required, go through T038.
+- **Build:** map writer `staging.prop_ids` to shot `prop_ids`, leave outfit IDs to wardrobe planning, and reject or identify unknown props before rendering. Preserve V1 manifest readback for audit without misclassifying old corrupt data as a valid outfit.
+- **Accept:** a draft with a prop in dialogue produces that exact prop in the manifest and render packet with no false outfit; establishing and dialogue shots both pass. Test a missing prop and a corrected rerun through the ordinary budget/idempotency path. Record the source-level read-only reproduction from the V2 review.
+
+### T037 — live-release scheduling and metadata correction (V2-F04/F05)
+
+- **Writes:** publishing command builder, scheduler discovery and scoped tests.
+- **Build:** discover a reconciled-absent slot rearmed as `SUBMITTED` with pending provider operation; construct a current-version command from approved release scope and metadata, not the mock fallback. Retain single-flight per slot and dedupe across periods/restarts.
+- **Accept:** an absent result leads to one later submit and verified readback; a crash/restart or concurrent timer does not duplicate it; stale metadata/capability/approval blocks; a live transport never receives mock-labeled title/caption/description. Fixture-only metadata remains explicitly confined to OFFLINE_MOCK.
+
+### T038 — V2 contract and kit crosswalk
+
+- **Writes:** canonical contracts, schema generation, examples, ordered migrations and compatibility notes.
+- **Build:** map the production kit's episode/asset/continuity concepts to V2 canonical records without importing incompatible ID, duration and status rules. Define concept intake/candidate, character logic, episode pack, story time, wardrobe bible/assignment, state event, prop/location sheet, style bible, typed shot reference, prompt manifest and progress projection. Use stable IDs, versions, hashes, rights and validity intervals; define legacy V1 read behavior.
+- **Accept:** generated schemas/examples/migrations and downgrade/upgrade/readback evidence; a V1 manifest remains readable but is explicitly not V2-ready; role-less assets, contradictory state, stale outfit and retired rights are rejected before paid work. No second source of truth.
+
+### T039 — Script Maker and richer bible
+
+- **Writes:** research/story services, writer/critic prompts and scoped tests; UI input surface is T044.
+- **Build:** turn story, genre/tone and episode count into original candidate scopes under a bounded research envelope. Add character wants, strategy, flaw, secrets, relationships and knowledge timing, plus season promise/payoff/escalation ledgers. Generate detailed first-three episode packs and a later-episode map after the existing Gate 1 decision; no additional routine approval gate.
+- **Accept:** an owner-entered short idea reaches Gate 1 without hand-written `SeasonScope`; the chosen scope is hash-bound; future secrets do not leak; each episode pack lists visible cast, props, locations, proof objects, story time and required assets; Thai and duration constraints hold.
+
+### T040 — series look, sheets and wardrobe/state library
+
+- **Writes:** references/asset planning and scoped tests; cross-module fields are owned by T038.
+- **Build:** generate demand-driven character angles, per-character outfit sheets, props and location layouts/empty plates, and a style bible with a short moving sample. Assign outfit by character, scene, story day, setting and explicit change/reuse reason; maintain prop ownership/hand and wardrobe state intervals. Cost, rights and cache keys cover every distinct asset version.
+- **Accept:** day-one office and next-day home scenes bind distinct outfits by default; same-outfit reuse requires a reason; silent visible characters and key props receive references; only the current approved outfit is attached to a shot; changed/retired assets invalidate affected dependents, not the whole season. Real dimensions/cost remain T031 evidence.
+
+### T041 — shot state, reference resolver and prompt compiler
+
+- **Writes:** story/directing compiler, reference resolver and GPU workflow binding through serialized module handoffs.
+- **Build:** compile the episode pack into scene/beat/shot records with state-in → event → state-out, screen direction, eyeline, action handoff, sound and edit intent. Produce roughly 30-second editorial groups for the UI but render individual at-most-15-second shots. Select typed exact-version identity, outfit, prop, location, style and first/last/handoff assets; fail on conflicts. Vendor-specific workflow adapters map semantic roles to actual controls without index-based guessing.
+- **Accept:** AT-15–17 and a composed draft→pack→manifest→reference→prompt→workflow trace pass; no future secret or unrelated asset enters a shot prompt; changed source hashes trigger targeted regeneration and review; required controls unsupported by the selected route block before reservation.
+
+### T042 — keyframe preflight and continuity QA
+
+- **Writes:** rendering/QA services and scoped tests.
+- **Build:** where model route supports it, validate still keyframes before motion for identity, assigned outfit, location geometry, prop details, light and frame handoff. Add actual-media checks and coverage accounting for wardrobe, props, space/action, Thai voice/subtitles and phone viewing; calibrate model evaluators on a labeled set and preserve UNKNOWN for unobserved facts.
+- **Accept:** seeded identity/outfit/prop/eyeline/proof-text errors route to the earliest correct repair stage; passing keyframes alone do not certify motion; model QA reports measured false positives/negatives and applicable shot classes before any release-gating use.
+
+### T043 — poster, preview and creative lineage
+
+- **Writes:** editing/variants/cover services and scoped tests.
+- **Build:** create a static poster with approved character/title/CTA assets and an optional up-to-90-second episode-one preview from accepted source footage, separately from the existing three short hook candidates. Bind reveal boundary, source ranges, rights, mobile safe zones, platform variants and package hashes.
+- **Accept:** all new creatives appear in the Gate 2 package; changing a source invalidates only derivatives; no new generation job or publication obligation is silently created; a spoiler, wrong CTA or unreadable poster fails review.
+
+### T044 — owner workbench and progress projection
+
+- **Writes:** review/API routes/templates or a documented frontend module, with owner-scoped tests.
+- **Build:** three-step intake, season bible, sheets/look, episode sections, shots, media/review and release views. Project a full timeline from durable events/jobs/asset/review/post state, showing stage and overall percent, accepted/total work, cost, blockers, retries, waits, next action and version. Keep production and release completion separate.
+- **Accept:** refresh/restart/retry/revision, a new planned outfit/shot, a failed provider call and both human gates display truthful progress and reasons; percent can decrease with explicit version change; no invented provider-internal progress or owner-scope leak; existing two gates remain authoritative.
+
+### T045 — live V1 provider composition and paid benchmark path
+
+- **Writes:** Runpod adapter, Comfy transport, live composition/worker bootstrap, storage/billing/cleanup integration, scoped tests and operator runbook. No pod launch is part of code completion.
+- **Build:** preserve OFFLINE_MOCK refusal, add explicitly configured PAID_BENCHMARK adapters with credential references and real clock/IDs; select compatible pinned workflow/GPU/rights/price; support owned create/find/stop/terminate, submit/poll, durable output, actual usage, restart reconciliation and independent janitor. Separate production/publication/community capacities. The benchmark tool must produce real receipts rather than relabel fake evidence.
+- **Accept:** fixture fault injection covers create/submit ambiguity, stop failure, rate/price changes and restart; no external call without reservation and effect authorization; live configuration refuses unqualified rights/presets. T031 alone records actual pod/quality/cost evidence.
+
+### T046 — private staging and domain readiness
+
+- **Writes:** deployment definition, secret references, TLS/auth/private-media configuration, backup/restore and operations runbook.
+- **Build:** stage one owner, one series and one episode privately; then prepare `dramabox.aivora.agency` with DNS/TLS only as a separately executed deployment action. Keep public posting independently gated by Gate 2 and account capability.
+- **Accept:** authenticated owner scope, no public media leakage, restart/backup/restore and worker/janitor isolation drills pass; staging progress agrees with persisted job state; production hostname is not marked live from a local mock page.
+
+### T047 — independent V2 composed acceptance
+
+- **Writes:** integration/fault tests and redacted V2 evidence; findings return to the responsible module owners.
+- **Build:** start from a short story idea, approve one season, automatically create bible/packs/sheets/style/wardrobe assignments, compile and render fake short shots, assemble/QA/repair, show correct timeline, and reach the same episode Gate 2. Inject prop/outfit mismatch, next-day change, stale reference, failed attempt, restart and revision; exercise poster/preview lineage.
+- **Accept:** AT-15–17 and AT-20–23 pass from composed behavior, AT-19's rearm path passes against fixture transports, prior AT-01–13 remain green, and `make check`/`make pilot` are rerun. State clearly that AT-18 live pod evidence, AT-19 real-account extension and AT-14 still require T031–T033.
+
+### T048 — time-independent pilot and integration fixture (V2-F12)
+
+- **Writes:** mock-world/test fixture clock setup, integration tests and pilot runbook. The production approval migration and authorization policy stay strict.
+- **Build:** keep the fake media/production timeline deterministic while creating a genuinely live test owner session relative to the database server clock, or provide an equivalent isolated test-time mechanism. Audit fixture provider timestamps and scheduled windows so a different calendar day does not invalidate the mock route. Do not backdate approval events or extend production session TTL to conceal the issue.
+- **Accept:** `make check`, `make pilot`, the scheduler-driven integration test and the independent AT-02/AT-03 approval tests pass on a fresh date and when the old fixed 2026-10-27 fixture time is more than eight hours in the past. A genuinely expired/forged session is still denied by the DB. Record the 28 October failure and corrected test receipts.
 
 ## 6. Requirement-to-task coverage
 
@@ -330,10 +424,18 @@ For each: implement the common T020 interface without local alternate approval/b
 | IMP-04 observation-first | T018, T030 | AT-06 |
 | IMP-05 feedback memory | T008, T019 | AT-07 |
 | IMP-07 three hooks | T016, T027 | AT-10 |
+| V2-01/02 intake, bible, episode packs | T038, T039, T044, T047 | AT-20 |
+| V2-03/04/05 story time, sheet and wardrobe state | T036, T038, T040, T041, T047 | AT-15/16/17 |
+| V2-06/07 look, typed references and prompt compiler | T038, T040, T041, T042, T047 | AT-17 |
+| V2-08 keyframe/actual-media continuity | T042, T031, T047 | AT-05/17/18 |
+| V2-09 poster and optional preview | T043, T047 | AT-22 |
+| V2-10 owner timeline and domain | T044, T046, T047 | AT-21 |
+| V2-11 current defects and release recovery | T036, T037, T041, T047, T048 | AT-15/17/19/23 |
+| V2-12 staged live rollout | T045, T031–T035, T046 | AT-14/18/19 |
 
 ## 7. Completion ledger and handoff format
 
-Orchestrator alone maintains [task_status.csv](task_status.csv). Permitted statuses: `TODO`, `CLAIMED`, `IN_PROGRESS`, `REVIEW`, `DONE`, `BLOCKED_EXTERNAL`, `FAILED`, `CANCELLED`. DONE requires accepted scoped evidence; an external blocker cannot be hidden behind a DONE comment. A split software-versus-live result must state its milestone precisely.
+Orchestrator alone maintains [task_status.csv](task_status.csv). Permitted statuses: `TODO`, `CLAIMED`, `IN_PROGRESS`, `REVIEW`, `ACCEPTED` (historical V1 usage), `DONE` (equivalent accepted result for new tasks), `BLOCKED_EXTERNAL`, `FAILED`, `CANCELLED`. `DONE` or `ACCEPTED` requires scoped evidence; a planned contract version, mock pass or external blocker cannot be hidden behind completion. A split software-versus-live result must state its milestone precisely. Do not reset T001–T030 because V2 was added.
 
 For each task return:
 
@@ -352,4 +454,4 @@ Do not paste tokens, private contacts, raw payment data, full media blobs or unv
 
 ## 8. Ready-to-use orchestrator brief
 
-> Implement the system specified in `/root/AIVORA/drama-box/docs/microdrama-system/SPEC.md`, following `/root/AIVORA/drama-box/docs/microdrama-system/task_breakdown.md`. Start by inspecting applicable repository instructions and existing state; do not restart completed accepted tasks. Use the current task ledger and validation checkpoint; do not restart accepted T001–T003/T007. Resume independent M1 validation for T004–T006/T008 before opening dependent tasks. For a fresh bootstrap only, establish the isolated `microdrama/` scaffold and freeze contracts/persistence first. Dispatch at most three workers on dependency-ready disjoint paths and retain one integrator. Keep all paid/provider/public effects disabled until their explicit prerequisites and authorization exist. Workers return scoped handoffs; only the integrator changes shared contracts, migrations, registries and status. Preserve the two runtime human gates, US$10 episode cap and all IMP-01–08 requirements. Validate budget concurrency, approval provenance, actual-media QA coverage, crash recovery, queue isolation and publication dedupe independently. Report software-ready, provider-qualified, first-episode and ten-episode qualification separately. Do not claim the live system works from mocks or silently add manual operators to make it pass.
+> Implement [SPEC.md](SPEC.md) v2.0 using this breakdown and the [current-build review](build-review-v2-2026-10-28.md). Inspect the checkout and ledger first; preserve accepted T001–T030 and the closed 26 October remediation. Repair the V2-F12 fixed-date integration fixture first and close V2-F01/F02/F04/F05 before their affected paid/public paths. Freeze T038 contracts before dependent V2 modules. Follow dependency-ready tasks T036–T048, then the still-pending T031–T035 live/reliability gates; do not call a manual Runpod sample an integrated V1 pass. Keep paid/cloud/public effects disabled until their own prerequisites and authorization. Preserve two runtime human gates, original Thai fiction, the US$10 episode cap and IMP-01–08. Test composed prop/outfit/reference binding, W09 rearm, progress truth, budget/approval/QA/recovery and private-owner access. Report software-ready, provider-qualified, first-episode, staged-domain and ten-episode qualification separately. Do not claim the live system works from mocks or silently add manual operators to make it pass.

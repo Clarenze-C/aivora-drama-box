@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/rights_ledger.schema.json",
+  "title": "Rights Ledger",
+  "type": "object",
+  "required": ["items", "ai_labeling", "evidence_archive"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rights_id", "asset", "category", "scope", "status"],
+        "properties": {
+          "rights_id": { "type": "string" },
+          "asset": { "type": "string" },
+          "category": { "type": "string" },
+          "licensor": { "type": "string" },
+          "scope": { "type": "object" },
+          "prohibited": { "type": "array", "items": { "type": "string" } },
+          "evidence_files": { "type": "array", "items": { "type": "string" } },
+          "expires_at": { "type": "string" },
+          "expiry_action": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["cleared", "restricted", "pending", "blocked", "expired"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "ai_labeling": {
+      "type": "object",
+      "properties": {
+        "jurisdictions": { "type": "array", "items": { "type": "string" } },
+        "visible_label": { "type": "string" },
+        "metadata_label": { "type": "string" },
+        "platform_declarations": { "type": "array", "items": { "type": "object" } },
+        "verified_at": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "model_terms_reviews": { "type": "array", "items": { "type": "object" } },
+    "evidence_archive": { "type": "object" },
+    "release_blocks": { "type": "array", "items": { "type": "string" } },
+    "change_log": { "type": "array", "items": { "type": "object" } }
+  },
+  "additionalProperties": true
+}

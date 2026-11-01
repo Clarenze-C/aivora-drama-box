@@ -30,6 +30,9 @@ Outputs land in `out/pilot-demo/`:
 
 Every provider is a T007 fake; the offline network guard blocks any
 non-loopback connection. Nothing in this path can spend money or act publicly.
+The mock production/provider timeline remains fixed and reproducible, while
+owner sessions are created and checked against PostgreSQL's `clock_timestamp()`
+so the production approval expiry rule remains active on any calendar date.
 
 ## The trigger layer (replaces n8n — operator decision 2026-10-23)
 

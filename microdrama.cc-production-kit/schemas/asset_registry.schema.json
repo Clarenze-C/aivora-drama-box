@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/asset_registry.schema.json",
+  "title": "Asset Registry",
+  "type": "object",
+  "required": [
+    "characters",
+    "locations",
+    "props",
+    "voices",
+    "styles"
+  ],
+  "properties": {
+    "characters": {
+      "type": "object",
+      "patternProperties": {
+        "^CH_[A-Z0-9_]+$": {
+          "type": "object",
+          "required": [
+            "name",
+            "role",
+            "face_anchor",
+            "hair_anchor",
+            "wardrobe_anchor",
+            "symbolic_identifier"
+          ],
+          "properties": {
+            "name": { "type": "string" },
+            "role": { "type": "string" },
+            "version": { "type": "string" },
+            "status": {
+              "type": "string",
+              "enum": ["exploration", "candidate", "review", "approved", "golden", "locked", "deprecated", "retired", "rejected"]
+            },
+            "phase": { "type": "string" },
+            "face_anchor": { "type": "string" },
+            "hair_anchor": { "type": "string" },
+            "body_anchor": { "type": "string" },
+            "wardrobe_anchor": { "type": "string" },
+            "symbolic_identifier": { "type": "string" },
+            "negative_constraints": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "reference_images": {
+              "type": "object"
+            },
+            "golden_reference_manifest": {
+              "type": "array",
+              "items": { "type": "object" }
+            },
+            "pose_motion_signature": { "type": "object" },
+            "voice_ref": { "type": "string" },
+            "rights_status": { "type": "string" },
+            "provenance": { "type": "object" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "locations": {
+      "type": "object",
+      "patternProperties": {
+        "^LOC_[A-Z0-9_]+$": {
+          "type": "object",
+          "required": [
+            "name",
+            "status_meaning",
+            "visual_anchor",
+            "camera_zones"
+          ],
+          "properties": {
+            "name": { "type": "string" },
+            "status_meaning": { "type": "string" },
+            "visual_anchor": { "type": "string" },
+            "version": { "type": "string" },
+            "status": { "type": "string" },
+            "geometry": { "type": "object" },
+            "fixed_anchors": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "camera_zones": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "lighting": { "type": ["string", "object"] },
+            "empty_plate_refs": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "states": { "type": "object" },
+            "avoid": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "props": {
+      "type": "object",
+      "patternProperties": {
+        "^PROP_[A-Z0-9_]+$": {
+          "type": "object",
+          "required": [
+            "name",
+            "purpose",
+            "visual_anchor"
+          ],
+          "properties": {
+            "name": { "type": "string" },
+            "purpose": { "type": "string" },
+            "visual_anchor": { "type": "string" },
+            "version": { "type": "string" },
+            "status": { "type": "string" },
+            "owner": { "type": "string" },
+            "dimensions": { "type": "string" },
+            "states": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "text_layer_ref": { "type": "string" },
+            "production_note": { "type": "string" },
+            "insert_shots": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "voices": {
+      "type": "object"
+    },
+    "wardrobes": {
+      "type": "object",
+      "patternProperties": {
+        "^WD_[A-Z0-9_]+$": {
+          "type": "object",
+          "required": ["owner", "phase", "pieces"],
+          "properties": {
+            "owner": { "type": "string" },
+            "phase": { "type": "string" },
+            "pieces": { "type": "object" },
+            "materials": { "type": ["string", "object"] },
+            "accessories": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "states": { "type": "object" },
+            "reference_images": { "type": "object" },
+            "negative_constraints": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "graphics": {
+      "type": "object",
+      "patternProperties": {
+        "^GRAPHIC_[A-Z0-9_]+$": {
+          "type": "object",
+          "required": ["purpose", "factual_fields"],
+          "properties": {
+            "purpose": { "type": "string" },
+            "factual_fields": { "type": "object" },
+            "display_format": { "type": "string" },
+            "languages": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "references": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "font_rights": { "type": "string" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "styles": {
+      "type": "object"
+    },
+    "dependency_graph": { "type": "object" },
+    "change_log": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "rights_provenance": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/project.schema.json",
+  "title": "Microdrama Project",
+  "type": "object",
+  "required": [
+    "project_id",
+    "version",
+    "status",
+    "opportunity_brief",
+    "series_bible",
+    "asset_registry",
+    "episodes",
+    "rights_log",
+    "metrics_ledger"
+  ],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "pattern": "^MD[0-9A-Za-z_-]+$"
+    },
+    "version": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "brief",
+        "story_design",
+        "script",
+        "asset_lock",
+        "storyboard",
+        "generation",
+        "edit",
+        "test",
+        "scale",
+        "paused"
+      ]
+    },
+    "opportunity_brief": {
+      "type": "object",
+      "required": [
+        "audience",
+        "platform_assumption",
+        "genre",
+        "emotional_engine"
+      ],
+      "properties": {
+        "audience": { "type": "string" },
+        "platform_assumption": { "type": "string" },
+        "genre": { "type": "string" },
+        "visual_style": { "type": "string" },
+        "emotional_engine": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "freshness_levers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "avoid": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "hook_families": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "series_bible": {
+      "type": "object"
+    },
+    "asset_registry": {
+      "$ref": "asset_registry.schema.json"
+    },
+    "episodes": {
+      "type": "array",
+      "items": {
+        "$ref": "episode_pack.schema.json"
+      }
+    },
+    "rights_log": {
+      "type": "object"
+    },
+    "metrics_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true
+}

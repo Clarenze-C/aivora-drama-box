@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/metrics_ledger.schema.json",
+  "title": "Metrics Ledger",
+  "type": "object",
+  "required": ["experiments", "observations", "decisions"],
+  "properties": {
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["experiment_id", "hypothesis", "variants", "primary_metric"],
+        "properties": {
+          "experiment_id": { "type": "string" },
+          "hypothesis": { "type": "string" },
+          "variants": { "type": "array", "items": { "type": "string" } },
+          "controlled": { "type": "array", "items": { "type": "string" } },
+          "primary_metric": { "type": "string" },
+          "guardrails": { "type": "array", "items": { "type": "string" } },
+          "decision_rule": { "type": "string" },
+          "budget": { "type": "object" },
+          "status": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "observations": { "type": "array", "items": { "type": "object" } },
+    "comment_coding": { "type": "array", "items": { "type": "object" } },
+    "costs": { "type": "object" },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["decision_id", "evidence", "diagnosis", "action", "return_to"],
+        "properties": {
+          "decision_id": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "diagnosis": { "type": "string" },
+          "action": { "type": "string" },
+          "return_to": { "type": "string" },
+          "do_not_change": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    },
+    "scale_gate": { "type": "object" },
+    "stop_decision": { "type": "object" }
+  },
+  "additionalProperties": true
+}

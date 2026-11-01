@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://microdrama.local/schemas/episode_pack.schema.json",
+  "title": "Episode Pack",
+  "type": "object",
+  "required": [
+    "episode_id",
+    "status",
+    "duration_target_seconds",
+    "opening_hook",
+    "commercial_question",
+    "beats",
+    "cliffhanger",
+    "storyboard"
+  ],
+  "properties": {
+    "episode_id": {
+      "type": "string",
+      "pattern": "^E[0-9]{3}$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "needs_review",
+        "approved",
+        "blocked",
+        "in_generation",
+        "in_edit",
+        "exported"
+      ]
+    },
+    "version": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "state_in": {
+      "type": "object"
+    },
+    "state_out": {
+      "type": "object"
+    },
+    "pays": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "borrows": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "duration_target_seconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 600
+    },
+    "opening_hook": {
+      "type": "object",
+      "required": [
+        "hook_type",
+        "visual",
+        "line"
+      ],
+      "properties": {
+        "hook_type": { "type": "string" },
+        "visual": { "type": "string" },
+        "line": { "type": "string" },
+        "target_emotion": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "commercial_question": {
+      "type": "string"
+    },
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "wardrobe": { "type": "string" },
+          "goal": { "type": "string" },
+          "emotion_in": { "type": "string" },
+          "emotion_out": { "type": "string" },
+          "forbidden": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "locations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "props": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "beats": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "beat_id",
+          "time_range",
+          "emotion",
+          "visible_action",
+          "required_assets"
+        ],
+        "properties": {
+          "beat_id": {
+            "type": "string",
+            "pattern": "^B[0-9]{2}$"
+          },
+          "time_range": { "type": "string" },
+          "emotion": { "type": "string" },
+          "visible_action": { "type": "string" },
+          "dialogue": { "type": "string" },
+          "required_assets": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "generation_risks": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "function": { "type": "string" },
+          "state_change": { "type": "string" },
+          "audio": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "cliffhanger": {
+      "type": "object",
+      "required": [
+        "type",
+        "withheld_satisfaction",
+        "next_episode_first_shot"
+      ],
+      "properties": {
+        "type": { "type": "string" },
+        "withheld_satisfaction": { "type": "string" },
+        "next_episode_first_shot": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "script": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "narration": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string" },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "text"],
+            "properties": {
+              "id": { "type": "string" },
+              "text": { "type": "string" },
+              "use": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "subtitles": {
+      "type": "object"
+    },
+    "compliance": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "approvals_required": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "storyboard": {
+      "type": "array",
+      "items": {
+        "$ref": "storyboard.schema.json"
+      }
+    },
+    "generation_records": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "edit_timeline": {
+      "type": "object"
+    },
+    "ad_variants": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "qc_reports": {
+      "type": "array",
+      "items": {
+        "$ref": "qc_report.schema.json"
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -5,6 +5,8 @@ Automated original Thai micro-drama production and organic social operation.
 ## Project entry points
 
 - [Implementation SPEC](docs/microdrama-system/SPEC.md)
+- [Production app review and plan](docs/microdrama-system/production-app-review-and-plan.md)
+- [Current-build V2 findings](docs/microdrama-system/build-review-v2-2026-10-28.md)
 - [Multi-agent task breakdown](docs/microdrama-system/task_breakdown.md)
 - [Current task ledger](docs/microdrama-system/task_status.csv)
 - [Research and operating design](deliverables/thai-microdrama-research-2026-10-19/README.md)
@@ -17,10 +19,15 @@ This branch is `feat/microdrama-m0-m4`, migrated from Claude's work in
 `Clarenze-C/AIVORA-Root` at `7558c2d811c7bacb2538d3c92156b10612c19da2`.
 The branch name describes its intended scope, not completed milestones.
 
-The imported ledger records T001–T003 and T007 as ACCEPTED. T004–T006 and T008
-remain IN_PROGRESS: M1 round-3 independent validation was unfinished at the
-source checkpoint. Resume that validation before starting dependent work.
-Historical test receipts are preserved; the migration does not re-certify them.
+The current ledger records T001–T030 as ACCEPTED, including the offline M4
+workflow. The 26 October 2026 remediation record documents the fixes for the
+subsequent build review. The V2 SPEC and ledger add pending T036–T048 for
+current-build defects and the new production app. The 28 October full offline
+check currently fails in integration because a fixed-time test owner session
+has expired; T048 tracks that repair. T031–T035 remain TODO and require live
+provider, rights, cost, publishing and episode evidence.
+Historical migration receipts are preserved; the migration alone did not
+re-certify them.
 
 All software remains offline/mock by default. Live model quality, rights,
 GPU costs and real publishing require the documented later validation tasks.
