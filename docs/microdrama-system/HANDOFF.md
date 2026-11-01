@@ -36,10 +36,10 @@ deployment receipt.
   preparation before the existing Gate 2; T047 must test the composed release
   path. T044 and T045 remain `REVIEW`/unfinished. T046, T047 and live
   T031–T035 have not started.
-- The **last full green** receipt (2026-11-01, after the T044b2 review fix
-  round, under CPUQuota45%): `make check` **all offline checks passed** —
-  **2,595 unit, 462 contract and 208 integration** tests; Ruff lint and format
-  passed; `git diff --check` clean. `make pilot` exit 0: W01–W12, exactly two
+- The **last full green** receipt (2026-11-01, after T047, under
+  CPUQuota45%): `make check` **all offline checks passed** — **2,595 unit,
+  462 contract and 214 integration** tests (the +6 are T047's composed
+  acceptance); Ruff clean. Earlier same-day post-T044b2 run: 208 integration. `make pilot` exit 0: W01–W12, exactly two
   human gates, 16 local exports, 303,000 **synthetic** micro-USD. Focused
   intake receipts re-verified independently in the same session: 19/19
   (12 unit intake UI, 7 composed script_maker integration) and 570 unit +
@@ -169,7 +169,10 @@ responses as billed cost.
    `ReviewService.prepare_release_approval_manifest` from the same Gate 2
    flow. Close T037 only after the composed live-like fixture path; no extra
    human approval type.
-4. Run independent T047 V2 composed/fault acceptance, then T046 private
+4. ~~T047~~ **DONE 2026-11-01** (see [T047 evidence](../../microdrama/evidence/T047.md)):
+   production expectations reader + dispatch-boundary asset/rights gates built
+   and proven composed; T037 closed on the intake-born Gate 2 release path.
+   Codex scoped review pending quota reset (11-04). Next: T046 private
    staging/owner-scope/backup drills. DNS/TLS for `dramabox.aivora.agency` is a
    separate deployment action.
 5. Finish T045 accounting/bootstrap and obtain explicit rights, credentials,
