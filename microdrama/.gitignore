@@ -34,3 +34,5 @@ dist/
 
 # Generated pilot/demo artifacts (runbooks/pilot.md documents regeneration).
 out/
+deployment/staging.env
+deployment/staging/drill-logs/

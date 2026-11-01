@@ -489,8 +489,17 @@ def build_pipeline_world(
     )
 
     if seed_registries:
-        seed_mock_catalog(preset_registry)
-        seed_mock_registries(db, adapters, fake_clock, fake_ids, settings)
+        # Restart-idempotent (T046): a durable deployment boots against an
+        # already-seeded database, and re-recording version-1 presets would
+        # Conflict. Seed only when the mock preset catalog is absent; the
+        # per-record seeding helpers replay silently on their own rows.
+        with db.transaction(readonly=True) as tx:
+            already_seeded = tx.fetchone(
+                "SELECT 1 FROM preset_registry WHERE preset_id LIKE 'fake-%' LIMIT 1"
+            )
+        if already_seeded is None:
+            seed_mock_catalog(preset_registry)
+            seed_mock_registries(db, adapters, fake_clock, fake_ids, settings)
 
     return PipelineWorld(
         settings=settings,

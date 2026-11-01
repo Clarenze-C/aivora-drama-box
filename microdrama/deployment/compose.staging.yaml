@@ -1,0 +1,69 @@
+# T046 PRIVATE staging stack — localhost-bound, authenticated, durable.
+#
+#   docker compose -f deployment/compose.staging.yaml --env-file deployment/staging.env up -d --build
+#
+# Isolation: dedicated project name, named volumes, ports published on the
+# host LOOPBACK only (nothing public until the separately configured
+# domain/TLS work — see deployment/staging/DOMAIN-RUNBOOK.md). The app guards
+# execution_mode=OFFLINE_MOCK at startup: every paid/public/cloud effect is
+# refused by construction, so unattended private staging is safe.
+name: microdrama-staging
+
+services:
+  postgres:
+    image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
+    environment:
+      POSTGRES_USER: ${STAGING_POSTGRES_USER:-microdrama}
+      POSTGRES_DB: ${STAGING_POSTGRES_DB:-microdrama}
+      POSTGRES_PASSWORD: ${STAGING_POSTGRES_PASSWORD:?set in deployment/staging.env}
+    volumes:
+      - staging-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STAGING_POSTGRES_USER:-microdrama} -d ${STAGING_POSTGRES_DB:-microdrama}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      MICRODRAMA_DATABASE_URL: postgresql://${STAGING_POSTGRES_USER:-microdrama}:${STAGING_POSTGRES_PASSWORD}@postgres:5432/${STAGING_POSTGRES_DB:-microdrama}
+      MICRODRAMA_OBJECT_STORE_ROOT: /data/objects
+      MICRODRAMA_HOST: 0.0.0.0   # published on the host loopback below
+      MICRODRAMA_PORT: "8000"
+    ports:
+      - "127.0.0.1:${STAGING_APP_PORT:-8091}:8000"
+    volumes:
+      - staging-objects:/data/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "microdrama.api.serve", "health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["python", "-m", "microdrama.api.worker", "--idle-sleep", "3", "--janitor-every", "50"]
+    environment:
+      MICRODRAMA_DATABASE_URL: postgresql://${STAGING_POSTGRES_USER:-microdrama}:${STAGING_POSTGRES_PASSWORD}@postgres:5432/${STAGING_POSTGRES_DB:-microdrama}
+      MICRODRAMA_OBJECT_STORE_ROOT: /data/objects
+    volumes:
+      - staging-objects:/data/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  staging-pg:
+  staging-objects:
