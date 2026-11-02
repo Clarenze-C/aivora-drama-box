@@ -171,6 +171,8 @@ def up(data_root: Path = DEFAULT_DATA_ROOT) -> int:
         )
         + "\n"
     )
+    from microdrama.pipeline.canary_authorization import CANARY_EPISODE_ID
+
     print(f"canary database up: {dsn}")
     print(f"canary episode: {CANARY_EPISODE_ID}")
     print(f"state: {STATE_PATH}")
