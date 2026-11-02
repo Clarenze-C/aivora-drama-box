@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -72,6 +72,7 @@ from microdrama.contracts.v2 import (
     OutfitDefinition,
     PackBeat,
     PropSheet,
+    ReferenceRole,
     StateValue,
     WardrobeBible,
     validate_current_rights_grant,
@@ -387,7 +388,15 @@ class V2TruthSeed:
                 subject_id=subject,
                 asset_id=uid(f"t047-asset-{role}-{subject}"),
                 asset_version=1,
-                asset_sha256=h(f"t047-bytes-{role}-{subject}"),
+                # A location sheet is minted from the same empty plate as its
+                # LocationLayout (the production shape): the sheet's asset hash
+                # IS the layout's geometry hash.
+                asset_sha256=(
+                    {"stall": GEO_STALL, "shophouse-room": GEO_ROOM}.get(subject)
+                    if role == "location"
+                    else None
+                )
+                or h(f"t047-bytes-{role}-{subject}"),
                 view_name="front",
                 rights=v2_rights(),
                 validity_from=V2_T0,
@@ -400,7 +409,18 @@ class V2TruthSeed:
                 ("location", "shophouse-room"),
             )
         ] + self._outfit_sheets
-        self.style = _resealed(v2_style_bible(), record_id=uid("t047-style"), season_id=season_id)
+        # The style moving sample carries REAL stored bytes so the dispatch
+        # asset gate's happy path (ACCEPTED row + exact version/hash + live
+        # stored bytes) is provable through the loaded context (DB-6).
+        from microdrama.contracts.hashing import sha256_hex
+
+        self.style_bytes = b"t047-style-moving-sample-fixture-bytes"
+        self.style = _resealed(
+            v2_style_bible(),
+            record_id=uid("t047-style"),
+            season_id=season_id,
+            moving_sample_sha256=sha256_hex(self.style_bytes),
+        )
         self.style_sheet = _sealed_new(
             AssetSheet,
             "sheet-style",
@@ -471,6 +491,34 @@ class V2TruthSeed:
                 *self.asset_sheets,
             ]
         )
+        # Production pairs every AssetSheet/PropSheet with a registered asset row
+        # (v2_planning.persist_generated): the season-scoped dispatch context
+        # (DB-2) proves sheets through exactly those rows. The style sample
+        # carries real stored bytes; the other sheets register synthetic rows.
+        style_key = "t047/style-moving-sample"
+        self.world.store.put_bytes(style_key, self.style_bytes, media_type="video/mp4")
+        from microdrama.contracts.examples import media_info
+
+        with self.world.db.transaction() as tx:
+            for sheet in (*self.asset_sheets, self.prop_sheet):
+                is_style = sheet is self.style_sheet
+                insert_row(
+                    tx,
+                    "assets",
+                    {
+                        "id": sheet.asset_id,
+                        "asset_kind": "VIDEO" if is_style else "IMAGE",
+                        "object_key": style_key if is_style else f"t047/sheets/{sheet.asset_id}",
+                        "sha256": sheet.asset_sha256,
+                        "size_bytes": len(self.style_bytes) if is_style else 0,
+                        "media_type": "video/mp4" if is_style else "application/octet-stream",
+                        **({"media": jsonb(media_info())} if is_style else {}),
+                        "state": "ACCEPTED",
+                        "provenance": "ORIGINAL_FIXTURE",
+                        "season_id": self.season_id,
+                        "descriptor": jsonb({}),
+                    },
+                )
         with self.world.db.transaction() as tx:
             if with_script:
                 insert_row(
@@ -837,6 +885,169 @@ def test_reader_reads_only_the_current_main_variant_timeline(v2_episode) -> None
     assert reader.continuity_expectations(episode_id) is None
 
 
+def test_dispatch_context_is_scoped_to_the_episodes_season(v2_episode) -> None:
+    """DB-2: sheets and layouts from ANOTHER season sharing the same subject ids
+    (the 'style' subject, a character id, a prop id, a location id) are
+    invisible to this episode's dispatch context — provenance is the season's
+    asset rows, the same approach as the T044b2 F2 workbench fix."""
+    world, seed, episode_id = v2_episode
+    foreign_season = uuid.uuid4()
+    foreign_assets = [uid(f"t047-foreign-asset-{name}") for name in ("style", "fon", "prop")]
+
+    def _foreign_asset_row(asset_id, tx) -> None:
+        insert_row(
+            tx,
+            "assets",
+            {
+                "id": asset_id,
+                "asset_kind": "IMAGE",
+                "object_key": f"t047/foreign/{asset_id}",
+                "sha256": h(f"t047-foreign-bytes-{asset_id}"),
+                "size_bytes": 0,
+                "media_type": "application/octet-stream",
+                "state": "ACCEPTED",
+                "provenance": "ORIGINAL_FIXTURE",
+                "season_id": foreign_season,
+                "descriptor": jsonb({}),
+            },
+        )
+
+    with world.db.transaction() as tx:
+        insert_row(
+            tx,
+            "seasons",
+            {
+                "id": foreign_season,
+                "state": "PROPOSED",
+                "title_th": "ฤดูกาลอื่นของคนอื่น",
+                "title_en": "Another owner's foreign season",
+            },
+        )
+        for asset_id in foreign_assets:
+            _foreign_asset_row(asset_id, tx)
+
+    foreign_docs = [
+        # a style sheet sharing the global 'style' subject
+        _sealed_new(
+            AssetSheet,
+            "foreign-sheet-style",
+            asset_role="style",
+            subject_id="style",
+            asset_id=foreign_assets[0],
+            asset_version=1,
+            asset_sha256=h(f"t047-foreign-bytes-{foreign_assets[0]}"),
+            view_name="front",
+            rights=v2_rights(),
+            validity_from=V2_T0,
+        ),
+        # a character sheet sharing the character id 'fon'
+        _sealed_new(
+            AssetSheet,
+            "foreign-sheet-fon",
+            asset_role="character_identity",
+            subject_id="fon",
+            asset_id=foreign_assets[1],
+            asset_version=1,
+            asset_sha256=h(f"t047-foreign-bytes-{foreign_assets[1]}"),
+            view_name="front",
+            rights=v2_rights(),
+            validity_from=V2_T0,
+        ),
+        # a prop sheet sharing the prop id
+        _sealed_new(
+            PropSheet,
+            "foreign-prop-note",
+            prop_id="prop-debt-note",
+            owner_character_id="lek",
+            purpose="A foreign season's debt note.",
+            visual_anchor="A different folded paper.",
+            dimensions="A6 folded",
+            known_states=["folded"],
+            text_layer_sha256=h("t047-foreign-prop-text"),
+            asset_id=foreign_assets[2],
+            asset_version=1,
+            asset_sha256=h(f"t047-foreign-bytes-{foreign_assets[2]}"),
+            rights=v2_rights(),
+        ),
+        # a layout for the shared 'stall' location on ITS OWN plate geometry
+        _sealed_new(
+            LocationLayout,
+            "foreign-layout-stall",
+            location_id="stall",
+            geometry_sha256=h("t047-foreign-stall-plate"),
+            entrance_ids=["back-door"],
+            camera_zones=["table"],
+            light_states=["evening"],
+            prop_ownership={},
+            rights=v2_rights(),
+        ),
+    ]
+    StoryV2Store(world.db).save_bundle(foreign_docs)
+
+    context = load_reference_context(
+        world.db,
+        world.store,
+        episode_id,
+        resolve_current_rights=make_registry_rights_resolver(world.db),
+        territories=["TH"],
+    )
+    assert {str(sheet.asset_id) for sheet in context.asset_sheets} == {
+        str(sheet.asset_id) for sheet in seed.asset_sheets
+    }, "foreign-season sheets sharing subjects must be invisible"
+    assert [str(sheet.asset_id) for sheet in context.prop_sheets] == [
+        str(seed.prop_sheet.asset_id)
+    ], "the foreign prop sheet must not shadow the season's own"
+    assert {layout.location_id for layout in context.location_layouts} == {
+        "stall",
+        "shophouse-room",
+    }, "only layouts proven by THIS season's plates are visible"
+
+    # And the episode's own dispatch binding still resolves end-to-end.
+    dispatch_shot = example_shot("shot-s1", 1).model_copy(
+        update={
+            "scene_id": "s1",
+            "location_id": "stall",
+            "prop_ids": ["prop-debt-note"],
+            "outfit_ids": [],
+        }
+    )
+    assert context.expectations_for(dispatch_shot), "own references still bind"
+
+
+def test_current_doc_ambiguity_fails_closed(v2_episode) -> None:
+    """DB-5: two current records for one payload key are a typed ambiguity
+    error, never a fetchone guess between them.
+
+    The store allows this shape (uniqueness is one current row per record_id,
+    not per payload key): a season can carry two distinct current records that
+    both name it."""
+    world, seed, episode_id = v2_episode
+    duplicate = _resealed(seed.secret, record_id=uid("t047-secret-dupe"))
+    with world.db.transaction() as tx:
+        insert_row(
+            tx,
+            "v2_contract_documents",
+            {
+                "contract_type": "SecretLedger",
+                "record_id": duplicate.record_id,
+                "version": duplicate.version,
+                "payload": jsonb(duplicate),
+                "payload_sha256": duplicate.content_sha256,
+                "valid_from": duplicate.valid_from,
+                "current": True,
+                "created_at": T0,
+            },
+        )
+    with pytest.raises(MicrodramaError, match="ambiguous current SecretLedger"):
+        load_reference_context(
+            world.db,
+            world.store,
+            episode_id,
+            resolve_current_rights=make_registry_rights_resolver(world.db),
+            territories=["TH"],
+        )
+
+
 # --- (2) the dispatch-boundary gates ----------------------------------------------------
 
 
@@ -871,15 +1082,16 @@ def test_verify_current_asset_fails_closed(
     verify = make_verify_current_asset(db, world.store)
     verify(asset_id, version, sha)  # the exact live shape passes
 
-    with pytest.raises(MicrodramaError):
+    # Each refusal names its own gate (DB-6), never an anonymous MicrodramaError.
+    with pytest.raises(MicrodramaError, match="version is not the live version"):
         verify(asset_id, version + 1, sha)  # superseded version
-    with pytest.raises(MicrodramaError):
+    with pytest.raises(MicrodramaError, match="hash differs from the registered row"):
         verify(asset_id, version, "0" * 64)  # wrong hash
-    with pytest.raises(MicrodramaError):
+    with pytest.raises(MicrodramaError, match="asset does not exist"):
         verify(uuid.uuid4(), 1, sha)  # no such row
     with db.transaction() as tx:
         tx.execute("UPDATE assets SET state = 'SUPERSEDED' WHERE id = %s", (asset_id,))
-    with pytest.raises(MicrodramaError):
+    with pytest.raises(MicrodramaError, match="is not ACCEPTED"):
         verify(asset_id, version, sha)  # not ACCEPTED
     with db.transaction() as tx:
         tx.execute("UPDATE assets SET state = 'ACCEPTED' WHERE id = %s", (asset_id,))
@@ -909,11 +1121,19 @@ def test_verify_current_asset_fails_closed(
                 "descriptor": jsonb({}),
             },
         )
-    with pytest.raises(MicrodramaError):
+    with pytest.raises(MicrodramaError, match="stored asset bytes do not hash"):
         verify(lying_id, 1, lying_sha)
 
 
-def _seed_rights_row(db, grant, *, version: int, status: str) -> None:
+def _seed_rights_row(
+    db,
+    grant,
+    *,
+    version: int,
+    status: str,
+    expires_at: datetime | None = None,
+    territories: list[str] | None = None,
+) -> None:
     with db.transaction() as tx:
         tx.execute(
             "UPDATE rights_registry SET current = false WHERE rights_route_id = %s"
@@ -929,11 +1149,11 @@ def _seed_rights_row(db, grant, *, version: int, status: str) -> None:
                 "version": version,
                 "subject_kind": grant.subject_kind.value,
                 "subject_ref": grant.subject_ref,
-                "territories": jsonb(["TH"]),
+                "territories": jsonb(territories or ["TH"]),
                 "commercial_use": True,
                 "output_release_allowed": True,
                 "required_disclosures": jsonb([]),
-                "expires_at": None,
+                "expires_at": expires_at,
                 "evidence": jsonb([{"source": "FAKE_FIXTURE", "ref": "t047-seeded-evidence"}]),
                 "status": status,
                 "current": True,
@@ -945,16 +1165,41 @@ def test_registry_resolver_and_context_gate_rights_and_references(v2_episode) ->
     world, seed, episode_id = v2_episode
     resolver = make_registry_rights_resolver(world.db)
     grant = v2_rights()
-    # Absent registry subject: fail closed before any dispatch.
-    with pytest.raises((MicrodramaError, ValueError)):
+    # Absent registry subject: fail closed before any dispatch, and the error
+    # names the gate that fired (DB-6 — each case asserts its own message).
+    with pytest.raises(ValueError, match="no current rights registry record"):
         validate_current_rights_grant(grant, resolver, at=T0, territories=["TH"])
     _seed_rights_row(world.db, grant, version=1, status="ELIGIBLE")
     record = validate_current_rights_grant(grant, resolver, at=T0, territories=["TH"])
     assert record.status.value == "ELIGIBLE"
-    # Superseded by an EXPIRED current version: the grant dies with it.
-    _seed_rights_row(world.db, grant, version=2, status="EXPIRED")
-    with pytest.raises((MicrodramaError, ValueError)):
-        validate_current_rights_grant(grant, resolver, at=T0, territories=["TH"])
+    # A non-eligible current version (the registry's revocation shapes are
+    # INELIGIBLE/UNKNOWN — no REVOKED status exists): the grant dies with it.
+    # Each case's grant carries the CURRENT row's version, so the status gate —
+    # not the subject/version gate — is the one that fires.
+    _seed_rights_row(world.db, grant, version=2, status="INELIGIBLE")
+    grant_v2 = grant.model_copy(update={"rights_version": 2})
+    with pytest.raises(ValueError, match="record is not eligible"):
+        validate_current_rights_grant(grant_v2, resolver, at=T0, territories=["TH"])
+    # An ELIGIBLE record whose expiry has since passed: expired is expired.
+    # (The contract refuses to RECORD an already-expired ELIGIBLE row, so the
+    # row expires after its recording date and validation runs later still.)
+    passed = datetime(2026, 12, 1, tzinfo=UTC)
+    _seed_rights_row(world.db, grant, version=3, status="ELIGIBLE", expires_at=passed)
+    grant_v3 = grant.model_copy(update={"rights_version": 3, "expires_at": passed})
+    with pytest.raises(ValueError, match="record has expired"):
+        validate_current_rights_grant(
+            grant_v3, resolver, at=datetime(2027, 1, 1, tzinfo=UTC), territories=["TH"]
+        )
+    # An ELIGIBLE, unexpired record that does not cover the requested territory.
+    _seed_rights_row(world.db, grant, version=4, status="ELIGIBLE", territories=["TH"])
+    grant_v4 = grant.model_copy(update={"rights_version": 4})
+    with pytest.raises(ValueError, match="does not cover requested territories"):
+        validate_current_rights_grant(grant_v4, resolver, at=T0, territories=["US"])
+    # The clean ACCEPTED shape passes (status back to a plain ELIGIBLE row).
+    _seed_rights_row(world.db, grant, version=5, status="ELIGIBLE")
+    grant_v5 = grant.model_copy(update={"rights_version": 5})
+    clean = validate_current_rights_grant(grant_v5, resolver, at=T0, territories=["TH"])
+    assert clean.status.value == "ELIGIBLE"
 
     context = load_reference_context(
         world.db,
@@ -975,14 +1220,20 @@ def test_registry_resolver_and_context_gate_rights_and_references(v2_episode) ->
     assert expected, "the composed context resolves reference expectations"
     subjects = {subject for _role, subject in expected}
     assert "stall" in subjects, "the scene location is a bound reference subject"
-    # The context's asset gate is the wired fail-closed verifier: an unknown
-    # asset id is refused (records' asset ids are not registered asset rows
-    # here, so only the refusal is provable without seeding real bytes).
-    with pytest.raises(MicrodramaError):
-        some_reference = next(iter(expected.values()))
+    # The context's asset gate is the wired fail-closed verifier, and each
+    # refusal names its gate (DB-6). The character sheet's asset row has no
+    # stored bytes, so the stored-bytes leg is the one that refuses.
+    fon_reference = expected[(ReferenceRole.CHARACTER_IDENTITY, "fon")]
+    with pytest.raises(MicrodramaError, match="not found"):
         context.verify_current_asset(
-            some_reference.asset_id, int(some_reference.asset_version), some_reference.asset_sha256
+            fon_reference.asset_id,
+            int(fon_reference.asset_version),
+            fon_reference.asset_sha256,
         )
+    # The happy path through the LOADED context: the style moving sample is an
+    # ACCEPTED row at the exact version/hash whose live stored bytes hash to
+    # the registered sha256 — the gate passes (DB-6).
+    context.verify_current_asset(seed.style_sheet.asset_id, 1, seed.style_sheet.asset_sha256)
 
 
 # --- (3) the intake-born composed release path (T037 closure evidence) ------------------

@@ -129,14 +129,25 @@ def make_registry_rights_resolver(db: Database) -> RightsResolver:
 
 
 def _current_doc(tx, model: type, *, key: str, value: str, label: str):
-    """The one current row for a payload key, model-validated and hash-verified."""
-    row = tx.fetchone(
+    """The one current row for a payload key, model-validated and hash-verified.
+
+    DB-5: exactly one current row must match — the store permits several
+    current records to name the same payload key (uniqueness is per
+    record_id), and guessing between them with an unordered fetchone would
+    dispatch against arbitrary content. Ambiguity is a typed error.
+    """
+    rows = tx.fetchall(
         "SELECT record_id, version, payload, payload_sha256 FROM v2_contract_documents "
-        "WHERE contract_type = %s AND current AND payload->>%s = %s",
+        "WHERE contract_type = %s AND current AND payload->>%s = %s ORDER BY record_id",
         (model.__name__, key, value),
     )
-    if row is None:
+    if rows is None or len(rows) == 0:
         raise SchemaInvalid(f"no current {model.__name__} record for this {label}")
+    if len(rows) > 1:
+        raise SchemaInvalid(
+            f"ambiguous current {model.__name__} records for this {label}", **{label: value}
+        )
+    row = rows[0]
     try:
         record = model.model_validate(row["payload"])
     except ValidationError as exc:
@@ -214,19 +225,42 @@ def load_reference_context(
             | {o.outfit_id for bible in wardrobe_bibles for o in bible.outfits}
             | {c.character_id for c in pack.character_logic}
         )
+        # DB-2: season provenance, the same approach as the T044b2 F2 workbench
+        # fix. Sheet ids are shared identifiers (any season may have a 'style'
+        # subject or a 'fon' character), so a sheet is visible to this episode's
+        # dispatch only when ITS asset row belongs to the episode's season.
+        season_asset_ids = {
+            str(row["id"])
+            for row in tx.fetchall("SELECT id FROM assets WHERE season_id = %s", (season_id,))
+        }
         asset_sheets = [
             sheet
             for subject in sorted(subjects)
             for sheet in _current_docs(tx, AssetSheet, key="subject_id", value=subject)
+            if str(sheet.asset_id) in season_asset_ids
         ]
         scene_props = {prop for scene in pack.scenes for prop in scene.prop_ids}
         prop_sheets = [
-            sheet for sheet in _current_docs_all(tx, PropSheet) if sheet.prop_id in scene_props
+            sheet
+            for prop in sorted(scene_props)
+            for sheet in _current_docs(tx, PropSheet, key="prop_id", value=prop)
+            if str(sheet.asset_id) in season_asset_ids
         ]
+        # A LocationLayout carries no asset reference; it is minted from the
+        # same empty plate as the season's location AssetSheet, so geometry
+        # equality against a proven plate IS the provenance chain (shared plate
+        # bytes across seasons degrade to ambiguity, which one-layout binding
+        # refuses — an honest unknown, never a guess).
+        plate_shas = {
+            sheet.asset_sha256
+            for sheet in _current_docs(tx, AssetSheet, key="asset_role", value="location")
+            if str(sheet.asset_id) in season_asset_ids
+        }
         location_layouts = [
             layout
-            for layout in _current_docs_all(tx, LocationLayout)
-            if layout.location_id in {scene.location_id for scene in pack.scenes}
+            for location_id in sorted({scene.location_id for scene in pack.scenes})
+            for layout in _current_docs(tx, LocationLayout, key="location_id", value=location_id)
+            if layout.geometry_sha256 in plate_shas
         ]
     verify_current_asset = make_verify_current_asset(db, store)
     return ReferenceContext(
