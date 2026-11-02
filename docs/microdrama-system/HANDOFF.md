@@ -9,10 +9,11 @@ deployment receipt.
 
 - Repo: `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`. Everything
   through 2026-11-01 is committed and pushed (remote head `62a39ec`). The
-  2026-11-02 review fix round (DB-1..DB-11) is committed locally in layered
-  code+docs commits on top and **not pushed** — Opus accepts first. A
-  pre-review snapshot of the formerly dirty tree exists at
-  `/root/drama-box-dirty-snapshot-20261101.tar.gz`.
+  2026-11-02 review fix round (DB-1..DB-11) and its re-review-1 follow-up
+  round (DBR-1..DBR-3 + DBR-6 drill re-run, code commit `95fef89`) are
+  committed locally in layered code+docs commits on top and **not pushed** —
+  Opus accepts first. A pre-review snapshot of the formerly dirty tree exists
+  at `/root/drama-box-dirty-snapshot-20261101.tar.gz`.
 - Current contract package: **2.15.0** (V2 payload schema version 2.0; V1
   payloads remain readable). Migrations 0019–0024 are present. Contract source
   and generated artifacts are guardian-owned.
@@ -29,11 +30,11 @@ T047 and T048 `DONE` (evidence under `microdrama/evidence/`, receipts in the
 ledger). T045 is the one open offline task (`REVIEW` — billing finality,
 below). T031–T035 are the live qualification gates and have not started.
 
-The **last full green** receipt (2026-11-02, after the DB-1..DB-11 fix round,
-under CPUQuota45%): `make check` **all offline checks passed** — **2,608
-unit, 462 contract and 219 integration** tests; Ruff (check + format) clean;
-`make pilot` exit 0 — W01–W12, exactly two human gates, 16 local exports,
-303,000 **synthetic** micro-USD.
+The **last full green** receipt (2026-11-02, after the DBR-1..DBR-3 fix round
++ DBR-6 drill re-run, under CPUQuota45%): `make check` **all offline checks
+passed** — **2,611 unit, 462 contract and 221 integration** tests; Ruff
+(check + format) clean; `make pilot` exit 0 — W01–W12, exactly two human
+gates, 16 local exports, 303,000 **synthetic** micro-USD.
 
 **Independent reviews:** the pending Codex spot-checks for T044b2 (findings 1
 and 3), T046 and T047 were replaced on 2026-11-02 by a stand-in cross-model
@@ -42,10 +43,16 @@ review (Claude Sonnet 5.5 read-only reviewer, Opus rulings —
 (DB-1..DB-11) were accepted as BINDING and fixed the same day, tests-first
 red→green, in commits `15b6cf5`, `03f3e92`, `64b1784`, `73747df`
 (+`01379d7` format); evidence is appended to the T044b2/T046/T047 evidence
-files and the ledger rows point there. What remains is the review-after-fix
-step: a re-review of the fixed findings only, plus the spot-check of
-T044b2 F2/F4/F5/F6 that no independent reviewer has covered yet
-(build and first fix round share a model family — caveat recorded per row).
+files and the ledger rows point there. **Re-review 1** (same file, section at
+the end) then ACCEPTED that fix round: DB-1, DB-2, DB-4..DB-10 and the
+T044b2 F2/F4/F5/F6 spot-check are CLOSED. Its three follow-ups — DBR-1
+(create-owner reserved its password file after the owner row committed),
+DBR-2 (the reader's overlap check rejected every contract-valid crossfade
+EDL), DBR-3 (unbounded `advisory_lock` wait) — are fixed tests-first
+red→green in commit `95fef89`, and the required DBR-6 drill re-run after
+DB-10 passed 7/7 (loopback compose on 8093, stack left DOWN). What remains
+is ONE scoped re-review of DBR-1..DBR-3 only — the second and last
+re-review round; after it, the operator decides whether to push.
 
 ## What 1 November built (all gated, committed, pushed)
 
@@ -107,9 +114,10 @@ T044b2 F2/F4/F5/F6 that no independent reviewer has covered yet
 
 ## What remains, in order
 
-1. **Review-after-fix**: a re-review of the 2 Nov fixed findings only (DB-1
-   ..DB-11), plus the T044b2 F2/F4/F5/F6 spot-check no independent reviewer
-   has covered — after the 2026-11-04 Codex quota reset, or another
+1. **Review-after-fix**: ONE scoped re-review of DBR-1..DBR-3 only (commit
+   `95fef89` + the DBR-6 drill evidence in `microdrama/evidence/T046.md`) —
+   the second and last re-review round; after it the operator decides
+   whether to push. After the 2026-11-04 Codex quota reset, or another
    cross-model reviewer sooner.
 2. **T045 accounting acceptance** (offline work, no provider calls).
 3. **T031 real-provider qualification** — needs T045 accepted PLUS explicit
