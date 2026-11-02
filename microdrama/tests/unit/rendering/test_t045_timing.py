@@ -182,3 +182,23 @@ def test_fake_provider_shutdown_stays_stop_only(world: RenderWorld) -> None:
     row = world.lease_row(lease_id)
     assert row["terminate_verified_at"] is None
     assert row["compute_window_end_at"] == row["stop_verified_at"]
+
+
+def test_shutdown_of_an_ambiguous_create_records_the_window_end(db: Database) -> None:
+    """T045-FIX A-S1: closing a lease whose create was sent but never produced a Pod
+    still bounds the compute window (at the close instant); the hold stays for the
+    operator resolution, it is not silently released."""
+    provider = RunpodIdFakePods(clock=FakeClock(T0), ids=SequentialIds("t045-podless"))
+    world = RenderWorld(db, provider=provider)
+    episode = world.episode()
+    handle = world.claim(episode, "t045-podless")
+    world.provider.queue_scenarios(PodCreateScenario.CREATE_TIMEOUT_NOT_CREATED)
+    with pytest.raises(NeedsReconciliation):
+        world.leases.ensure_pod(handle.lease.lease_id)
+    row = world.lease_row(handle.lease.lease_id)
+    assert row["create_requested_at"] is not None
+    world.leases.shutdown(handle.lease.lease_id, reason="ambiguous create, no pod seen")
+    row = world.lease_row(handle.lease.lease_id)
+    assert row["lease_state"] == "RELEASED"
+    assert row["compute_window_end_at"] is not None
+    assert _reservation_state(db, row["reservation_id"]) == "ACTIVE"

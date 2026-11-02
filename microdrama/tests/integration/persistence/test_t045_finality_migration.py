@@ -349,8 +349,7 @@ def test_migration_0025_adds_fix_round_columns_and_tables(db: Database) -> None:
         assert "finality_attempts" in {
             row["column_name"]
             for row in tx.fetchall(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'pod_leases'"
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'pod_leases'"
             )
         }
         tables = {

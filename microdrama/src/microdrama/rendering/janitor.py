@@ -324,12 +324,18 @@ class Janitor:
         with self._db.transaction() as tx:
             current = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
             assert current is not None
+            # T045-FIX A-S1: bound a sent-but-podless create's window at the close
+            # instant, exactly like LeaseService._close_claim_without_pod.
             update_with_revision(
                 tx,
                 "pod_leases",
                 lease_id,
                 current["revision"],
-                {"lease_state": LeaseState.RELEASED.value},
+                {
+                    "lease_state": LeaseState.RELEASED.value,
+                    "compute_window_end_at": current["compute_window_end_at"]
+                    or (now if current["create_requested_at"] is not None else None),
+                },
                 now=now,
             )
             self._lease_event(

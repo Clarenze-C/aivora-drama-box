@@ -605,8 +605,7 @@ class BillingRepository:
             ]
             if straddling:
                 raise SchemaInvalid(
-                    "a billing bucket straddles the period edge; pick a period on bucket "
-                    "boundaries"
+                    "a billing bucket straddles the period edge; pick a period on bucket boundaries"
                 )
             if rows:
                 if not (
@@ -773,6 +772,124 @@ class BillingRepository:
                 tx, verified, verification
             )
 
+    def resolve_podless_create(
+        self,
+        lease_id: UUID,
+        *,
+        actor_ref: str,
+        reason: str,
+        evidence_sha256: str,
+    ) -> None:
+        """T045-FIX A-S1: the audited operator resolution for a sent-but-podless create.
+
+        The operator attests that the provider console shows no Pod and no charge for
+        the owned name and period. The attestation (actor, reason, evidence sha,
+        instant) is durable and one-per-lease; it posts the deterministic BILLED 0
+        SETTLEMENT, which releases the hold's remainder. Refused once a Pod is
+        attached (the stray-adoption path owns that case) and for an empty actor or
+        reason. A later-appearing Pod cannot double-settle: the receipt key is stable
+        and later provider cost arrives as REOPENED adjustments.
+        """
+        if not str(actor_ref or "").strip():
+            raise SchemaInvalid("a podless-create resolution requires an actor")
+        if not str(reason or "").strip():
+            raise SchemaInvalid("a podless-create resolution requires a reason")
+        if not (
+            isinstance(evidence_sha256, str)
+            and len(evidence_sha256) == 64
+            and all(c in "0123456789abcdef" for c in evidence_sha256)
+        ):
+            raise SchemaInvalid("a podless-create resolution requires a sha256 evidence hash")
+
+        def operation(tx: Tx) -> datetime:
+            tx.fetchval(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 451051))", (str(lease_id),)
+            )
+            lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
+            if lease is None:
+                raise NotFound("pod lease not found", lease_id=str(lease_id))
+            if lease["pod_id"] is not None:
+                raise Conflict(
+                    "the lease has a Pod attached; the stray-adoption path applies",
+                    lease_id=str(lease_id),
+                    pod_id=lease["pod_id"],
+                )
+            if lease["create_requested_at"] is None:
+                raise Conflict(
+                    "no create was ever sent for this lease; the hold releases on that "
+                    "proof without a resolution",
+                    lease_id=str(lease_id),
+                )
+            now = datetime.now(UTC)
+            existing = tx.fetchone(
+                "SELECT resolved_at FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+                (lease_id,),
+            )
+            if existing is None:
+                tx.execute(
+                    "INSERT INTO runpod_podless_create_resolutions (resolution_id, lease_id, "
+                    "actor_ref, reason, evidence_sha256, resolved_at) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (
+                        uuid5(NAMESPACE_URL, f"runpod-podless-resolve:{lease_id}"),
+                        lease_id,
+                        actor_ref.strip(),
+                        reason.strip(),
+                        evidence_sha256,
+                        now,
+                    ),
+                )
+                if lease["compute_window_end_at"] is None:
+                    # Bound the window at the resolution instant; nothing else ends it.
+                    tx.execute(
+                        "UPDATE pod_leases SET compute_window_end_at=%s WHERE id=%s",
+                        (now, lease_id),
+                    )
+                append_event(
+                    tx,
+                    aggregate_type="pod_lease",
+                    aggregate_id=lease_id,
+                    event_type="billing.podless_create_resolved",
+                    payload={
+                        "actor_ref": actor_ref.strip(),
+                        "reason": reason.strip(),
+                        "evidence_sha256": evidence_sha256,
+                    },
+                    correlation_id=lease_id,
+                    occurred_at=now,
+                )
+            return lease["updated_at"]
+
+        observed_at = self.db.run_in_transaction(operation)
+        if self.budget_service is None:
+            raise Conflict(
+                "a podless-create resolution requires the budget service to post the "
+                "BILLED 0 settlement"
+            )
+        with self.db.transaction(readonly=True) as tx:
+            reservation_id = tx.fetchval(
+                "SELECT reservation_id FROM pod_leases WHERE id=%s", (lease_id,)
+            )
+        receipt = UsageReceipt(
+            receipt_id=uuid5(NAMESPACE_URL, f"runpod-podless-resolve:{lease_id}"),
+            provider="runpod",
+            provider_receipt_id=f"podlease-podless:{lease_id}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=CostBasis.BILLED,
+            reservation_id=reservation_id,
+            episode_id=None,
+            season_id=None,
+            category=BudgetCategory.GPU_GENERATION,
+            amount_micro_usd=0,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            interval_start=None,
+            interval_end=None,
+            observed_at=observed_at,
+            provenance=Provenance.LIVE_PROVIDER,
+        )
+        self.budget_service.record_usage(receipt)
+
     @staticmethod
     def matched_invoice_periods(
         tx: Tx, lease: Any, window_start: datetime, coverage_end: datetime
@@ -928,11 +1045,32 @@ class BillingRepository:
 def _lease_readiness_in_transaction(tx: Tx, lease: Any) -> LeaseBillingReadiness:
     """R7 readiness for one lease row, inside a caller-owned read transaction."""
     lease_id = lease["id"]
+    resolved_podless = tx.fetchval(
+        "SELECT 1 FROM runpod_podless_create_resolutions WHERE lease_id=%s", (lease_id,)
+    )
+    if resolved_podless is not None:
+        # T045-FIX A-S1: the audited operator resolution is the durable proof that no
+        # Pod and no charge exist for this sent create; the lease is BILLED at 0.
+        return LeaseBillingReadiness(lease_id, "BILLED", None, billed_micro_usd=0)
+    if lease["pod_id"] is None and lease["create_requested_at"] is not None:
+        # T045-FIX A-S1: a create was sent and no Pod was ever attached. A closed
+        # window alone is not proof that nothing was charged — only the audited
+        # resolution (or a stray adoption, which attaches the Pod) can make this
+        # lease final.
+        return LeaseBillingReadiness(
+            lease_id,
+            "PENDING_PROVIDER_FINALITY",
+            lease["compute_window_end_at"] or lease["updated_at"],
+        )
     pending_since = lease["compute_window_end_at"] or lease["updated_at"]
     window_start = lease["compute_window_start_at"] or lease["create_requested_at"]
-    if window_start is None:
+    if window_start is None and lease["pod_id"] is None:
         # Nothing was ever sent for this lease: no compute window, nothing to bill.
         return LeaseBillingReadiness(lease_id, "BILLED", None, billed_micro_usd=0)
+    if window_start is None:
+        # T045-FIX A-S4: a Pod is attached but no window start is recorded — the
+        # provider owns when compute began, and that is not yet final.
+        return LeaseBillingReadiness(lease_id, "PENDING_PROVIDER_FINALITY", pending_since)
     if lease["compute_window_end_at"] is None:
         return LeaseBillingReadiness(lease_id, "PENDING_PROVIDER_FINALITY", pending_since)
     window_end = lease["compute_window_end_at"]

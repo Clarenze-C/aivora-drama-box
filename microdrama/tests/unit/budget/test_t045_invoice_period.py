@@ -381,8 +381,9 @@ def test_a_skip_closed_by_a_later_observation_no_longer_blocks_verification(
     """T045-FIX A-B1: an open poll writes skips; once a later poll of the same buckets
     observes them closed, the period verifies, the lease reaches BILLED and the hold's
     remainder is released."""
-    from microdrama.budget.billing import lease_billing_readiness, settle_billed_lease
     from t045_support import insert_runpod_lease
+
+    from microdrama.budget.billing import lease_billing_readiness, settle_billed_lease
 
     repository = _paid(world)
     episode = world.episode()
@@ -486,9 +487,7 @@ def test_an_account_scoped_covering_query_is_not_coverage(world: World, db: Data
     cover this Pod's period."""
     repository = _paid(world)
     _seed_episode_with_lease(world, db, pod_id="pod-scoped")
-    other = closed_bucket(
-        pod_id="pod-other", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0
-    )
+    other = closed_bucket(pod_id="pod-other", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0)
     repository.ingest(other[0], [other[1]])
     with pytest.raises(Conflict, match="covers the period"):
         repository.verify_invoice_period(

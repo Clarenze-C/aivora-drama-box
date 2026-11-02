@@ -1126,12 +1126,23 @@ class LeaseService:
         with self._db.transaction() as tx:
             row = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
             assert row is not None
+            # T045-FIX A-S1: a create that was sent but never produced a Pod still has
+            # a compute window; its end is this close instant. Without it readiness
+            # stays PENDING forever; the audited operator resolution (or a stray
+            # adoption) settles what the window means.
             update_with_revision(
                 tx,
                 "pod_leases",
                 lease_id,
                 row["revision"],
-                {"lease_state": LeaseState.RELEASED.value},
+                {
+                    "lease_state": LeaseState.RELEASED.value,
+                    "compute_window_end_at": row["compute_window_end_at"]
+                    or (
+                        # Only a sent create opened a window worth closing.
+                        now if row["create_requested_at"] is not None else None
+                    ),
+                },
                 now=now,
             )
             self._emit(

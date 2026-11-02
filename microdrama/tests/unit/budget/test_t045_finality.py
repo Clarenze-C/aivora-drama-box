@@ -490,3 +490,158 @@ def test_finality_survives_a_restart_readback(db_dsn: str, world: World, db: Dat
         assert readiness.state == "BILLED"
         with restarted.transaction(readonly=True) as tx:
             assert tx.fetchval("SELECT count(*) FROM charges WHERE kind='SETTLEMENT'") == 1
+
+
+# --- T045-FIX A-S1: the audited podless-create resolution ---------------------------------
+
+
+def _seed_podless_sent_create(world: World, db: Database, *, pod_id=None):
+    """A runpod lease whose create was sent but which never produced a Pod."""
+    episode = world.episode()
+    with db.transaction() as tx:
+        lease, reservation = insert_runpod_lease(
+            tx,
+            episode.episode_id,
+            pod_id=pod_id,
+            lease_state="RELEASED",
+            pod_state="REQUESTED",
+            create_requested_at=T0,
+            reservation_micro_usd=900_000,
+        )
+    return episode, lease, reservation
+
+
+def test_podless_create_resolution_bills_zero_and_releases(world: World, db: Database) -> None:
+    from microdrama.budget.billing import BillingRepository
+
+    _paid(world)
+    episode, lease, reservation = _seed_podless_sent_create(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "PENDING_PROVIDER_FINALITY"
+    repository.resolve_podless_create(
+        lease,
+        actor_ref="owner:test",
+        reason="console shows no Pod and no charge",
+        evidence_sha256=_evidence("podless"),
+    )
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "BILLED"
+    assert readiness.billed_micro_usd == 0
+    row = _reservation_row(db, reservation)
+    assert row["state"] == "SETTLED"
+    assert row["settled_micro_usd"] == 0
+    counters = world.counters(episode.account_id)
+    assert counters["reserved"] == 0  # the whole hold was released
+    assert counters["settled"] == 0
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM runpod_podless_create_resolutions") == 1
+        assert tx.fetchval("SELECT count(*) FROM charges WHERE kind='SETTLEMENT'") == 1
+
+
+def test_podless_resolution_is_refused_once_a_pod_is_attached(world: World, db: Database) -> None:
+    from microdrama.budget.billing import BillingRepository
+    from microdrama.contracts.errors import Conflict
+
+    _paid(world)
+    _episode, lease, _reservation = _seed_podless_sent_create(world, db, pod_id="pod-attached")
+    repository = BillingRepository(db, budget_service=world.service)
+    with pytest.raises(Conflict, match="attached"):
+        repository.resolve_podless_create(
+            lease,
+            actor_ref="owner:test",
+            reason="stray adopted later",
+            evidence_sha256=_evidence("attached"),
+        )
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM runpod_podless_create_resolutions") == 0
+
+
+def test_podless_resolution_requires_actor_and_reason(world: World, db: Database) -> None:
+    from microdrama.budget.billing import BillingRepository
+    from microdrama.contracts.errors import SchemaInvalid
+
+    _paid(world)
+    _episode, lease, _reservation = _seed_podless_sent_create(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    with pytest.raises(SchemaInvalid, match="actor"):
+        repository.resolve_podless_create(
+            lease, actor_ref="  ", reason="reason", evidence_sha256=_evidence("a")
+        )
+    with pytest.raises(SchemaInvalid, match="reason"):
+        repository.resolve_podless_create(
+            lease, actor_ref="owner:test", reason="", evidence_sha256=_evidence("b")
+        )
+
+
+def test_replaying_a_podless_resolution_is_a_noop(world: World, db: Database) -> None:
+    from microdrama.budget.billing import BillingRepository
+
+    _paid(world)
+    episode, lease, _reservation = _seed_podless_sent_create(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    repository.resolve_podless_create(
+        lease,
+        actor_ref="owner:test",
+        reason="console shows no Pod and no charge",
+        evidence_sha256=_evidence("replay"),
+    )
+    repository.resolve_podless_create(
+        lease,
+        actor_ref="owner:test",
+        reason="console shows no Pod and no charge",
+        evidence_sha256=_evidence("replay"),
+    )
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM runpod_podless_create_resolutions") == 1
+        assert tx.fetchval("SELECT count(*) FROM charges WHERE kind='SETTLEMENT'") == 1
+    assert world.counters(episode.account_id)["settled"] == 0
+
+
+def test_a_pod_appearing_after_a_resolution_does_not_double_settle(
+    world: World, db: Database
+) -> None:
+    from microdrama.budget.billing import BillingRepository
+    from microdrama.contracts.errors import Conflict
+
+    _paid(world)
+    episode, lease, _reservation = _seed_podless_sent_create(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    repository.resolve_podless_create(
+        lease,
+        actor_ref="owner:test",
+        reason="console showed no Pod",
+        evidence_sha256=_evidence("late-pod"),
+    )
+    with db.transaction() as tx:  # the stray the provider finally admitted
+        tx.execute(
+            "UPDATE pod_leases SET pod_id='pod-late', pod_state='RUNNING' WHERE id=%s", (lease,)
+        )
+    with pytest.raises(Conflict):
+        # A second resolution is structurally impossible once the Pod exists; the
+        # existing stray-adoption path (buckets, invoice, REOPENED adjustments) is
+        # the only way cost can arrive now.
+        repository.resolve_podless_create(
+            lease, actor_ref="owner:test", reason="again", evidence_sha256=_evidence("again")
+        )
+    assert world.counters(episode.account_id)["settled"] == 0
+
+
+def test_a_pod_without_a_window_start_is_pending_not_billed_zero(
+    world: World, db: Database
+) -> None:
+    """T045-FIX A-S4: an attached Pod with no recorded window start is pending
+    provider finality, never a free BILLED 0."""
+    episode = world.episode()
+    with db.transaction() as tx:
+        lease, _reservation = insert_runpod_lease(
+            tx,
+            episode.episode_id,
+            pod_id="pod-nostart",
+            lease_state="ACTIVE",
+            pod_state="RUNNING",
+            create_requested_at=None,
+            compute_window_start_at=None,
+        )
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "PENDING_PROVIDER_FINALITY"
