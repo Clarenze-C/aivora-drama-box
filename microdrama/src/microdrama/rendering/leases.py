@@ -462,6 +462,34 @@ def close_storage_ownership(db: Database, provider: str, pod_id: str, instant: d
         )
 
 
+def record_terminate_verified(db: Database, lease_id: UUID, now: datetime) -> datetime:
+    """Persist the verified-terminate instant set-once, FIRST (T045-FIX A-S6).
+
+    The ownership close and the compute-window end read this stored value back —
+    never a fresh clock read — so a crash between this write and the close is
+    finished later at exactly the same instant, and a replayed shutdown cannot
+    move the window's end.
+    """
+    with db.transaction() as tx:
+        row = tx.fetchone(
+            "SELECT terminate_verified_at, revision FROM pod_leases WHERE id = %s FOR UPDATE",
+            (lease_id,),
+        )
+        if row is None:
+            raise NotFound("pod lease not found", lease_id=str(lease_id))
+        if row["terminate_verified_at"] is not None:
+            return row["terminate_verified_at"]
+        update_with_revision(
+            tx,
+            "pod_leases",
+            lease_id,
+            row["revision"],
+            {"terminate_verified_at": now},
+            now=now,
+        )
+        return now
+
+
 def settle_reservation_for_lease(
     db: Database,
     budget: BudgetService,
@@ -859,6 +887,10 @@ class LeaseService:
             self._manager.verify(pod, spec, settings=self._settings)
             if row["lease_state"] == "CLAIMED":
                 self._activate(lease_id, pod)
+            # T045-FIX A-S6: a crash between the ACTIVE write and the ownership open
+            # must not leave the pod's disk unowned forever — any re-ensure heals it,
+            # and the open itself is idempotent per (provider, pod, creating lease).
+            open_storage_ownership(self._db, lease_id, row["pod_id"])
         else:
             # Durable create-request proof is committed in its own transaction BEFORE the
             # create call is sent (T045 R8/G13): with it, a later list miss can no longer
@@ -1087,7 +1119,9 @@ class LeaseService:
             # pod still bills its volume, so the chain's compute window (and the storage
             # ownership it grounds) only ends at a verified terminate.
             terminal = self._manager.terminate(row["pod_id"])
-            terminate_verified = self._now()
+            # T045-FIX A-S6: the verified terminate is durable BEFORE the ownership
+            # close, and the close reads the stored value back — never a fresh clock.
+            terminate_verified = record_terminate_verified(self._db, lease_id, self._now())
             window_end = terminate_verified
             close_storage_ownership(self._db, row["provider"], row["pod_id"], terminate_verified)
         self.accrue(lease_id)

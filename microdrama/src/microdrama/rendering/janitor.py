@@ -54,6 +54,7 @@ from microdrama.rendering.leases import (
     accrue_lease_usage,
     close_storage_ownership,
     open_storage_ownership,
+    record_terminate_verified,
 )
 from microdrama.rendering.pods import (
     LEASE_OPERATION_KIND,
@@ -176,8 +177,49 @@ class Janitor:
         self._sweep_provider_orphans(now, report)
         self._sweep_unbound_holds(now, report)
         self._sweep_billing_ingestion(now, report)
+        self._sweep_open_ownership(now, report)
         self._sweep_terminal_leases(now, report)
         return report
+
+    def _sweep_open_ownership(self, now: datetime, report: JanitorReport) -> None:
+        """T045-FIX A-S6: finish an ownership close a crash left behind.
+
+        A shutdown or janitor clean that died between the terminate write and the
+        ownership close leaves the pod's storage interval open with a durable
+        ``terminate_verified_at``. Close it at exactly that stored instant — never a
+        fresh clock read. Idempotent: rows whose interval is already closed are not
+        selected.
+        """
+        rows = self._db_query(
+            "SELECT DISTINCT ON (l.pod_id) l.pod_id, l.terminate_verified_at "
+            "FROM pod_leases l JOIN pod_storage_ownership o "
+            "ON o.provider = l.provider AND o.pod_id = l.pod_id AND o.valid_until IS NULL "
+            "WHERE l.provider = 'runpod' AND l.pod_id IS NOT NULL "
+            "AND l.terminate_verified_at IS NOT NULL "
+            "ORDER BY l.pod_id, l.terminate_verified_at",
+            (),
+        )
+        for row in rows:
+            close_storage_ownership(self._db, "runpod", row["pod_id"], row["terminate_verified_at"])
+            self._evidence(
+                f"pod:{row['pod_id']}",
+                "janitor.ownership_closed",
+                {
+                    "pod_id": row["pod_id"],
+                    "closed_at": row["terminate_verified_at"].isoformat(),
+                    "cause": "crash-between-terminate-and-close",
+                },
+                now,
+            )
+            report.stopped_pods.append(
+                JanitorAction(
+                    subject=f"pod:{row['pod_id']}",
+                    action="close_storage_ownership",
+                    outcome="closed",
+                    detail=f"ownership closed at the persisted terminate "
+                    f"{row['terminate_verified_at'].isoformat()}",
+                )
+            )
 
     # --- phase 1: live leases whose worker is gone ---------------------------------------
 
@@ -271,7 +313,9 @@ class Janitor:
             # T045 R8: the janitor's cleanup of a Runpod chain also terminates, so the
             # volume stops billing and the compute window has a verified end.
             pod_state = self._manager.terminate(pod_id)
-            terminate_verified = self._now()
+            # T045-FIX A-S6: the verified terminate is durable BEFORE the ownership
+            # close, and the close reads the stored value back — never a fresh clock.
+            terminate_verified = record_terminate_verified(self._db, lease_id, self._now())
             window_end = terminate_verified
             close_storage_ownership(self._db, "runpod", pod_id, terminate_verified)
         self._accrue(lease_id, now)

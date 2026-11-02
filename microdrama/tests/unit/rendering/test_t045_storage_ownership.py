@@ -79,3 +79,51 @@ def test_fake_stop_only_leaves_ownership_open(world: RenderWorld) -> None:
     rows = _ownership_rows(world.db, activated.lease.pod_id)
     assert len(rows) == 1
     assert rows[0]["valid_until"] is None
+
+
+def test_a_crash_before_the_ownership_write_is_healed_by_a_re_ensure(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX A-S6: a crash between the ACTIVE write and the ownership open must not
+    send the pod's disk to recovery forever - any later ensure opens it, exactly once."""
+    provider = RunpodIdFakePods(clock=FakeClock(T0), ids=SequentialIds("t045-own-crash1"))
+    world = RenderWorld(db, provider=provider)
+    episode = world.episode()
+    monkeypatch.setattr("microdrama.rendering.leases.open_storage_ownership", lambda *a, **k: None)
+    handle, activated = world.claim_and_acquire(episode, "t045-own-crash-open")
+    pod_id = activated.lease.pod_id
+    assert activated.lease.lease_state == "ACTIVE"
+    assert _ownership_rows(db, pod_id) == []  # the crash window: ACTIVE, no ownership row
+    monkeypatch.undo()
+    world.leases.ensure_pod(handle.lease.lease_id)
+    rows = _ownership_rows(db, pod_id)
+    assert len(rows) == 1
+    assert rows[0]["owner_episode_id"] == episode.episode_id
+    assert rows[0]["valid_until"] is None
+    world.leases.ensure_pod(handle.lease.lease_id)  # the open is idempotent
+    assert len(_ownership_rows(db, pod_id)) == 1
+
+
+def test_a_crash_after_the_terminate_write_is_closed_by_the_janitor_at_the_persisted_instant(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX A-S6: the terminate instant is persisted BEFORE the ownership close and
+    the close reads the stored value; a crash in between is finished by the janitor at
+    exactly terminate_verified_at - never a fresh clock read."""
+    provider = RunpodIdFakePods(clock=FakeClock(T0), ids=SequentialIds("t045-own-crash2"))
+    world = RenderWorld(db, provider=provider)
+    episode = world.episode()
+    handle, activated = world.claim_and_acquire(episode, "t045-own-crash-close")
+    pod_id = activated.lease.pod_id
+    world.clock.advance(seconds=600)
+    monkeypatch.setattr("microdrama.rendering.leases.close_storage_ownership", lambda *a, **k: None)
+    world.leases.shutdown(handle.lease.lease_id, reason="crash before the close")
+    monkeypatch.undo()
+    persisted = world.lease_row(handle.lease.lease_id)["terminate_verified_at"]
+    assert persisted is not None  # the terminate write survived the crash
+    assert _ownership_rows(db, pod_id)[0]["valid_until"] is None
+    world.clock.advance(seconds=600)
+    world.janitor().sweep()
+    rows = _ownership_rows(db, pod_id)
+    assert len(rows) == 1
+    assert rows[0]["valid_until"] == persisted
