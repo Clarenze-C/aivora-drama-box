@@ -78,8 +78,24 @@ ALTER TABLE runpod_billing_buckets
 
 -- Invoice evidence (G6): one verification per bucket observation, and one use of an
 -- evidence hash per bucket identity. These are the replay backstops behind R6.
+-- T045-FIX A-N6: the identity column carries the verified bucket's identity from the
+-- start — pre-existing rows are backfilled from their bucket row, and the blanket ''
+-- default is dropped so a future insert cannot silently claim the empty identity.
 ALTER TABLE runpod_billing_invoice_verifications
   ADD COLUMN bucket_identity_sha256 text NOT NULL DEFAULT '';
+-- The table is append-only (0022), so the one-time backfill runs with its mutation
+-- guard disabled; the guard is restored immediately after.
+ALTER TABLE runpod_billing_invoice_verifications
+  DISABLE TRIGGER runpod_billing_invoice_append_only;
+UPDATE runpod_billing_invoice_verifications v
+SET bucket_identity_sha256 = b.bucket_identity_sha256
+FROM runpod_billing_buckets b
+WHERE b.observation_id = v.bucket_observation_id
+  AND v.bucket_identity_sha256 = '';
+ALTER TABLE runpod_billing_invoice_verifications
+  ENABLE TRIGGER runpod_billing_invoice_append_only;
+ALTER TABLE runpod_billing_invoice_verifications
+  ALTER COLUMN bucket_identity_sha256 DROP DEFAULT;
 ALTER TABLE runpod_billing_invoice_verifications
   ADD CONSTRAINT runpod_billing_invoice_verifications_observation_unique
   UNIQUE (bucket_observation_id);
@@ -107,6 +123,8 @@ CREATE TABLE runpod_billing_period_evidence (
   reason text,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (period_end > period_start),
+  -- T045-FIX A-N6: MATCHED_ZERO is a zero-amount outcome by definition.
+  CHECK (outcome <> 'MATCHED_ZERO' OR amount_micro_usd = 0),
   CHECK ((supersedes_evidence_id IS NULL) = (actor_ref IS NULL AND reason IS NULL)),
   CHECK (actor_ref IS NULL OR actor_ref <> ''),
   CHECK (reason IS NULL OR reason <> ''),
@@ -146,4 +164,54 @@ CREATE TRIGGER runpod_billing_query_skipped_buckets_no_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION md_forbid_mutation();
 CREATE TRIGGER runpod_billing_query_skipped_buckets_integer_numbers
   BEFORE INSERT OR UPDATE ON runpod_billing_query_skipped_buckets
+  FOR EACH ROW EXECUTE FUNCTION md_forbid_non_integer_numbers();
+
+-- T045-FIX A-S2: the finality retry attempt count behind the doubling backoff. It is
+-- freely rewritable (reset to 0 once BILLED); the four timestamps above stay set-once.
+ALTER TABLE pod_leases
+  ADD COLUMN finality_attempts integer NOT NULL DEFAULT 0 CHECK (finality_attempts >= 0);
+
+-- T045-FIX A-S1: the audited operator resolution for a create that was sent but never
+-- produced a Pod. One resolution per lease, append-only, with the attestation (actor,
+-- reason, evidence sha) and its instant. It posts the BILLED 0 settlement.
+CREATE TABLE runpod_podless_create_resolutions (
+  resolution_id uuid PRIMARY KEY,
+  lease_id uuid NOT NULL UNIQUE REFERENCES pod_leases(id),
+  actor_ref text NOT NULL CHECK (actor_ref <> ''),
+  reason text NOT NULL CHECK (reason <> ''),
+  evidence_sha256 text NOT NULL CHECK (evidence_sha256 ~ '^[0-9a-f]{64}$'),
+  resolved_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER runpod_podless_create_resolutions_append_only
+  BEFORE UPDATE OR DELETE ON runpod_podless_create_resolutions
+  FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER runpod_podless_create_resolutions_no_truncate
+  BEFORE TRUNCATE ON runpod_podless_create_resolutions
+  FOR EACH STATEMENT EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER runpod_podless_create_resolutions_integer_numbers
+  BEFORE INSERT OR UPDATE ON runpod_podless_create_resolutions
+  FOR EACH ROW EXECUTE FUNCTION md_forbid_non_integer_numbers();
+
+-- T045-FIX B-S4: the per-Pod billing-ingest backoff. One row per owned Pod, updated
+-- after every ingest attempt (stored, replayed or failed); rows are never deleted.
+CREATE TABLE runpod_billing_ingest_backoff (
+  pod_id text PRIMARY KEY,
+  provider_account_ref text NOT NULL,
+  next_ingest_at timestamptz NOT NULL,
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  post_terminate_ingest_done boolean NOT NULL DEFAULT false,
+  last_outcome text NOT NULL CHECK (last_outcome IN
+    ('STORED','REPLAYED','SKIPPED_OPEN','FAILED')),
+  last_detail text NOT NULL DEFAULT '',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TRIGGER runpod_billing_ingest_backoff_no_delete
+  BEFORE DELETE ON runpod_billing_ingest_backoff
+  FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER runpod_billing_ingest_backoff_no_truncate
+  BEFORE TRUNCATE ON runpod_billing_ingest_backoff
+  FOR EACH STATEMENT EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER runpod_billing_ingest_backoff_integer_numbers
+  BEFORE INSERT OR UPDATE ON runpod_billing_ingest_backoff
   FOR EACH ROW EXECUTE FUNCTION md_forbid_non_integer_numbers();

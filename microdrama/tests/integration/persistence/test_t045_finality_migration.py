@@ -257,6 +257,149 @@ def test_bucket_replay_key_widens_to_finality_and_verifications_are_unique(
         )
 
 
+def test_migration_0025_backfills_verification_identity_and_drops_the_default(
+    pg_server_dsn: str,
+) -> None:
+    """T045-FIX A-N6: the identity column is backfilled from the bucket row, and no
+    blanket ``''`` default remains for future inserts to fall back on."""
+    name = f"md_t045n6_{uuid.uuid4().hex[:10]}"
+    with psycopg.connect(pg_server_dsn, autocommit=True) as conn:
+        conn.execute(f'CREATE DATABASE "{name}"')
+    dsn = psycopg.conninfo.make_conninfo(pg_server_dsn, dbname=name)
+    try:
+        assert migrate(dsn, target="0024") == [f"{n:04d}" for n in range(1, 25)]
+        identity = "b" * 64
+        with psycopg.connect(dsn) as conn:
+            query_id = uuid.uuid4()
+            observation_id = uuid.uuid4()
+            conn.execute(
+                "INSERT INTO runpod_billing_queries (query_id, provider_account_ref, "
+                "observed_at, result_state, payload) VALUES (%s, 'acct:t045', %s, "
+                "'BUCKETS', '{}')",
+                (query_id, T0),
+            )
+            conn.execute(
+                "INSERT INTO runpod_billing_buckets (observation_id, "
+                "bucket_identity_sha256, revision, query_id, provider_account_ref, "
+                "pod_id, bucket_start, bucket_end, bucket_size_seconds, "
+                "raw_response_sha256, observed_at, currency, total_amount_micro_usd, "
+                "gpu_amount_micro_usd, cpu_amount_micro_usd, disk_amount_micro_usd, "
+                "finality_state, payload) VALUES (%s, %s, 1, %s, 'acct:t045', "
+                "'pod-n6', %s, %s, 3600, %s, %s, 'USD', 0, 0, 0, 0, "
+                "'ALLOCATED_PROVIDER_REPORTED', '{}')",
+                (
+                    observation_id,
+                    identity,
+                    query_id,
+                    T0,
+                    T0 + timedelta(hours=1),
+                    "r" * 64,
+                    T0,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO runpod_billing_invoice_verifications (verification_id, "
+                "bucket_observation_id, evidence_sha256, verified_at, result, payload) "
+                "VALUES (%s, %s, %s, %s, 'MATCHED', '{}')",
+                (uuid.uuid4(), observation_id, "e" * 64, T0),
+            )
+        assert migrate(dsn) == ["0025"]
+        with psycopg.connect(dsn) as conn:
+            stored = conn.execute(
+                "SELECT bucket_identity_sha256 FROM runpod_billing_invoice_verifications"
+            ).fetchone()
+            assert stored is not None and stored[0] == identity
+            default = conn.execute(
+                "SELECT column_default FROM information_schema.columns "
+                "WHERE table_name = 'runpod_billing_invoice_verifications' "
+                "AND column_name = 'bucket_identity_sha256'"
+            ).fetchone()
+            assert default is not None and default[0] is None
+    finally:
+        with psycopg.connect(pg_server_dsn, autocommit=True) as conn:
+            conn.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+def test_matched_zero_period_evidence_must_carry_a_zero_amount(db: Database) -> None:
+    """T045-FIX A-N6: MATCHED_ZERO is a zero-amount outcome by definition."""
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO runpod_billing_period_evidence (period_evidence_id, "
+            "provider_account_ref, pod_id, period_start, period_end, amount_micro_usd, "
+            "currency, evidence_sha256, evidence_source, observed_at, outcome, "
+            "bucket_sum_micro_usd) VALUES (%s, 'acct:t045', 'pod-mz', %s, %s, 1, 'USD', "
+            "%s, 'INVOICE', %s, 'MATCHED_ZERO', 0)",
+            (uuid.uuid4(), T0, T0 + timedelta(hours=1), "a" * 64, T0),
+        )
+    with db.transaction() as tx:  # a zero amount is exactly what MATCHED_ZERO means
+        tx.execute(
+            "INSERT INTO runpod_billing_period_evidence (period_evidence_id, "
+            "provider_account_ref, pod_id, period_start, period_end, amount_micro_usd, "
+            "currency, evidence_sha256, evidence_source, observed_at, outcome, "
+            "bucket_sum_micro_usd) VALUES (%s, 'acct:t045', 'pod-mz', %s, %s, 0, 'USD', "
+            "%s, 'INVOICE', %s, 'MATCHED_ZERO', 0)",
+            (uuid.uuid4(), T0, T0 + timedelta(hours=1), "b" * 64, T0),
+        )
+
+
+def test_migration_0025_adds_fix_round_columns_and_tables(db: Database) -> None:
+    """T045-FIX schema: the podless-create resolution (A-S1), the finality attempt
+    count (A-S2) and the per-Pod ingest backoff (B-S4)."""
+    with db.transaction(readonly=True) as tx:
+        assert "finality_attempts" in {
+            row["column_name"]
+            for row in tx.fetchall(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'pod_leases'"
+            )
+        }
+        tables = {
+            row["table_name"]
+            for row in tx.fetchall(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
+            )
+        }
+        assert "runpod_podless_create_resolutions" in tables
+        assert "runpod_billing_ingest_backoff" in tables
+        backoff_columns = {
+            row["column_name"]
+            for row in tx.fetchall(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'runpod_billing_ingest_backoff'"
+            )
+        }
+        assert {
+            "pod_id",
+            "provider_account_ref",
+            "next_ingest_at",
+            "attempts",
+            "post_terminate_ingest_done",
+            "last_outcome",
+            "last_detail",
+        } <= backoff_columns
+    # The resolution is append-only and one per lease.
+    with db.transaction() as tx:
+        lease = _insert_lease(tx, pod_id=None)
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO runpod_podless_create_resolutions (resolution_id, lease_id, "
+            "actor_ref, reason, evidence_sha256, resolved_at) VALUES (%s, %s, "
+            "'owner:test', 'console shows no pod', %s, %s)",
+            (uuid.uuid4(), lease, "c" * 64, T0),
+        )
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute("UPDATE runpod_podless_create_resolutions SET reason='rewritten'")
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute("DELETE FROM runpod_podless_create_resolutions")
+    with pytest.raises(DuplicateSemanticKey), db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO runpod_podless_create_resolutions (resolution_id, lease_id, "
+            "actor_ref, reason, evidence_sha256, resolved_at) VALUES (%s, %s, "
+            "'owner:test', 'second resolution', %s, %s)",
+            (uuid.uuid4(), lease, "d" * 64, T0),
+        )
+
+
 def test_period_evidence_supersede_audit_is_structural(db: Database) -> None:
     first = uuid.uuid4()
     with db.transaction() as tx:
