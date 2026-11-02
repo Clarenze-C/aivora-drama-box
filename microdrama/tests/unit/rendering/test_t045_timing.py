@@ -35,6 +35,32 @@ class RunpodIdFakePods(FakePodProvider):
     provider_id = "runpod"
 
 
+class SeparateConnectionCreatePods(RunpodIdFakePods):
+    """T045-FIX A-S8: create_pod reads create_requested_at over its own connection.
+
+    A second connection can only see the create-request proof if it was committed
+    before the create call was sent - a write still open in the caller's transaction
+    would be invisible here."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.probe_dsn: str | None = None
+        self.probe_lease_id: UUID | None = None
+        self.create_pod_saw: object = "never-called"
+
+    def create_pod(self, request) -> object:
+        import psycopg
+
+        with psycopg.connect(self.probe_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT create_requested_at FROM pod_leases WHERE id = %s",
+                (str(self.probe_lease_id),),
+            )
+            row = cur.fetchone()
+        self.create_pod_saw = row[0] if row else "row-missing"
+        return super().create_pod(request)
+
+
 def _budget(db: Database) -> BudgetService:
     return BudgetService(db, FakeClock(T0), SequentialIds("t045-timing"), Settings())
 
@@ -116,8 +142,28 @@ def test_create_request_is_durable_before_the_create_call(world: RenderWorld) ->
     assert row["compute_window_start_at"] == row["create_requested_at"]
 
 
-def test_shutdown_of_an_ambiguous_create_keeps_the_runpod_hold(db: Database) -> None:
-    # A runpod lease whose create was sent and whose reconcile-by-token found nothing:
+def test_create_request_is_committed_before_the_create_call_is_sent(
+    db_dsn: str, db: Database
+) -> None:
+    """T045-FIX A-S8: the durable proof is visible to a SEPARATE connection while the
+    create call is in flight - the commit genuinely precedes the create, not merely
+    the same transaction that later writes it."""
+    provider = SeparateConnectionCreatePods(clock=FakeClock(T0), ids=SequentialIds("t045-a8"))
+    provider.probe_dsn = db_dsn
+    world = RenderWorld(db, provider=provider)
+    episode = world.episode()
+    handle = world.claim(episode, "t045-create-order-proof")
+    provider.probe_lease_id = handle.lease.lease_id
+    world.leases.ensure_pod(handle.lease.lease_id)
+    assert provider.create_pod_saw not in ("never-called", "row-missing")
+    assert provider.create_pod_saw is not None  # committed before create_pod ran
+
+
+def test_release_guard_keeps_the_runpod_hold_for_an_ambiguous_create(db: Database) -> None:
+    # T045-FIX A-S8: renamed to what this actually exercises - the BudgetService
+    # release guard for a create whose outcome is unknown (the real shutdown path is
+    # covered by test_shutdown_of_an_ambiguous_create_records_the_window_end). A
+    # runpod lease whose create was sent and whose reconcile-by-token found nothing:
     # the provider list miss the code itself calls out as not being proof of failure.
     with db.transaction() as tx:
         lease_id, reservation_id = _insert_runpod_claim(tx, create_requested=True)
