@@ -12,7 +12,10 @@ queue or the main service. One ``sweep()``:
 3. releases budget holds of the pod lifecycle (``pod.lease`` / ``pod.stop``) that were
    never bound to a lease row (a crash between reserve and insert) once past a grace
    period;
-4. settles holds of already-terminal leases a crash left unsettled.
+4. ingests provider billing history for owned Runpod pods whose leases are not BILLED
+   (T045 R9), mapping exact micro-USD buckets into the durable repository so the next
+   phase can settle on provider-final evidence;
+5. settles holds of already-terminal leases a crash left unsettled.
 
 Every action appends an evidence event. The janitor only ever manages pods that carry its
 configured owned tag: foreign pods (another team's tag, or untagged) are never returned by
@@ -32,6 +35,7 @@ from typing import Any
 from uuid import UUID, uuid5
 
 from microdrama.budget import BudgetService
+from microdrama.budget.billing import BillingRepository
 from microdrama.config import Settings
 from microdrama.contracts.enums import EpisodeState, LeaseState, PodState
 from microdrama.contracts.errors import MicrodramaError
@@ -57,6 +61,7 @@ from microdrama.rendering.pods import (
     PodManager,
     resolve_pod_provider,
 )
+from microdrama.rendering.runpod_billing import map_billing_history
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,7 @@ class JanitorReport:
     lease_outcomes: list[JanitorAction] = field(default_factory=list)
     orphan_pods: list[JanitorAction] = field(default_factory=list)
     budget_holds: list[JanitorAction] = field(default_factory=list)
+    billing_ingests: list[JanitorAction] = field(default_factory=list)
     failures: list[JanitorAction] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +99,7 @@ class JanitorReport:
             "lease_outcomes": [a.to_dict() for a in self.lease_outcomes],
             "orphan_pods": [a.to_dict() for a in self.orphan_pods],
             "budget_holds": [a.to_dict() for a in self.budget_holds],
+            "billing_ingests": [a.to_dict() for a in self.billing_ingests],
             "failures": [a.to_dict() for a in self.failures],
         }
 
@@ -115,6 +122,7 @@ class Janitor:
         self._finality = finality
         self._db = db
         self._budget = budget
+        self._provider = provider
         self._clock = clock
         self._settings = settings
         self._config = config
@@ -164,6 +172,7 @@ class Janitor:
         self._sweep_leases(now, report)
         self._sweep_provider_orphans(now, report)
         self._sweep_unbound_holds(now, report)
+        self._sweep_billing_ingestion(now, report)
         self._sweep_terminal_leases(now, report)
         return report
 
@@ -514,7 +523,90 @@ class Janitor:
                 now,
             )
 
-    # --- phase 4: terminal leases with unsettled holds --------------------------------------
+    # --- phase 4: provider billing ingestion for unfinal leases (T045 R9) -------------------
+
+    def _sweep_billing_ingestion(self, now: datetime, report: JanitorReport) -> None:
+        """Pull provider billing for owned Runpod pods whose leases are not BILLED.
+
+        Effect-gated at the provider (a billing query is a live provider call) and
+        paced by the same per-lease finality backoff that paces settlement retries,
+        so a pending pod cannot hot-loop the billing endpoint. Only the durable
+        repository may receive the mapped buckets; the fake provider path (no
+        ``billing_history``) is untouched. Ingest runs before the terminal-lease
+        sweep so the same sweep's finality pass sees the fresh buckets.
+        """
+        billing_history = getattr(self._provider, "billing_history", None)
+        if billing_history is None or not isinstance(self._finality, BillingRepository):
+            return
+        pods = self._db_query(
+            "SELECT l.pod_id, MIN(l.provider_account_ref) AS account_ref, "
+            "MIN(COALESCE(l.create_requested_at, l.created_at)) AS window_start, "
+            "GREATEST(MAX(l.compute_window_end_at), MAX(l.terminate_verified_at)) "
+            "AS window_end, MIN(l.next_finality_check_at) AS backoff "
+            "FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
+            "WHERE l.provider = 'runpod' AND l.pod_id IS NOT NULL "
+            "AND l.owned_tag = %s AND r.state IN ('ACTIVE', 'EXPIRED') "
+            "GROUP BY l.pod_id "
+            "HAVING MIN(l.next_finality_check_at) IS NULL "
+            "OR MIN(l.next_finality_check_at) <= %s "
+            "ORDER BY MIN(l.created_at)",
+            (self._config.owned_tag, now),
+        )
+        for row in pods:
+            pod_id = row["pod_id"]
+            if not row["account_ref"]:
+                report.failures.append(
+                    JanitorAction(
+                        subject=f"pod:{pod_id}",
+                        action="billing_ingest",
+                        outcome="failed",
+                        detail="lease has no provider account label; billing cannot be attributed",
+                    )
+                )
+                continue
+            since = row["window_start"]
+            until = row["window_end"] or now
+            if until <= since:
+                until = since + timedelta(seconds=1)
+            try:
+                history = billing_history(pod_id, since=since, until=until)
+                mapped = map_billing_history(
+                    self._db, history, provider_account_ref=row["account_ref"]
+                )
+                ingested = 0
+                if mapped is not None:
+                    self._finality.ingest(mapped.query, mapped.buckets)
+                    ingested = len(mapped.buckets)
+            except MicrodramaError as exc:
+                report.failures.append(
+                    JanitorAction(
+                        subject=f"pod:{pod_id}",
+                        action="billing_ingest",
+                        outcome="failed",
+                        detail=f"{exc.code}: {exc.message}",
+                    )
+                )
+                continue
+            action = JanitorAction(
+                subject=f"pod:{pod_id}",
+                action="billing_ingest",
+                outcome="INGESTED" if ingested else "REPLAY",
+                detail=f"{ingested} bucket(s) stored over the lease window",
+            )
+            report.billing_ingests.append(action)
+            self._evidence(
+                f"pod:{pod_id}",
+                "janitor.billing_ingested",
+                {
+                    "pod_id": pod_id,
+                    "buckets_stored": ingested,
+                    "window_start": since.isoformat(),
+                    "window_end": until.isoformat(),
+                },
+                now,
+            )
+
+    # --- phase 5: terminal leases with unsettled holds --------------------------------------
 
     def _sweep_terminal_leases(self, now: datetime, report: JanitorReport) -> None:
         # T045 R8/G15: a hold that EXPIRED while it waited for an invoice is revisited

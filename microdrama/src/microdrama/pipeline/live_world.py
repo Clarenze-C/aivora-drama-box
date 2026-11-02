@@ -34,6 +34,7 @@ from microdrama.rendering.janitor import Janitor, build_janitor
 from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
 from microdrama.rendering.pods import PodManager
 from microdrama.rendering.presets import PresetCatalog
+from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
 from microdrama.rendering.runpod_transport import (
     RunpodQuoteAttestation,
     RunpodRestProvider,
@@ -408,25 +409,6 @@ def build_live_benchmark_world(
 
     owned_tag = f"microdrama-owned:{attestation.namespace}"
 
-    def absent_pod_ownership_probe(pod_id: str) -> bool:
-        """T045 R9: durable DB ownership proof for billing reads of an absent Pod.
-
-        A terminated Pod is gone from the provider, so ``billing_history`` can no
-        longer establish ownership there. The durable proof is a ``pod_leases`` row
-        with this pod id, the owned-tag namespace, the attested account label and a
-        verified terminate.
-        """
-        with db.transaction(readonly=True) as tx:
-            return (
-                tx.fetchone(
-                    "SELECT 1 FROM pod_leases WHERE provider = 'runpod' AND pod_id = %s "
-                    "AND owned_tag = %s AND provider_account_ref = %s "
-                    "AND terminate_verified_at IS NOT NULL",
-                    (pod_id, owned_tag, attestation.provider_account_ref),
-                )
-                is not None
-            )
-
     provider = RunpodRestProvider(
         settings,
         credential_ref=runpod_credential_ref,
@@ -435,7 +417,9 @@ def build_live_benchmark_world(
         now=live_clock.now,
         reservation_guard=reservation_guard,
         cleanup_guard=cleanup_guard,
-        absent_pod_ownership_probe=absent_pod_ownership_probe,
+        absent_pod_ownership_probe=durable_pod_ownership_probe(
+            db, owned_tag=owned_tag, provider_account_ref=attestation.provider_account_ref
+        ),
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, pod_config)
