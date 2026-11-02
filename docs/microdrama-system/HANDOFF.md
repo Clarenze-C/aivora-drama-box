@@ -11,8 +11,8 @@ deployment receipt.
   through 2026-11-01 is committed and pushed (remote head `62a39ec`). The
   2026-11-02 review fix round (DB-1..DB-11) and its re-review-1 follow-up
   round (DBR-1..DBR-3 + DBR-6 drill re-run, code commit `95fef89`) are
-  committed locally in layered code+docs commits on top and **not pushed** —
-  re-review 2 ACCEPTED them; the push waits for the operator. A pre-review snapshot of the formerly dirty tree exists
+  committed in layered code+docs commits on top; re-review 2 ACCEPTED them and
+  they were pushed on 2026-11-02 with the operator's approval. A pre-review snapshot of the formerly dirty tree exists
   at `/root/drama-box-dirty-snapshot-20261101.tar.gz`.
 - Current contract package: **2.15.0** (V2 payload schema version 2.0; V1
   payloads remain readable). Migrations 0019–0024 are present. Contract source
@@ -115,11 +115,9 @@ is closed; the only open step is the operator's push decision.
 
 ## What remains, in order
 
-1. **Review-after-fix**: ONE scoped re-review of DBR-1..DBR-3 only (commit
-   `95fef89` + the DBR-6 drill evidence in `microdrama/evidence/T046.md`) —
-   the second and last re-review round; after it the operator decides
-   whether to push. After the 2026-11-04 Codex quota reset, or another
-   cross-model reviewer sooner.
+1. ~~Review-after-fix~~ **DONE 2026-11-02**: re-review 2 ACCEPTED DBR-1..3 +
+   DBR-6 (`ef08674`); the operator approved the push and the branch is pushed.
+   An optional Codex spot-check after the 2026-11-04 reset remains.
 2. **T045 accounting acceptance** (offline work, no provider calls).
 3. **T031 real-provider qualification** — needs T045 accepted PLUS explicit
    operator authorization: rights route, credentials, current quote,
