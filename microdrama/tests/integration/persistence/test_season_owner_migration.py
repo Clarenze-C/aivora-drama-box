@@ -110,7 +110,7 @@ def backfilled(pg_server_dsn: str) -> tuple[str, dict]:
             approval_id=ids["ambiguous_approval"],
             scope_hash=ambiguous_scope,
         )
-    assert migrate(dsn) == ["0024"]
+    assert migrate(dsn) == ["0024", "0025"]
     return dsn, ids
 
 

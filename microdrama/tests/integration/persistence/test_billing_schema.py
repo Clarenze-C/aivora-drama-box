@@ -29,6 +29,8 @@ def test_billing_migration_creates_append_only_reconciliation_tables(pg_server_d
             "runpod_billing_budget_postings",
             "runpod_billing_recovery_resolutions",
             "runpod_billing_budget_finalizations",
+            "runpod_billing_period_evidence",
+            "runpod_billing_query_skipped_buckets",
         } <= tables
         triggers = {
             row[0]
@@ -36,4 +38,4 @@ def test_billing_migration_creates_append_only_reconciliation_tables(pg_server_d
                 "SELECT tgname FROM pg_trigger WHERE tgname LIKE 'runpod_billing_%_append_only'"
             )
         }
-        assert len(triggers) == 7
+        assert len(triggers) == 9
