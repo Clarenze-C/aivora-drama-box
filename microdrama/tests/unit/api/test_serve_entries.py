@@ -76,8 +76,7 @@ def test_first_boot_seed_is_atomic_when_it_fails_midway(db, offline_settings, mo
         world_mod.build_pipeline_world(offline_settings, db)
     with db.transaction(readonly=True) as tx:
         presets = int(
-            tx.fetchval("SELECT count(*) FROM preset_registry WHERE preset_id LIKE 'fake-%'")
-            or 0
+            tx.fetchval("SELECT count(*) FROM preset_registry WHERE preset_id LIKE 'fake-%'") or 0
         )
     assert presets == 0, "a crash mid-seed must roll the whole first boot back"
 
@@ -85,8 +84,7 @@ def test_first_boot_seed_is_atomic_when_it_fails_midway(db, offline_settings, mo
     clean = world_mod.build_pipeline_world(offline_settings, db)
     with clean.db.transaction(readonly=True) as tx:
         presets = int(
-            tx.fetchval("SELECT count(*) FROM preset_registry WHERE preset_id LIKE 'fake-%'")
-            or 0
+            tx.fetchval("SELECT count(*) FROM preset_registry WHERE preset_id LIKE 'fake-%'") or 0
         )
         rights = int(
             tx.fetchval(
@@ -141,9 +139,7 @@ def test_health_fails_when_the_payload_is_not_ok(monkeypatch):
         httpx, "get", lambda *a, **k: _Response({"status": "not-ok", "version": "x"})
     )
     assert serve._health() == 1, "a not-ok payload fails the probe"
-    monkeypatch.setattr(
-        httpx, "get", lambda *a, **k: _Response({"status": "ok", "version": "x"})
-    )
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response({"status": "ok", "version": "x"}))
     assert serve._health() == 0
 
 

@@ -786,7 +786,9 @@ def _clip(clip_id: str, *, timeline_in_ms: int, source_in_ms: int, source_out_ms
     )
 
 
-def _append_manifest_row(seed: V2TruthSeed, *, variant_key: str, version: int, state: str, clips) -> None:
+def _append_manifest_row(
+    seed: V2TruthSeed, *, variant_key: str, version: int, state: str, clips
+) -> None:
     """Append one edit_manifests row (the table's durable supersede shape)."""
     edl = EditDecisionList(
         edl_id=uuid.uuid4(),

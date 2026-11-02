@@ -670,9 +670,7 @@ def test_stale_selection_job_is_superseded_by_a_newer_intent(
     _run(claimed_y)  # the newest intent runs first: the proposal moves to Y
     on_y = world.intake.status(world.human(), season_id)
     assert on_y.proposal_id is not None
-    y_proposal = world.row(
-        "SELECT scope FROM season_proposals WHERE id = %s", (on_y.proposal_id,)
-    )
+    y_proposal = world.row("SELECT scope FROM season_proposals WHERE id = %s", (on_y.proposal_id,))
     assert y_proposal["scope"]["title_en"] == newest_card.title_en
 
     stale_outcome = _run(claimed_x)  # X's job completes AFTER the newer selection
@@ -693,6 +691,6 @@ def test_stale_selection_job_is_superseded_by_a_newer_intent(
     )
     assert not stale_card_after.is_current_proposal
     assert bound is not None  # the initially-bound candidate stays a plain card
-    assert world.count(
-        "SELECT COUNT(*) FROM research_runs WHERE season_id = %s", (season_id,)
-    ) == 2, "only the intake run and Y's bounded run ever reach research"
+    assert (
+        world.count("SELECT COUNT(*) FROM research_runs WHERE season_id = %s", (season_id,)) == 2
+    ), "only the intake run and Y's bounded run ever reach research"

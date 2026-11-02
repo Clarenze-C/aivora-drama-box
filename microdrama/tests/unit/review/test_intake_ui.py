@@ -697,9 +697,7 @@ def test_missing_search_price_blocks_dispatch(world: World) -> None:
 def test_missing_llm_provider_blocks_dispatch(world: World) -> None:
     """F3/DB-8: no research model provider means no dispatch, no spend."""
     broken = IntakeWorld(world, llm_enabled=False)
-    _blocked_page(
-        world, broken, blocker="research model provider is not configured", slug="no-llm"
-    )
+    _blocked_page(world, broken, blocker="research model provider is not configured", slug="no-llm")
 
 
 def test_missing_llm_token_prices_block_dispatch(world: World) -> None:
