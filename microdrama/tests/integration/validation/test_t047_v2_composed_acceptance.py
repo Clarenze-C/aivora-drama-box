@@ -523,7 +523,7 @@ class V2TruthSeed:
                         "id": edl.edl_id,
                         "episode_id": self.episode_id,
                         "purpose": "FULL_EPISODE",
-                        "variant_key": "master",
+                        "variant_key": "main",  # the production timeline lane
                         "version": 1,
                         "edl": jsonb(edl),
                         "edl_hash": canonical_hash(edl),
@@ -725,6 +725,116 @@ def test_reader_fails_closed_on_stale_tampered_or_missing_records(v2_episode) ->
     s1 = next(w for w in degraded.windows if w.scene_id == "s1")
     assert s1.outfit_by_character.get("fon") is None, "stale-hash content is unreadable"
     assert degraded.expectations_sha256() != baseline.expectations_sha256()
+
+
+def _clip(clip_id: str, *, timeline_in_ms: int, source_in_ms: int, source_out_ms: int) -> EdlClip:
+    return EdlClip(
+        clip_id=clip_id,
+        track=TrackKind.VIDEO,
+        source_asset_id=uuid.uuid4(),
+        source_in_ms=source_in_ms,
+        source_out_ms=source_out_ms,
+        timeline_in_ms=timeline_in_ms,
+    )
+
+
+def _append_manifest_row(seed: V2TruthSeed, *, variant_key: str, version: int, state: str, clips) -> None:
+    """Append one edit_manifests row (the table's durable supersede shape)."""
+    edl = EditDecisionList(
+        edl_id=uuid.uuid4(),
+        episode_id=seed.episode_id,
+        version=version,
+        purpose=SlotKind.FULL_EPISODE,
+        output=OutputFormat(width=1080, height=1920, fps_num=30),
+        clips=clips,
+    )
+    with seed.world.db.transaction() as tx:
+        insert_row(
+            tx,
+            "edit_manifests",
+            {
+                "id": edl.edl_id,
+                "episode_id": seed.episode_id,
+                "purpose": "FULL_EPISODE",
+                "variant_key": variant_key,
+                "version": version,
+                "edl": jsonb(edl),
+                "edl_hash": canonical_hash(edl),
+                "state": state,
+            },
+        )
+
+
+def test_reader_fails_closed_on_unmapped_or_dropped_video_clips(v2_episode) -> None:
+    """DB-3: a VIDEO clip that does not map, or a window that would be dropped,
+    makes the expectations incomplete — never a silent partial list."""
+    world, seed, episode_id = v2_episode
+    reader = V2RecordContinuityExpectations(world.db)
+    assert reader.continuity_expectations(episode_id) is not None
+
+    clean = [
+        _clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800),
+        _clip("shot-s2.v", timeline_in_ms=3_800, source_in_ms=0, source_out_ms=1_200),
+    ]
+    # An unmapped shot is the one dropped-window shape a CONTRACT-VALID EDL can
+    # carry: EdlClip/EditDecisionList already reject empty windows (out <= in)
+    # and overlapping timelines at model-validation time, so those reader
+    # branches are defense-in-depth for rows that bypass validation. The
+    # unmapped clip reaches the reader today — and used to be silently skipped.
+    shapes = {
+        "unmapped shot": [
+            _clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800),
+            _clip("shot-unknown.v", timeline_in_ms=3_800, source_in_ms=0, source_out_ms=1_200),
+        ],
+    }
+    version = 2
+    for label, clips in shapes.items():
+        _append_manifest_row(
+            seed, variant_key="main", version=version, state="RENDERED", clips=clips
+        )
+        got = reader.continuity_expectations(episode_id)
+        assert got is None, f"{label}: expectations must be incomplete, never partial"
+        # restore a clean newest row so the next shape is evaluated on its own
+        _append_manifest_row(
+            seed, variant_key="main", version=version + 1, state="RENDERED", clips=clean
+        )
+        version += 2
+
+
+def test_reader_reads_only_the_current_main_variant_timeline(v2_episode) -> None:
+    """DB-4: the timeline lane is variant_key='main'; the newest MAIN row governs.
+
+    A higher-versioned derivative variant must never define the expectations,
+    and a newest main row that is INVALIDATED means no usable timeline at all —
+    the reader must not fall back to the older RENDERED row."""
+    world, seed, episode_id = v2_episode
+    reader = V2RecordContinuityExpectations(world.db)
+    assert [w.scene_id for w in reader.continuity_expectations(episode_id).windows] == ["s1", "s2"]
+
+    # A derivative variant at a much higher version with fewer clips: invisible.
+    _append_manifest_row(
+        seed,
+        variant_key="tiktok-9x16",
+        version=5,
+        state="RENDERED",
+        clips=[_clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800)],
+    )
+    still_main = reader.continuity_expectations(episode_id)
+    assert still_main is not None, "a variant timeline never defines the main expectations"
+    assert [w.scene_id for w in still_main.windows] == ["s1", "s2"]
+
+    # The newest MAIN row invalidated: expectations unknown, never the old row's.
+    _append_manifest_row(
+        seed,
+        variant_key="main",
+        version=6,
+        state="INVALIDATED",
+        clips=[
+            _clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800),
+            _clip("shot-s2.v", timeline_in_ms=3_800, source_in_ms=0, source_out_ms=1_200),
+        ],
+    )
+    assert reader.continuity_expectations(episode_id) is None
 
 
 # --- (2) the dispatch-boundary gates ----------------------------------------------------

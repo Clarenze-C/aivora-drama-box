@@ -115,14 +115,17 @@ class V2RecordContinuityExpectations:
             episode = tx.fetchone("SELECT season_id FROM episodes WHERE id = %s", (episode_id,))
             if episode is None:
                 return None
+            # DB-4: the timeline lane is variant_key='main'; the NEWEST main row
+            # governs regardless of state, and anything but PLANNED/RENDERED
+            # means no usable timeline — never a fallback to an older row.
             manifest_row = tx.fetchone(
-                "SELECT edl FROM edit_manifests WHERE episode_id = %s"
-                " AND purpose = 'FULL_EPISODE' AND state IN ('PLANNED', 'RENDERED')"
+                "SELECT edl, state FROM edit_manifests WHERE episode_id = %s"
+                " AND purpose = 'FULL_EPISODE' AND variant_key = 'main'"
                 " ORDER BY version DESC LIMIT 1",
                 (episode_id,),
             )
-            if manifest_row is None:
-                return None  # no exported timeline: expectations stay unknown
+            if manifest_row is None or str(manifest_row["state"]) not in ("PLANNED", "RENDERED"):
+                return None  # no usable main timeline: expectations stay unknown
             try:
                 edl = EditDecisionList.model_validate(manifest_row["edl"])
             except ValidationError:
@@ -149,14 +152,19 @@ class V2RecordContinuityExpectations:
                 shot_id = clip.clip_id.rsplit(".", 1)[0]
                 shot = shots.get(shot_id)
                 if shot is None:
-                    continue
+                    # DB-3: a VIDEO clip the records cannot map makes the whole
+                    # expectations set incomplete — a partial window list would
+                    # silently shrink QA coverage.
+                    return None
                 scene = scenes.get(shot.scene_id)
                 if scene is None:
-                    continue
+                    return None
                 start = int(clip.timeline_in_ms)
                 end = start + int(clip.source_out_ms - clip.source_in_ms)
                 if end <= start or (windows and start < windows[-1].end_ms):
-                    continue  # never feed overlapping or empty windows
+                    # DB-3: an empty or overlapping window is dropped evidence,
+                    # never silently skipped.
+                    return None
                 outfit_by_character = {
                     a.character_id: a.outfit_id for a in assignments if a.scene_id == scene.scene_id
                 }
