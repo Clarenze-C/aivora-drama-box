@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -350,3 +351,26 @@ def test_concurrent_migrators_apply_each_version_once(pg_server_dsn: str) -> Non
     assert not errors
     applied = sorted(v for r in results for v in r)
     assert applied == [m.version for m in discover()]
+
+
+def test_advisory_lock_times_out_with_a_typed_error(db, db_dsn) -> None:
+    """DBR-3: ``advisory_lock`` bounds its wait and fails typed, never hangs.
+
+    A second session holds the same key; the caller asks for a 0.5 s timeout.
+    The old code blocked on ``pg_advisory_lock`` forever. Now ``SET
+    lock_timeout`` bounds the wait and the failure is a ``ServiceUnavailable``
+    naming the lock, raised well inside the bound."""
+    from microdrama.contracts.errors import ServiceUnavailable
+
+    key = 4_972_026_112  # distinct from FIRST_BOOT_SEED_LOCK_KEY and the migrator's key
+    holder = psycopg.connect(db_dsn, autocommit=True)
+    try:
+        holder.execute("SELECT pg_advisory_lock(%s)", (key,))
+        started = time.monotonic()
+        with pytest.raises(ServiceUnavailable, match=f"advisory lock {key}"):
+            with db.advisory_lock(key, timeout_s=0.5):
+                pass
+        waited = time.monotonic() - started
+    finally:
+        holder.close()
+    assert 0.4 <= waited <= 5.0, f"the wait must be bounded by the timeout (waited {waited:.2f}s)"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import pytest
 
 
@@ -146,12 +148,85 @@ def test_health_fails_when_the_payload_is_not_ok(monkeypatch):
 def test_secret_file_is_created_0600_and_never_overwritten(tmp_path):
     """DB-11: the owner password file is created with 0o600 from the first
     instant (O_CREAT|O_EXCL — no umask window, no overwrite)."""
-    from microdrama.api.serve import _write_secret_file
+    import os
+
+    from microdrama.api.serve import _open_secret_file
 
     target = tmp_path / "owner-password.txt"
-    _write_secret_file(target, "a-first-password\n")
+    fd = _open_secret_file(target)
+    try:
+        os.write(fd, b"a-first-password\n")
+    finally:
+        os.close(fd)
     assert target.read_text() == "a-first-password\n"
     assert (target.stat().st_mode & 0o777) == 0o600
     with pytest.raises(FileExistsError):
-        _write_secret_file(target, "a-second-password\n")
+        _open_secret_file(target)
     assert target.read_text() == "a-first-password\n", "an existing file is never overwritten"
+
+
+# --- re-review round 2 (2026-11-02): DBR-1 create-owner / password-file ordering ---
+
+
+def _owner_count(db, username: str) -> int:
+    with db.transaction(readonly=True) as tx:
+        return int(tx.fetchval("SELECT count(*) FROM owners WHERE username = %s", (username,)) or 0)
+
+
+@pytest.mark.db
+def test_create_owner_refuses_an_existing_password_file_and_creates_no_owner(
+    db, db_dsn, offline_settings, tmp_path
+):
+    """DBR-1: the --write-password-to target is reserved BEFORE create_owner.
+
+    The old order committed the owner first and then hit FileExistsError: exit
+    4 with the owner created and the one-time password lost forever — an owner
+    nobody could ever log in as. An existing target must mean exit 4 and ZERO
+    owner rows."""
+    from microdrama.api import serve
+
+    target = tmp_path / "owner-password.txt"
+    target.write_text("a-stale-password\n")
+    args = argparse.Namespace(username="dbowner-stale", write_password_to=str(target))
+    assert serve._create_owner(offline_settings, db_dsn, args) == 4
+    assert _owner_count(db, "dbowner-stale") == 0, "an existing target must leave no owner row"
+    assert target.read_text() == "a-stale-password\n", "the existing file is never touched"
+
+
+@pytest.mark.db
+def test_create_owner_writes_password_0600_to_a_fresh_target(
+    db, db_dsn, offline_settings, tmp_path
+):
+    """DBR-1: a fresh target gets the owner row AND the 0600 file with the
+    one-time password (the reservation happens first, the write after)."""
+    from microdrama.api import serve
+
+    target = tmp_path / "owner-password.txt"
+    args = argparse.Namespace(username="dbowner-fresh", write_password_to=str(target))
+    assert serve._create_owner(offline_settings, db_dsn, args) == 0
+    assert _owner_count(db, "dbowner-fresh") == 1
+    assert target.exists(), "the password file must exist on success"
+    assert (target.stat().st_mode & 0o777) == 0o600
+    secret = target.read_text()
+    assert secret.endswith("\n") and len(secret.strip()) >= 18, "the password is in the file"
+
+
+@pytest.mark.db
+def test_create_owner_failure_after_the_reservation_leaves_no_file_and_no_owner(
+    db, db_dsn, offline_settings, tmp_path, monkeypatch
+):
+    """DBR-1: when create_owner fails after the file was reserved, the empty
+    reservation is unlinked — no stale empty file may block the next attempt."""
+    from microdrama.api import serve
+    from microdrama.core.auth import AuthService
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("forced create_owner failure")
+
+    monkeypatch.setattr(AuthService, "create_owner", boom)
+    target = tmp_path / "owner-password.txt"
+    args = argparse.Namespace(username="dbowner-boom", write_password_to=str(target))
+    with pytest.raises(RuntimeError, match="forced create_owner failure"):
+        serve._create_owner(offline_settings, db_dsn, args)
+    assert not target.exists(), "a failed creation must leave no file behind"
+    assert _owner_count(db, "dbowner-boom") == 0

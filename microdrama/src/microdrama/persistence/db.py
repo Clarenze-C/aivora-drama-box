@@ -13,6 +13,7 @@ PostgreSQL errors are translated into contract error types:
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -217,16 +218,32 @@ class Database:
                 time.sleep(min(0.01 * (2**attempt), 0.2))
 
     @contextmanager
-    def advisory_lock(self, key: int) -> Iterator[None]:
+    def advisory_lock(self, key: int, timeout_s: float = 120.0) -> Iterator[None]:
         """Hold a session-level PostgreSQL advisory lock on a dedicated connection.
 
         First-boot administrative mutual exclusion (DB-10): the lock sits on
         its own short-lived connection, so work done under it keeps the whole
         pool. If the holder dies, the session ends and the lock releases.
+
+        DBR-3: the wait is bounded — ``SET lock_timeout`` (default 120 s,
+        overridable per call) turns a holder that never releases into a typed
+        ``ServiceUnavailable`` naming the key, never an unbounded hang.
         """
+        timeout_ms = int(timeout_s * 1000)
+        if not math.isfinite(timeout_s) or timeout_ms <= 0:
+            raise ValueError(f"advisory lock timeout must be positive seconds, got {timeout_s!r}")
         conn = psycopg.connect(self.dsn, autocommit=True)
         try:
-            conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+            # timeout_ms is a validated positive int, so embedding it is safe;
+            # SET takes no bind parameters over the extended protocol.
+            conn.execute(f"SET lock_timeout = '{timeout_ms}ms'")
+            try:
+                conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+            except (pg_errors.LockNotAvailable, pg_errors.QueryCanceled) as exc:
+                raise ServiceUnavailable(
+                    f"advisory lock {key} not acquired within {timeout_ms}ms",
+                    retryable=True,
+                ) from exc
             try:
                 yield
             finally:

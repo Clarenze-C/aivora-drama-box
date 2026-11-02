@@ -116,6 +116,17 @@ class EdlClip(ContractModel):
         return self.timeline_in_ms + self.duration_ms
 
 
+def video_overlap_allowed_ms(nxt: EdlClip) -> int:
+    """How far ``nxt`` may start inside the previous VIDEO clip's window.
+
+    Single source of truth (DBR-2) shared by ``EditDecisionList._timeline``
+    validation and the QA continuity reader: only a clip arriving with a
+    CROSSFADE overlaps the previous video window, by exactly its
+    ``transition_ms``; every other transition kind abuts with zero overlap.
+    """
+    return nxt.transition_ms if nxt.transition_in is TransitionKind.CROSSFADE else 0
+
+
 class OutputFormat(ContractModel):
     width: PositiveInt
     height: PositiveInt
@@ -148,10 +159,7 @@ class EditDecisionList(VersionedPayload):
         if not video:
             raise ValueError("an EDL needs at least one video clip")
         for prev, nxt in zip(video, video[1:], strict=False):
-            overlap_allowed = (
-                nxt.transition_ms if nxt.transition_in is TransitionKind.CROSSFADE else 0
-            )
-            if nxt.timeline_in_ms < prev.timeline_out_ms - overlap_allowed:
+            if nxt.timeline_in_ms < prev.timeline_out_ms - video_overlap_allowed_ms(nxt):
                 raise ValueError(f"video clips {prev.clip_id}/{nxt.clip_id} overlap")
         if (
             self.burn_in_caption_track_id

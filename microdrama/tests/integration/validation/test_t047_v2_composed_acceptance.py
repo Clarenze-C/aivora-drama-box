@@ -39,7 +39,7 @@ from validation_qa_support import (
 )
 
 from microdrama.api.app import AppComponents, create_app
-from microdrama.contracts.enums import QAOutcome, SlotKind, TrackKind
+from microdrama.contracts.enums import QAOutcome, SlotKind, TrackKind, TransitionKind
 from microdrama.contracts.errors import MicrodramaError
 from microdrama.contracts.examples import (
     V2_T0,
@@ -775,7 +775,15 @@ def test_reader_fails_closed_on_stale_tampered_or_missing_records(v2_episode) ->
     assert degraded.expectations_sha256() != baseline.expectations_sha256()
 
 
-def _clip(clip_id: str, *, timeline_in_ms: int, source_in_ms: int, source_out_ms: int) -> EdlClip:
+def _clip(
+    clip_id: str,
+    *,
+    timeline_in_ms: int,
+    source_in_ms: int,
+    source_out_ms: int,
+    transition_in: TransitionKind = TransitionKind.CUT,
+    transition_ms: int = 0,
+) -> EdlClip:
     return EdlClip(
         clip_id=clip_id,
         track=TrackKind.VIDEO,
@@ -783,6 +791,8 @@ def _clip(clip_id: str, *, timeline_in_ms: int, source_in_ms: int, source_out_ms
         source_in_ms=source_in_ms,
         source_out_ms=source_out_ms,
         timeline_in_ms=timeline_in_ms,
+        transition_in=transition_in,
+        transition_ms=transition_ms,
     )
 
 
@@ -826,11 +836,13 @@ def test_reader_fails_closed_on_unmapped_or_dropped_video_clips(v2_episode) -> N
         _clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800),
         _clip("shot-s2.v", timeline_in_ms=3_800, source_in_ms=0, source_out_ms=1_200),
     ]
-    # An unmapped shot is the one dropped-window shape a CONTRACT-VALID EDL can
-    # carry: EdlClip/EditDecisionList already reject empty windows (out <= in)
-    # and overlapping timelines at model-validation time, so those reader
-    # branches are defense-in-depth for rows that bypass validation. The
-    # unmapped clip reaches the reader today — and used to be silently skipped.
+    # An unmapped shot is one dropped-window shape a CONTRACT-VALID EDL can
+    # carry. EdlClip/EditDecisionList reject empty windows (out <= in) at
+    # model-validation time, and a CROSSFADE clip may overlap the previous
+    # video window by exactly its transition_ms (DBR-2 — mirrored by the
+    # reader), so only overlap beyond that crossfade allowance is
+    # defense-in-depth for rows that bypass validation. The unmapped clip
+    # reaches the reader today — and used to be silently skipped.
     shapes = {
         "unmapped shot": [
             _clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800),
@@ -849,6 +861,45 @@ def test_reader_fails_closed_on_unmapped_or_dropped_video_clips(v2_episode) -> N
             seed, variant_key="main", version=version + 1, state="RENDERED", clips=clean
         )
         version += 2
+
+
+def test_reader_yields_full_expectations_for_a_crossfade_edl(v2_episode) -> None:
+    """DBR-2: the DB-3 fail-closed overlap check mirrors the EDL contract.
+
+    ``EditDecisionList._timeline`` lets the next VIDEO clip start inside the
+    previous one by exactly its CROSSFADE ``transition_ms`` — a crossfade EDL
+    is contract-valid — so the reader must compose FULL expectations for it.
+    Red before the fix: any overlap, crossfade or not, returned None.
+
+    Window spans: the crossfade interval stays with the OUTGOING shot's
+    window; the incoming shot's window starts where the previous one ends
+    (``EpisodeContinuityExpectations`` requires non-overlapping ordered
+    windows), so expectations are asserted from the moment the incoming shot
+    fully owns the timeline."""
+    world, seed, episode_id = v2_episode
+    reader = V2RecordContinuityExpectations(world.db)
+    crossfade = [
+        _clip("shot-s1.v", timeline_in_ms=0, source_in_ms=0, source_out_ms=3_800),
+        _clip(
+            "shot-s2.v",
+            timeline_in_ms=3_600,  # 200 ms inside shot-s1's window: the crossfade
+            source_in_ms=0,
+            source_out_ms=1_200,
+            transition_in=TransitionKind.CROSSFADE,
+            transition_ms=200,
+        ),
+    ]
+    _append_manifest_row(seed, variant_key="main", version=2, state="RENDERED", clips=crossfade)
+    got = reader.continuity_expectations(episode_id)
+    assert got is not None, "a contract-valid crossfade EDL must compose expectations"
+    assert [w.scene_id for w in got.windows] == ["s1", "s2"]
+    assert [(w.start_ms, w.end_ms) for w in got.windows] == [(0, 3_800), (3_800, 4_800)]
+
+    # Overlap BEYOND a clip's transition_ms cannot be seeded through the
+    # contract (EditDecisionList rejects it at validation — see the corrected
+    # DB-3 note above), so the beyond-allowance branch stays fail-closed
+    # defense-in-depth for rows that bypass validation, untestable from a
+    # model-validated manifest.
 
 
 def test_reader_reads_only_the_current_main_variant_timeline(v2_episode) -> None:

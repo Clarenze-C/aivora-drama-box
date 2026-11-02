@@ -18,7 +18,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from microdrama.contracts.hashing import canonical_hash
-from microdrama.contracts.media import EditDecisionList, TrackKind
+from microdrama.contracts.media import EditDecisionList, TrackKind, video_overlap_allowed_ms
 from microdrama.contracts.season import Script
 from microdrama.contracts.v2 import (
     DirectingManifest,
@@ -161,10 +161,26 @@ class V2RecordContinuityExpectations:
                     return None
                 start = int(clip.timeline_in_ms)
                 end = start + int(clip.source_out_ms - clip.source_in_ms)
-                if end <= start or (windows and start < windows[-1].end_ms):
-                    # DB-3: an empty or overlapping window is dropped evidence,
-                    # never silently skipped.
+                # DBR-2: mirror EditDecisionList._timeline exactly — a clip
+                # arriving with a CROSSFADE may start transition_ms inside the
+                # previous window (the shared video_overlap_allowed_ms rule).
+                # An empty window, or an overlap beyond that allowance, is
+                # dropped evidence (DB-3), never silently skipped.
+                overlap_allowed = video_overlap_allowed_ms(clip) if windows else 0
+                if end <= start or (windows and start < windows[-1].end_ms - overlap_allowed):
                     return None
+                if windows and start < windows[-1].end_ms:
+                    # The crossfade interval itself stays with the outgoing
+                    # shot's window: the incoming shot's expectations are
+                    # asserted from the moment it fully owns the timeline —
+                    # EpisodeContinuityExpectations requires non-overlapping
+                    # ordered windows.
+                    start = windows[-1].end_ms
+                    if end <= start:
+                        # The clip lives entirely inside the crossfade and never
+                        # fully owns the timeline: dropped evidence, never
+                        # silently skipped.
+                        return None
                 outfit_by_character = {
                     a.character_id: a.outfit_id for a in assignments if a.scene_id == scene.scene_id
                 }

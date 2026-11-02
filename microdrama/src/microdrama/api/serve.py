@@ -23,6 +23,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import secrets
 import sys
@@ -93,18 +94,16 @@ def _serve(settings: Settings, dsn: str) -> int:
     return 0
 
 
-def _write_secret_file(target: Path, secret: str) -> None:
-    """Create the secret file at 0o600 from the first instant (DB-11).
+def _open_secret_file(target: Path) -> int:
+    """Create (and reserve) the secret file at 0o600 from the first instant.
 
-    ``O_CREAT|O_EXCL`` — the file never exists at umask permissions, and an
-    existing file is never silently overwritten (a stale password file must
-    fail loudly, not be replaced under an operator's eye).
+    ``O_CREAT|O_EXCL`` (DB-11) — the file never exists at umask permissions,
+    and an existing file is never silently overwritten (a stale password file
+    must fail loudly, not be replaced under an operator's eye). DBR-1:
+    ``create-owner`` reserves the target BEFORE the owner row exists, so a
+    refusal leaves no owner, and a failed creation unlinks the reservation.
     """
-    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        os.write(fd, secret.encode())
-    finally:
-        os.close(fd)
+    return os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
 
 def _create_owner(settings: Settings, dsn: str, args: argparse.Namespace) -> int:
@@ -116,18 +115,34 @@ def _create_owner(settings: Settings, dsn: str, args: argparse.Namespace) -> int
             print(f"owner {args.username!r} already exists; nothing done", file=sys.stderr)
             return 3
         password = secrets.token_urlsafe(18)
-        owner_id = world.auth.create_owner(args.username, password)
+        fd: int | None = None
+        target: Path | None = None
         if args.write_password_to:
             target = Path(args.write_password_to)
             try:
-                _write_secret_file(target, password + "\n")
+                fd = _open_secret_file(target)
             except FileExistsError:
                 print(
-                    f"refusing to overwrite {target}; the owner was created — "
-                    "write the password manually or remove the file first",
+                    f"refusing to overwrite {target}; no owner was created — "
+                    "remove the file (or pick another target) and retry",
                     file=sys.stderr,
                 )
                 return 4
+        try:
+            owner_id = world.auth.create_owner(args.username, password)
+        except BaseException:
+            # DBR-1: the row never landed, so the reserved (still empty) file
+            # must not stay behind and block the next attempt.
+            if fd is not None:
+                os.close(fd)
+                with contextlib.suppress(OSError):
+                    os.unlink(target)
+            raise
+        if fd is not None:
+            try:
+                os.write(fd, (password + "\n").encode())
+            finally:
+                os.close(fd)
             print(f"[create-owner] {args.username} = {owner_id}; password written 0600 to {target}")
         else:
             # Printed exactly once to stdout; the operator captures or discards it.
