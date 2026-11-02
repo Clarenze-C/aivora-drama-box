@@ -475,6 +475,144 @@ def test_overstatement_after_a_downward_revision_is_stored_as_evidence(
     assert events[0]["payload"]["invoice_micro_usd"] == 800_000
 
 
+def test_overstatement_evidence_is_pod_level_across_leases_and_periods(
+    world: World, db: Database
+) -> None:
+    """T045-FIX A-S5: the overstatement evidence compares the Pod's total posted GPU
+    (all leases of the Pod, a warm transfer splits the bill) with the SUM of the
+    distinct matched periods - never one lease's posting against the single largest
+    period. Evidence only: both leases still settle exactly what they posted."""
+    _paid(world)
+    from uuid import uuid4 as _uuid4
+
+    from microdrama.budget.billing import BillingRepository
+
+    episode_a = world.episode()
+    episode_b = world.episode(number=2)
+    transfer_instant = T0 + timedelta(minutes=30)
+    with db.transaction() as tx:
+        root, _root_reservation = insert_runpod_lease(
+            tx,
+            episode_a.episode_id,
+            pod_id="pod-s5-final",
+            client_token="tok-s5-root",
+            lease_state="RELEASED",
+            pod_state="TERMINATED",
+            create_requested_at=T0,
+            compute_window_start_at=T0,
+            compute_window_end_at=transfer_instant,
+        )
+        receiver, _recv_reservation = insert_runpod_lease(
+            tx,
+            episode_b.episode_id,
+            pod_id="pod-s5-final",
+            client_token="tok-s5-recv",
+            lease_state="RELEASED",
+            pod_state="TERMINATED",
+            create_requested_at=transfer_instant,
+            compute_window_start_at=transfer_instant,
+            compute_window_end_at=T0 + 2 * HOUR,
+            transferred_from=root,
+        )
+    repository = BillingRepository(db, budget_service=world.service)
+    aged = T0 + 2 * HOUR + timedelta(hours=1)
+    # Period 1 [T0, 1h) holds the warm transfer; period 2 [1h, 2h) is the receiver's.
+    # One covering query per period: a bucket must sit wholly inside its period.
+    first_query, first_bucket = closed_bucket(
+        pod_id="pod-s5-final", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0
+    )
+    second_query, second_bucket = closed_bucket(
+        pod_id="pod-s5-final",
+        start=T0 + HOUR,
+        end=T0 + 2 * HOUR,
+        gpu=500_000,
+        cpu=0,
+        disk=0,
+        observed_at=aged,
+    )
+    repository.ingest(first_query, [first_bucket])
+    repository.ingest(second_query, [second_bucket])
+    matched_one = repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-s5-final",
+        period_start=T0,
+        period_end=T0 + HOUR,
+        amount_micro_usd=600_000,
+        currency="USD",
+        evidence_sha256=_evidence("s5-period-1"),
+        source="INVOICE",
+        observed_at=aged,
+    )
+    assert matched_one.outcome == "MATCHED"
+    # A downward provider revision lands for period 2 before its invoice: the posted
+    # spend stays at the pre-revision sum, the later invoice matches the lower one.
+    with db.transaction(readonly=True) as tx:
+        latest = tx.fetchone(
+            "SELECT payload FROM runpod_billing_buckets "
+            "WHERE bucket_identity_sha256=%s ORDER BY revision DESC LIMIT 1",
+            (second_bucket.bucket_identity_sha256,),
+        )
+    latest_model = type(second_bucket).model_validate(latest["payload"])
+    revision_payload = latest_model.model_dump(mode="python")
+    revision_payload.update(
+        observation_id=_uuid4(),
+        query_id=_uuid4(),
+        revision=latest_model.revision + 1,
+        prior_observation_id=latest_model.observation_id,
+        prior_raw_response_sha256=latest_model.raw_response_sha256,
+        total_amount_micro_usd=400_000,
+        gpu_amount_micro_usd=400_000,
+        observed_at=latest_model.observed_at + timedelta(hours=1),
+        finality_state="ALLOCATED_PROVIDER_REPORTED",
+        invoice_verification_id=None,
+    )
+    revision = type(second_bucket).model_validate(revision_payload)
+    revision_query = type(second_query).model_validate(
+        second_query.model_dump(mode="python")
+        | {
+            "query_id": revision.query_id,
+            "raw_response_sha256": sha256(b"t045-s5-downward").hexdigest(),
+            "bucket_observation_ids": [revision.observation_id],
+        }
+    )
+    revision = revision.model_copy(
+        update={"raw_response_sha256": revision_query.raw_response_sha256}
+    )
+    repository.ingest(revision_query, [revision])
+    matched_two = repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-s5-final",
+        period_start=T0 + HOUR,
+        period_end=T0 + 2 * HOUR,
+        amount_micro_usd=400_000,
+        currency="USD",
+        evidence_sha256=_evidence("s5-period-2"),
+        source="INVOICE",
+        observed_at=T0 + 3 * HOUR,
+    )
+    assert matched_two.outcome == "MATCHED"
+    # Posted across the Pod: root 300_000 + receiver 800_000 = 1_100_000 against an
+    # invoice sum of 1_000_000 (600_000 + 400_000) - the Pod-level overstatement.
+    settled_root = settle_billed_lease(db, world.service, lease_id=root, context="s5 root")
+    settled_receiver = settle_billed_lease(
+        db, world.service, lease_id=receiver, context="s5 receiver"
+    )
+    assert (settled_root, settled_receiver) == (300_000, 800_000)
+    with db.transaction(readonly=True) as tx:
+        events = tx.fetchall(
+            "SELECT payload FROM domain_events WHERE event_type='billing.overstatement_recorded'"
+        )
+    assert events, "the pod-level overstatement must be recorded"
+    assert {
+        (
+            event["payload"]["posted_micro_usd"],
+            event["payload"]["invoice_micro_usd"],
+            event["payload"]["scope"],
+        )
+        for event in events
+    } == {(1_100_000, 1_000_000, "pod")}
+
+
 def test_finality_survives_a_restart_readback(db_dsn: str, world: World, db: Database) -> None:
     _paid(world)
     from microdrama.budget.billing import BillingRepository
@@ -645,3 +783,102 @@ def test_a_pod_without_a_window_start_is_pending_not_billed_zero(
         )
     readiness = lease_billing_readiness(db, lease)
     assert readiness.state == "PENDING_PROVIDER_FINALITY"
+
+
+def test_a_concurrent_adjustment_is_never_dropped_by_the_settlement(
+    db_dsn: str, world: World, db: Database
+) -> None:
+    """T045-FIX A-S3: the settlement recomputes readiness and the GPU sum and posts in
+    one transaction holding the reservation row lock. An ADJUSTMENT committing between
+    an earlier read and the settlement ends with settled equal to the full posted sum —
+    the stale SETTLEMENT that replaced (and dropped) the adjustment is impossible."""
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    import psycopg
+
+    from microdrama.budget.billing import BillingRepository
+
+    _paid(world)
+    episode, lease, reservation = _seed_straddling(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    _buckets_and_verify(world, db, repository)
+    with db.transaction(readonly=True) as tx:
+        posted_before = tx.fetchval(
+            "SELECT COALESCE(SUM(amount_micro_usd),0) FROM charges "
+            "WHERE reservation_id=%s AND kind IN ('ACCRUAL','ADJUSTMENT')",
+            (reservation,),
+        )
+    adjustment = 137_000
+    # A second session holds the reservation lock, mirroring an in-flight settlement
+    # read; the adjustment commits inside that session before it releases the lock.
+    blocker = psycopg.connect(db_dsn)
+    blocker.autocommit = False
+    try:
+        with blocker.cursor() as cur:
+            cur.execute("SELECT 1 FROM reservations WHERE id = %s FOR UPDATE", (str(reservation),))
+            charge = uuid4()
+            with blocker.cursor() as writer:
+                writer.execute(
+                    "INSERT INTO charges (id, account_id, reservation_id, receipt_id, "
+                    "provider, provider_receipt_id, kind, cost_basis, provenance, category, "
+                    "amount_micro_usd, units, unit, observed_at, receipt) VALUES "
+                    "(%s, (SELECT account_id FROM reservations WHERE id=%s), %s, %s, "
+                    "'runpod', %s, 'ADJUSTMENT', 'PROVIDER_REPORTED', 'LIVE_PROVIDER', "
+                    "'GPU_GENERATION', %s, 0, 'GPU_SECOND', %s, '{}')",
+                    (
+                        str(charge),
+                        str(reservation),
+                        str(reservation),
+                        str(uuid4()),
+                        f"race-adjustment:{charge}",
+                        adjustment,
+                        datetime.now(UTC),
+                    ),
+                )
+                writer.execute(
+                    "UPDATE reservations SET accrued_micro_usd = accrued_micro_usd + %s "
+                    "WHERE id = %s",
+                    (adjustment, str(reservation)),
+                )
+                # Mirror an ADJUSTMENT on a fully-accrued ACTIVE hold: reserved does
+                # not move, accrued rises on the account and its GPU category too.
+                writer.execute(
+                    "UPDATE budget_accounts SET accrued_micro_usd = accrued_micro_usd + %s "
+                    "WHERE id = (SELECT account_id FROM reservations WHERE id = %s)",
+                    (adjustment, str(reservation)),
+                )
+                writer.execute(
+                    "UPDATE budget_category_allocations SET accrued_micro_usd = "
+                    "accrued_micro_usd + %s WHERE account_id = "
+                    "(SELECT account_id FROM reservations WHERE id = %s) "
+                    "AND category = 'GPU_GENERATION'",
+                    (adjustment, str(reservation)),
+                )
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            settled_task = pool.submit(
+                settle_billed_lease,
+                db,
+                world.service,
+                lease_id=lease,
+                context="race",
+            )
+            import time
+
+            time.sleep(1.0)  # the settlement reaches its lock before the adjustment commits
+            blocker.commit()
+            settled = settled_task.result(timeout=30)
+        assert settled == int(posted_before) + adjustment
+        with db.transaction(readonly=True) as tx:
+            row = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (reservation,))
+            settlement = tx.fetchone(
+                "SELECT amount_micro_usd FROM charges WHERE reservation_id=%s "
+                "AND kind='SETTLEMENT'",
+                (reservation,),
+            )
+        assert row["state"] == "SETTLED"
+        assert row["settled_micro_usd"] == int(posted_before) + adjustment
+        assert settlement["amount_micro_usd"] == int(posted_before) + adjustment
+    finally:
+        blocker.close()

@@ -1245,11 +1245,37 @@ def settle_billed_lease(db: Database, budget: Any, *, lease_id: UUID, context: s
     reservation — no new money; it may be 0. The ledger's SETTLEMENT releases exactly
     the unused remainder (including from an EXPIRED reservation). A replay is a no-op.
     Any posted-versus-invoice overstatement is stored as evidence.
+
+    T045-FIX A-S3: readiness, the posted sum and the SETTLEMENT are computed and
+    posted in ONE transaction that holds the reservation row lock (and the account
+    lock, in the ledger's own order), so a concurrent ADJUSTMENT either lands before
+    the read (included in the settled total) or after the post (added to settled) — a
+    stale SETTLEMENT that silently drops it is impossible.
     """
-    with db.transaction(readonly=True) as tx:
+    with db.transaction() as tx:
         lease = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (lease_id,))
         if lease is None:
             raise NotFound("pod lease not found", lease_id=str(lease_id))
+        # Hold the reservation row for the whole decision: lock in the ledger's order
+        # (account first) so this does not invert against concurrent usage posts.
+        account_id = tx.fetchval(
+            "SELECT account_id FROM reservations WHERE id=%s", (lease["reservation_id"],)
+        )
+        if account_id is None:
+            raise NotFound(
+                "lease reservation not found", reservation_id=str(lease["reservation_id"])
+            )
+        tx.execute("SELECT 1 FROM budget_accounts WHERE id=%s FOR UPDATE", (account_id,))
+        tx.execute("SELECT 1 FROM reservations WHERE id=%s FOR UPDATE", (lease["reservation_id"],))
+        settled_state = tx.fetchone(
+            "SELECT state, settled_micro_usd FROM reservations WHERE id=%s",
+            (lease["reservation_id"],),
+        )
+        if settled_state["state"] in ("SETTLED", "RELEASED"):
+            # One final amount per reservation — the ledger's own invariant. The
+            # invoice path, a replayed sweep or a podless-create resolution already
+            # posted it (A-S1); this sweep reports that outcome, never a second final.
+            return int(settled_state["settled_micro_usd"] or 0)
         readiness = _lease_readiness_in_transaction(tx, lease)
         if readiness.state != "BILLED":
             raise Conflict(
@@ -1258,45 +1284,71 @@ def settle_billed_lease(db: Database, budget: Any, *, lease_id: UUID, context: s
                 state=readiness.state,
             )
         total = readiness.billed_micro_usd or 0
-        invoice_rows = BillingRepository.matched_invoice_periods(
-            tx,
-            lease,
-            lease["compute_window_start_at"] or lease["create_requested_at"],
-            lease["compute_window_end_at"],
+        # T045-FIX A-S5: the overstatement evidence is Pod-level — the sum of the
+        # distinct non-superseded MATCHED/MATCHED_ZERO periods against the total
+        # posted for ALL leases of this Pod (a transferred chain shares the bill).
+        # Evidence only; no money moves.
+        invoice_sum = 0
+        seen_periods: set[UUID] = set()
+        pod_leases = tx.fetchall(
+            "SELECT * FROM pod_leases WHERE provider='runpod' AND pod_id=%s ORDER BY created_at",
+            (lease["pod_id"],),
         )
-        invoice_sum = max((int(row["amount_micro_usd"]) for row in invoice_rows), default=0)
-    receipt = UsageReceipt(
-        receipt_id=uuid5(NAMESPACE_URL, f"runpod-billed-settle:{lease_id}"),
-        provider=lease["provider"],
-        provider_receipt_id=f"podlease-billed:{lease_id}",
-        kind=ReceiptKind.SETTLEMENT,
-        cost_basis=CostBasis.BILLED,
-        reservation_id=lease["reservation_id"],
-        episode_id=lease["owner_episode_id"],
-        season_id=None,
-        category=BudgetCategory.GPU_GENERATION,
-        amount_micro_usd=total,
-        currency="USD",
-        units=0,
-        unit=PriceUnit.GPU_SECOND,
-        interval_start=None,
-        interval_end=None,
-        observed_at=lease["updated_at"],
-        provenance=Provenance.LIVE_PROVIDER,
-    )
-    result = budget.record_usage(receipt)
-    if not result.replayed and total > invoice_sum:
-        with db.transaction() as tx:
+        if pod_leases:
+            for pod_lease in pod_leases:
+                for row in BillingRepository.matched_invoice_periods(
+                    tx,
+                    pod_lease,
+                    pod_lease["compute_window_start_at"] or pod_lease["create_requested_at"],
+                    pod_lease["compute_window_end_at"],
+                ):
+                    if row["period_evidence_id"] not in seen_periods:
+                        seen_periods.add(row["period_evidence_id"])
+                        invoice_sum += int(row["amount_micro_usd"])
+            pod_posted = int(
+                tx.fetchval(
+                    "SELECT COALESCE(SUM(c.amount_micro_usd),0)::bigint FROM charges c "
+                    "JOIN pod_leases l ON l.reservation_id = c.reservation_id "
+                    "WHERE l.provider='runpod' AND l.pod_id=%s "
+                    "AND c.category='GPU_GENERATION' AND c.kind IN ('ACCRUAL','ADJUSTMENT')",
+                    (lease["pod_id"],),
+                )
+                or 0
+            )
+        else:  # a podless resolution: nothing was ever posted or invoiced
+            pod_posted = 0
+        receipt = UsageReceipt(
+            receipt_id=uuid5(NAMESPACE_URL, f"runpod-billed-settle:{lease_id}"),
+            provider=lease["provider"],
+            provider_receipt_id=f"podlease-billed:{lease_id}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=CostBasis.BILLED,
+            reservation_id=lease["reservation_id"],
+            episode_id=lease["owner_episode_id"],
+            season_id=None,
+            category=BudgetCategory.GPU_GENERATION,
+            amount_micro_usd=total,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            interval_start=None,
+            interval_end=None,
+            observed_at=lease["updated_at"],
+            provenance=Provenance.LIVE_PROVIDER,
+        )
+        result = budget.record_usage_in_transaction(tx, receipt)
+        if not result.replayed and pod_posted > invoice_sum:
             append_event(
                 tx,
                 aggregate_type="pod_lease",
                 aggregate_id=lease_id,
                 event_type="billing.overstatement_recorded",
                 payload={
-                    "posted_micro_usd": total,
+                    "posted_micro_usd": pod_posted,
                     "invoice_micro_usd": invoice_sum,
-                    "overstatement_micro_usd": total - invoice_sum,
+                    "overstatement_micro_usd": pod_posted - invoice_sum,
                     "context": context,
+                    "scope": "pod",
                 },
                 correlation_id=lease_id,
                 occurred_at=datetime.now(UTC),

@@ -859,16 +859,25 @@ class BudgetService:
         ):
             raise SchemaInvalid("receipt names neither a reservation, an episode nor a season")
         with self._db.transaction() as tx:
-            account_id = self._receipt_account_id(tx, receipt)
-            acct = lock_account(tx, account_id)
-            cats = lock_categories(tx, account_id)
-            ledger = self._ledger(tx, acct, cats)
-            replay = self._replay(tx, receipt, acct.id)
-            if replay is not None:
-                return replay
-            self._check_scope(receipt, acct)
-            reservation = self._linked_reservation(tx, receipt, acct.id)
-            return self._post_charge(tx, ledger, receipt, reservation)
+            return self.record_usage_in_transaction(tx, receipt)
+
+    def record_usage_in_transaction(self, tx: Tx, receipt: UsageReceipt) -> ChargeResult:
+        """The ``record_usage`` core inside a caller-owned transaction (T045-FIX A-S3).
+
+        The caller holds any row locks it needs (the settlement path holds the
+        reservation lock) and everything — replay check, scope check, ledger post —
+        commits with the caller's transaction.
+        """
+        account_id = self._receipt_account_id(tx, receipt)
+        acct = lock_account(tx, account_id)
+        cats = lock_categories(tx, account_id)
+        ledger = self._ledger(tx, acct, cats)
+        replay = self._replay(tx, receipt, acct.id)
+        if replay is not None:
+            return replay
+        self._check_scope(receipt, acct)
+        reservation = self._linked_reservation(tx, receipt, acct.id)
+        return self._post_charge(tx, ledger, receipt, reservation)
 
     def _record_gpu_interval(
         self,
