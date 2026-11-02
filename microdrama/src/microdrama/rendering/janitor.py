@@ -44,6 +44,8 @@ from microdrama.rendering.leases import (
     RENDERING_NAMESPACE,
     PodLeaseConfig,
     accrue_lease_usage,
+    close_storage_ownership,
+    open_storage_ownership,
     settle_reservation_for_lease,
 )
 from microdrama.rendering.pods import (
@@ -253,6 +255,7 @@ class Janitor:
             pod_state = self._manager.terminate(pod_id)
             terminate_verified = self._now()
             window_end = terminate_verified
+            close_storage_ownership(self._db, "runpod", pod_id, terminate_verified)
         self._accrue(lease_id, now)
         with self._db.transaction() as tx:
             current = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
@@ -350,6 +353,9 @@ class Janitor:
                 {"pod_id": pod.pod_id, "adopted_by": "janitor"},
                 now,
             )
+        # An adopted stray pod is storage the pipeline owns from its create request
+        # (T045 R3): open (or confirm) its ownership interval for the chain root.
+        open_storage_ownership(self._db, lease_id, pod.pod_id)
 
     def _mark_release_started(self, lease_id: UUID, now: datetime) -> None:
         with self._db.transaction() as tx:

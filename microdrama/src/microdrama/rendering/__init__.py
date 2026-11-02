@@ -25,8 +25,10 @@ from microdrama.rendering.leases import (
     accrue_lease_usage,
     build_lease_service,
     client_token_for,
+    close_storage_ownership,
     human_wait_guard,
     mock_pod_price,
+    open_storage_ownership,
     settle_reservation_for_lease,
 )
 from microdrama.rendering.pods import (
@@ -74,5 +76,7 @@ __all__ = [
     "human_wait_guard",
     "mock_pod_price",
     "resolve_pod_provider",
+    "close_storage_ownership",
+    "open_storage_ownership",
     "settle_reservation_for_lease",
 ]

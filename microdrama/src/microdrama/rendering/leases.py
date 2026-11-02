@@ -396,6 +396,63 @@ def _settlement_totals(db: Database, reservation_id: UUID) -> tuple[int, int]:
     return int(row["amount"]), int(row["units"])
 
 
+def open_storage_ownership(db: Database, lease_id: UUID, pod_id: str) -> None:
+    """Idempotently open the pod's storage-ownership row for the chain root (T045 R3).
+
+    The owner is the root lease's episode (the episode that asked for the create), the
+    interval starts at the root's ``create_requested_at``, and the row records its
+    creating lease. A warm transfer never touches it; only the verified terminate closes.
+    """
+    with db.transaction() as tx:
+        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s", (lease_id,))
+        if lease is None:
+            raise NotFound("pod lease not found", lease_id=str(lease_id))
+        root = tx.fetchone(
+            "SELECT id, owner_episode_id, create_requested_at FROM pod_leases "
+            "WHERE provider = %s AND pod_id = %s AND transferred_from IS NULL "
+            "ORDER BY created_at LIMIT 1",
+            (lease["provider"], pod_id),
+        )
+        owner = root if root is not None else lease
+        valid_from = (
+            owner["create_requested_at"] or lease["create_requested_at"] or owner["created_at"]
+        )
+        existing = tx.fetchval(
+            "SELECT 1 FROM pod_storage_ownership WHERE provider = %s AND pod_id = %s "
+            "AND creating_lease_id = %s",
+            (lease["provider"], pod_id, owner["id"]),
+        )
+        if existing is None:
+            tx.execute(
+                "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
+                "valid_from, creating_lease_id) VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    uuid5(RENDERING_NAMESPACE, f"storage-ownership:{owner['id']}"),
+                    lease["provider"],
+                    pod_id,
+                    owner["owner_episode_id"],
+                    valid_from,
+                    owner["id"],
+                ),
+            )
+
+
+def close_storage_ownership(db: Database, provider: str, pod_id: str, instant: datetime) -> None:
+    """Close the pod's open ownership interval at the verified terminate (set-once).
+
+    The interval must stay non-empty (schema CHECK), so a terminate that lands on the
+    same instant as the create request closes at create + 1µs: a pod that lived no time
+    owns no storage time, and the row still records the close exactly once.
+    """
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_storage_ownership SET valid_until = GREATEST(%s, valid_from + "
+            "interval '1 microsecond') WHERE provider = %s AND pod_id = %s "
+            "AND valid_until IS NULL",
+            (instant, provider, pod_id),
+        )
+
+
 def settle_reservation_for_lease(
     db: Database,
     budget: BudgetService,
@@ -847,6 +904,9 @@ class LeaseService:
                 },
                 now,
             )
+        # The pod is now durably ours: its storage belongs to the chain root's episode
+        # from the create request on (T045 R3). Idempotent on every re-activation.
+        open_storage_ownership(self._db, lease_id, pod.pod_id)
 
     # --- operation ---------------------------------------------------------------------
 
@@ -987,6 +1047,7 @@ class LeaseService:
             terminal = self._manager.terminate(row["pod_id"])
             terminate_verified = self._now()
             window_end = terminate_verified
+            close_storage_ownership(self._db, row["provider"], row["pod_id"], terminate_verified)
         self.accrue(lease_id)
         now = self._now()
         with self._db.transaction() as tx:

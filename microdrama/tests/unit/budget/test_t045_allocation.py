@@ -291,3 +291,44 @@ def test_disk_splits_by_storage_ownership_and_missing_owner_is_recovery(db: Data
     shares2 = _allocations_by_owner(db, [bucket2.observation_id])
     assert shares2[("RECOVERY", "recovery_pool", "DISK")] == 300_000
     assert not [key for key in shares2 if key[0] == "EPISODE" and key[2] == "DISK"]
+
+
+def test_post_stop_disk_charges_the_owner_up_to_the_verified_terminate(db: Database) -> None:
+    """T045 R3: storage billing continues past the verified stop, to the verified terminate."""
+    with db.transaction() as tx:
+        from t045_support import insert_storage_ownership
+
+        _, episode, _ = open_episode_account(tx)
+        stopped = T0 + timedelta(minutes=40)
+        terminated = T0 + timedelta(minutes=50)
+        lease, _ = insert_runpod_lease(
+            tx,
+            episode,
+            pod_id="pod-poststop",
+            lease_state="RELEASED",
+            pod_state="TERMINATED",
+            create_requested_at=T0,
+            compute_window_start_at=T0,
+            compute_window_end_at=terminated,
+            stop_verified_at=stopped,
+            terminate_verified_at=terminated,
+        )
+        insert_storage_ownership(
+            tx,
+            episode,
+            pod_id="pod-poststop",
+            valid_from=T0,
+            valid_until=terminated,
+            creating_lease=lease,
+        )
+    query, bucket = closed_bucket(
+        pod_id="pod-poststop", start=T0, end=T0 + HOUR, gpu=0, cpu=0, disk=300_000
+    )
+    BillingRepository(db).ingest(query, [bucket])
+    shares = _allocations_by_owner(db, [bucket.observation_id])
+    assert shares[("EPISODE", str(episode), "DISK")] == 300_000
+    assert not [
+        amount
+        for (kind, _, component), amount in shares.items()
+        if kind == "RECOVERY" and component == "DISK" and amount
+    ]
