@@ -763,12 +763,40 @@ class LeaseService:
             if row["lease_state"] == "CLAIMED":
                 self._activate(lease_id, pod)
         else:
+            # Durable create-request proof is committed in its own transaction BEFORE the
+            # create call is sent (T045 R8/G13): with it, a later list miss can no longer
+            # be read as "nothing was sent" and the hold cannot be quietly released.
+            self._record_create_request(lease_id)
             pod = self._manager.acquire_or_reconcile(
                 spec, name=self._pod_name(row), client_token=row["client_token"]
             )
             self._manager.verify(pod, spec, settings=self._settings)
             self._activate(lease_id, pod)
         return LeaseHandle(self._contract(self._load(lease_id)))
+
+    def _record_create_request(self, lease_id: UUID) -> datetime:
+        """Commit the create-request instant (and the root's window start) before create."""
+        now = self._now()
+        with self._db.transaction() as tx:
+            row = tx.fetchone(
+                "SELECT create_requested_at, compute_window_start_at, revision "
+                "FROM pod_leases WHERE id = %s FOR UPDATE",
+                (lease_id,),
+            )
+            if row is None:
+                raise NotFound("pod lease not found", lease_id=str(lease_id))
+            if row["create_requested_at"] is None:
+                update_with_revision(
+                    tx,
+                    "pod_leases",
+                    lease_id,
+                    row["revision"],
+                    # A chain root's compute window starts when its create was requested.
+                    {"create_requested_at": now, "compute_window_start_at": now},
+                    now=now,
+                )
+                return now
+            return row["create_requested_at"]
 
     @staticmethod
     def _pod_name(row: Mapping[str, Any]) -> str:
@@ -800,6 +828,11 @@ class LeaseService:
                     "pod_state": PodState.RUNNING.value,
                     "lease_state": LeaseState.ACTIVE.value,
                     "heartbeat_at": now,
+                    # Adopted pods whose create proof predates the window columns still
+                    # get a window start; set-once keeps the first value forever.
+                    "compute_window_start_at": (
+                        row["compute_window_start_at"] or row["create_requested_at"] or now
+                    ),
                 },
                 now=now,
             )
@@ -945,6 +978,15 @@ class LeaseService:
                     self._now(),
                 )
             raise
+        window_end = self._now()
+        terminate_verified: datetime | None = None
+        if self._manager.is_runpod():
+            # T045 R8: the final release of a Runpod chain terminates the pod. A stopped
+            # pod still bills its volume, so the chain's compute window (and the storage
+            # ownership it grounds) only ends at a verified terminate.
+            terminal = self._manager.terminate(row["pod_id"])
+            terminate_verified = self._now()
+            window_end = terminate_verified
         self.accrue(lease_id)
         now = self._now()
         with self._db.transaction() as tx:
@@ -959,6 +1001,9 @@ class LeaseService:
                     "lease_state": LeaseState.RELEASED.value,
                     "pod_state": terminal.value,
                     "stop_verified_at": current["stop_verified_at"] or now,
+                    # Set once: the verified stop, or the verified terminate for Runpod.
+                    "compute_window_end_at": current["compute_window_end_at"] or window_end,
+                    "terminate_verified_at": current["terminate_verified_at"] or terminate_verified,
                 },
                 now=now,
             )
@@ -1132,7 +1177,13 @@ class LeaseService:
                 "pod_leases",
                 lease_id,
                 old["revision"],
-                {"lease_state": LeaseState.RELEASED.value, "accrued_until": now},
+                {
+                    "lease_state": LeaseState.RELEASED.value,
+                    "accrued_until": now,
+                    # T045 R8/G16: a lease that transferred away has no verified stop of
+                    # its own; its compute window ends at the transfer instant.
+                    "compute_window_end_at": old["compute_window_end_at"] or now,
+                },
                 now=now,
             )
             self._emit(
@@ -1146,9 +1197,9 @@ class LeaseService:
                 "INSERT INTO pod_leases (id, schema_version, provider, pod_id, owned_tag, "
                 "client_token, owner_episode_id, owner_job_id, reservation_id, lease_state, "
                 "pod_state, gpu_type, hourly_price_micro_usd, heartbeat_at, lease_expires_at, "
-                "accrued_until, transferred_from) "
+                "accrued_until, transferred_from, compute_window_start_at) "
                 "VALUES (%s, '1.0', %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', 'RUNNING', %s, %s, "
-                "%s, %s, %s, %s) RETURNING *",
+                "%s, %s, %s, %s, %s) RETURNING *",
                 (
                     new_id,
                     old["provider"],
@@ -1164,6 +1215,8 @@ class LeaseService:
                     now + _ms(ttl),
                     now,
                     lease_id,
+                    # A transfer receiver's compute window starts at the transfer instant.
+                    now,
                 ),
             )
             assert inserted is not None

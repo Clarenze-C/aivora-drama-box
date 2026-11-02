@@ -47,12 +47,13 @@ class RenderWorld:
         settings: Settings | None = None,
         config: PodLeaseConfig | None = None,
         create_steps: tuple[Any, ...] = (),
+        provider: FakePodProvider | None = None,
     ) -> None:
         self.db = db
         self.clock = FakeClock(T0)
         self.settings = settings or Settings(execution_mode=ExecutionMode.OFFLINE_MOCK)
         self.config = config or PodLeaseConfig.for_mock()
-        self.provider = FakePodProvider(
+        self.provider = provider or FakePodProvider(
             clock=self.clock, ids=SequentialIds("render-pods"), scenarios=create_steps
         )
         self.ids = SequentialIds("render")

@@ -293,6 +293,19 @@ class PodManager:
             )
         return pod.state
 
+    def is_runpod(self) -> bool:
+        """Whether this manager drives the live Runpod provider."""
+        return self._provider.provider_id.casefold() == "runpod"
+
+    def terminate(self, pod_id: str) -> PodState:
+        """Terminate the pod and verify it by read-back (T045 R8 final release).
+
+        An absent pod counts as terminated, exactly like a verified read-back: the
+        provider no longer lists the resource, so compute and its volume are gone.
+        """
+        self._provider.terminate_pod(pod_id)
+        return self._verify_stopped(pod_id)
+
     def usage(self, pod_id: str, *, since: datetime, until: datetime) -> list[UsageReceipt]:
         return self._provider.usage(pod_id, since=since, until=until)
 

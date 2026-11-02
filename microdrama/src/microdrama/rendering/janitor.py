@@ -245,6 +245,14 @@ class Janitor:
         self._accrue(lease_id, now)
         self._mark_release_started(lease_id, now)
         pod_state = self._manager.stop(pod_id)
+        terminate_verified = None
+        window_end = now
+        if self._manager.is_runpod():
+            # T045 R8: the janitor's cleanup of a Runpod chain also terminates, so the
+            # volume stops billing and the compute window has a verified end.
+            pod_state = self._manager.terminate(pod_id)
+            terminate_verified = self._now()
+            window_end = terminate_verified
         self._accrue(lease_id, now)
         with self._db.transaction() as tx:
             current = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
@@ -259,6 +267,8 @@ class Janitor:
                     "lease_state": terminal,
                     "pod_state": pod_state.value,
                     "stop_verified_at": current["stop_verified_at"] or now,
+                    "compute_window_end_at": current["compute_window_end_at"] or window_end,
+                    "terminate_verified_at": current["terminate_verified_at"] or terminate_verified,
                 },
                 now=now,
             )

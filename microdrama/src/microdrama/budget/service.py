@@ -502,6 +502,23 @@ class BudgetService:
             res = lock_reservation(tx, reservation_id)
             if res.state is not ReservationState.ACTIVE:
                 raise Conflict("only an ACTIVE reservation can be released", state=res.state.value)
+            if res.provider.casefold() == "runpod":
+                # T045 R8/G13: a Runpod hold bound to a lease may only be released on
+                # durable proof that no create was ever sent. Anything else (a create was
+                # requested, or a pod is bound) must close through billing finality (R7).
+                lease = tx.fetchone(
+                    "SELECT create_requested_at, pod_id FROM pod_leases "
+                    "WHERE reservation_id = %s LIMIT 1",
+                    (reservation_id,),
+                )
+                if lease is not None and not (
+                    lease["create_requested_at"] is None and lease["pod_id"] is None
+                ):
+                    raise Conflict(
+                        "a runpod lease hold is released only through billing finality; "
+                        "durable proof that no create was sent is missing",
+                        reservation_id=str(reservation_id),
+                    )
             if res.accrued != 0:
                 raise Conflict(
                     "usage was accrued against this reservation; it must be settled, not released"
