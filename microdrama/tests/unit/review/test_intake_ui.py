@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from review_support import World
 
 from microdrama.api.app import AppComponents, create_app
-from microdrama.contracts.enums import PrincipalKind
+from microdrama.contracts.enums import PriceUnit, PrincipalKind
 from microdrama.contracts.examples import EP1_ID, SEASON_ID, season_scope
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.v2 import ConceptIntake
@@ -51,6 +51,7 @@ class IntakeWorld:
         envelope: int | None = ENVELOPE,
         llm_enabled: bool = True,
         source_providers: dict | None = None,
+        research_config: object = None,
     ):
         self.world = world
         llm = FakeLLMProvider(clock=world.clock, ids=world.ids) if llm_enabled else None
@@ -58,6 +59,9 @@ class IntakeWorld:
         self.script_maker = build_script_maker_service(
             world.clock, world.settings, budget=world.budget, llm=llm
         )
+        research_kwargs: dict = {}
+        if research_config is not None:
+            research_kwargs["config"] = research_config
         self.research: ResearchService = build_research_service(
             world.db,
             world.clock,
@@ -68,6 +72,7 @@ class IntakeWorld:
                 {"fake-sources": self.sources} if source_providers is None else source_providers
             ),
             llm=llm,
+            **research_kwargs,
         )
         self.service = IntakeService(
             world.db,
@@ -610,6 +615,136 @@ def test_status_shows_current_blockers_alongside_recorded_jobs(web, intake_world
     assert "Background work" in page.text, "the recorded job stays visible"
     assert "Configuration problems present now" in page.text
     assert "is not registered" in page.text
+
+
+def _submit_intake(client: TestClient, csrf: str, key: str) -> str:
+    submitted = client.post(
+        "/ui/intake",
+        data={
+            "csrf_token": csrf,
+            "wizard_key": key,
+            "step": "submit",
+            "story_idea": IDEA,
+            "genre_tags": "family-drama",
+            "tone": "อบอุ่น",
+            "episode_count": "3",
+        },
+    )
+    assert submitted.status_code == 303
+    return submitted.headers["location"].rsplit("/", 1)[1]
+
+
+def _blocked_page(world: World, broken: IntakeWorld, *, blocker: str, slug: str) -> None:
+    """The broken composition records the intake with the typed blocker, no job."""
+    username = f"blocked.{slug}.owner"
+    world.set_owner(world.auth.create_owner(username, PASSWORD))
+    client = _client(world, broken.service)
+    client.get("/auth/login")
+    client.post(
+        "/auth/login",
+        data={
+            "username": username,
+            "password": PASSWORD,
+            "login_csrf": client.cookies.get("md_login_csrf"),
+        },
+    )
+    csrf = client.cookies.get("md_csrf")
+    key = _wizard_key(client.get("/ui/intake").text)
+    season_id = _submit_intake(client, csrf, key)
+    assert world.jobs_of(INTAKE_JOB_TYPE) == [], "a blocked intake dispatches nothing"
+    page = client.get(f"/ui/intake/{season_id}")
+    assert page.status_code == 200
+    assert blocker in page.text, f"the page must name the blocker: {blocker!r}"
+    assert "Blocked — nothing was dispatched" in page.text
+
+
+def test_disabled_source_provider_blocks_dispatch(world: World) -> None:
+    """F3/DB-8: a registered but disabled source provider blocks before any spend."""
+    from dataclasses import replace
+
+    broken = IntakeWorld(world)
+    record = broken.research.registry["fake-sources"]
+    broken.research._registry["fake-sources"] = replace(
+        record, enabled=False, disabled_reason="fixture: disabled for this test"
+    )
+    _blocked_page(
+        world,
+        broken,
+        # the provider id is HTML-escaped on the page; assert the escape-free tail
+        blocker="is disabled: fixture: disabled for this test",
+        slug="disabled-provider",
+    )
+
+
+def test_missing_search_price_blocks_dispatch(world: World) -> None:
+    """F3/DB-8: an unpriced search lane blocks before candidate generation spends."""
+    from microdrama.research import ResearchConfig
+    from microdrama.testing.fakes import fake_price_quote
+
+    broken = IntakeWorld(
+        world,
+        research_config=ResearchConfig(
+            search_price=None,
+            llm_input_price=fake_price_quote(PriceUnit.INPUT_TOKEN_1K),
+            llm_output_price=fake_price_quote(PriceUnit.OUTPUT_TOKEN_1K),
+        ),
+    )
+    _blocked_page(
+        world, broken, blocker="research search price is not configured", slug="no-search-price"
+    )
+
+
+def test_missing_llm_provider_blocks_dispatch(world: World) -> None:
+    """F3/DB-8: no research model provider means no dispatch, no spend."""
+    broken = IntakeWorld(world, llm_enabled=False)
+    _blocked_page(
+        world, broken, blocker="research model provider is not configured", slug="no-llm"
+    )
+
+
+def test_missing_llm_token_prices_block_dispatch(world: World) -> None:
+    """F3/DB-8: unpriced model tokens block before generation spends into research."""
+    from microdrama.research import ResearchConfig
+
+    broken = IntakeWorld(world, research_config=ResearchConfig())
+    _blocked_page(
+        world,
+        broken,
+        blocker="research model token prices are not configured",
+        slug="no-llm-prices",
+    )
+
+
+def test_handler_rechecks_blockers_at_run_time(web, intake_world) -> None:
+    """F3/DB-8: blockers are re-checked when the job RUNS, not only at submit.
+
+    Configuration that breaks between submit and the worker's run must fail the
+    job with the typed INTAKE_NOT_CONFIGURED code before candidate generation
+    spends anything.
+    """
+    from microdrama.core.jobs import Failed
+
+    csrf = _login(web)
+    key = _wizard_key(web.get("/ui/intake").text)
+    season_id = _submit_intake(web, csrf, key)
+    assert len(intake_world.world.jobs_of(INTAKE_JOB_TYPE)) == 1
+    # The registry loses the provider after dispatch (a live configuration fault).
+    intake_world.service._research = build_research_service(
+        intake_world.world.db,
+        intake_world.world.clock,
+        intake_world.world.ids,
+        intake_world.world.settings,
+        budget=intake_world.world.budget,
+        source_providers={},
+        llm=FakeLLMProvider(clock=intake_world.world.clock, ids=intake_world.world.ids),
+    )
+    job = intake_world.world.jobs.claim("production", worker_id="db8-worker", lease_ms=60_000)
+    assert job is not None and job.job_type == INTAKE_JOB_TYPE
+    context = intake_world.world.jobs.context(job, "db8-worker")
+    outcome = intake_world.service.handle_research_job(context)
+    assert isinstance(outcome, Failed)
+    assert outcome.error_code == "INTAKE_NOT_CONFIGURED"
+    assert "is not registered" in outcome.detail
 
 
 def _resealed(record, **updates):

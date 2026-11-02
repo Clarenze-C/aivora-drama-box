@@ -505,7 +505,9 @@ def test_reselecting_after_another_selection_reruns_the_candidate(
     trigger key named only the candidate), so the current Gate 1 proposal stayed
     on A and the owner's latest choice silently lost. Every selection intent now
     carries a durable revision in both keys; a double-click while the run is
-    still queued dedupes to that same job.
+    still queued dedupes to that same job. The third selection REPEATS an
+    earlier selection target (B again after A), which is the shape the
+    candidate-only key could not survive (DB-1).
     """
     world = OwnerPath(db, offline_settings, object_store)
     world.llm.script_role(RuntimeRole.STORY_ARCHITECT, _candidate_payload("a", "b"))
@@ -556,6 +558,141 @@ def test_reselecting_after_another_selection_reruns_the_candidate(
     rebound = next(card for card in final.candidates if card.record_id == first.record_id)
     assert rebound.is_current_proposal
     assert final.proposal_scope_hash == rebound.scope_sha256
+
+    # Select B A SECOND TIME: this third selection repeats an earlier selection
+    # target, so a candidate-only key would replay B's first COMPLETED job
+    # instead of running a new bounded intent (the DB-1 shape). It must be a
+    # brand-new job with a new revision in both keys.
+    after_a = world.intake.status(world.human(), season_id)
+    again = world.intake.select(
+        world.human(), season_id, second.record_id, intake_sha256=after_a.intake_sha256
+    )
+    assert again.status_code == 202 and again.body["status"] == "QUEUED"
+    assert again.body["job_id"] != switched_ack.body["job_id"], (
+        "re-selecting B is a NEW job, never a replay of B's first completed job"
+    )
+    assert world.count("SELECT COUNT(*) FROM jobs") == 4, "intake + three selection intents"
+    assert world.drain_intake_jobs() == 1
+    end = world.intake.status(world.human(), season_id)
+    end_proposal = world.row(
+        "SELECT scope, scope_hash FROM season_proposals WHERE id = %s", (end.proposal_id,)
+    )
+    assert end_proposal["scope"]["title_en"] == second.title_en, "the latest selection (B) wins"
+    end_card = next(card for card in end.candidates if card.record_id == second.record_id)
+    assert end_card.is_current_proposal
+    assert end.proposal_scope_hash == end_card.scope_sha256
     assert (
-        world.count("SELECT COUNT(*) FROM research_runs WHERE season_id = %s", (season_id,)) == 3
+        world.count("SELECT COUNT(*) FROM research_runs WHERE season_id = %s", (season_id,)) == 4
     ), "the intake run plus one bounded run per distinct selection intent"
+
+    # Every selection intent is a distinct revision in BOTH keys: the job
+    # semantic keys and the research run trigger keys never collide pairwise.
+    job_keys = [
+        str(row["semantic_key"])
+        for row in world.row_all(
+            "SELECT semantic_key FROM jobs WHERE season_id = %s AND job_type = %s"
+            " AND starts_with(input->>'trigger', 'owner_selection.')",
+            (season_id, INTAKE_JOB_TYPE),
+        )
+    ]
+    assert len(job_keys) == 3 and len(set(job_keys)) == 3, (
+        f"selection job semantic keys must all differ: {sorted(job_keys)}"
+    )
+    run_keys = [
+        str(row["semantic_key"])
+        for row in world.row_all(
+            "SELECT semantic_key FROM research_runs WHERE season_id = %s", (season_id,)
+        )
+    ]
+    assert len(run_keys) == 4 and len(set(run_keys)) == 4, (
+        f"research trigger keys must all differ: {sorted(run_keys)}"
+    )
+
+
+def test_stale_selection_job_is_superseded_by_a_newer_intent(
+    db: Database, offline_settings: Settings, object_store: ObjectStore
+) -> None:
+    """DB-9: a stale selection job completing after a newer selection changes nothing.
+
+    The owner selects X, then selects Y before any run starts (three candidates:
+    the initially-bound one can never be re-selected while its proposal stands,
+    so a real stale/newer pair needs two unbound candidates). A worker runs
+    Y's job (the newest intent) and only then picks up X's older queued job —
+    e.g. after a restart or a lease handoff. X's job must recognize it was
+    superseded (a higher-revision selection job exists for the season), return
+    a typed superseded outcome, spend nothing on research, and leave the
+    current Gate 1 proposal on Y.
+    """
+    payload = _candidate_payload("x", "y")
+    payload["candidates"].append(
+        {
+            **payload["candidates"][1],
+            "title_th": "บันทึกฉบับที่สาม",
+            "title_en": "The Third Draft",
+            "logline": "An original season about the third draft told in Thai.",
+        }
+    )
+    world = OwnerPath(db, offline_settings, object_store)
+    world.llm.script_role(RuntimeRole.STORY_ARCHITECT, payload)
+    ack = world.submit_intake(key="wizard-key-superseded")
+    season_id = uuid.UUID(ack.body["season_id"])
+    assert world.drain_intake_jobs() == 1
+    view = world.intake.status(world.human(), season_id)
+    bound = next(card for card in view.candidates if card.is_current_proposal)
+    unbound = [card for card in view.candidates if not card.is_current_proposal]
+    assert len(unbound) == 2
+    stale_card, newest_card = unbound[0], unbound[1]
+
+    # Select X (revision 1), then Y (revision 2) — two real selection jobs, neither run.
+    select_x = world.intake.select(
+        world.human(), season_id, stale_card.record_id, intake_sha256=view.intake_sha256
+    )
+    assert select_x.status_code == 202
+    select_y = world.intake.select(
+        world.human(), season_id, newest_card.record_id, intake_sha256=view.intake_sha256
+    )
+    assert select_y.status_code == 202
+
+    # Claim in FIFO order (X's job first); run Y's job, then X's stale job.
+    claimed_x = world.jobs.claim("production", worker_id="t044b2-worker", lease_ms=60_000)
+    claimed_y = world.jobs.claim("production", worker_id="t044b2-worker", lease_ms=60_000)
+    assert claimed_x is not None and claimed_y is not None
+    assert str(claimed_x.input["trigger"]).endswith(str(stale_card.record_id))
+    assert str(claimed_y.input["trigger"]).endswith(str(newest_card.record_id))
+
+    def _run(job) -> object:
+        context = world.jobs.context(job, "t044b2-worker")
+        outcome = world.intake.handle_research_job(context)
+        assert outcome is not None
+        world.jobs.finish(job.id, worker_id="t044b2-worker", outcome=outcome)
+        return outcome
+
+    _run(claimed_y)  # the newest intent runs first: the proposal moves to Y
+    on_y = world.intake.status(world.human(), season_id)
+    assert on_y.proposal_id is not None
+    y_proposal = world.row(
+        "SELECT scope FROM season_proposals WHERE id = %s", (on_y.proposal_id,)
+    )
+    assert y_proposal["scope"]["title_en"] == newest_card.title_en
+
+    stale_outcome = _run(claimed_x)  # X's job completes AFTER the newer selection
+    assert isinstance(stale_outcome, Succeeded), "the stale job is a typed superseded result"
+    assert stale_outcome.result["status"] == "SUPERSEDED"
+    assert int(stale_outcome.result["superseded_by_revision"]) == 2
+    assert stale_outcome.result.get("research_run_id") is None, "a superseded job spends nothing"
+
+    final = world.intake.status(world.human(), season_id)
+    final_proposal = world.row(
+        "SELECT scope FROM season_proposals WHERE id = %s", (final.proposal_id,)
+    )
+    assert final_proposal["scope"]["title_en"] == newest_card.title_en, "the proposal stays on Y"
+    y_card = next(card for card in final.candidates if card.record_id == newest_card.record_id)
+    assert y_card.is_current_proposal
+    stale_card_after = next(
+        card for card in final.candidates if card.record_id == stale_card.record_id
+    )
+    assert not stale_card_after.is_current_proposal
+    assert bound is not None  # the initially-bound candidate stays a plain card
+    assert world.count(
+        "SELECT COUNT(*) FROM research_runs WHERE season_id = %s", (season_id,)
+    ) == 2, "only the intake run and Y's bounded run ever reach research"

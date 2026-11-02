@@ -132,6 +132,22 @@ def parse_selection_trigger(trigger: str) -> tuple[int, UUID] | None:
         return None
 
 
+def newest_selection_revision(tx: Tx, season_id: UUID) -> int:
+    """The highest revision among the season's selection jobs (0 when none)."""
+    rows = tx.fetchall(
+        "SELECT input->>'trigger' AS trigger FROM jobs "
+        "WHERE season_id = %s AND job_type = %s "
+        "AND starts_with(input->>'trigger', %s)",
+        (season_id, INTAKE_JOB_TYPE, SELECTION_TRIGGER_PREFIX),
+    )
+    revisions = [
+        parsed[0]
+        for row in rows
+        if (parsed := parse_selection_trigger(str(row["trigger"] or ""))) is not None
+    ]
+    return max(revisions, default=0)
+
+
 _WIZARD_FIELDS = frozenset(
     {"csrf_token", "step", "wizard_key", "story_idea", "genre_tags", "tone", "episode_count"}
 )
@@ -1028,6 +1044,23 @@ class IntakeService:
                     "INTAKE_SEASON_NOT_PROPOSED",
                     detail=f"season is {season['state']}; research proposes only on PROPOSED",
                 )
+            if revision is not None:
+                # DB-9: a selection job that is no longer the newest intent must
+                # not run — a stale queued job completing after a newer selection
+                # would rebind the proposal to the owner's abandoned choice and
+                # spend a research run on it. The newest intent wins by revision.
+                newest_revision = newest_selection_revision(tx, season_id)
+                if newest_revision > revision:
+                    return Succeeded(
+                        {
+                            "status": "SUPERSEDED",
+                            "season_id": str(season_id),
+                            "candidate_id": str(selected_id) if selected_id else None,
+                            "superseded_by_revision": newest_revision,
+                            "research_run_id": None,
+                            "proposal_id": None,
+                        }
+                    )
             intake = self._load_intake(tx, season_id)
         if intake is None:
             return Failed("INTAKE_MISSING", detail=f"season {season_id} has no intake record")
