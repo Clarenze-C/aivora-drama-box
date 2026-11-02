@@ -1,36 +1,40 @@
 # T045 live provider adapter notes
 
 This is implementation guidance for T031. T045 does not authorize a Pod, paid prompt,
-rights route, or public action. The live bootstrap remains blocked on durable billing
-allocation/finality integration, so there is intentionally no executable canary command
-here. Do not call the provider adapter directly.
+rights route, or public action: the canary commands below are exercised by T045 only
+inside pytest with fixture transports. Running `canary execute` for real is T031, under
+the operator's authorization. Do not call the provider adapter directly.
 
-## Integrator status (T045 bootstrap)
+## Integrator status (T045 bootstrap — unblocked by T045-B)
 
 `microdrama.pipeline.live_world.build_live_benchmark_world` is the only intended composition
 entrypoint. It checks `PAID_BENCHMARK`, both explicit paid/cloud flags, no public-action
 capacity, `credref:` names, current quote/evidence expiry, rights and workflow callbacks,
-and matching image/GPU/namespace pins before constructing clients. Construction performs no
-DNS, credential resolution, or provider request. The provider clients additionally require
-durable reservation/operation context at each effect boundary.
+and matching image/GPU/namespace/account-label pins before constructing clients. Construction
+performs no DNS, credential resolution, or provider request. The provider clients additionally
+require durable reservation/operation context at each effect boundary.
 
-Composition remains blocked until the billing owner wires durable Runpod bucket allocation
-and provider-finality state into lease settlement and the independent GPU janitor. The
-Runpod REST adapter's empty per-interval `usage()` result is unknown usage; it must never be
-used to release a reservation or report zero cost. Raw billing history remains
-`PENDING_PROVIDER_FINALITY`, not a per-lease receipt. No live canary command is available
-until this blocker is cleared and T031 separately authorizes the bounded run.
+**T045-B (2 Nov): the composition is no longer blocked.** The builder takes a required
+`BillingRepository`, composes the lease service and janitor behind `RunpodInvoiceFinality`,
+computes `billing_state` from per-lease readiness, and the unconditional refusal is gone.
+The janitor ingests the provider's billing buckets for owned Runpod pods whose leases are
+not BILLED (exact micro-USD mapping; identical responses are replays that add nothing;
+revised responses post only the delta), including pods already absent at the provider
+through the durable `pod_leases` ownership proof (`terminate_verified_at` + account label).
+The Runpod REST adapter's empty per-interval `usage()` result stays unknown usage and still
+never releases a reservation or reports zero cost — only a MATCHED period invoice reaches
+BILLED and releases the remainder.
 
-The current database registries also cannot attest every live route property yet. The
-integrator validates the exact current rights route/subject/version, enabled preset/version,
-workflow hash, preset controls, mapped template node classes, image digest, GPU/RAM allowlist,
-and quote timestamp/rates/storage/exposure before composition. The mapped node-class hash is
-not a ComfyUI input-schema digest; `PresetRecord` has no durable field for that schema or for
-maximum output controls/resolution/duration. `RunpodQuoteAttestation` has no stable quote ID,
-currency, persistent-volume size, or reservation-backed maximum storage exposure. A guardian
-contract change should add those current evidence fields and bind the selected T031 quote and
-Comfy node schema/output ceilings to the persisted benchmark/preset record. Until then, those
-checks remain evidence blockers even after billing settlement is available.
+The database registries still cannot attest every live route property: the mapped
+node-class hash is not a ComfyUI input-schema digest, and `PresetRecord` has no durable
+field for that schema or for maximum output controls/resolution/duration. **R10
+limitation:** the canary authorization pins `node_schema_sha256` and
+`output_controls_sha256` (and the required controls) instead — they are authorization
+pins, not `PresetRecord` fields. `RunpodQuoteAttestation` now carries the quote id,
+USD-only currency, persistent-volume size, maximum storage exposure and the
+`provider_account_ref` label (written to `pod_leases` at claim and used in the bucket
+identity). A guardian contract change that binds the Comfy node schema and output
+ceilings to the persisted preset record remains open as a proposal, not a blocker.
 
 ## Required bootstrap contract before a canary
 
@@ -127,6 +131,115 @@ the following contract:
 This needs a shared persistence and budget-accounting change owned by the integrator. Until
 that lands, the raw bucket history is review evidence only, and actual-cost qualification
 is blocked even though the provider endpoint is implemented.
+
+## The canary runner (T045-B; `python -m microdrama.pipeline.canary`)
+
+One authorization document authorizes one bounded run. The exact commands (as T031's
+packet must state them), run from `microdrama/` against the dedicated canary database:
+
+```bash
+# 1) validate the authorization and every gate; print the plan and the sha to approve
+python -m microdrama.pipeline.canary preflight --authorization runbooks/canary-authorization.json
+
+# 2) the bounded run itself, only with the sha preflight printed and only before the
+#    hard stop (T031 authorizes this; T045 runs it only under pytest with fixture
+#    transports)
+python -m microdrama.pipeline.canary execute \
+  --authorization runbooks/canary-authorization.json \
+  --authorization-sha256 <hex-from-preflight> \
+  --prompts runbooks/canary-prompts.json \
+  --comfy-endpoint https://<pod>-8188.proxy.runpod.net
+
+# 3) verify the operator's period invoice once Runpod invoices the canary
+python -m microdrama.pipeline.canary invoice \
+  --authorization runbooks/canary-authorization.json \
+  --pod-id <pod-id> --period-start <iso> --period-end <iso> \
+  --amount-micro-usd <int> --source INVOICE --evidence <invoice-file>
+```
+
+`preflight` (the default command) validates the authorization and every `live_world`
+gate, resolves no credential value (it only checks the refs are well-formed `credref:`
+names), performs no network access, and prints the plan — caps, pins, quote, hard stop,
+composed Pod image (`microdrama-canary@sha256:<digest>`; the authorization pins the
+digest) — plus `authorization_sha256=<hex>` (the sha256 of the authorization file
+bytes).
+
+`execute --authorization-sha256 <hex>` refuses, typed and before any transport call,
+on: a sha mismatch; `now ≥ hard_stop_utc`; an expired quote; a mode other than
+PAID_BENCHMARK or a missing paid/cloud flag; a spend cap above `episode_cap_micro_usd`;
+or a prompt object whose content hash is not pinned. It then runs runbook steps 1–6
+through the composed `live_world` only: reserve → owned-name Pod create; before the
+first prompt, the `/object_info` digest of the mapped node classes against the pinned
+`node_schema_sha256` (a mismatch stops + terminates and submits nothing); bounded
+prompt submits (≤ `max_prompts` distinct prompts, ≤ `max_attempts` total, no blind
+retries — ambiguity stops for a human); output fetch → checksum → durable copy;
+stop → terminate → verified read-back (the T045-A final-release path); janitor ingest.
+`hard_stop_utc`/`max_wall_seconds` are enforced by a deadline that stops and
+terminates. The runner never prints credential values, `Authorization` headers or the
+environment, and its default credential resolver refuses — T031 supplies the real one.
+
+`invoice` wraps `verify_invoice_period` (R5) from operator evidence: account ref (from
+the authorization), pod id, period, amount, evidence file (**only its sha256 is
+stored**), source (`INVOICE`/`CONSOLE`), and the optional `--supersedes`/`--actor`/
+`--reason` for an audited supersede. A MATCHED invoice lets the janitor's next sweep
+settle the lease BILLED and release exactly the unused remainder; a mismatch keeps the
+hold and marks the lease DISPUTED.
+
+### Authorization schema (exactly the R11 list)
+
+A fully worked example with obviously fake values ships at
+`microdrama/runbooks/canary-authorization.example.json` (references use `credref:`
+names only). Fields: `operator`, `change_ref`, `hard_stop_utc`, `max_wall_seconds`;
+`quote` (R10 fields: `quote_id`, USD-only `currency`, `captured_at`, `expires_at`,
+`compute_micro_usd_per_hour`, `container_disk_gb`,
+`container_storage_micro_usd_per_gb_month`, `persistent_volume_gb`,
+`persistent_storage_micro_usd_per_gb_month`, `max_storage_exposure_micro_usd`,
+`allowed_gpu_types`, `host_ram_gb_by_gpu`, `maximum_runtime_ms`,
+`maximum_exposure_micro_usd`); `caps` (`max_spend_micro_usd` — including storage
+exposure and the shutdown reserve — `max_storage_gb`, `max_prompts`, `max_attempts`
+≤ 3); `rights` (`rights_route_id`, `rights_subject_ref`, `rights_subject_kind`,
+`rights_version`, `territories`, `rights_evidence_id`, `eligible_until`); `pins`
+(`image_digest`, `workflow_sha256`, `node_schema_sha256`, `output_controls_sha256`,
+`preset_id`, `preset_version`, `required_controls`); `runpod_credential_ref` and
+`comfy_credential_ref` (`credref:` names only); `namespace`;
+`provider_account_ref` (an `acct:` label); and the prompt/reference inputs as content
+hashes (`prompt_sha256`, `reference_sha256`). Validation rules worth knowing: the
+hourly rate must be a whole number of micro-USD per GPU-second (integer ledger
+prices), the spend cap cannot exceed the quote's exposure ceiling, the storage cap
+cannot be below the quoted volume, and prompt pins are sha256 of the canonical prompt
+object (`{"text", "seed", "negative", ...}`) supplied at execute time via `--prompts`
+and verified before anything is submitted.
+
+### Canary record JSON
+
+`execute` writes the runbook's "Canary record" fields as JSON to
+`microdrama/evidence/provider-qualification/<utc-ts>-canary.json` — authorization sha,
+operator/change ref, times and deadline, quote and caps, rights and pins, reservation
+ids, lease id, client tokens, pod id, prompt ids, output object keys with sha256 and
+byte length, shutdown/terminate verification, janitor summary, and per-lease
+`billing_readiness` with an honest `billing_state`
+(`PENDING_PROVIDER_FINALITY`/`AWAITING_INVOICE` until the invoice matches; never a
+pretend BILLED).
+
+### The dedicated canary database
+
+The T046 staging stack refuses PAID_BENCHMARK, so the canary cannot use it. Stand up
+the canary's own database instead (from `microdrama/`):
+
+```bash
+make canary-db            # or: python tools/canary_db.py up
+python tools/canary_db.py status
+python tools/canary_db.py down
+```
+
+It starts a fresh loopback PostgreSQL on a free port (never 8091 or 8093 and never a
+running container's port), applies every migration, and seeds the canary's registries
+(the rights route with real evidence labels so it stays eligible in PAID_BENCHMARK,
+the enabled benchmark preset) plus one canary episode with its budget account. The
+DSN is printed and stored in `out/canary-db.json`; run the canary with
+`MICRODRAMA_DATABASE_URL` set to it. The runner resolves the single seeded canary
+episode (oldest with a budget account) — the canary database must not be shared with
+production data.
 
 ## Canary record (must be filled from live evidence)
 

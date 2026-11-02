@@ -68,3 +68,8 @@ services-up:
 
 services-down:
 	$(PY) -m microdrama.testing.services down
+
+# Dedicated loopback PostgreSQL for the T045 canary (runbooks/canary section).
+# Fresh cluster + migrations + canary registry seed; never ports 8091/8093.
+canary-db:
+	$(PY) tools/canary_db.py up
