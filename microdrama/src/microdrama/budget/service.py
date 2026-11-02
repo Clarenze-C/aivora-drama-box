@@ -629,6 +629,11 @@ class BudgetService:
                 if charge_id
                 else None
             )
+        if allocation.delta_micro_usd == 0:
+            # T045 R2: a zero-delta allocation row is durable evidence only. It posts
+            # nothing, and in particular a zero-delta RECOVERY row must never create
+            # RECOVERY_PENDING exposure or block later Runpod reservations.
+            return None
         if allocation.owner_kind == "RECOVERY":
             tx.execute(
                 "INSERT INTO runpod_billing_budget_postings "
@@ -648,12 +653,13 @@ class BudgetService:
             account_id = episode_account_id(tx, episode_id)
             account = lock_account(tx, account_id)
             categories = lock_categories(tx, account_id)
-            candidate = tx.fetchone(
-                "SELECT * FROM reservations WHERE account_id=%s AND lower(provider)='runpod' "
-                "AND category=%s ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
-                (account_id, category.value),
-            )
-            reservation = reservation_from_row(candidate) if candidate else None
+            reservation = None
+            if category is BudgetCategory.GPU_GENERATION:
+                # T045 R2 (G2): GPU posts against the reservation of the lease whose
+                # compute window overlaps this bucket (earliest overlap for that episode
+                # on that Pod); uncovered existence uses the chain root's lease. Never
+                # "newest reservation per account".
+                reservation = self._lease_window_reservation(tx, bucket, episode_id)
             receipt = UsageReceipt(
                 receipt_id=uuid5(NAMESPACE_URL, f"runpod-billing:{allocation.allocation_id}"),
                 provider="runpod",
@@ -1010,6 +1016,45 @@ class BudgetService:
             raise Conflict(
                 "receipt season does not match its budget account", season_id=str(receipt.season_id)
             )
+
+    @staticmethod
+    def _lease_window_reservation(
+        tx: Tx, bucket: RunpodBillingBucketObservation, episode_id: UUID
+    ) -> ReservationRow | None:
+        """Resolve the reservation a GPU billing delta posts against (T045 R2).
+
+        The lease whose compute window overlaps the bucket, taking the earliest overlap
+        for that episode on that Pod; uncovered existence falls back to the chain root's
+        lease. Returns ``None`` when no durable lease links this episode to the bucket,
+        in which case the delta posts unreserved.
+        """
+        row = tx.fetchone(
+            "SELECT r.* FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
+            "WHERE l.provider='runpod' AND l.pod_id=%s AND l.owner_episode_id=%s "
+            "AND r.category='GPU_GENERATION' "
+            "AND COALESCE(l.compute_window_start_at, l.create_requested_at, l.created_at) < %s "
+            "AND COALESCE(l.compute_window_end_at, l.stop_verified_at, l.terminate_verified_at, %s) > %s "
+            "ORDER BY GREATEST(COALESCE(l.compute_window_start_at, l.create_requested_at, "
+            "l.created_at), %s) ASC, l.created_at ASC LIMIT 1 FOR UPDATE",
+            (
+                bucket.pod_id,
+                episode_id,
+                bucket.bucket_end,
+                bucket.bucket_end,
+                bucket.bucket_start,
+                bucket.bucket_start,
+            ),
+        )
+        if row is None:
+            # Uncovered existence belongs to the root lease's episode: use its hold.
+            row = tx.fetchone(
+                "SELECT r.* FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
+                "WHERE l.provider='runpod' AND l.pod_id=%s AND l.transferred_from IS NULL "
+                "AND l.owner_episode_id=%s AND r.category='GPU_GENERATION' "
+                "ORDER BY l.created_at ASC LIMIT 1 FOR UPDATE",
+                (bucket.pod_id, episode_id),
+            )
+        return reservation_from_row(row) if row is not None else None
 
     def _linked_reservation(
         self, tx: Tx, receipt: UsageReceipt, account_id: UUID
