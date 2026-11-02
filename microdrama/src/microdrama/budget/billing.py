@@ -375,23 +375,90 @@ class BillingRepository:
         bucket: RunpodBillingBucketObservation,
         prior: RunpodBillingBucketObservation | None = None,
     ) -> list[RunpodBillingAllocation]:
-        """Build signed revision deltas from durable lease and storage ownership."""
+        """Build signed revision deltas from durable lease windows and storage ownership.
+
+        T045 R1 (G1): Runpod reports no usage intervals, so lease episodes come from
+        ``pod_leases`` compute windows. The GPU/CPU denominator is the Pod's existence
+        seconds inside the bucket - from the chain root's ``create_requested_at`` to the
+        last lease's verified stop or terminate - never the bucket length: a partly used
+        hour is allocated to the episodes that existed in it. Existence covered by no
+        lease goes to the root lease's episode, or to the recovery pool when the Pod has
+        no root lease. Disk is allocated by storage-ownership seconds; existence the
+        ownership rows do not cover is recovery, never a neighbouring episode.
+        """
         start, end = bucket.bucket_start, bucket.bucket_end
-        overlaps = tx.fetchall(
-            "SELECT l.owner_episode_id::text AS owner, "
-            "EXTRACT(EPOCH FROM LEAST(i.interval_end,%s)-GREATEST(i.interval_start,%s))::bigint AS seconds "
-            "FROM pod_usage_intervals i JOIN pod_leases l ON l.id=i.lease_id "
-            "WHERE i.provider='runpod' AND i.pod_id=%s AND i.interval_start<%s AND i.interval_end>%s",
-            (end, start, bucket.pod_id, end, start),
+        duration = max(1, int((end - start).total_seconds()))
+        leases = tx.fetchall(
+            "SELECT id, owner_episode_id::text AS owner, transferred_from, "
+            "COALESCE(compute_window_start_at, create_requested_at, created_at) AS window_start, "
+            "COALESCE(compute_window_end_at, stop_verified_at, terminate_verified_at) AS window_end "
+            "FROM pod_leases WHERE provider='runpod' AND pod_id=%s ORDER BY created_at",
+            (bucket.pod_id,),
         )
+        root = next((row for row in leases if row["transferred_from"] is None), None)
+
+        def clip(window_start: datetime, window_end: datetime | None) -> tuple[datetime, datetime]:
+            return max(start, window_start), min(end, window_end or end)
+
+        gpu_cpu_weights: dict[str, int] = {}
+        existence: tuple[datetime, datetime] | None = None
+        if leases:
+            # The chain exists from the root's create request (the earliest lease window
+            # when no root is recorded) until the last lease's verified stop or
+            # terminate; while that is still unknown, the bucket end is the
+            # conservative bound.
+            chain_start = (
+                root["window_start"] if root is not None else min(r["window_start"] for r in leases)
+            )
+            lo, hi = clip(chain_start, max((row["window_end"] or end) for row in leases))
+            if hi > lo:
+                existence = (lo, hi)
+        if existence is not None:
+            for row in leases:
+                lo, hi = clip(row["window_start"], row["window_end"])
+                seconds = int((hi - lo).total_seconds())
+                if seconds > 0:
+                    gpu_cpu_weights[row["owner"]] = gpu_cpu_weights.get(row["owner"], 0) + seconds
+            covered = sum(gpu_cpu_weights.values())
+            existence_seconds = int((existence[1] - existence[0]).total_seconds())
+            if covered < existence_seconds:
+                # Existence covered by no lease belongs to the root lease's episode,
+                # or to the recovery pool when the Pod has no root lease.
+                uncovered = existence_seconds - covered
+                if root is not None:
+                    gpu_cpu_weights[root["owner"]] = (
+                        gpu_cpu_weights.get(root["owner"], 0) + uncovered
+                    )
+                else:
+                    gpu_cpu_weights["recovery_pool"] = uncovered
+        if not gpu_cpu_weights:
+            # No recorded existence at all: a non-zero bucket is 100% recovery.
+            gpu_cpu_weights = {"recovery_pool": duration}
+
         disk_owners = tx.fetchall(
             "SELECT owner_episode_id::text AS owner, "
             "EXTRACT(EPOCH FROM LEAST(COALESCE(valid_until,%s),%s)-GREATEST(valid_from,%s))::bigint AS seconds "
             "FROM pod_storage_ownership WHERE provider='runpod' AND pod_id=%s "
             "AND valid_from<%s AND COALESCE(valid_until,%s)>%s",
-            (end, end, start, bucket.pod_id, end, start, start),
+            # 5 is ``valid_from < end`` and 6 is ``COALESCE(valid_until, end) > start``:
+            # an open row (valid_until NULL) extends to the bucket end and stays
+            # eligible — the pre-T045 binding excluded exactly those rows.
+            (end, end, start, bucket.pod_id, end, end, start),
         )
-        duration = max(1, int((end - start).total_seconds()))
+        disk_weights: dict[str, int] = {}
+        for row in disk_owners:
+            disk_weights[row["owner"]] = disk_weights.get(row["owner"], 0) + max(
+                0, int(row["seconds"])
+            )
+        if existence is not None:
+            disk_covered = sum(disk_weights.values())
+            if disk_covered < existence_seconds:
+                disk_weights["recovery_pool"] = (
+                    disk_weights.get("recovery_pool", 0) + existence_seconds - disk_covered
+                )
+        if not disk_weights:
+            disk_weights = {"recovery_pool": duration}
+
         created = datetime.now(UTC)
         fields = {
             BillingComponent.GPU: "gpu_amount_micro_usd",
@@ -405,21 +472,12 @@ class BillingRepository:
         }
         output: list[RunpodBillingAllocation] = []
         for component, field in fields.items():
-            observed = overlaps if component is not BillingComponent.DISK else disk_owners
+            weights = disk_weights if component is BillingComponent.DISK else gpu_cpu_weights
             basis = (
-                BillingAllocationBasis.MEASURED_OVERLAP
-                if component is not BillingComponent.DISK
-                else BillingAllocationBasis.STORAGE_OWNER
+                BillingAllocationBasis.STORAGE_OWNER
+                if component is BillingComponent.DISK
+                else BillingAllocationBasis.MEASURED_OVERLAP
             )
-            weights: dict[str, int] = {}
-            for row in observed:
-                owner = row["owner"]
-                weights[owner] = weights.get(owner, 0) + max(0, int(row["seconds"]))
-            covered = sum(weights.values())
-            if covered < duration:
-                weights["recovery_pool"] = weights.get("recovery_pool", 0) + duration - covered
-            if not weights:
-                weights["recovery_pool"] = duration
             delta = int(getattr(bucket, field)) - prior_amounts[component]
             shares = largest_remainder(delta, sorted(weights.items()))
             for owner, amount in shares.items():
