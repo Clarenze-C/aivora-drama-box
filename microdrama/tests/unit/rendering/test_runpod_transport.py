@@ -426,6 +426,8 @@ def test_independent_janitor_stops_only_namespaced_orphan(db: Database) -> None:
         paid_requests_enabled=True,
         cloud_resources_enabled=True,
     )
+    from microdrama.rendering.finality import RunpodInvoiceFinality
+
     janitor = Janitor(
         db,
         budget=None,
@@ -434,6 +436,7 @@ def test_independent_janitor_stops_only_namespaced_orphan(db: Database) -> None:
         ids=SequentialIds("runpod-janitor"),
         settings=settings,
         config=config,
+        finality=RunpodInvoiceFinality(db),
     )
     report = janitor.sweep()
     assert report.stopped_pods == ["pod-123"]

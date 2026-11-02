@@ -125,7 +125,14 @@ def test_shutdown_failure_leaves_durable_state_the_janitor_finishes(world: Rende
     world.leases = __import__(
         "microdrama.rendering", fromlist=["build_lease_service"]
     ).build_lease_service(
-        world.db, world.budget, world.manager, world.clock, world.ids, world.settings, world.config
+        world.db,
+        world.budget,
+        world.manager,
+        world.clock,
+        world.ids,
+        world.settings,
+        world.config,
+        world.finality,
     )
     with pytest.raises(TransientProviderError):
         world.leases.shutdown(handle.lease.lease_id, reason="done")

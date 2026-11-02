@@ -20,6 +20,7 @@ from microdrama.rendering import (
     PodLeaseClaimRequest,
     PodLeaseConfig,
     PodManager,
+    SyntheticUsageFinality,
     build_janitor,
     build_lease_service,
 )
@@ -65,8 +66,16 @@ class RenderWorld:
             stop_attempts=self.config.stop_attempts,
             create_attempts=self.config.create_attempts,
         )
+        self.finality = SyntheticUsageFinality(self.settings, provider_id=self.provider.provider_id)
         self.leases: LeaseService = build_lease_service(
-            db, self.budget, self.manager, self.clock, self.ids, self.settings, self.config
+            db,
+            self.budget,
+            self.manager,
+            self.clock,
+            self.ids,
+            self.settings,
+            self.config,
+            self.finality,
         )
 
     def janitor(self, *, config: PodLeaseConfig | None = None) -> Janitor:
@@ -79,6 +88,7 @@ class RenderWorld:
             self.ids,
             self.settings,
             config or self.config,
+            SyntheticUsageFinality(self.settings, provider_id=self.provider.provider_id),
         )
 
     # --- seeding ------------------------------------------------------------------

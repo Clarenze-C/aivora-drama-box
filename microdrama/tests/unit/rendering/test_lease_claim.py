@@ -163,7 +163,14 @@ def test_unknown_price_config_blocks_claim(world: RenderWorld) -> None:
     world.config = replace(world.config, price=None)
     world.manager = PodManager(world.provider, world.clock, world.config)
     world.leases = build_lease_service(
-        world.db, world.budget, world.manager, world.clock, world.ids, world.settings, world.config
+        world.db,
+        world.budget,
+        world.manager,
+        world.clock,
+        world.ids,
+        world.settings,
+        world.config,
+        world.finality,
     )
     with pytest.raises(UnknownPrice):
         world.claim(ep, KEY)

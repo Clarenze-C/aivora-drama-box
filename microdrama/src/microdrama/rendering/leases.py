@@ -68,6 +68,11 @@ from microdrama.contracts.infra import Clock, IdGenerator
 from microdrama.contracts.providers import PodInfo
 from microdrama.core.events import append_event, list_events
 from microdrama.persistence.db import Database, Tx, update_with_revision
+from microdrama.rendering.finality import (
+    LeaseBillingFinality,
+    LeaseSettlement,
+    check_finality_pairing,
+)
 from microdrama.rendering.pods import (
     LEASE_OPERATION_KIND,
     STOP_OPERATION_KIND,
@@ -172,6 +177,7 @@ class ShutdownResult:
     settled_micro_usd: int
     replayed: bool = False
     compute_stopped: bool = True
+    billing_pending: bool = False  # T045 R8: the hold stays until billing finality
 
 
 def client_token_for(semantic_key: str) -> str:
@@ -458,10 +464,29 @@ def settle_reservation_for_lease(
     budget: BudgetService,
     settings: Settings,
     *,
+    finality: LeaseBillingFinality,
     lease_id: UUID,
     context: str,
 ) -> int:
-    """Close the lease's budget hold: settle to the recorded usage, or release when unused.
+    """Close the lease's budget hold through the required finality port (T045 R8).
+
+    There is no default and no flag: the caller's finality decides whether an unused
+    hold releases (offline synthetic) or waits for invoice finality (Runpod).
+    """
+    return finality.settle_lease(
+        db, budget, settings, lease_id=lease_id, context=context
+    ).settled_micro_usd
+
+
+def settle_from_recorded_usage(
+    db: Database,
+    budget: BudgetService,
+    settings: Settings,
+    *,
+    lease_id: UUID,
+    context: str,
+) -> LeaseSettlement:
+    """The offline synthetic settlement: settle to the recorded usage, release if unused.
 
     The settlement receipt is fully deterministic (stable receipt keys, ``observed_at``
     taken from the lease row's own ``updated_at``), so a crash between the lease update and
@@ -480,7 +505,7 @@ def settle_reservation_for_lease(
             )
         except Conflict:
             pass  # already closed by an earlier attempt (replay)
-        return 0
+        return LeaseSettlement(0, released=True)
     mock = settings.is_offline_mock
     receipt = UsageReceipt(
         receipt_id=uuid5(RENDERING_NAMESPACE, f"settle:{row['provider']}:{lease_id}"),
@@ -502,7 +527,7 @@ def settle_reservation_for_lease(
         provenance=Provenance.FAKE_SYNTHETIC if mock else Provenance.LIVE_PROVIDER,
     )
     budget.record_usage(receipt)
-    return total
+    return LeaseSettlement(settled_micro_usd=total)
 
 
 # --- the lease service ---------------------------------------------------------------------
@@ -520,7 +545,10 @@ class LeaseService:
         ids: IdGenerator,
         settings: Settings,
         config: PodLeaseConfig,
+        finality: LeaseBillingFinality,
     ) -> None:
+        check_finality_pairing(finality, manager.provider_id)
+        self._finality = finality
         self._db = db
         self._budget = budget
         self._manager = manager
@@ -1008,11 +1036,13 @@ class LeaseService:
         row = self._load(lease_id)
         if row["lease_state"] == LeaseState.RELEASED.value:
             settled, _ = _settlement_totals(self._db, row["reservation_id"])
+            state = self._reservation_state(row["reservation_id"])
             return ShutdownResult(
                 lease_id=lease_id,
                 stop_verified_at=row["stop_verified_at"],
                 settled_micro_usd=settled,
                 replayed=True,
+                billing_pending=state in ("ACTIVE", "EXPIRED"),
             )
         if row["lease_state"] not in LIVE_LEASE_STATES:
             raise Conflict("lease is not live", lease_id=str(lease_id), state=row["lease_state"])
@@ -1075,14 +1105,15 @@ class LeaseService:
                 {"reason": reason, "pod_state": terminal.value},
                 now,
             )
-        settled = settle_reservation_for_lease(
-            self._db, self._budget, self._settings, lease_id=lease_id, context=reason
+        outcome = self._finality.settle_lease(
+            self._db, self._budget, self._settings, lease_id=lease_id, context=reason, now=now
         )
         self._release_cleanup_grant(cleanup_id, lease_id)
         return ShutdownResult(
             lease_id=lease_id,
             stop_verified_at=now,
-            settled_micro_usd=settled,
+            settled_micro_usd=outcome.settled_micro_usd,
+            billing_pending=outcome.pending,
         )
 
     def _close_claim_without_pod(self, lease_id: UUID, reason: str) -> ShutdownResult:
@@ -1105,10 +1136,15 @@ class LeaseService:
                 {"reason": reason, "compute": "none"},
                 now,
             )
-        settle_reservation_for_lease(
-            self._db, self._budget, self._settings, lease_id=lease_id, context=reason
+        outcome = self._finality.settle_lease(
+            self._db, self._budget, self._settings, lease_id=lease_id, context=reason, now=now
         )
-        return ShutdownResult(lease_id=lease_id, stop_verified_at=None, settled_micro_usd=0)
+        return ShutdownResult(
+            lease_id=lease_id,
+            stop_verified_at=None,
+            settled_micro_usd=outcome.settled_micro_usd,
+            billing_pending=outcome.pending,
+        )
 
     def _reserve_cleanup_grant(self, row: Mapping[str, Any]) -> UUID | None:
         """Best-effort ``pod.stop`` shutdown grant (T005 cleanup privilege).
@@ -1161,6 +1197,11 @@ class LeaseService:
             # An unreleased grant expires on its own short deadline; the janitor also
             # sweeps stale pod.stop holds. Never block the shutdown path on it.
             pass
+
+    def _reservation_state(self, reservation_id: UUID) -> str:
+        with self._db.transaction(readonly=True) as tx:
+            state = tx.fetchval("SELECT state FROM reservations WHERE id = %s", (reservation_id,))
+        return str(state) if state else "MISSING"
 
     # --- cancellation / human wait -------------------------------------------------------
 
@@ -1289,7 +1330,12 @@ class LeaseService:
                 now,
             )
         settle_reservation_for_lease(
-            self._db, self._budget, self._settings, lease_id=lease_id, context="transferred"
+            self._db,
+            self._budget,
+            self._settings,
+            finality=self._finality,
+            lease_id=lease_id,
+            context="transferred",
         )
         return LeaseHandle(self._contract(inserted))
 
@@ -1315,9 +1361,10 @@ def build_lease_service(
     ids: IdGenerator,
     settings: Settings,
     config: PodLeaseConfig,
+    finality: LeaseBillingFinality,
 ) -> LeaseService:
     """Composition factory for the integrator (route/job registration stays with them)."""
-    return LeaseService(db, budget, provider, clock, ids, settings, config)
+    return LeaseService(db, budget, provider, clock, ids, settings, config, finality)
 
 
 __all__ = [

@@ -40,13 +40,16 @@ from microdrama.contracts.providers import PodProvider
 from microdrama.core.clock import SystemClock, UuidIds
 from microdrama.core.events import append_event, list_events
 from microdrama.persistence.db import Database, Tx, update_with_revision
+from microdrama.rendering.finality import (
+    LeaseBillingFinality,
+    check_finality_pairing,
+)
 from microdrama.rendering.leases import (
     RENDERING_NAMESPACE,
     PodLeaseConfig,
     accrue_lease_usage,
     close_storage_ownership,
     open_storage_ownership,
-    settle_reservation_for_lease,
 )
 from microdrama.rendering.pods import (
     LEASE_OPERATION_KIND,
@@ -106,7 +109,10 @@ class Janitor:
         ids: IdGenerator,
         settings: Settings,
         config: PodLeaseConfig,
+        finality: LeaseBillingFinality,
     ) -> None:
+        check_finality_pairing(finality, provider.provider_id)
+        self._finality = finality
         self._db = db
         self._budget = budget
         self._clock = clock
@@ -282,18 +288,22 @@ class Janitor:
                 {"cause": cause, "pod_state": pod_state.value},
                 now,
             )
-        settled = settle_reservation_for_lease(
+        outcome = self._finality.settle_lease(
             self._db,
             self._budget,
             self._settings,
             lease_id=lease_id,
             context=f"janitor:{cause}",
+            now=now,
         )
         return JanitorAction(
             subject=f"lease:{lease_id}",
             action=f"clean:{cause}",
             outcome=terminal,
-            detail=f"pod {pod_state.value}, settled {settled} micro-USD",
+            detail=(
+                f"pod {pod_state.value}, settled {outcome.settled_micro_usd} micro-USD"
+                + (", billing pending" if outcome.pending else "")
+            ),
         )
 
     def _close_without_compute(
@@ -317,14 +327,23 @@ class Janitor:
                 {"cause": cause, "compute": "none"},
                 now,
             )
-        settle_reservation_for_lease(
-            self._db, self._budget, self._settings, lease_id=lease_id, context=f"janitor:{cause}"
+        outcome = self._finality.settle_lease(
+            self._db,
+            self._budget,
+            self._settings,
+            lease_id=lease_id,
+            context=f"janitor:{cause}",
+            now=now,
         )
         return JanitorAction(
             subject=f"lease:{lease_id}",
             action=f"clean:{cause}",
-            outcome="RELEASED",
-            detail="no compute was ever acquired",
+            outcome="RELEASED" if outcome.released else "PENDING",
+            detail=(
+                "no compute was ever acquired"
+                if outcome.released
+                else "no compute acquired; billing finality pending"
+            ),
         )
 
     def _attach_stray(self, lease_id: UUID, pod, now: datetime) -> None:
@@ -498,21 +517,26 @@ class Janitor:
     # --- phase 4: terminal leases with unsettled holds --------------------------------------
 
     def _sweep_terminal_leases(self, now: datetime, report: JanitorReport) -> None:
+        # T045 R8/G15: a hold that EXPIRED while it waited for an invoice is revisited
+        # here too, and the backoff column keeps pending retries from hot-looping.
         rows = self._db_query(
             "SELECT l.id AS lease_id, l.reservation_id, l.lease_state FROM pod_leases l "
             "JOIN reservations r ON r.id = l.reservation_id "
-            "WHERE l.lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') AND r.state = 'ACTIVE' "
+            "WHERE l.lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+            "AND r.state IN ('ACTIVE', 'EXPIRED') "
+            "AND (l.next_finality_check_at IS NULL OR l.next_finality_check_at <= %s) "
             "ORDER BY l.created_at",
-            (),
+            (now,),
         )
         for row in rows:
             try:
-                settled = settle_reservation_for_lease(
+                outcome = self._finality.settle_lease(
                     self._db,
                     self._budget,
                     self._settings,
                     lease_id=row["lease_id"],
                     context="janitor:terminal-lease",
+                    now=now,
                 )
             except MicrodramaError as exc:
                 report.failures.append(
@@ -524,11 +548,20 @@ class Janitor:
                     )
                 )
                 continue
+            if outcome.pending:
+                outcome_label, detail = "PENDING", "billing finality not reached"
+            elif outcome.released:
+                outcome_label, detail = "RELEASED", "no usage, released"
+            else:
+                outcome_label, detail = (
+                    "SETTLED",
+                    f"{outcome.settled_micro_usd} micro-USD",
+                )
             action = JanitorAction(
                 subject=f"lease:{row['lease_id']}",
                 action="settle_terminal",
-                outcome="SETTLED" if settled else "RELEASED",
-                detail=f"{settled} micro-USD",
+                outcome=outcome_label,
+                detail=detail,
             )
             report.budget_holds.append(action)
 
@@ -547,9 +580,10 @@ def build_janitor(
     ids: IdGenerator,
     settings: Settings,
     config: PodLeaseConfig,
+    finality: LeaseBillingFinality,
 ) -> Janitor:
     """Composition factory for the integrator / scheduler registration."""
-    return Janitor(db, budget, provider, clock, ids, settings, config)
+    return Janitor(db, budget, provider, clock, ids, settings, config, finality)
 
 
 def main(argv: list[str] | None = None) -> int:

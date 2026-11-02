@@ -57,6 +57,7 @@ from microdrama.qa.repairs import (
 from microdrama.qa.service import build_technical_qa_service
 from microdrama.references import ReferencesService, build_references_service
 from microdrama.rendering.comfy_jobs import ComfyRenderService, build_comfy_render_service
+from microdrama.rendering.finality import SyntheticUsageFinality
 from microdrama.rendering.janitor import Janitor as GpuJanitor
 from microdrama.rendering.janitor import build_janitor as build_gpu_janitor
 from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
@@ -415,7 +416,16 @@ def build_pipeline_world(
 
     pod_config = PodLeaseConfig.for_mock()
     manager = PodManager(fakes.pods, fake_clock, pod_config)
-    leases = build_lease_service(db, budget, manager, fake_clock, fake_ids, settings, pod_config)
+    leases = build_lease_service(
+        db,
+        budget,
+        manager,
+        fake_clock,
+        fake_ids,
+        settings,
+        pod_config,
+        SyntheticUsageFinality(settings, provider_id=manager.provider_id),
+    )
     comfy = build_comfy_render_service(
         db, budget, fakes.comfy, fake_clock, fake_ids, settings, None, store
     )
@@ -493,6 +503,7 @@ def build_pipeline_world(
         fake_ids,
         settings,
         pod_config,
+        SyntheticUsageFinality(settings, provider_id=fakes.pods.provider_id),
     )
 
     if seed_registries:

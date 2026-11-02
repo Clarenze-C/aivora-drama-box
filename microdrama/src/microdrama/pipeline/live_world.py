@@ -28,6 +28,7 @@ from microdrama.rendering.comfy_jobs import (
     build_comfy_render_service,
 )
 from microdrama.rendering.comfy_transport import ComfyHttpClient, HttpTransport
+from microdrama.rendering.finality import RunpodInvoiceFinality
 from microdrama.rendering.janitor import Janitor, build_janitor
 from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
 from microdrama.rendering.pods import PodManager
@@ -359,7 +360,10 @@ def build_live_benchmark_world(
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, pod_config)
-    leases = build_lease_service(db, budget, manager, live_clock, live_ids, settings, pod_config)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    leases = build_lease_service(
+        db, budget, manager, live_clock, live_ids, settings, pod_config, finality
+    )
 
     def comfy_request_guard(path: str, authorization_key: str | None, authorization: Any) -> None:
         with db.transaction(readonly=True) as tx:
@@ -418,7 +422,9 @@ def build_live_benchmark_world(
     comfy = build_comfy_render_service(
         db, budget, comfy_client, live_clock, live_ids, settings, render_config, store
     )
-    janitor = build_janitor(db, budget, provider, live_clock, live_ids, settings, pod_config)
+    janitor = build_janitor(
+        db, budget, provider, live_clock, live_ids, settings, pod_config, finality
+    )
     return LiveBenchmarkWorld(
         settings=settings,
         provider=provider,

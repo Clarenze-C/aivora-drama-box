@@ -7,6 +7,12 @@ ComfyUI adapter (T013), route/preset support (T014), and fixture-backed live tra
 route/job registration belongs to the integrator.
 """
 
+from microdrama.rendering.finality import (
+    LeaseBillingFinality,
+    LeaseSettlement,
+    RunpodInvoiceFinality,
+    SyntheticUsageFinality,
+)
 from microdrama.rendering.janitor import (
     Janitor,
     JanitorAction,
@@ -78,5 +84,9 @@ __all__ = [
     "resolve_pod_provider",
     "close_storage_ownership",
     "open_storage_ownership",
+    "LeaseBillingFinality",
+    "LeaseSettlement",
+    "RunpodInvoiceFinality",
+    "SyntheticUsageFinality",
     "settle_reservation_for_lease",
 ]
