@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
@@ -19,6 +19,7 @@ from microdrama.contracts.cost import (
     BillingComponent,
     BillingFinalityState,
     BillingInvoiceVerification,
+    BillingQueryState,
     BillingVerificationResult,
     RunpodBillingAllocation,
     RunpodBillingBucketObservation,
@@ -28,9 +29,14 @@ from microdrama.contracts.cost import (
     validate_runpod_billing_query,
     validate_runpod_billing_revision,
 )
+from microdrama.contracts.errors import IdempotencyConflict, SchemaInvalid
 from microdrama.persistence.db import Database, Tx, jsonb
 
 MICRO_USD = Decimal(1_000_000)
+# T045 R4: how long a billing bucket stays "open" after its end before it is stored
+# as settled provider evidence. An unverified assumption about Runpod settlement,
+# configurable per repository instance and documented in the runbook.
+DEFAULT_SETTLE_LAG = timedelta(minutes=15)
 
 
 @dataclass(frozen=True)
@@ -109,16 +115,86 @@ def largest_remainder(total: int, weights: list[tuple[str, int]]) -> dict[str, i
 class BillingRepository:
     """Append-only persistence for canonical 2.13 billing records."""
 
-    def __init__(self, db: Database, budget_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        budget_service: Any | None = None,
+        *,
+        settle_lag: timedelta = DEFAULT_SETTLE_LAG,
+    ) -> None:
         self.db = db
         self.budget_service = budget_service
+        # An unverified assumption about how long Runpod keeps reshaping a bucket: a
+        # bucket is only "closed" (storable) once its end is this far behind the
+        # observation. Configurable because it is an assumption, not a documented fact.
+        self.settle_lag = settle_lag
+
+    def _classify(
+        self,
+        query: RunpodBillingQueryObservation,
+        buckets: list[RunpodBillingBucketObservation],
+    ) -> tuple[
+        RunpodBillingQueryObservation,
+        list[RunpodBillingBucketObservation],
+        list[RunpodBillingBucketObservation],
+    ]:
+        """T045 R4: split the response into closed (stored) and open (skipped) buckets."""
+        closed, open_buckets = [], []
+        for bucket in buckets:
+            if bucket.bucket_end <= bucket.observed_at - self.settle_lag:
+                closed.append(bucket)
+            else:
+                open_buckets.append(bucket)
+        effective = query
+        if open_buckets:
+            update: dict[str, Any] = {}
+            if not closed:
+                # Every returned bucket is open: the query as a whole is UNKNOWN — it
+                # is not evidence of zero and not coverage.
+                update = {
+                    "result_state": BillingQueryState.UNKNOWN,
+                    "unknown_reason": "every returned bucket was still open at observed_at",
+                    "bucket_observation_ids": [],
+                }
+            else:
+                update = {"bucket_observation_ids": [b.observation_id for b in closed]}
+            effective = RunpodBillingQueryObservation.model_validate(
+                effective.model_dump(mode="python") | update
+            )
+        return effective, closed, open_buckets
 
     def ingest(
         self,
         query: RunpodBillingQueryObservation,
         buckets: list[RunpodBillingBucketObservation],
         allocations: list[RunpodBillingAllocation] | None = None,
+        *,
+        _verified_finality: bool = False,
     ) -> None:
+        """Store one provider response. The repository derives the stored state (R4).
+
+        Only closed buckets (``bucket_end`` at least ``settle_lag`` behind the
+        observation) are stored, as ``ALLOCATED_PROVIDER_REPORTED``; malformed ones stay
+        ``DISPUTED``. Open buckets are recorded in the skipped table instead, and an
+        all-open response is recorded as an ``UNKNOWN`` query. A bucket presented as
+        ``INVOICE_VERIFIED`` or ``PENDING_PROVIDER_FINALITY`` is refused: finality is
+        derived here or written by the internal invoice path only.
+        """
+        for bucket in buckets:
+            if (
+                bucket.finality_state is BillingFinalityState.INVOICE_VERIFIED
+                and not _verified_finality
+            ):
+                raise SchemaInvalid(
+                    "INVOICE_VERIFIED is written only by the invoice verification path; "
+                    "API ingest must present an unsettled bucket"
+                )
+            if bucket.finality_state is BillingFinalityState.PENDING_PROVIDER_FINALITY:
+                raise SchemaInvalid(
+                    "PENDING_PROVIDER_FINALITY is a lease readiness state; ingest must "
+                    "present an allocatable or disputed bucket"
+                )
+        query, buckets, open_buckets = self._classify(query, buckets)
         allocations = allocations or []
 
         def operation(tx: Tx) -> None:
@@ -132,7 +208,7 @@ class BillingRepository:
             )
             if existing_query is not None:
                 if RunpodBillingQueryObservation.model_validate(existing_query["payload"]) != query:
-                    raise ValueError("billing query ID replayed with different content")
+                    raise IdempotencyConflict("billing query ID replayed with different content")
                 return
             tx.execute(
                 "INSERT INTO runpod_billing_queries (query_id,provider_account_ref,observed_at,result_state,payload) "
@@ -145,6 +221,23 @@ class BillingRepository:
                     jsonb(query),
                 ),
             )
+            for bucket in open_buckets:
+                tx.execute(
+                    "INSERT INTO runpod_billing_query_skipped_buckets (skip_id,query_id,"
+                    "provider_account_ref,pod_id,bucket_start,bucket_end,bucket_size_seconds,"
+                    "observed_at,reason) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'OPEN_BUCKET') "
+                    "ON CONFLICT (query_id,pod_id,bucket_start,bucket_end) DO NOTHING",
+                    (
+                        uuid4(),
+                        query.query_id,
+                        query.provider_account_ref,
+                        bucket.pod_id,
+                        bucket.bucket_start,
+                        bucket.bucket_end,
+                        bucket.bucket_size_seconds,
+                        bucket.observed_at,
+                    ),
+                )
             for bucket in buckets:
                 tx.fetchval(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s, 451046))",

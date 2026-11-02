@@ -837,32 +837,32 @@
     "model": "RunpodBillingAllocation"
   },
   "examples/v1/valid/RunpodBillingBucketObservation.json": {
-    "canonical_sha256": "4abe0dd4ab79a81f71cdc672a18dd1e0023941a1b473fa3d0091c1b68b5f9cb7",
+    "canonical_sha256": "4a0167ca08b81bd2fd3da14fc4fb2f950fadfd3b9c9397367436ff71aa1ee112",
     "expect": "valid",
     "model": "RunpodBillingBucketObservation"
   },
   "examples/v1/valid/RunpodBillingBucketObservation__disputed.json": {
-    "canonical_sha256": "b29791a23536430422bb67f7a786eb54237b35c0cf62fb1f082146a4730debf7",
+    "canonical_sha256": "350488328a8b5d1ff9499e7901c5d2d356347ecb3e9c0a1b30cb1f9138a06d5d",
     "expect": "valid",
     "model": "RunpodBillingBucketObservation"
   },
   "examples/v1/valid/RunpodBillingBucketObservation__invoice_verified.json": {
-    "canonical_sha256": "89dc0ba0180c33e090bf046c311573c973e432ce146a55be51eab5af6f9290b0",
+    "canonical_sha256": "5ec08f9c7b51a24957dd41769de4d1d99bfba55aa80b5e45284fcada52248683",
     "expect": "valid",
     "model": "RunpodBillingBucketObservation"
   },
   "examples/v1/valid/RunpodBillingQueryObservation.json": {
-    "canonical_sha256": "5ff1224a2660b8a4eb1bac9b8d5740093c02e0ab378d52e97ad7a7c1ec378fef",
+    "canonical_sha256": "26d9364765d872340b7f7d50c2aaf8f10f40410993b3a0e751552fec37d247dd",
     "expect": "valid",
     "model": "RunpodBillingQueryObservation"
   },
   "examples/v1/valid/RunpodBillingQueryObservation__empty.json": {
-    "canonical_sha256": "dce40475109135915dcfeae2826f5396cabff7c77625795253595e18b1f6b0c0",
+    "canonical_sha256": "da35f19a8ea20c88c5fc19f584159d323f9d27b80f0dbf6813c3b1df1986e82d",
     "expect": "valid",
     "model": "RunpodBillingQueryObservation"
   },
   "examples/v1/valid/RunpodBillingQueryObservation__unknown.json": {
-    "canonical_sha256": "5d013247261478b43e836bd7dea194f4ac04961ccce4f68c925525b6aa47e924",
+    "canonical_sha256": "5ec90931014c807a967d8c2ff9b8b01c71859564ec5b98fb1fb6c5938663acc7",
     "expect": "valid",
     "model": "RunpodBillingQueryObservation"
   },

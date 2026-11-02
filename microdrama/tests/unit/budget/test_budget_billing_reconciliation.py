@@ -16,9 +16,8 @@ from microdrama.contracts.cost import (
     RunpodBillingQueryObservation,
 )
 from microdrama.contracts.enums import ExecutionMode
-from microdrama.contracts.errors import BudgetExhausted, PolicyDenied
+from microdrama.contracts.errors import BudgetExhausted, PolicyDenied, SchemaInvalid
 from microdrama.contracts.examples import (
-    billing_invoice_verification,
     runpod_billing_bucket_disputed,
     runpod_billing_bucket_invoice_verified,
     runpod_billing_bucket_observation,
@@ -166,7 +165,7 @@ def test_provider_reported_allocations_are_idempotent_and_negative_revision_neve
     assert world.counters(episode.account_id) == after
 
 
-def test_invoice_finality_is_durable_and_recovery_reassignment_is_audited(
+def test_verified_finality_is_internal_and_recovery_reassignment_is_audited(
     world: World, db: Database
 ) -> None:
     episode = world.episode()
@@ -175,16 +174,17 @@ def test_invoice_finality_is_durable_and_recovery_reassignment_is_audited(
         paid_requests_enabled=True,
         cloud_resources_enabled=True,
     )
-    bucket = runpod_billing_bucket_invoice_verified()
+    bucket = runpod_billing_bucket_observation()
     query = runpod_billing_query_observation()
-    verification = billing_invoice_verification()
     repository = BillingRepository(db, budget_service=world.service)
+    # T045 R4: a bucket presented as INVOICE_VERIFIED is refused at ingest - the
+    # verified revision is written only by the invoice-verification path (R5, whose
+    # tests assert the finalization rows).
+    with pytest.raises(SchemaInvalid, match="INVOICE_VERIFIED"):
+        repository.ingest(query, [runpod_billing_bucket_invoice_verified()])
     repository.ingest(query, [bucket])
-    repository.verify_invoice(bucket, verification)
-    world.service.record_provider_invoice_verification(bucket, verification)
-    world.service.record_provider_invoice_verification(bucket, verification)
     with db.transaction(readonly=True) as tx:
-        assert tx.fetchval("SELECT count(*) FROM runpod_billing_budget_finalizations") == 1
+        assert tx.fetchval("SELECT count(*) FROM runpod_billing_budget_finalizations") == 0
         recovery_ids = tx.fetchall(
             "SELECT allocation_id FROM runpod_billing_allocations WHERE owner_kind='RECOVERY'"
         )

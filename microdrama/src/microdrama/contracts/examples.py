@@ -1049,7 +1049,8 @@ def runpod_billing_bucket_observation() -> RunpodBillingBucketObservation:
         provider_resolved_window_start=T0,
         provider_resolved_window_end=T0 + timedelta(seconds=3600),
         raw_response_sha256=h("runpod-billing-response-r1"),
-        observed_at=T0 + timedelta(seconds=3601),
+        # closed at ingest time: at least the settle lag past the bucket end (T045 R4)
+        observed_at=T0 + timedelta(hours=2),
         currency="USD",
         total_amount_micro_usd=1_000_000,
         gpu_amount_micro_usd=500_000,
@@ -1089,7 +1090,7 @@ def runpod_billing_query_observation() -> RunpodBillingQueryObservation:
         provider_resolved_window_end=T0 + timedelta(hours=1),
         bucket_size_seconds=3600,
         raw_response_sha256=h("runpod-billing-response-r1"),
-        observed_at=T0 + timedelta(seconds=3601),
+        observed_at=T0 + timedelta(hours=2),
         result_state=BillingQueryState.BUCKETS,
         bucket_observation_ids=[uid("runpod-billing-bucket-r1")],
     )
