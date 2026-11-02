@@ -115,6 +115,8 @@ class PodLeaseConfig:
     ``price`` is the configured GPU-second quote; ``None`` means unknown and blocks every
     paid dispatch. ``allowed_gpu_types``/``min_host_ram_gb`` come from the enabled preset
     registry records; ``container_image`` is the pinned image reference.
+    ``provider_account_ref`` (T045 R10) is the non-secret account label from the operator
+    attestation, recorded on every lease claim so billing buckets attribute to it.
     """
 
     owned_tag: str
@@ -123,6 +125,7 @@ class PodLeaseConfig:
     container_image: str
     max_hourly_price_micro_usd: int
     price: PriceQuote | None
+    provider_account_ref: str | None = None
     lease_ttl_ms: int = 1_800_000
     shutdown_margin_ms: int = 300_000
     heartbeat_timeout_ms: int = 300_000
@@ -761,9 +764,10 @@ class LeaseService:
                 inserted = tx.fetchone(
                     "INSERT INTO pod_leases (id, schema_version, provider, pod_id, owned_tag, "
                     "client_token, owner_episode_id, owner_job_id, reservation_id, lease_state, "
-                    "pod_state, gpu_type, hourly_price_micro_usd, lease_expires_at) "
+                    "pod_state, gpu_type, hourly_price_micro_usd, lease_expires_at, "
+                    "provider_account_ref) "
                     "VALUES (%s, '1.0', %s, NULL, %s, %s, %s, %s, %s, 'CLAIMED', 'REQUESTED', "
-                    "%s, %s, %s) "
+                    "%s, %s, %s, %s) "
                     "ON CONFLICT (provider, client_token) DO NOTHING RETURNING *",
                     (
                         lease_id,
@@ -776,6 +780,7 @@ class LeaseService:
                         request.gpu_type,
                         price.unit_price_micro_usd * 3600,
                         now + _ms(ttl),
+                        self._config.provider_account_ref,
                     ),
                 )
                 if inserted is None:

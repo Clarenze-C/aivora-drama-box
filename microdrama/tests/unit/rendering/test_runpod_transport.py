@@ -70,12 +70,17 @@ def _pod(
 def _attestation(*, enabled: bool = True, quote: int = 900_000) -> RunpodQuoteAttestation:
     return RunpodQuoteAttestation(
         namespace=NS,
+        quote_id="quote-t031-current",
+        currency="USD",
+        provider_account_ref="acct:runpod-t031",
         quote_micro_usd_per_hour=quote,
         quote_as_of=NOW - timedelta(minutes=1),
         expires_at=NOW + timedelta(minutes=30),
         container_disk_gb=1,
         container_storage_micro_usd_per_gb_month=100_000,
+        persistent_volume_gb=5,
         persistent_storage_micro_usd_per_gb_month=200_000,
+        max_storage_exposure_micro_usd=1_200_000,
         pinned_image=IMAGE,
         allowed_gpu_types=frozenset({"NVIDIA A40"}),
         host_ram_gb_by_gpu={"NVIDIA A40": 64},

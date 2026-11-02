@@ -46,15 +46,17 @@ class RunpodQuoteEvidence:
     """Operator quote snapshot; values must match the provider attestation exactly."""
 
     quote_id: str
+    currency: str
     captured_at: datetime
     expires_at: datetime
     compute_micro_usd_per_hour: int
     container_disk_gb: int
     container_storage_micro_usd_per_gb_month: int
-    allowed_gpu_types: frozenset[str]
-    host_ram_gb_by_gpu: dict[str, int]
     persistent_volume_gb: int
     persistent_storage_micro_usd_per_gb_month: int
+    max_storage_exposure_micro_usd: int
+    allowed_gpu_types: frozenset[str]
+    host_ram_gb_by_gpu: dict[str, int]
     maximum_runtime_ms: int
     maximum_exposure_micro_usd: int
 
@@ -72,6 +74,21 @@ class RunpodQuoteEvidence:
             raise PolicyDenied("Runpod compute/storage quote is not current")
         if self.captured_at != attestation.quote_as_of or self.expires_at != attestation.expires_at:
             raise PolicyDenied("quote evidence window differs from provider attestation")
+        if self.currency != "USD":
+            raise PolicyDenied("Runpod quote evidence currency must be USD")
+        # T045 R10: every attested quote field is cross-checked both ways — the evidence
+        # names the same quote, currency, volume size and storage exposure the operator
+        # attested, or composition refuses.
+        if (
+            self.quote_id != attestation.quote_id
+            or self.currency != attestation.currency
+            or self.persistent_volume_gb != attestation.persistent_volume_gb
+            or self.max_storage_exposure_micro_usd != attestation.max_storage_exposure_micro_usd
+        ):
+            raise PolicyDenied(
+                "quote evidence differs from provider attestation on quote id, currency, "
+                "persistent volume or storage exposure"
+            )
         if (
             self.compute_micro_usd_per_hour != attestation.quote_micro_usd_per_hour
             or self.container_disk_gb != attestation.container_disk_gb
@@ -106,6 +123,8 @@ class RunpodQuoteEvidence:
         storage = (storage_numerator + 30 * 24 * 60 * 60 * 1000 - 1) // (30 * 24 * 60 * 60 * 1000)
         if self.maximum_exposure_micro_usd < compute + storage:
             raise PolicyDenied("quote exposure ceiling does not cover compute and storage")
+        if self.max_storage_exposure_micro_usd < storage:
+            raise PolicyDenied("attested storage exposure ceiling does not cover quoted storage")
 
 
 @dataclass(frozen=True)
@@ -297,6 +316,10 @@ def build_live_benchmark_world(
         raise PolicyDenied("benchmark exposure exceeds the configured episode budget cap")
     if pod_config.owned_tag != f"microdrama-owned:{attestation.namespace}":
         raise PolicyDenied("lease ownership tag differs from isolated provider namespace")
+    if pod_config.provider_account_ref != attestation.provider_account_ref:
+        # T045 R10: the lease's durable account label must be exactly the attested one so
+        # billing buckets reconcile against the account that actually billed the Pod.
+        raise PolicyDenied("lease provider account differs from the attested account label")
     if pod_config.container_image != attestation.pinned_image:
         raise PolicyDenied("lease container image differs from attested digest")
     if not pod_config.allowed_gpu_types or not pod_config.allowed_gpu_types.issubset(

@@ -40,12 +40,17 @@ class RunpodQuoteAttestation:
     """Operator supplied current quote and T031 gating evidence (no provider default)."""
 
     namespace: str
+    quote_id: str
+    currency: str
+    provider_account_ref: str
     quote_micro_usd_per_hour: int
     quote_as_of: datetime
     expires_at: datetime
     container_disk_gb: int
     container_storage_micro_usd_per_gb_month: int
+    persistent_volume_gb: int
     persistent_storage_micro_usd_per_gb_month: int
+    max_storage_exposure_micro_usd: int
     pinned_image: str
     allowed_gpu_types: frozenset[str]
     host_ram_gb_by_gpu: Mapping[str, int]
@@ -56,13 +61,22 @@ class RunpodQuoteAttestation:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9]{4,12}", self.namespace):
             raise ValueError("Runpod ownership namespace must be 4-12 lowercase alphanumerics")
+        if not self.quote_id:
+            raise ValueError("Runpod attestation needs the operator's current quote id")
+        if self.currency != "USD":
+            raise ValueError("Runpod quote currency must be USD; no FX rate is available")
+        if not re.fullmatch(r"acct:[a-z0-9][a-z0-9._\-]{1,120}", self.provider_account_ref):
+            raise ValueError("Runpod provider account must be an acct: label (non-secret)")
         if (
             self.quote_micro_usd_per_hour <= 0
             or self.container_disk_gb <= 0
             or self.container_storage_micro_usd_per_gb_month <= 0
+            or self.persistent_volume_gb < 0
             or self.persistent_storage_micro_usd_per_gb_month <= 0
         ):
             raise ValueError("Runpod compute/storage quote and disk bounds are invalid")
+        if self.max_storage_exposure_micro_usd <= 0:
+            raise ValueError("Runpod attestation needs a positive maximum storage exposure")
         if (
             not self.pinned_image
             or "@sha256:" not in self.pinned_image
@@ -291,6 +305,10 @@ class RunpodRestProvider:
             raise PolicyDenied("Runpod GPU profile has no attested host RAM meeting the request")
         if request.volume_gb < 0:
             raise PolicyDenied("Pod persistent volume cannot be negative")
+        if request.volume_gb > self._attestation.persistent_volume_gb:
+            # T045 R10: the attested persistent-volume size bounds what a live create may
+            # mount; storage exposure is quoted against exactly that size.
+            raise PolicyDenied("Pod persistent volume exceeds the attested persistent volume size")
         name = pod_name(self._attestation.namespace, request.client_token)
         # The owner namespace and token-derived name are the only externally visible
         # ownership fields documented by Runpod REST v2.
