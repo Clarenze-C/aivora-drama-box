@@ -193,6 +193,7 @@ class RunpodRestProvider:
         now: Callable[[], datetime],
         reservation_guard: Callable[[PodCreateRequest, RunpodQuoteAttestation], None],
         cleanup_guard: Callable[[str, str], None],
+        absent_pod_ownership_probe: Callable[[str], bool] | None = None,
         transport: RunpodTransport | None = None,
     ) -> None:
         self._settings = settings
@@ -202,6 +203,9 @@ class RunpodRestProvider:
         self._now = now
         self._reservation_guard = reservation_guard
         self._cleanup_guard = cleanup_guard
+        # T045 R9: durable DB ownership proof for billing reads once the Pod is gone
+        # from the provider (a terminated Pod cannot be looked up there anymore).
+        self._absent_pod_ownership_probe = absent_pod_ownership_probe
         self._transport = transport or UrllibRunpodTransport()
         self._owned_tag = f"microdrama-owned:{attestation.namespace}"
 
@@ -473,13 +477,23 @@ class RunpodRestProvider:
         The provider may snap requested bounds to hourly buckets. Those records are useful
         as actual provider-reported cost evidence, but are not returned as UsageReceipt
         objects for accrue_lease_usage because a bucket can overlap adjacent leases.
+
+        A Pod absent at the provider (terminated) is billed through the durable DB
+        ownership proof (T045 R9): a ``pod_leases`` row with this pod id, the owned-tag
+        namespace, the attested account label and a verified terminate. Without that
+        proof the call is refused — absence is never evidence of non-ownership.
         """
+        self._settings.require_effect(EffectKind.CLOUD_RESOURCE, what="Runpod billing history")
         if since.tzinfo is None or until.tzinfo is None or until <= since:
             raise PolicyDenied("billing history needs a positive timezone-aware interval")
         pod = self.get_pod(pod_id)
         if pod is None:
-            raise PolicyDenied("billing history Pod is absent; ownership cannot be verified")
-        self._require_owned(pod)
+            if self._absent_pod_ownership_probe is None or not self._absent_pod_ownership_probe(
+                pod_id
+            ):
+                raise PolicyDenied("billing history Pod is absent; ownership cannot be verified")
+        else:
+            self._require_owned(pod)
         payload = self._call(
             "GET",
             "/billing/pods",
@@ -570,10 +584,9 @@ def _billing_record(value: Any) -> RunpodBillingRecord:
         cpu_micro_usd=_amount_micro(value["cpuAmount"]),
         disk_micro_usd=_amount_micro(value["diskAmount"]),
     )
-    if record.total_micro_usd != (
-        record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
-    ):
-        raise ValueError("provider billing total does not equal its documented cost components")
+    # T045 R4/R9: a total that does not equal its components is carried through and
+    # stored as a DISPUTED bucket by the janitor's mapping — refusing here would
+    # hide the provider's malformed evidence instead of recording it.
     if record.interval_end <= record.interval_start:
         raise ValueError("provider billing bucket has an empty or reversed interval")
     return record

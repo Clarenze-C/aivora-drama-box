@@ -111,6 +111,7 @@ def test_live_world_rejects_offline_before_accessing_dependencies() -> None:
             None,
             attestation=attestation,
             evidence=_evidence(attestation),
+            billing=None,
             runpod_credential_ref="credref:runpod",
             comfy_credential_ref="credref:comfy",
             credential_resolver=lambda _: pytest.fail("credentials must not resolve"),
@@ -130,6 +131,7 @@ def test_live_world_rejects_missing_effect_flags_before_credentials() -> None:
             None,
             attestation=attestation,
             evidence=_evidence(attestation),
+            billing=None,
             runpod_credential_ref="credref:runpod",
             comfy_credential_ref="credref:comfy",
             credential_resolver=lambda _: pytest.fail("credentials must not resolve"),
@@ -160,13 +162,22 @@ def test_image_digest_is_an_exact_suffix_of_the_attested_image() -> None:
         mismatched.check(now=datetime.now(UTC), attestation=attestation)
 
 
-def test_registry_evidence_checks_current_rights_and_enabled_preset(db, offline_settings) -> None:
-    now = datetime.now(UTC)
-    preset_registry = PresetRegistry(db, offline_settings)
+def _seed_registries(db, settings, *, recorded_at=None, live_evidence: bool = False) -> None:
+    """Record the current rights route and enabled preset the live evidence pins.
+
+    ``live_evidence`` records the rights route with real evidence labels so the record
+    stays eligible outside OFFLINE_MOCK (a FAKE_FIXTURE record reads UNKNOWN there).
+    """
+    now = recorded_at or datetime.now(UTC)
+    preset_registry = PresetRegistry(db, settings)
     preset = next(p for p in mock_catalog_presets() if p.preset_id == "fake-quality-8step")
     preset = preset.model_copy(update={"gpu_type": "A40", "host_ram_gb": 64})
     preset_registry.record(preset, source_provenance=Provenance.FAKE_SYNTHETIC)
-    rights_registry = RightsRegistry(db, SystemClock(), offline_settings)
+    rights_registry = RightsRegistry(db, SystemClock(), settings)
+    evidence_source = (
+        EvidenceSource.LICENSE_DOCUMENT if live_evidence else EvidenceSource.FAKE_FIXTURE
+    )
+    provenance = Provenance.LIVE_PROVIDER if live_evidence else Provenance.FAKE_SYNTHETIC
     rights_registry.record(
         RightsRecord(
             record_id="4f0c5c28-77be-44e2-9050-c7b350b839be",
@@ -177,12 +188,17 @@ def test_registry_evidence_checks_current_rights_and_enabled_preset(db, offline_
             territories=["TH"],
             commercial_use=True,
             output_release_allowed=True,
-            evidence=[EvidenceRef(source=EvidenceSource.FAKE_FIXTURE, ref="fixture:rights")],
+            evidence=[EvidenceRef(source=evidence_source, ref="fixture:rights")],
             status=RightsStatus.ELIGIBLE,
             recorded_at=now,
         ),
-        source_provenance=Provenance.FAKE_SYNTHETIC,
+        source_provenance=provenance,
     )
+
+
+def test_registry_evidence_checks_current_rights_and_enabled_preset(db, offline_settings) -> None:
+    now = datetime.now(UTC)
+    _seed_registries(db, offline_settings)
     attestation = _attestation()
     evidence = _evidence(attestation)
     validate_registry_evidence(

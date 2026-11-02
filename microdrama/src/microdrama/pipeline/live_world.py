@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from microdrama.budget import BudgetService
+from microdrama.budget.billing import BillingRepository, lease_billing_readiness
 from microdrama.config import Settings
 from microdrama.contracts.enums import EffectKind, ExecutionMode, RightsSubjectKind
 from microdrama.contracts.errors import EffectDenied, PolicyDenied
@@ -256,13 +257,45 @@ class LiveBenchmarkWorld:
     """Services needed by the T045/T031 bounded canary path."""
 
     settings: Settings
+    db: Database
     provider: RunpodRestProvider
     manager: PodManager
     leases: LeaseService
     comfy_client: ComfyHttpClient
     comfy: ComfyRenderService
     janitor: Janitor
-    billing_state: str = "PENDING_PROVIDER_FINALITY"
+    billing: BillingRepository
+
+    def billing_readiness(self) -> list[Any]:
+        """Per-lease billing readiness (T045 R7) for every runpod lease, oldest first."""
+        with self.db.transaction(readonly=True) as tx:
+            rows = tx.fetchall(
+                "SELECT id FROM pod_leases WHERE provider = 'runpod' ORDER BY created_at"
+            )
+        return [lease_billing_readiness(self.db, row["id"]) for row in rows]
+
+    @property
+    def billing_state(self) -> str:
+        """The worst readiness any runpod lease reports; honest before any run too.
+
+        With no lease yet nothing has reached provider finality, so the aggregate is
+        ``PENDING_PROVIDER_FINALITY`` — never a pretend BILLED.
+        """
+        worst_rank = 0
+        ranking = {
+            "BILLED": 1,
+            "AWAITING_INVOICE": 2,
+            "PENDING_PROVIDER_FINALITY": 3,
+            "RECOVERY_REQUIRED": 4,
+            "DISPUTED": 5,
+        }
+        for readiness in self.billing_readiness():
+            worst_rank = max(worst_rank, ranking.get(readiness.state, 3))
+        return (
+            next(state for state, rank in ranking.items() if rank == worst_rank)
+            if worst_rank
+            else "PENDING_PROVIDER_FINALITY"
+        )
 
 
 def build_live_benchmark_world(
@@ -273,6 +306,7 @@ def build_live_benchmark_world(
     *,
     attestation: RunpodQuoteAttestation,
     evidence: LiveBenchmarkEvidence,
+    billing: BillingRepository,
     runpod_credential_ref: str,
     comfy_credential_ref: str,
     credential_resolver: Callable[[str], str | None],
@@ -287,8 +321,10 @@ def build_live_benchmark_world(
     """Compose a paid benchmark; no external effect occurs during this call.
 
     Credential resolvers are retained by the clients and only called after durable
-    reservation/operation guards. Raw Runpod billing buckets remain pending; they are
-    deliberately not mapped to lease receipts here.
+    reservation/operation guards. ``billing`` (T045 R9) is the durable reconciliation
+    repository the janitor ingests provider buckets into and the world computes its
+    billing state from; the lease service and janitor settle exclusively through
+    ``RunpodInvoiceFinality``.
     """
 
     if settings.execution_mode is not ExecutionMode.PAID_BENCHMARK:
@@ -303,6 +339,12 @@ def build_live_benchmark_world(
     ):
         if not value.startswith("credref:") or len(value) <= len("credref:"):
             raise EffectDenied(f"{name} credential must be a credref name")
+    # T045 R9: only the durable reconciliation repository may back a live world — a
+    # synthetic-finality object (offline recorded usage) must never settle real money.
+    if not isinstance(billing, BillingRepository):
+        raise PolicyDenied(
+            "live benchmark composition requires a BillingRepository for durable billing finality"
+        )
 
     live_clock, live_ids = clock or SystemClock(), ids or UuidIds()
     now = live_clock.now()
@@ -334,14 +376,6 @@ def build_live_benchmark_world(
         attestation=attestation,
         clock=live_clock,
     )
-    # RunpodRestProvider deliberately exposes raw billing buckets, not interval
-    # receipts. Existing LeaseService/JANITOR close reservations from interval
-    # usage; until billing allocation is wired into that path, using them could
-    # turn an empty usage response into a zero-cost settlement.
-    raise PolicyDenied(
-        "live benchmark blocked: durable billing allocation/finality is not wired "
-        "to lease accounting"
-    )
 
     def reservation_guard(request: Any, _quote: RunpodQuoteAttestation) -> None:
         # LeaseService creates and commits the reservation before PodManager invokes
@@ -372,6 +406,27 @@ def build_live_benchmark_world(
             if operation_kind not in {"pod.stop", "pod.terminate"}:
                 raise EffectDenied("unsupported Runpod cleanup operation")
 
+    owned_tag = f"microdrama-owned:{attestation.namespace}"
+
+    def absent_pod_ownership_probe(pod_id: str) -> bool:
+        """T045 R9: durable DB ownership proof for billing reads of an absent Pod.
+
+        A terminated Pod is gone from the provider, so ``billing_history`` can no
+        longer establish ownership there. The durable proof is a ``pod_leases`` row
+        with this pod id, the owned-tag namespace, the attested account label and a
+        verified terminate.
+        """
+        with db.transaction(readonly=True) as tx:
+            return (
+                tx.fetchone(
+                    "SELECT 1 FROM pod_leases WHERE provider = 'runpod' AND pod_id = %s "
+                    "AND owned_tag = %s AND provider_account_ref = %s "
+                    "AND terminate_verified_at IS NOT NULL",
+                    (pod_id, owned_tag, attestation.provider_account_ref),
+                )
+                is not None
+            )
+
     provider = RunpodRestProvider(
         settings,
         credential_ref=runpod_credential_ref,
@@ -380,10 +435,17 @@ def build_live_benchmark_world(
         now=live_clock.now,
         reservation_guard=reservation_guard,
         cleanup_guard=cleanup_guard,
+        absent_pod_ownership_probe=absent_pod_ownership_probe,
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, pod_config)
-    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    # T045 R8/R9: the lease service and janitor settle only through the Runpod
+    # invoice finality port. A caller-supplied repository keeps its settle lag.
+    finality = (
+        billing
+        if isinstance(billing, RunpodInvoiceFinality)
+        else RunpodInvoiceFinality(db, budget_service=budget, settle_lag=billing.settle_lag)
+    )
     leases = build_lease_service(
         db, budget, manager, live_clock, live_ids, settings, pod_config, finality
     )
@@ -450,12 +512,14 @@ def build_live_benchmark_world(
     )
     return LiveBenchmarkWorld(
         settings=settings,
+        db=db,
         provider=provider,
         manager=manager,
         leases=leases,
         comfy_client=comfy_client,
         comfy=comfy,
         janitor=janitor,
+        billing=billing,
     )
 
 
