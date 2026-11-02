@@ -475,7 +475,14 @@ def settle_reservation_for_lease(
 
     There is no default and no flag: the caller's finality decides whether an unused
     hold releases (offline synthetic) or waits for invoice finality (Runpod).
+    T045-FIX A-N9: the pairing is checked here too, against the lease's own provider —
+    a settle call cannot bypass the constructor-side gate by passing a foreign finality.
     """
+    with db.transaction(readonly=True) as tx:
+        provider = tx.fetchval("SELECT provider FROM pod_leases WHERE id = %s", (lease_id,))
+    if provider is None:
+        raise NotFound("pod lease not found", lease_id=str(lease_id))
+    check_finality_pairing(finality, str(provider))
     return finality.settle_lease(
         db, budget, settings, lease_id=lease_id, context=context
     ).settled_micro_usd

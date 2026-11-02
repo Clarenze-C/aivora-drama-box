@@ -147,36 +147,75 @@ class RunpodInvoiceFinality(BillingRepository, LeaseBillingFinality):
                     lease["reservation_id"],
                     reason=f"pod lease {lease_id} closed without any create ({context})",
                 )
+                return LeaseSettlement(settled_micro_usd=0, released=True)
             except Conflict:
-                pass  # already closed by an earlier attempt (replay)
-            return LeaseSettlement(settled_micro_usd=0, released=True)
+                # T045-FIX A-N8: a refused release is not a replay. Report the
+                # reservation's durable state — never a released that did not happen.
+                with db.transaction(readonly=True) as tx:
+                    state = tx.fetchval(
+                        "SELECT state FROM reservations WHERE id = %s",
+                        (lease["reservation_id"],),
+                    )
+                    settled_amount = tx.fetchval(
+                        "SELECT settled_micro_usd FROM reservations WHERE id = %s",
+                        (lease["reservation_id"],),
+                    )
+                if state == "RELEASED":
+                    return LeaseSettlement(settled_micro_usd=0, released=True)
+                if state == "SETTLED":
+                    return LeaseSettlement(settled_micro_usd=int(settled_amount or 0))
+                return LeaseSettlement(settled_micro_usd=0, pending=True)
         readiness = lease_billing_readiness(self.db, lease_id)
         if readiness.state != "BILLED":
             self._schedule_retry(db, lease_id, now or datetime.now(UTC))
             return LeaseSettlement(settled_micro_usd=0, pending=True)
         settled = settle_billed_lease(self.db, budget, lease_id=lease_id, context=context)
+        self._reset_retry_count(db, lease_id, now or datetime.now(UTC))
         return LeaseSettlement(settled_micro_usd=settled)
 
     def _schedule_retry(self, db: Database, lease_id: UUID, now: datetime) -> None:
-        """Grow the retry backoff on the lease row; pending is never an error."""
+        """Grow the retry backoff on the lease row; pending is never an error.
+
+        T045-FIX A-S2: the delay doubles from the base on every pending attempt,
+        persisted as an attempt count, so sweeps that arrive exactly when each backoff
+        expires still grow (5, 10, 20, 40 min ...) up to the one-hour cap.
+        """
         with db.transaction() as tx:
             row = tx.fetchone(
-                "SELECT revision, next_finality_check_at FROM pod_leases WHERE id = %s FOR UPDATE",
+                "SELECT revision, finality_attempts FROM pod_leases WHERE id = %s FOR UPDATE",
                 (lease_id,),
             )
             if row is None:
                 return
-            current = row["next_finality_check_at"]
-            if current is None or current <= now:
-                delay = FINALITY_BACKOFF_BASE
-            else:
-                delay = min(current - now, FINALITY_BACKOFF_CAP) * 2
+            attempts = int(row["finality_attempts"] or 0)
+            delay = min(FINALITY_BACKOFF_BASE * (2**attempts), FINALITY_BACKOFF_CAP)
             update_with_revision(
                 tx,
                 "pod_leases",
                 lease_id,
                 row["revision"],
-                {"next_finality_check_at": now + min(delay, FINALITY_BACKOFF_CAP)},
+                {
+                    "next_finality_check_at": now + delay,
+                    "finality_attempts": attempts + 1,
+                },
+                now=now,
+            )
+
+    def _reset_retry_count(self, db: Database, lease_id: UUID, now: datetime) -> None:
+        """T045-FIX A-S2: a BILLED settlement closes the retry sequence."""
+        with db.transaction() as tx:
+            row = tx.fetchone(
+                "SELECT revision, finality_attempts FROM pod_leases WHERE id = %s FOR UPDATE",
+                (lease_id,),
+            )
+            if row is None or not row["finality_attempts"]:
+                return
+            update_with_revision(
+                tx,
+                "pod_leases",
+                lease_id,
+                row["revision"],
+                {"finality_attempts": 0},
                 now=now,
             )
 

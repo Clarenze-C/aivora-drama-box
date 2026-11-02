@@ -259,3 +259,184 @@ def _reservation_state(db: Database, handle) -> str:
             "ON l.reservation_id = r.id WHERE l.id=%s",
             (handle.lease.lease_id,),
         )
+
+
+# --- T045-FIX: A-S2 doubling backoff, A-N8 honest release report, A-N9 settle pairing ----
+
+
+def _paid_settings() -> Settings:
+    return Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+
+
+def _backoff_row(db: Database, lease):
+    with db.transaction(readonly=True) as tx:
+        return tx.fetchone(
+            "SELECT next_finality_check_at, finality_attempts FROM pod_leases WHERE id=%s",
+            (lease,),
+        )
+
+
+def test_finality_backoff_doubles_each_pending_sweep_and_caps_at_one_hour(
+    db: Database,
+) -> None:
+    """T045-FIX A-S2: consecutive sweeps past each expiry double the delay (5, 10,
+    20, 40 min...) up to the one-hour cap."""
+    from microdrama.rendering.finality import FINALITY_BACKOFF_CAP
+
+    lease, _reservation = _runpod_lease(db)
+    budget = _budget(db)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    settings = _paid_settings()
+    now = T0
+    expected_minutes = [5, 10, 20, 40]
+    for minutes in expected_minutes:
+        outcome = finality.settle_lease(
+            db, budget, settings, lease_id=lease, context="sweep", now=now
+        )
+        assert outcome.pending is True
+        row = _backoff_row(db, lease)
+        assert row["next_finality_check_at"] == now + timedelta(minutes=minutes)
+        now = row["next_finality_check_at"]  # the sweep arrives when the backoff expires
+    # The next doubling (80 min) is capped at 60.
+    finality.settle_lease(db, budget, settings, lease_id=lease, context="sweep", now=now)
+    assert _backoff_row(db, lease)["next_finality_check_at"] == now + FINALITY_BACKOFF_CAP
+
+
+def test_finality_attempt_count_resets_once_billed(db: Database) -> None:
+    """T045-FIX A-S2: a BILLED settlement resets the attempt counter."""
+    from microdrama.budget.billing import BillingRepository
+
+    with db.transaction() as tx:
+        season = seed_season(tx)
+        episode = seed_episode(tx, season)
+        account = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd, "
+            "reserved_outstanding_micro_usd) VALUES (%s, 'EPISODE', %s, %s, 10000000, 100000)",
+            (account, season, episode),
+        )
+        for category in (
+            "RESEARCH_SCRIPT_PROMPTS_METADATA",
+            "REFERENCES_DIALOGUE",
+            "QA_CAPTIONS",
+            "CPU_STORAGE_TRANSFER",
+            "RECOVERY_HEADROOM",
+            "METERED_MANAGEMENT",
+        ):
+            tx.execute(
+                "INSERT INTO budget_category_allocations (account_id, category, "
+                "allocated_micro_usd, protected) VALUES (%s, %s, 0, %s)",
+                (account, category, "false" if category == "METERED_MANAGEMENT" else "true"),
+            )
+        tx.execute(
+            "INSERT INTO budget_category_allocations (account_id, category, "
+            "allocated_micro_usd, reserved_outstanding_micro_usd, protected) "
+            "VALUES (%s, 'GPU_GENERATION', 900000, 100000, true)",
+            (account,),
+        )
+        reservation = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO reservations (id, account_id, request_id, semantic_key, "
+            "request_hash, category, queue, provider, operation_kind, price, ceilings, "
+            "reserved_micro_usd, state, expires_at) VALUES (%s, %s, %s, %s, %s, "
+            "'GPU_GENERATION', 'production', 'runpod', 'pod.lease', '{}', '{}', 100000, "
+            "'ACTIVE', %s)",
+            (reservation, account, uuid.uuid4(), f"reset:{reservation}", "0" * 64, T0),
+        )
+        lease = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO pod_leases (id, provider, pod_id, owned_tag, client_token, "
+            "owner_episode_id, reservation_id, lease_state, pod_state, gpu_type, "
+            "hourly_price_micro_usd, lease_expires_at, create_requested_at) "
+            "VALUES (%s, 'runpod', NULL, 'microdrama-owned:t045', %s, %s, %s, 'RELEASED', "
+            "'REQUESTED', 'NVIDIA RTX A40', 263000, %s, %s)",
+            (lease, f"tok-{lease}", episode, reservation, T0 + timedelta(hours=6), T0),
+        )
+    budget = _budget(db)
+    settings = _paid_settings()
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    finality.settle_lease(db, budget, settings, lease_id=lease, context="sweep", now=T0)
+    finality.settle_lease(
+        db, budget, settings, lease_id=lease, context="sweep", now=T0 + timedelta(minutes=5)
+    )
+    assert _backoff_row(db, lease)["finality_attempts"] == 2
+    BillingRepository(db, budget_service=budget).resolve_podless_create(
+        lease, actor_ref="owner:test", reason="console shows no pod", evidence_sha256="a" * 64
+    )
+    outcome = finality.settle_lease(
+        db, budget, settings, lease_id=lease, context="post-resolution", now=T0 + timedelta(hours=1)
+    )
+    assert outcome.settled_micro_usd == 0
+    assert _backoff_row(db, lease)["finality_attempts"] == 0
+
+
+def test_a_refused_release_reports_the_truth_not_released(db: Database) -> None:
+    """T045-FIX A-N8: when BudgetService.release refuses, the settlement reports the
+    reservation's real state instead of claiming released."""
+    with db.transaction() as tx:
+        season = seed_season(tx)
+        episode = seed_episode(tx, season)
+        account = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
+            "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
+            (account, season, episode),
+        )
+        reservation = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO reservations (id, account_id, request_id, semantic_key, "
+            "request_hash, category, queue, provider, operation_kind, price, ceilings, "
+            "reserved_micro_usd, settled_micro_usd, state, expires_at, closed_at, "
+            "closed_reason) VALUES (%s, %s, %s, %s, %s, 'GPU_GENERATION', 'production', "
+            "'runpod', 'pod.lease', '{}', '{}', 100000, 40000, 'SETTLED', %s, %s, 'settled')",
+            (
+                reservation,
+                account,
+                uuid.uuid4(),
+                f"n8:{reservation}",
+                "0" * 64,
+                T0 + timedelta(hours=6),
+                T0 + timedelta(minutes=30),
+            ),
+        )
+        lease = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO pod_leases (id, provider, pod_id, owned_tag, client_token, "
+            "owner_episode_id, reservation_id, lease_state, pod_state, gpu_type, "
+            "hourly_price_micro_usd, lease_expires_at) VALUES (%s, 'runpod', NULL, "
+            "'microdrama-owned:t045', %s, %s, %s, 'RELEASED', 'REQUESTED', "
+            "'NVIDIA RTX A40', 263000, %s)",
+            (lease, f"tok-{lease}", episode, reservation, T0 + timedelta(hours=6)),
+        )
+    budget = _budget(db)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    outcome = finality.settle_lease(
+        db, budget, _paid_settings(), lease_id=lease, context="replay", now=T0
+    )
+    assert outcome.released is False
+    assert outcome.pending is False
+    assert outcome.settled_micro_usd == 40000  # the earlier settlement stands
+
+
+def test_settle_reservation_for_lease_checks_the_provider_pairing(db: Database) -> None:
+    """T045-FIX A-N9: the settle helper itself refuses a finality whose provider does
+    not match the lease, not only the constructors."""
+    from microdrama.rendering.leases import settle_reservation_for_lease
+
+    lease, _reservation = _runpod_lease(db)
+    synthetic = SyntheticUsageFinality(
+        Settings(execution_mode=ExecutionMode.OFFLINE_MOCK), provider_id="fake"
+    )
+    with pytest.raises(Conflict, match="finality"):
+        settle_reservation_for_lease(
+            db,
+            _budget(db),
+            Settings(execution_mode=ExecutionMode.OFFLINE_MOCK),
+            finality=synthetic,
+            lease_id=lease,
+            context="mismatched pairing",
+        )
