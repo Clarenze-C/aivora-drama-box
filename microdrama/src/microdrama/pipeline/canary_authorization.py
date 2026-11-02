@@ -2,9 +2,10 @@
 
 The authorization is the operator's signed-off plan for one bounded paid benchmark:
 operator/change reference, hard stop and wall clock, the quote with every R10 field,
-spend/storage/prompt/attempt caps, the rights route, the pins (image digest, workflow,
-node schema, output controls, preset), ``credref:`` names only, the namespace and
-provider account label, and the prompt/reference inputs as content hashes.
+spend/storage/prompt/attempt caps, the rights route, the pins (the full image
+reference, workflow, node schema, output controls, preset), ``credref:`` names only,
+the namespace and provider account label, and the prompt/reference inputs as content
+hashes.
 
 It never carries secret values and never carries prompt text — only the sha256 of the
 canonical prompt objects, which ``execute`` verifies before anything is submitted.
@@ -26,6 +27,14 @@ from microdrama.contracts.errors import SchemaInvalid
 _NAMESPACE_RE = re.compile(r"[a-z0-9]{4,12}")
 _ACCOUNT_REF_RE = re.compile(r"acct:[a-z0-9][a-z0-9._\-]{1,120}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+#: T045-FIX B-B2: a full image reference — an explicit registry host (so it can never
+#: resolve to docker.io/library), at least one repository path segment, and a sha256
+#: digest pinned by digest (never a mutable tag).
+_IMAGE_REF_RE = re.compile(
+    r"[a-z0-9][a-z0-9._\-]*\.[a-z0-9._\-]*(:[0-9]{1,5})?"
+    r"(/[a-z0-9][a-z0-9._\-]*)+"
+    r"@sha256:[0-9a-f]{64}"
+)
 
 
 def _credref(value: str) -> str:
@@ -112,7 +121,7 @@ class CanaryRights(BaseModel):
 class CanaryPins(BaseModel):
     """The pinned contract the run may not drift from (R10 limitation recorded)."""
 
-    image_digest: str
+    image_ref: str
     workflow_sha256: str
     node_schema_sha256: str
     output_controls_sha256: str
@@ -122,8 +131,14 @@ class CanaryPins(BaseModel):
 
     @model_validator(mode="after")
     def _pin_rules(self) -> CanaryPins:
+        # T045-FIX B-B2: the pin is the FULL image reference exactly as create must
+        # send it — <registry>/<repo>@sha256:<64 hex>. The runner never invents a
+        # repository name, so a fictional default image can never satisfy the pin.
+        if not _IMAGE_REF_RE.fullmatch(self.image_ref):
+            raise ValueError(
+                "image_ref must be the full reference <registry>/<repo>@sha256:<64 hex>"
+            )
         for field in (
-            "image_digest",
             "workflow_sha256",
             "node_schema_sha256",
             "output_controls_sha256",

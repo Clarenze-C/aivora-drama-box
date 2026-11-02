@@ -311,7 +311,6 @@ def build_live_benchmark_world(
     runpod_credential_ref: str,
     comfy_credential_ref: str,
     credential_resolver: Callable[[str], str | None],
-    comfy_endpoint: str,
     pod_config: PodLeaseConfig,
     render_config: ComfyRenderConfig,
     clock: Clock | None = None,
@@ -326,6 +325,12 @@ def build_live_benchmark_world(
     repository the janitor ingests provider buckets into and the world computes its
     billing state from; the lease service and janitor settle exclusively through
     ``RunpodInvoiceFinality``.
+
+    T045-FIX B-B2: the Comfy client is composed UNBOUND — its base URL is derived
+    from the created Pod (``ComfyHttpClient.bind_pod_endpoint``) and nothing else can
+    set it. T045-FIX B-B1: a render on this world's leased Runpod Pod must be
+    lease-covered (the Pod lease's BILLED settlement is the only GPU cost), so a
+    render config that would charge per GPU-second is refused here.
     """
 
     if settings.execution_mode is not ExecutionMode.PAID_BENCHMARK:
@@ -355,6 +360,15 @@ def build_live_benchmark_world(
         raise PolicyDenied("current operator quote exceeds the configured reservation ceiling")
     if render_config.price is None or render_config.price.unit_price_micro_usd <= 0:
         raise PolicyDenied("Comfy render price must be known and positive")
+    if not render_config.lease_covered:
+        # T045-FIX B-B1: this world's Comfy endpoint IS the leased Runpod Pod, whose
+        # GPU time the provider invoice already bills. A render config that would
+        # settle measured GPU-seconds on top of the Pod lease's BILLED settlement
+        # double-counts the same GPU time, so only a lease-covered config may compose.
+        raise PolicyDenied(
+            "a render on a leased Runpod Pod must be lease-covered: the Pod lease's "
+            "BILLED settlement is the only GPU cost"
+        )
     if evidence.maximum_exposure_micro_usd > settings.episode_cap_micro_usd:
         raise PolicyDenied("benchmark exposure exceeds the configured episode budget cap")
     if pod_config.owned_tag != f"microdrama-owned:{attestation.namespace}":
@@ -494,7 +508,6 @@ def build_live_benchmark_world(
 
     comfy_client = ComfyHttpClient(
         settings,
-        endpoint=comfy_endpoint,
         credential_ref=comfy_credential_ref,
         credential_resolver=credential_resolver,
         request_guard=comfy_request_guard,

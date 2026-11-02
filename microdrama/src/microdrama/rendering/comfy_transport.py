@@ -82,7 +82,7 @@ class ComfyHttpClient:
         self,
         settings: Settings,
         *,
-        endpoint: str,
+        endpoint: str | None = None,
         credential_ref: str | None,
         credential_resolver: Callable[[str], str | None],
         request_guard: Callable[[str, str | None, ComfyRequestAuthorization], None],
@@ -90,7 +90,8 @@ class ComfyHttpClient:
         transport: HttpTransport | None = None,
     ) -> None:
         self._settings = settings
-        self._endpoint = endpoint.rstrip("/")
+        self._endpoint = endpoint.rstrip("/") if endpoint else None
+        self._bound_pod_id: str | None = None
         self._credential_ref = credential_ref
         self._credential_resolver = credential_resolver
         self._request_guard = request_guard
@@ -99,6 +100,34 @@ class ComfyHttpClient:
         self._authorization: ContextVar[ComfyRequestAuthorization | None] = ContextVar(
             f"comfy_auth_{id(self)}", default=None
         )
+
+    def bind_pod_endpoint(self, pod_id: str, endpoint_url: str | None) -> None:
+        """T045-FIX B-B2: bind the Comfy base URL from the created Pod, exactly once.
+
+        The only accepted value is the leased Pod's own proxy URL,
+        ``https://<pod_id>-8188.proxy.runpod.net`` (what ``PodInfo.endpoint_url``
+        carries). A Pod that reports anything else — or no exposed 8188 port at all —
+        refuses here, before any ComfyUI call can send the bearer token to a host the
+        pipeline never validated. No config value or CLI flag can set the endpoint.
+        """
+        expected = f"https://{pod_id}-8188.proxy.runpod.net"
+        if endpoint_url != expected:
+            raise EffectDenied(
+                "the leased Pod's Comfy endpoint does not match its own proxy URL",
+                pod_id=pod_id,
+                endpoint_url=endpoint_url,
+                expected=expected,
+            )
+        if self._bound_pod_id is not None:
+            if self._bound_pod_id != pod_id:
+                raise EffectDenied(
+                    "the Comfy client is already bound to another leased Pod",
+                    bound_pod_id=self._bound_pod_id,
+                    pod_id=pod_id,
+                )
+            return
+        self._endpoint = expected
+        self._bound_pod_id = pod_id
 
     @contextmanager
     def authorization_scope(
@@ -145,6 +174,10 @@ class ComfyHttpClient:
         # Every route is a live effect boundary. Refuse the effect and check the caller's
         # reservation/operation context before resolving a credential or touching HTTP.
         self._settings.require_effect(EffectKind.PAID_REQUEST, what=f"ComfyUI {method} {path}")
+        if self._endpoint is None:
+            # T045-FIX B-B2: the endpoint is derived from the created Pod and bound
+            # explicitly; an unbound client must never emit a request anywhere.
+            raise EffectDenied("the Comfy endpoint is not bound; it is derived from the leased Pod")
         authorization = self._authorization.get()
         if authorization is None:
             raise EffectDenied("ComfyUI request has no scoped durable reservation/operation")

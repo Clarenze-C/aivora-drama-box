@@ -138,12 +138,20 @@ class ComfyRenderConfig:
     unknown and blocks every paid dispatch. ``required_media_kinds`` is what counts as a
     complete attempt: an attempt whose history lacks any of them is a failure, however
     many sampler steps executed.
+
+    T045-FIX B-B1: ``lease_covered`` marks a render whose GPU time is paid by the Pod
+    lease's BILLED settlement (the provider invoice bucket). The attempt hold still
+    reserves at the real quote (the exposure ceiling stays enforced), but it settles at
+    ZERO charge — the prompt's GPU time must never be counted a second time on top of
+    the Pod invoice. A non-covered config keeps the measured per-second settlement
+    (the offline/pilot path is unchanged).
     """
 
     price: PriceQuote | None
     timeout_ms: int = 600_000
     poll_after_ms: int = 1_000
     required_media_kinds: tuple[str, ...] = ("video",)
+    lease_covered: bool = False
 
     @classmethod
     def for_mock(cls) -> ComfyRenderConfig:
@@ -967,6 +975,36 @@ class ComfyRenderService:
             except Conflict:
                 pass
             return 0
+        if self._config.lease_covered:
+            # T045-FIX B-B1: a render on a leased Runpod Pod is paid once — by the
+            # Pod lease's BILLED settlement (the provider invoice bucket). The
+            # attempt's hold settles at zero charge: same deterministic receipt key,
+            # zero amount, so the lease's invoice stays the only GPU cost and a
+            # replay is still byte-identical.
+            interval_end = row["updated_at"]
+            self._budget.record_usage(
+                UsageReceipt(
+                    receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
+                    provider=row["provider"],
+                    provider_receipt_id=f"comfy-settle:{row['id']}",
+                    kind=ReceiptKind.SETTLEMENT,
+                    cost_basis=CostBasis.BILLED,
+                    reservation_id=row["reservation_id"],
+                    episode_id=row["episode_id"],
+                    season_id=None,
+                    job_id=row["job_id"],
+                    category=BudgetCategory.GPU_GENERATION,
+                    amount_micro_usd=0,
+                    currency="USD",
+                    units=0,
+                    unit=PriceUnit.GPU_SECOND,
+                    interval_start=row["submitted_at"],
+                    interval_end=interval_end,
+                    observed_at=interval_end,
+                    provenance=self.provenance,
+                )
+            )
+            return self._settled_amount(row["reservation_id"])
         price = self._config.price
         if price is None:
             raise UnknownPrice(

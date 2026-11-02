@@ -48,7 +48,10 @@ NS = "canary1"
 TAG = f"microdrama-owned:{NS}"
 ACCOUNT = "acct:runpod-canary"
 POD = "pod-canary-1"
-IMAGE_REPO = "microdrama-canary"
+#: T045-FIX B-B2: the authorization pins the FULL image reference; create sends it as-is.
+IMAGE_REF = "registry.example/microdrama/drama-canary@sha256:" + "a" * 64
+#: The Comfy base URL late-bound from the created Pod (B-B2).
+POD_COMFY_ENDPOINT = f"https://{POD}-8188.proxy.runpod.net"
 QUOTE_PER_HOUR = 504_000
 GPU_BUCKET = 50_000
 CPU_BUCKET = 10_000
@@ -70,15 +73,25 @@ class _Response:
 class RunpodCanaryTransport:
     """A scripted Runpod v2 surface: create/read/stop/terminate/billing."""
 
-    def __init__(self, *, create_timeout_once: bool = False, image: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        create_timeout_once: bool = False,
+        image: str | None = None,
+        no_comfy_port: bool = False,
+    ) -> None:
         self.state = "RUNNING" if not create_timeout_once else "ABSENT"
         self.create_calls = 0
         self.create_timeout_once = create_timeout_once
         self.out_of_band_created = create_timeout_once
-        self.image = image or f"{IMAGE_REPO}@sha256:" + "a" * 64
+        self.image = image or IMAGE_REF
+        self.no_comfy_port = no_comfy_port
+        #: T045-FIX B-B2: the image reference the create REQUEST actually carried.
+        self.created_image: str | None = None
         self.calls: list[tuple[str, str]] = []
 
     def _pod_json(self, name: str) -> dict[str, Any]:
+        ports = [] if self.no_comfy_port else [{"private": 8188, "public": 8188, "type": "http"}]
         return {
             "id": POD,
             "name": name,
@@ -87,7 +100,7 @@ class RunpodCanaryTransport:
             "cost": f"{QUOTE_PER_HOUR / 1_000_000:.6f}",
             "createdAt": T0.isoformat().replace("+00:00", "Z"),
             "gpu": {"id": "A40", "count": 1, "memory": 48},
-            "runtime": {"ports": [{"private": 8188, "public": 8188, "type": "http"}]},
+            "runtime": {"ports": ports},
         }
 
     def request(
@@ -98,6 +111,9 @@ class RunpodCanaryTransport:
         self.calls.append((method, url))
         if method == "POST" and url.endswith("/v2/pods"):
             self.create_calls += 1
+            self.created_image = json.loads(body or b"{}").get("image")
+            # The fixture Pod reports exactly the image the create request carried.
+            self.image = self.created_image or self.image
             if self.create_timeout_once:
                 self.create_timeout_once = False
                 # The create "timed out" but actually created the Pod out of band.
@@ -357,7 +373,6 @@ def _execute(
         prompts_path=_write_prompts(tmp_path),
         clock=clock,
         ids=SequentialIds("composed"),
-        comfy_endpoint="https://comfy.fixture.invalid",
         credential_resolver=lambda _ref: "fixture-dummy-value",
         runpod_transport=runpod_transport,
         comfy_transport=comfy_transport,
@@ -395,6 +410,25 @@ def _charge_total(db: Database) -> int:
     return sum(row["amount_micro_usd"] for row in rows)
 
 
+def _prompt_reservation(db: Database) -> dict[str, Any]:
+    """The comfy.queue_prompt hold (T045-FIX B-B1: it must settle at zero charge)."""
+    with db.transaction(readonly=True) as tx:
+        return tx.fetchone("SELECT * FROM reservations WHERE operation_kind='comfy.queue_prompt'")
+
+
+def _provider_reported_total(db: Database) -> int:
+    """The provider-reported charges (ACCRUAL/ADJUSTMENT): what the provider billed.
+
+    The lease SETTLEMENT finalizes the accrual it covers - the account counters net
+    the two rows - so this is the charge-table sum comparable to the invoice.
+    """
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT amount_micro_usd FROM charges WHERE kind IN ('ACCRUAL','ADJUSTMENT')"
+        )
+    return sum(row["amount_micro_usd"] for row in rows)
+
+
 # --- the composed canary --------------------------------------------------------------
 
 
@@ -412,6 +446,8 @@ def test_full_canary_bills_and_releases_the_exact_remainder(db: Database, tmp_pa
     )
     record = result.record
     assert record["pod_id"] == POD
+    # T045-FIX B-B2: the create request carried the full pinned image reference as-is.
+    assert runpod_transport.created_image == IMAGE_REF
     assert record["prompt_ids"] == [comfy_transport.prompt_id]
     assert record["output_objects"] and record["output_objects"][0]["sha256"]
     assert record["terminate_verified_at"] is not None
@@ -462,6 +498,18 @@ def test_full_canary_bills_and_releases_the_exact_remainder(db: Database, tmp_pa
     assert reservation["settled_micro_usd"] == GPU_BUCKET
     assert reservation["reserved_micro_usd"] == 260_400  # 140 micro-USD/s * 1860s
     # exactly the GPU bucket settled; the 210_400 remainder was released
+    # T045-FIX B-B1: the Pod lease's BILLED settlement is the ONLY GPU cost. The
+    # account total and the sum of all charges equal the invoice total exactly -
+    # the Comfy prompt hold settled at zero charge, on top of the run and the replay.
+    invoice_total = GPU_BUCKET + CPU_BUCKET + DISK_BUCKET
+    assert _account_counters(db)["settled"] == invoice_total
+    counters = _account_counters(db)
+    assert counters["accrued"] == 0  # nothing is left pending on the books
+    assert _provider_reported_total(db) == invoice_total
+    prompt_hold = _prompt_reservation(db)
+    assert prompt_hold is not None
+    assert prompt_hold["state"] == "SETTLED"
+    assert prompt_hold["settled_micro_usd"] == 0
 
     # Replaying every step adds no money.
     settled_before = reservation["settled_micro_usd"]
@@ -486,6 +534,9 @@ def test_full_canary_bills_and_releases_the_exact_remainder(db: Database, tmp_pa
     replayed = _reservation_of_lease(db)
     assert replayed["settled_micro_usd"] == settled_before
     assert _charge_total(db) == charges_before
+    assert _account_counters(db)["settled"] == invoice_total
+    assert _provider_reported_total(db) == invoice_total
+    assert _prompt_reservation(db)["settled_micro_usd"] == 0
 
 
 def _world_for_sweep(
@@ -563,7 +614,6 @@ def _full_world(
         clock=clock,
         ids=SequentialIds(seq),
         credential_resolver=lambda _ref: "fixture-dummy-value",
-        comfy_endpoint="https://comfy.fixture.invalid",
         runpod_transport=runpod_transport,
         comfy_transport=comfy_transport,
     )
@@ -732,3 +782,53 @@ def _canary_episode(db: Database) -> uuid.UUID:
             "SELECT e.id FROM episodes e JOIN budget_accounts a "
             "ON a.episode_id = e.id AND a.scope_kind='EPISODE' ORDER BY e.created_at LIMIT 1"
         )
+
+
+def test_a_pod_whose_comfy_endpoint_is_not_its_own_refuses_before_object_info(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-B2: the Comfy base URL is late-bound from the created Pod and must
+    equal https://<pod_id>-8188.proxy.runpod.net. A Pod that exposes no 8188 port
+    (endpoint_url None) refuses before any ComfyUI call - the bearer token never
+    leaves for an unvalidated host."""
+    from microdrama.contracts.errors import Conflict, EffectDenied
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(no_comfy_port=True)
+    comfy_transport = ComfyCanaryTransport()
+    # A Pod that exposes no 8188 port (endpoint_url None) refuses either at the pod
+    # verification or at the endpoint binding - both before any ComfyUI call.
+    with pytest.raises((EffectDenied, Conflict), match="endpoint"):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+        )
+    assert comfy_transport.calls == []  # nothing reached ComfyUI
+    assert not any("/object_info" in url for _method, url in comfy_transport.calls)
+    # The shutdown path hits the same verify refusal while adopting the created Pod,
+    # so the Pod's cleanup is the B-S3 not-clean concern, not asserted here.
+
+
+def test_the_comfy_calls_go_to_the_pods_own_proxy_url(db: Database, tmp_path: Path) -> None:
+    """T045-FIX B-B2: every ComfyUI request URL is the leased Pod's own proxy URL -
+    no CLI flag or config can point the client anywhere else."""
+    from microdrama.testing.media import render_clip_bytes  # noqa: F401 - re-exported
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport()
+    _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=runpod_transport,
+        comfy_transport=comfy_transport,
+    )
+    assert comfy_transport.calls, "the fixture transport saw no ComfyUI traffic"
+    for _method, url in comfy_transport.calls:
+        assert url.startswith(POD_COMFY_ENDPOINT), url

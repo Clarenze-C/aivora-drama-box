@@ -14,8 +14,12 @@
     "persistent_volume_gb": 5,
     "persistent_storage_micro_usd_per_gb_month": 200000,
     "max_storage_exposure_micro_usd": 1200000,
-    "allowed_gpu_types": ["NVIDIA A40"],
-    "host_ram_gb_by_gpu": { "NVIDIA A40": 64 },
+    "allowed_gpu_types": [
+      "NVIDIA A40"
+    ],
+    "host_ram_gb_by_gpu": {
+      "NVIDIA A40": 64
+    },
     "maximum_runtime_ms": 600000,
     "maximum_exposure_micro_usd": 2000000
   },
@@ -30,18 +34,23 @@
     "rights_subject_ref": "model-output:fixture",
     "rights_subject_kind": "MODEL_OUTPUT",
     "rights_version": 1,
-    "territories": ["TH"],
+    "territories": [
+      "TH"
+    ],
     "rights_evidence_id": "rights-evidence-fixture",
     "eligible_until": "2026-11-09T12:00:00Z"
   },
   "pins": {
-    "image_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "image_ref": "registry.example/microdrama/drama-canary@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "workflow_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "node_schema_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "output_controls_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "preset_id": "fake-quality-8step",
     "preset_version": 1,
-    "required_controls": ["SEED", "TEXT_PROMPT"]
+    "required_controls": [
+      "SEED",
+      "TEXT_PROMPT"
+    ]
   },
   "runpod_credential_ref": "credref:runpod-canary-fixture",
   "comfy_credential_ref": "credref:comfy-canary-fixture",

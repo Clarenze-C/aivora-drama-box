@@ -173,3 +173,28 @@ def test_missing_prompt_id_is_ambiguous_and_never_retried() -> None:
         with pytest.raises(NeedsReconciliation):
             client.queue_prompt({"1": {}}, client_id="md-1")
     assert len(fixture.calls) == 1
+
+
+def test_the_comfy_client_binds_only_its_own_pods_proxy_url() -> None:
+    """T045-FIX B-B2: the base URL is bound from the created Pod and must equal
+    https://<pod_id>-8188.proxy.runpod.net - a foreign or missing endpoint refuses,
+    a second binding to a different Pod refuses, and nothing can pre-set it."""
+    from microdrama.config import Settings
+    from microdrama.contracts.enums import ExecutionMode
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.rendering.comfy_transport import ComfyHttpClient
+
+    client = ComfyHttpClient(
+        Settings(execution_mode=ExecutionMode.PAID_BENCHMARK),
+        credential_ref="credref:comfy",
+        credential_resolver=lambda _ref: "dummy",
+        request_guard=lambda *_a, **_k: None,
+        dispatch_guard=lambda *_a, **_k: None,
+    )
+    with pytest.raises(EffectDenied, match="proxy URL"):
+        client.bind_pod_endpoint("pod-1", "https://attacker.example")
+    with pytest.raises(EffectDenied, match="proxy URL"):
+        client.bind_pod_endpoint("pod-1", None)
+    client.bind_pod_endpoint("pod-1", "https://pod-1-8188.proxy.runpod.net")
+    with pytest.raises(EffectDenied, match="another leased Pod"):
+        client.bind_pod_endpoint("pod-2", "https://pod-2-8188.proxy.runpod.net")

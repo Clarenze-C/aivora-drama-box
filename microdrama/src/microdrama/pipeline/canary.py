@@ -72,9 +72,6 @@ from microdrama.rendering.presets import PresetCatalog
 from microdrama.rendering.runpod_transport import RunpodQuoteAttestation, RunpodTransport
 from microdrama.rendering.workflows import WorkflowTemplate, template_sha256
 
-#: The image reference composed from the pinned digest (R11 pins the digest only).
-CANARY_IMAGE_REPO = "microdrama-canary"
-
 #: Where execute writes its canary record (overridable for tests).
 DEFAULT_EVIDENCE_DIR = Path(__file__).resolve().parents[3] / "evidence" / "provider-qualification"
 
@@ -88,10 +85,6 @@ def _refusing_resolver(_ref: str) -> str | None:
     raise EffectDenied(
         "no credential resolver is configured; T031 supplies one under the operator's authorization"
     )
-
-
-def canary_image_ref(authorization: CanaryAuthorization) -> str:
-    return f"{CANARY_IMAGE_REPO}@sha256:{authorization.pins.image_digest}"
 
 
 def canary_attestation(authorization: CanaryAuthorization) -> RunpodQuoteAttestation:
@@ -109,7 +102,8 @@ def canary_attestation(authorization: CanaryAuthorization) -> RunpodQuoteAttesta
         persistent_volume_gb=quote.persistent_volume_gb,
         persistent_storage_micro_usd_per_gb_month=quote.persistent_storage_micro_usd_per_gb_month,
         max_storage_exposure_micro_usd=quote.max_storage_exposure_micro_usd,
-        pinned_image=canary_image_ref(authorization),
+        # T045-FIX B-B2: the full pinned reference, sent as-is on create.
+        pinned_image=authorization.pins.image_ref,
         allowed_gpu_types=frozenset(quote.allowed_gpu_types),
         host_ram_gb_by_gpu=dict(quote.host_ram_gb_by_gpu),
         rights_evidence_id=authorization.rights.rights_evidence_id,
@@ -131,7 +125,7 @@ def canary_evidence(authorization: CanaryAuthorization) -> LiveBenchmarkEvidence
         preset_id=authorization.pins.preset_id,
         preset_version=authorization.pins.preset_version,
         workflow_sha256=authorization.pins.workflow_sha256,
-        image_digest=authorization.pins.image_digest,
+        image_digest=authorization.pins.image_ref.rsplit("@sha256:", 1)[1],
         node_schema_sha256=authorization.pins.node_schema_sha256,
         output_controls_sha256=authorization.pins.output_controls_sha256,
         eligible_until=rights.eligible_until,
@@ -178,7 +172,7 @@ def canary_pod_config(authorization: CanaryAuthorization) -> PodLeaseConfig:
         owned_tag=f"microdrama-owned:{authorization.namespace}",
         allowed_gpu_types=frozenset(authorization.quote.allowed_gpu_types),
         min_host_ram_gb=min(authorization.quote.host_ram_gb_by_gpu.values()),
-        container_image=canary_image_ref(authorization),
+        container_image=authorization.pins.image_ref,
         max_hourly_price_micro_usd=authorization.quote.compute_micro_usd_per_hour,
         price=_gpu_second_price(authorization),
         provider_account_ref=authorization.provider_account_ref,
@@ -188,7 +182,10 @@ def canary_pod_config(authorization: CanaryAuthorization) -> PodLeaseConfig:
 
 
 def canary_render_config(authorization: CanaryAuthorization) -> ComfyRenderConfig:
-    return ComfyRenderConfig(price=_gpu_second_price(authorization))
+    """T045-FIX B-B1: the canary renders on a leased Runpod Pod, so the render is
+    lease-covered - the prompt holds reserve at the real quote but settle at zero
+    charge; the Pod lease's BILLED settlement is the only GPU cost."""
+    return ComfyRenderConfig(price=_gpu_second_price(authorization), lease_covered=True)
 
 
 def compose_canary_world(
@@ -201,7 +198,6 @@ def compose_canary_world(
     clock: Clock,
     ids: Any,
     credential_resolver: Callable[[str], str | None],
-    comfy_endpoint: str,
     runpod_transport: RunpodTransport | None = None,
     comfy_transport: HttpTransport | None = None,
 ) -> LiveBenchmarkWorld:
@@ -217,7 +213,6 @@ def compose_canary_world(
         runpod_credential_ref=authorization.runpod_credential_ref,
         comfy_credential_ref=authorization.comfy_credential_ref,
         credential_resolver=credential_resolver,
-        comfy_endpoint=comfy_endpoint,
         pod_config=canary_pod_config(authorization),
         render_config=canary_render_config(authorization),
         clock=clock,
@@ -373,7 +368,6 @@ def run_preflight(
         clock=clock,
         ids=ids or UuidIds(),
         credential_resolver=_refusing_resolver,
-        comfy_endpoint="https://comfy.invalid",
     )
     lines = [
         "canary preflight OK",
@@ -388,13 +382,12 @@ def run_preflight(
         f"storage_gb={authorization.caps.max_storage_gb} "
         f"prompts={authorization.caps.max_prompts} "
         f"attempts={authorization.caps.max_attempts}",
-        f"pins: image={authorization.pins.image_digest} "
+        f"pins: image={authorization.pins.image_ref} "
         f"workflow={authorization.pins.workflow_sha256} "
         f"node_schema={authorization.pins.node_schema_sha256} "
         f"output_controls={authorization.pins.output_controls_sha256} "
         f"preset={authorization.pins.preset_id} v{authorization.pins.preset_version}",
         f"namespace: {authorization.namespace} account: {authorization.provider_account_ref}",
-        f"pod image: {canary_image_ref(authorization)}",
         f"credrefs: runpod={authorization.runpod_credential_ref} "
         f"comfy={authorization.comfy_credential_ref} (names only; values not resolved)",
         f"prompts pinned: {len(authorization.prompt_sha256)} "
@@ -415,7 +408,6 @@ def run_execute(
     prompts_path: str | Path,
     clock: Clock | None = None,
     ids: Any = None,
-    comfy_endpoint: str = "https://comfy.invalid",
     credential_resolver: Callable[[str], str | None] = _refusing_resolver,
     runpod_transport: RunpodTransport | None = None,
     comfy_transport: HttpTransport | None = None,
@@ -462,7 +454,6 @@ def run_execute(
         clock=clock,
         ids=ids,
         credential_resolver=credential_resolver,
-        comfy_endpoint=comfy_endpoint,
         runpod_transport=runpod_transport,
         comfy_transport=comfy_transport,
     )
@@ -633,6 +624,12 @@ def run_execute(
         handle = world.leases.ensure_pod(lease_id)
         record["pod_id"] = handle.lease.pod_id
         step("create_pod", {"pod_id": record["pod_id"]})
+        # T045-FIX B-B2: the Comfy base URL is late-bound from the created Pod and
+        # must be exactly its own proxy URL; anything else refuses before any
+        # ComfyUI call (the bearer token never reaches an unvalidated host).
+        pod_info = world.manager.get(handle.lease.pod_id)
+        world.comfy_client.bind_pod_endpoint(handle.lease.pod_id, pod_info.endpoint_url)
+        step("comfy_endpoint_bound", {"endpoint": pod_info.endpoint_url})
 
         # Runbook step 2 (before the first prompt): the /object_info digest gate.
         # The first prompt's hold and durable job exist before any ComfyUI request.
@@ -847,7 +844,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--authorization-sha256")
     parser.add_argument("--prompts")
-    parser.add_argument("--comfy-endpoint", default="https://comfy.invalid")
     parser.add_argument("--database-url")
     parser.add_argument("--pod-id")
     parser.add_argument("--period-start")
@@ -894,7 +890,6 @@ def main(argv: list[str] | None = None) -> int:
                 db=Database(database_url),
                 store=store,
                 prompts_path=args.prompts,
-                comfy_endpoint=args.comfy_endpoint,
                 credential_resolver=_refusing_resolver,
             )
             print(f"canary execute complete; record: {result.record_path}")

@@ -55,7 +55,7 @@ def _real_pins() -> dict[str, Any]:
     required = ("TEXT_PROMPT", "SEED")
     supported = sorted(control.value for control in MOCK_VIDEO_TEMPLATE.supported_controls)
     return {
-        "image_digest": "a" * 64,
+        "image_ref": "registry.example/microdrama/drama-canary@sha256:" + "a" * 64,
         "workflow_sha256": template_sha256(MOCK_VIDEO_TEMPLATE),
         "node_schema_sha256": canonical_hash(
             {
@@ -424,3 +424,27 @@ class _NullStore:
 
     def put_bytes(self, *args: Any, **kwargs: Any) -> None:  # pragma: no cover
         raise AssertionError("the store must not be written by preflight or refusals")
+
+
+def test_no_cli_flag_can_set_the_comfy_endpoint(tmp_path: Any) -> None:
+    """T045-FIX B-B2: the Comfy base URL is derived from the created Pod only - the
+    flag is gone from the CLI entirely (argparse refuses unknown options)."""
+    import pytest as _pytest
+
+    from microdrama.pipeline.canary import main
+
+    with _pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "execute",
+                "--authorization",
+                str(tmp_path / "absent.json"),
+                "--authorization-sha256",
+                "0" * 64,
+                "--prompts",
+                str(tmp_path / "absent.json"),
+                "--comfy-endpoint",
+                "https://attacker.example",
+            ]
+        )
+    assert exc.value.code == 2

@@ -115,7 +115,6 @@ def test_live_world_rejects_offline_before_accessing_dependencies() -> None:
             runpod_credential_ref="credref:runpod",
             comfy_credential_ref="credref:comfy",
             credential_resolver=lambda _: pytest.fail("credentials must not resolve"),
-            comfy_endpoint="https://comfy.invalid",
             pod_config=None,
             render_config=None,
         )
@@ -135,7 +134,6 @@ def test_live_world_rejects_missing_effect_flags_before_credentials() -> None:
             runpod_credential_ref="credref:runpod",
             comfy_credential_ref="credref:comfy",
             credential_resolver=lambda _: pytest.fail("credentials must not resolve"),
-            comfy_endpoint="https://comfy.invalid",
             pod_config=None,
             render_config=None,
         )

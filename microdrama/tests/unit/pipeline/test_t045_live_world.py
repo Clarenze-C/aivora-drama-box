@@ -89,7 +89,9 @@ def _live_pod_config() -> PodLeaseConfig:
     )
 
 
-def _live_render_config() -> ComfyRenderConfig:
+def _live_render_config(*, lease_covered: bool = True) -> ComfyRenderConfig:
+    # T045-FIX B-B1: a live world renders on a leased Runpod Pod, so its render is
+    # lease-covered (the Pod invoice is the only GPU cost).
     return ComfyRenderConfig(
         price=PriceQuote(
             currency="USD",
@@ -98,7 +100,8 @@ def _live_render_config() -> ComfyRenderConfig:
             source="PROVIDER_QUOTE",
             price_table_version="operator-quote-t031",
             as_of=T0,
-        )
+        ),
+        lease_covered=lease_covered,
     )
 
 
@@ -113,6 +116,7 @@ def _build(
     pod_config: PodLeaseConfig | None = None,
     runpod_transport: Any | None = None,
     comfy_transport: Any | None = None,
+    render_config: ComfyRenderConfig | None = None,
     credential_resolver: Any | None = None,
     runpod_credential_ref: str = "credref:runpod-canary",
     comfy_credential_ref: str = "credref:comfy-canary",
@@ -138,9 +142,8 @@ def _build(
                 AssertionError("credential values must never resolve during composition")
             )
         ),
-        comfy_endpoint="https://comfy.invalid",
         pod_config=pod_config or _live_pod_config(),
-        render_config=_live_render_config(),
+        render_config=render_config or _live_render_config(),
         clock=FakeClock(T0),
         ids=SequentialIds("t045-live"),
         runpod_transport=runpod_transport,
@@ -325,3 +328,24 @@ def _seed_episode(db: Database):
     with db.transaction() as tx:
         season = seed_season(tx)
         return season, seed_episode(tx, season)
+
+
+def test_a_charging_render_config_is_refused_for_a_leased_runpod_pod(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-B1: a world whose Comfy endpoint is the leased Runpod Pod refuses a
+    render config that would settle measured GPU-seconds - the Pod lease's BILLED
+    settlement is the only GPU cost."""
+    from microdrama.contracts.errors import PolicyDenied
+
+    _seed_registries(
+        db, _live_settings(), recorded_at=T0 - timedelta(minutes=1), live_evidence=True
+    )
+    with pytest.raises(PolicyDenied, match="lease-covered"):
+        _build(
+            db,
+            tmp_path,
+            runpod_transport=_FailingTransport("runpod"),
+            comfy_transport=_FailingTransport("comfy"),
+            render_config=_live_render_config(lease_covered=False),
+        )
