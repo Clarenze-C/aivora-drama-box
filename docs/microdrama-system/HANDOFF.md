@@ -7,11 +7,12 @@ deployment receipt.
 
 ## Checkout and safety
 
-- Repo: `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`, everything
-  committed and pushed (remote head `62a39ec`, 2026-11-01). The whole
-  T036–T048 stack landed on 2026-11-01 in layered code+docs commits, each
-  behind a full green gate. A pre-review snapshot of the formerly dirty tree
-  exists at `/root/drama-box-dirty-snapshot-20261101.tar.gz`.
+- Repo: `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`. Everything
+  through 2026-11-01 is committed and pushed (remote head `62a39ec`). The
+  2026-11-02 review fix round (DB-1..DB-11) is committed locally in layered
+  code+docs commits on top and **not pushed** — Opus accepts first. A
+  pre-review snapshot of the formerly dirty tree exists at
+  `/root/drama-box-dirty-snapshot-20261101.tar.gz`.
 - Current contract package: **2.15.0** (V2 payload schema version 2.0; V1
   payloads remain readable). Migrations 0019–0024 are present. Contract source
   and generated artifacts are guardian-owned.
@@ -28,16 +29,23 @@ T047 and T048 `DONE` (evidence under `microdrama/evidence/`, receipts in the
 ledger). T045 is the one open offline task (`REVIEW` — billing finality,
 below). T031–T035 are the live qualification gates and have not started.
 
-The **last full green** receipt (2026-11-01, after T046, under CPUQuota45%):
-`make check` **all offline checks passed** — **2,599 unit, 462 contract and
-214 integration** tests; Ruff clean; `make pilot` exit 0 — W01–W12, exactly
-two human gates, 16 local exports, 303,000 **synthetic** micro-USD.
+The **last full green** receipt (2026-11-02, after the DB-1..DB-11 fix round,
+under CPUQuota45%): `make check` **all offline checks passed** — **2,608
+unit, 462 contract and 219 integration** tests; Ruff (check + format) clean;
+`make pilot` exit 0 — W01–W12, exactly two human gates, 16 local exports,
+303,000 **synthetic** micro-USD.
 
-**Pending independent reviews (Codex weekly quota resets 2026-11-04):**
-scoped reviews for T044b2's fix round (at minimum a spot-check of findings 1
-selection-revision and 3 dispatch-blockers), T047 and T046. These were built
-and reviewed in-session on the operator's direction; the same-model-family
-caveat is recorded in each ledger row.
+**Independent reviews:** the pending Codex spot-checks for T044b2 (findings 1
+and 3), T046 and T047 were replaced on 2026-11-02 by a stand-in cross-model
+review (Claude Sonnet 5.5 read-only reviewer, Opus rulings —
+[review](T044b2-T046-T047-claude-review-2026-11-02.md)). All 11 findings
+(DB-1..DB-11) were accepted as BINDING and fixed the same day, tests-first
+red→green, in commits `15b6cf5`, `03f3e92`, `64b1784`, `73747df`
+(+`01379d7` format); evidence is appended to the T044b2/T046/T047 evidence
+files and the ledger rows point there. What remains is the review-after-fix
+step: a re-review of the fixed findings only, plus the spot-check of
+T044b2 F2/F4/F5/F6 that no independent reviewer has covered yet
+(build and first fix round share a model family — caveat recorded per row).
 
 ## What 1 November built (all gated, committed, pushed)
 
@@ -99,8 +107,10 @@ caveat is recorded in each ledger row.
 
 ## What remains, in order
 
-1. **Codex scoped reviews** after the 2026-11-04 quota reset (T044b2
-   spot-check, T047, T046) — close or escalate each ledger caveat.
+1. **Review-after-fix**: a re-review of the 2 Nov fixed findings only (DB-1
+   ..DB-11), plus the T044b2 F2/F4/F5/F6 spot-check no independent reviewer
+   has covered — after the 2026-11-04 Codex quota reset, or another
+   cross-model reviewer sooner.
 2. **T045 accounting acceptance** (offline work, no provider calls).
 3. **T031 real-provider qualification** — needs T045 accepted PLUS explicit
    operator authorization: rights route, credentials, current quote,

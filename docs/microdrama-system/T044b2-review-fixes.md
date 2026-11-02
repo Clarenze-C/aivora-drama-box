@@ -21,10 +21,16 @@ jobs + 1), so they are strictly increasing and race-free; the same-revision
 double-click dedupes through a status check on the latest intent, and the latest
 intent is found by the highest embedded revision — an important correction the
 fix round itself needed, because `ORDER BY created_at, id` is not order evidence
-under the frozen mock clock (SequentialIds uuid5s are not lexicographic). The
-pinned test drives B→A→B end to end: three research runs, final proposal binds
-the first candidate's title, double-click adds no fourth job, and the rebound
-card's hash equals the final proposal hash.
+under the frozen mock clock (SequentialIds uuid5s are not lexicographic).
+**Correction (2 Nov, DB-1):** the round-1 pinned test did NOT drive B→A→B — it
+drove select-B → select-A (two selection jobs; the initial proposal came from
+the intake run, so no selection target ever repeated, and the test passed on
+the old candidate-only key). The true B→A→B pin — third selection repeats B,
+202 with a new job_id, a 4th research run, proposal ends on B, all revision
+keys pairwise distinct — landed 2 Nov 2026 in
+`test_reselecting_after_another_selection_reruns_the_candidate`, with the
+mandated red proof (old key restored → `IdempotencyConflict`). Round-1's
+double-click and rebound-hash assertions stand as written.
 
 **F2 cross-owner sheets — CONFIRMED, FIXED, VERIFIED.** The contract models
 carry no season field (verified in `contracts/v2.py`); ids are shared
