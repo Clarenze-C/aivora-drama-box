@@ -65,14 +65,17 @@ def test_migration_0025_upgrades_and_reads_back(pg_server_dsn: str) -> None:
                     "WHERE table_name = 'pod_leases'"
                 )
             }
-            assert not {
-                "create_requested_at",
-                "compute_window_start_at",
-                "compute_window_end_at",
-                "terminate_verified_at",
-                "provider_account_ref",
-                "next_finality_check_at",
-            } & lease_columns
+            assert (
+                not {
+                    "create_requested_at",
+                    "compute_window_start_at",
+                    "compute_window_end_at",
+                    "terminate_verified_at",
+                    "provider_account_ref",
+                    "next_finality_check_at",
+                }
+                & lease_columns
+            )
         assert migrate(dsn) == ["0025"]
         with psycopg.connect(dsn) as conn:
             assert {
@@ -138,7 +141,8 @@ def test_pod_lease_timestamps_are_set_once(db: Database) -> None:
     ):
         with pytest.raises(Conflict), db.transaction() as tx:
             tx.execute(
-                f"UPDATE pod_leases SET {column}=%s WHERE id=%s", (value, lease)  # noqa: B608
+                f"UPDATE pod_leases SET {column}=%s WHERE id=%s",
+                (value, lease),  # noqa: B608
             )
         with pytest.raises(Conflict), db.transaction() as tx:
             tx.execute(f"UPDATE pod_leases SET {column}=NULL WHERE id=%s", (lease,))  # noqa: B608
@@ -150,9 +154,7 @@ def test_pod_lease_timestamps_are_set_once(db: Database) -> None:
 def test_storage_ownership_closes_once_and_records_creating_lease(db: Database) -> None:
     with db.transaction() as tx:
         lease = _insert_lease(tx, pod_id="pod-storage")
-        episode = tx.fetchval(
-            "SELECT owner_episode_id FROM pod_leases WHERE id=%s", (lease,)
-        )
+        episode = tx.fetchval("SELECT owner_episode_id FROM pod_leases WHERE id=%s", (lease,))
         ownership = uuid.uuid4()
         tx.execute(
             "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "

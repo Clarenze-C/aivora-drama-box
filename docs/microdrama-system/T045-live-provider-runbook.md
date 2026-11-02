@@ -68,6 +68,16 @@ media verification, durable copy and checksum—not a progress or `executed` eve
 
 ## Durable billing reconciliation contract (integrator acceptance required)
 
+> **T045-A (2 Nov):** this contract is implemented for R0–R8 (see
+> `microdrama/evidence/T045.md` and the finality addendum
+> `T045-finality-spec.md`, which overrides the older text below where they differ).
+> One operating assumption to verify at the first live canary: buckets are only stored
+> once their end is at least a **settle lag of 15 minutes** behind the observation
+> (`BillingRepository(settle_lag=...)`, default 15 min). This lag is an unverified
+> assumption about how long Runpod keeps reshaping a bucket — not a documented fact —
+> so it is configurable, and the first live ingest should confirm bucket amounts stop
+> changing after that window.
+
 Runpod's official `GET /v2/billing/pods` response is time-bucketed and supplies
 `podId`, `startTime`, `endTime`, `totalAmount`, `gpuAmount`, `cpuAmount`, and `diskAmount`.
 The request metadata reports the provider-resolved window. The current adapter preserves
