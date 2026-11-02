@@ -232,7 +232,7 @@ def test_mismatched_invoice_evidence_is_durable_and_never_finalizes_budget(
     repository = BillingRepository(db, budget_service=world.service)
     repository.ingest(runpod_billing_query_observation(), [bucket])
     # The mismatch evidence must commit; nothing in the budget may finalize from it.
-    repository.verify_invoice(bucket, verification)
+    repository._verify_invoice(bucket, verification)
     with db.transaction(readonly=True) as tx:
         row = tx.fetchone(
             "SELECT result FROM runpod_billing_invoice_verifications WHERE verification_id=%s",
@@ -288,3 +288,23 @@ def test_budget_policy_refusal_rolls_back_bucket_allocation_and_charge_together(
     )
     BillingRepository(db, budget_service=world.service).ingest(query, [bucket], allocations)
     assert world.counters(episode.account_id)["settled"] == bucket.total_amount_micro_usd
+
+
+def test_public_ingest_has_no_verified_finality_escape_hatch(world: World) -> None:
+    """T045-FIX A-N1: the internal verified-finality path is reachable only from the
+    repository's own invoice-verification method - no public ingest keyword can
+    present an INVOICE_VERIFIED bucket."""
+    repository = BillingRepository(db=world.db, budget_service=world.service)
+    with pytest.raises(TypeError):
+        repository.ingest(
+            runpod_billing_query_observation(),
+            [runpod_billing_bucket_observation()],
+            _verified_finality=True,
+        )
+
+
+def test_per_bucket_verification_is_private(world: World) -> None:
+    """T045-FIX A-N2: under R5 the only public verification is verify_invoice_period;
+    the per-bucket path is an internal step of it."""
+    assert not hasattr(BillingRepository, "verify_invoice")
+    assert hasattr(BillingRepository, "_verify_invoice")

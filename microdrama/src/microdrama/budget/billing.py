@@ -205,8 +205,6 @@ class BillingRepository:
         query: RunpodBillingQueryObservation,
         buckets: list[RunpodBillingBucketObservation],
         allocations: list[RunpodBillingAllocation] | None = None,
-        *,
-        _verified_finality: bool = False,
     ) -> None:
         """Store one provider response. The repository derives the stored state (R4).
 
@@ -215,13 +213,12 @@ class BillingRepository:
         ``DISPUTED``. Open buckets are recorded in the skipped table instead, and an
         all-open response is recorded as an ``UNKNOWN`` query. A bucket presented as
         ``INVOICE_VERIFIED`` or ``PENDING_PROVIDER_FINALITY`` is refused: finality is
-        derived here or written by the internal invoice path only.
+        derived here or written by the internal invoice path only (T045-FIX A-N1: the
+        internal verified-finality flag lives on the private ingest core, unreachable
+        from this public call).
         """
         for bucket in buckets:
-            if (
-                bucket.finality_state is BillingFinalityState.INVOICE_VERIFIED
-                and not _verified_finality
-            ):
+            if bucket.finality_state is BillingFinalityState.INVOICE_VERIFIED:
                 raise SchemaInvalid(
                     "INVOICE_VERIFIED is written only by the invoice verification path; "
                     "API ingest must present an unsettled bucket"
@@ -235,14 +232,7 @@ class BillingRepository:
         allocations = allocations or []
 
         def operation(tx: Tx) -> None:
-            self._ingest_in_transaction(
-                tx,
-                query,
-                buckets,
-                open_buckets,
-                allocations,
-                verified_finality=_verified_finality,
-            )
+            self._ingest_in_transaction(tx, query, buckets, open_buckets, allocations)
 
         self.db.run_in_transaction(operation)
 
@@ -403,9 +393,15 @@ class BillingRepository:
             query, buckets, effective_allocations, prior_observations=prior_observations
         )
 
-    def verify_invoice(
+    def _verify_invoice(
         self, bucket: RunpodBillingBucketObservation, verification: BillingInvoiceVerification
     ) -> None:
+        """Write one per-bucket invoice verification (T045-FIX A-N2: internal).
+
+        Under R5 the only public verification is :meth:`verify_invoice_period`; this
+        per-bucket step is what it composes for each matched bucket, and the mismatch
+        dispute record it writes for an unmatched one.
+        """
         validate_billing_invoice_verification(bucket, verification)
 
         def operation(tx: Tx) -> None:
