@@ -22,8 +22,10 @@ import pytest
 from microdrama.config import Settings
 from microdrama.contracts.enums import ExecutionMode
 from microdrama.contracts.errors import PolicyDenied, SchemaInvalid
+from microdrama.budget import BudgetService
 from microdrama.persistence import Database
 from microdrama.pipeline.canary import load_prompts, run_execute, run_invoice, run_preflight
+from microdrama.rendering import RunpodInvoiceFinality
 from microdrama.pipeline.canary_authorization import (
     CanaryAuthorization,
     load_canary_authorization,
@@ -392,7 +394,12 @@ def test_invoice_entrypoint_stores_only_the_evidence_hash(db: Database, tmp_path
     query, bucket = closed_bucket(
         pod_id="pod-canary-inv", start=start, end=end, gpu=400_000, cpu=50_000, disk=50_000
     )
-    RunpodInvoiceFinality(db).ingest(query, [bucket])
+    from microdrama.budget import BudgetService
+    from microdrama.testing.fakes import FakeClock as _FC, SequentialIds as _SI
+
+    RunpodInvoiceFinality(
+        db, budget_service=BudgetService(db, _FC(T0), _SI("canary-inv"), _live_settings())
+    ).ingest(query, [bucket])
     evidence = tmp_path / "invoice.pdf"
     evidence.write_bytes(b"fixture invoice bytes")
     summary = run_invoice(
@@ -415,7 +422,29 @@ def test_invoice_entrypoint_stores_only_the_evidence_hash(db: Database, tmp_path
             "SELECT count(*) FROM runpod_billing_period_evidence WHERE evidence_sha256 = %s",
             (sha256_hex(b"fixture invoice bytes"),),
         )
+        # T045-FIX B-S5: the matched period also wrote its ledger finalization rows -
+        # a budgetless verification could never do that.
+        finalizations = tx.fetchval("SELECT count(*) FROM runpod_billing_budget_finalizations")
     assert stored == 1
+    assert finalizations >= 1
+    # Replaying the invoice verification is a no-op.
+    replay = run_invoice(
+        settings=_live_settings(),
+        db=db,
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-canary-inv",
+        period_start=start,
+        period_end=end,
+        amount_micro_usd=500_000,
+        evidence_path=evidence,
+        source="INVOICE",
+        observed_at=end + timedelta(hours=3),
+    )
+    assert "replayed" in replay
+    with db.transaction(readonly=True) as tx:
+        assert (
+            tx.fetchval("SELECT count(*) FROM runpod_billing_budget_finalizations") == finalizations
+        )
 
 
 @dataclass
@@ -448,3 +477,35 @@ def test_no_cli_flag_can_set_the_comfy_endpoint(tmp_path: Any) -> None:
             ]
         )
     assert exc.value.code == 2
+
+
+def test_the_invoice_finality_requires_a_budget_service(db: Database) -> None:
+    """T045-FIX B-S5: a budgetless RunpodInvoiceFinality is refused at construction -
+    the ledger side of ingest and verification is not optional."""
+    from microdrama.contracts.errors import SchemaInvalid
+    from microdrama.rendering import RunpodInvoiceFinality
+
+    with pytest.raises(SchemaInvalid, match="budget service"):
+        RunpodInvoiceFinality(db, budget_service=None)
+    with pytest.raises(TypeError):
+        RunpodInvoiceFinality(db)
+
+
+def test_a_finality_with_a_foreign_budget_service_is_refused_by_the_world(
+    db: Database, tmp_path: Any
+) -> None:
+    """T045-FIX B-S5: live_world refuses a finality whose budget service is not the
+    world's own budget."""
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+    from test_t045_live_world import _build, _seed_registries
+
+    _seed_registries(
+        db, _live_settings(), recorded_at=T0 - timedelta(minutes=1), live_evidence=True
+    )
+    foreign = BudgetService(db, FakeClock(T0), SequentialIds("foreign"), _live_settings())
+    billing = RunpodInvoiceFinality(db, budget_service=foreign)
+    with pytest.raises(PolicyDenied, match="world's own budget service"):
+        _build(db, tmp_path, billing=billing)

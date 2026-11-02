@@ -835,7 +835,11 @@ def run_invoice(
     import hashlib
 
     evidence_sha256 = hashlib.sha256(Path(evidence_path).read_bytes()).hexdigest()
-    repository = RunpodInvoiceFinality(db)
+    # T045-FIX B-S5: invoice verification runs with a real budget service, so the
+    # matched periods write their runpod_billing_budget_finalizations rows.
+    repository = RunpodInvoiceFinality(
+        db, budget_service=BudgetService(db, SystemClock(), UuidIds(), settings)
+    )
     result = repository.verify_invoice_period(
         provider_account_ref=provider_account_ref,
         pod_id=pod_id,

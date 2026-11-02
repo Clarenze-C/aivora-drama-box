@@ -17,6 +17,7 @@ from microdrama.contracts.errors import (
     TransientProviderError,
 )
 from microdrama.contracts.providers import PodCreateRequest
+from microdrama.budget import BudgetService
 from microdrama.persistence import Database
 from microdrama.rendering.janitor import Janitor
 from microdrama.rendering.leases import PodLeaseConfig
@@ -441,7 +442,12 @@ def test_independent_janitor_stops_only_namespaced_orphan(db: Database) -> None:
         ids=SequentialIds("runpod-janitor"),
         settings=settings,
         config=config,
-        finality=RunpodInvoiceFinality(db),
+        finality=RunpodInvoiceFinality(
+            db,
+            budget_service=BudgetService(
+                db, FakeClock(NOW), SequentialIds("runpod-janitor"), settings
+            ),
+        ),
     )
     report = janitor.sweep()
     assert report.stopped_pods == ["pod-123"]

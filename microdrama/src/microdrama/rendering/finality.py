@@ -28,7 +28,7 @@ from microdrama.budget.billing import (
 )
 from microdrama.budget.service import BudgetService
 from microdrama.config import Settings
-from microdrama.contracts.errors import Conflict, NotFound
+from microdrama.contracts.errors import Conflict, NotFound, SchemaInvalid
 from microdrama.persistence.db import Database, update_with_revision
 
 # Backoff for "finality not reached yet" retries: doubles from five minutes up to an
@@ -116,10 +116,18 @@ class RunpodInvoiceFinality(BillingRepository, LeaseBillingFinality):
     def __init__(
         self,
         db: Database,
-        budget_service: Any | None = None,
+        budget_service: Any,
         *,
         settle_lag: timedelta | None = None,
     ) -> None:
+        # T045-FIX B-S5: the ledger side of ingest and invoice verification is not
+        # optional - a budgetless finality would store buckets whose allocations
+        # never reach the ledger. There is no None default to fall back on.
+        if budget_service is None:
+            raise SchemaInvalid(
+                "RunpodInvoiceFinality requires the budget service; the ledger side "
+                "of ingest and verification must run"
+            )
         super().__init__(db, budget_service, settle_lag=settle_lag or DEFAULT_SETTLE_LAG)
 
     def settle_lease(

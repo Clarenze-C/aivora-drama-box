@@ -444,6 +444,12 @@ def build_live_benchmark_world(
         if isinstance(billing, RunpodInvoiceFinality)
         else RunpodInvoiceFinality(db, budget_service=budget, settle_lag=billing.settle_lag)
     )
+    # T045-FIX B-S5: the finality must carry THIS world's budget service, so every
+    # ingest and verification the janitor runs lands on the world's own ledger.
+    if finality.budget_service is not budget:
+        raise PolicyDenied(
+            "the live world's invoice finality must carry the world's own budget service"
+        )
     leases = build_lease_service(
         db, budget, manager, live_clock, live_ids, settings, pod_config, finality
     )
