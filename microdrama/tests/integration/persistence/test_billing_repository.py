@@ -35,15 +35,13 @@ def test_ingest_is_idempotent_concurrent_and_survives_pool_restart(db_dsn: str) 
             "CPU": bucket.cpu_amount_micro_usd,
             "DISK": bucket.disk_amount_micro_usd,
         }
-        readiness = BillingRepository(db).accounting_readiness(
-            "acct:runpod-fixture", bucket.pod_id, bucket.bucket_start, bucket.bucket_end
-        )
+        # T045 R7 replaced accounting_readiness with per-lease readiness: a recovery
+        # allocation on the covering bucket keeps any lease RECOVERY_REQUIRED.
+        from t045_lease_probe import probe_lease_readiness
+
+        readiness = probe_lease_readiness(db, bucket)
         assert readiness.state == "RECOVERY_REQUIRED"
-        assert readiness.covered is True
-        assert readiness.provider_reported_micro_usd == bucket.total_amount_micro_usd
-        assert readiness.invoice_verified_micro_usd == 0
-        assert readiness.pending_exposure_held is True
-        assert readiness.unresolved_recovery is True
+        assert readiness.pending_since is not None
 
     # A fresh pool represents process restart/readback; durable rows remain canonical JSON.
     with Database(db_dsn) as restarted, restarted.transaction(readonly=True) as tx:

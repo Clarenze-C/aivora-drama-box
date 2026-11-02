@@ -24,18 +24,28 @@ from microdrama.contracts.cost import (
     RunpodBillingAllocation,
     RunpodBillingBucketObservation,
     RunpodBillingQueryObservation,
+    UsageReceipt,
     validate_billing_invoice_verification,
     validate_runpod_billing_allocations,
     validate_runpod_billing_query,
     validate_runpod_billing_revision,
 )
+from microdrama.contracts.enums import (
+    BudgetCategory,
+    CostBasis,
+    PriceUnit,
+    Provenance,
+    ReceiptKind,
+)
 from microdrama.contracts.errors import (
     Conflict,
     DuplicateSemanticKey,
     IdempotencyConflict,
+    NotFound,
     SchemaInvalid,
 )
 from microdrama.contracts.hashing import sha256_hex
+from microdrama.core.events import append_event
 from microdrama.persistence.db import Database, Tx, jsonb
 
 MICRO_USD = Decimal(1_000_000)
@@ -57,17 +67,22 @@ class InvoicePeriodResult:
 
 
 @dataclass(frozen=True)
-class BillingAccountingReadiness:
-    """Read-only accounting evidence for one pod/window; never a spend-release signal."""
+class LeaseBillingReadiness:
+    """Per-lease billing finality (T045 R7); BILLED is the only spend-release signal.
 
-    state: str
-    covered: bool
-    provider_reported_micro_usd: int
-    invoice_verified_micro_usd: int
-    pending_exposure_held: bool
-    unresolved_recovery: bool
-    missing_windows: tuple[tuple[datetime, datetime], ...]
-    observation_ids: tuple[str, ...]
+    ``REOPENED`` is derived, never stored: it means some covering bucket revision is
+    newer than the lease's BILLED settlement (its positive delta posts an ADJUSTMENT on
+    the closed reservation; a negative one is evidence only).
+    """
+
+    lease_id: UUID
+    state: (
+        str  # PENDING_PROVIDER_FINALITY | AWAITING_INVOICE | DISPUTED | RECOVERY_REQUIRED | BILLED
+    )
+    pending_since: datetime | None
+    billed_micro_usd: int | None = None
+    reopened: bool = False
+    missing_windows: tuple[tuple[datetime, datetime], ...] = ()
 
 
 def amount_to_micro_usd(value: str | int | Decimal) -> int:
@@ -714,81 +729,20 @@ class BillingRepository:
                 tx, verified, verification
             )
 
-    def accounting_readiness(
-        self, provider_account_ref: str, pod_id: str, since: datetime, until: datetime
-    ) -> BillingAccountingReadiness:
-        """Describe observed/final billing coverage; pending or absent evidence keeps exposure held."""
-        if until <= since:
-            raise ValueError("billing readiness window must be non-empty")
-        with self.db.transaction(readonly=True) as tx:
-            rows = tx.fetchall(
-                "SELECT observation_id,bucket_start,bucket_end,total_amount_micro_usd,finality_state "
-                "FROM runpod_billing_buckets WHERE provider_account_ref=%s AND pod_id=%s "
-                "AND bucket_start<%s AND bucket_end>%s ORDER BY bucket_start,bucket_end,revision",
-                (provider_account_ref, pod_id, until, since),
-            )
-            unresolved_recovery = bool(
-                tx.fetchval(
-                    "SELECT EXISTS (SELECT 1 FROM runpod_billing_allocations a "
-                    "JOIN runpod_billing_buckets b ON b.observation_id=a.bucket_observation_id "
-                    "LEFT JOIN runpod_billing_recovery_resolutions r USING (allocation_id) "
-                    "WHERE b.provider_account_ref=%s AND b.pod_id=%s AND b.bucket_start<%s "
-                    "AND b.bucket_end>%s AND a.owner_kind='RECOVERY' AND a.delta_micro_usd>0 "
-                    "AND r.allocation_id IS NULL)",
-                    (provider_account_ref, pod_id, until, since),
-                )
-            )
-        latest_by_bucket: dict[tuple[datetime, datetime], Any] = {}
-        for row in rows:
-            latest_by_bucket[(row["bucket_start"], row["bucket_end"])] = row
-        latest = list(latest_by_bucket.values())
-        buckets = [row for row in latest if row["finality_state"] != "DISPUTED"]
-        cursor = since
-        missing: list[tuple[datetime, datetime]] = []
-        for row in buckets:
-            start = max(since, row["bucket_start"])
-            end = min(until, row["bucket_end"])
-            if end <= cursor:
-                continue
-            if start > cursor:
-                missing.append((cursor, start))
-            cursor = max(cursor, end)
-        if cursor < until:
-            missing.append((cursor, until))
-        covered = not missing
-        relevant = [
-            row for row in buckets if row["bucket_start"] >= since and row["bucket_end"] <= until
-        ]
-        latest = relevant
-        reported = sum(int(row["total_amount_micro_usd"]) for row in latest)
-        verified = sum(
-            int(row["total_amount_micro_usd"])
-            for row in latest
-            if row["finality_state"] == "INVOICE_VERIFIED"
-        )
-        fully_verified = (
-            covered
-            and bool(latest)
-            and all(row["finality_state"] == "INVOICE_VERIFIED" for row in latest)
-        )
-        pending = not fully_verified or unresolved_recovery
-        return BillingAccountingReadiness(
-            state=(
-                "RECOVERY_REQUIRED"
-                if unresolved_recovery
-                else "INVOICE_VERIFIED"
-                if fully_verified
-                else "PENDING"
-                if latest
-                else "UNKNOWN"
-            ),
-            covered=covered,
-            provider_reported_micro_usd=reported,
-            invoice_verified_micro_usd=verified,
-            pending_exposure_held=pending,
-            unresolved_recovery=unresolved_recovery,
-            missing_windows=tuple(missing),
-            observation_ids=tuple(str(row["observation_id"]) for row in latest),
+    @staticmethod
+    def matched_invoice_periods(
+        tx: Tx, lease: Any, window_start: datetime, coverage_end: datetime
+    ) -> list[Any]:
+        """MATCHED/MATCHED_ZERO period evidence overlapping the lease's coverage."""
+        account_ref = lease["provider_account_ref"]
+        return tx.fetchall(
+            "SELECT * FROM runpod_billing_period_evidence WHERE pod_id=%s "
+            "AND (%s::text IS NULL OR provider_account_ref=%s) AND period_start < %s "
+            "AND period_end > %s AND outcome IN ('MATCHED','MATCHED_ZERO') "
+            "AND NOT EXISTS (SELECT 1 FROM runpod_billing_period_evidence s "
+            "WHERE s.supersedes_evidence_id = runpod_billing_period_evidence.period_evidence_id) "
+            "ORDER BY period_start, period_end",
+            (lease["pod_id"], account_ref, account_ref, coverage_end, window_start),
         )
 
     @staticmethod
@@ -919,6 +873,237 @@ class BillingRepository:
                     )
                 )
         return output
+
+
+def _lease_readiness_in_transaction(tx: Tx, lease: Any) -> LeaseBillingReadiness:
+    """R7 readiness for one lease row, inside a caller-owned read transaction."""
+    lease_id = lease["id"]
+    pending_since = lease["compute_window_end_at"] or lease["updated_at"]
+    window_start = lease["compute_window_start_at"] or lease["create_requested_at"]
+    if window_start is None:
+        # Nothing was ever sent for this lease: no compute window, nothing to bill.
+        return LeaseBillingReadiness(lease_id, "BILLED", None, billed_micro_usd=0)
+    if lease["compute_window_end_at"] is None:
+        return LeaseBillingReadiness(lease_id, "PENDING_PROVIDER_FINALITY", pending_since)
+    window_end = lease["compute_window_end_at"]
+
+    storage_rows = tx.fetchall(
+        "SELECT valid_until FROM pod_storage_ownership WHERE provider=%s AND pod_id=%s "
+        "AND owner_episode_id=%s",
+        (lease["provider"], lease["pod_id"], lease["owner_episode_id"]),
+    )
+    storage_end = window_end
+    for row in storage_rows:
+        end = row["valid_until"] or lease["terminate_verified_at"]
+        if end is None:
+            # Storage is still owned with no verified terminate: the window is open.
+            return LeaseBillingReadiness(lease_id, "PENDING_PROVIDER_FINALITY", pending_since)
+        storage_end = max(storage_end, end)
+    coverage_end = max(window_end, storage_end)
+
+    buckets = tx.fetchall(
+        "SELECT DISTINCT ON (bucket_identity_sha256) observation_id, bucket_start, "
+        "bucket_end, total_amount_micro_usd, finality_state, revision, observed_at "
+        "FROM runpod_billing_buckets WHERE pod_id=%s "
+        "AND (%s::text IS NULL OR provider_account_ref=%s) AND bucket_start < %s "
+        "AND bucket_end > %s ORDER BY bucket_identity_sha256, revision DESC",
+        (
+            lease["pod_id"],
+            lease["provider_account_ref"],
+            lease["provider_account_ref"],
+            coverage_end,
+            window_start,
+        ),
+    )
+    if any(row["finality_state"] == "DISPUTED" for row in buckets):
+        return LeaseBillingReadiness(lease_id, "DISPUTED", pending_since)
+    mismatched_open = tx.fetchone(
+        "SELECT period_evidence_id FROM runpod_billing_period_evidence WHERE pod_id=%s "
+        "AND (%s::text IS NULL OR provider_account_ref=%s) AND outcome='MISMATCHED' "
+        "AND period_start < %s AND period_end > %s AND NOT EXISTS ("
+        "SELECT 1 FROM runpod_billing_period_evidence newer WHERE newer.pod_id=%s "
+        "AND newer.supersedes_evidence_id = runpod_billing_period_evidence.period_evidence_id)",
+        (
+            lease["pod_id"],
+            lease["provider_account_ref"],
+            lease["provider_account_ref"],
+            coverage_end,
+            window_start,
+            lease["pod_id"],
+        ),
+    )
+    if mismatched_open is not None:
+        return LeaseBillingReadiness(lease_id, "DISPUTED", pending_since)
+    unresolved_recovery = tx.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM runpod_billing_allocations a "
+        "JOIN runpod_billing_buckets b ON b.observation_id=a.bucket_observation_id "
+        "LEFT JOIN runpod_billing_recovery_resolutions r USING (allocation_id) "
+        "WHERE b.pod_id=%s AND a.owner_kind='RECOVERY' AND a.delta_micro_usd>0 "
+        "AND r.allocation_id IS NULL)",
+        (lease["pod_id"],),
+    )
+    if unresolved_recovery:
+        return LeaseBillingReadiness(lease_id, "RECOVERY_REQUIRED", pending_since)
+
+    posted_gpu = lambda: int(  # noqa: E731 - local readability
+        tx.fetchval(
+            "SELECT COALESCE(SUM(amount_micro_usd),0)::bigint FROM charges "
+            "WHERE reservation_id=%s AND category='GPU_GENERATION' "
+            "AND kind IN ('ACCRUAL','ADJUSTMENT')",
+            (lease["reservation_id"],),
+        )
+        or 0
+    )
+    # REOPENED is derived: a settled lease whose covering evidence moved again. The
+    # revision's positive delta posts an ADJUSTMENT on the closed reservation; the
+    # state stays BILLED because the settlement already released the remainder.
+    reservation_state = tx.fetchval(
+        "SELECT state FROM reservations WHERE id=%s", (lease["reservation_id"],)
+    )
+    if reservation_state == "SETTLED":
+        settled_at = tx.fetchval(
+            "SELECT created_at FROM charges WHERE reservation_id=%s "
+            "AND kind='SETTLEMENT' ORDER BY created_at DESC LIMIT 1",
+            (lease["reservation_id"],),
+        )
+        if settled_at is not None:
+            newer_revision = tx.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM runpod_billing_buckets b "
+                "WHERE b.pod_id=%s AND b.observed_at > %s AND b.bucket_start < %s "
+                "AND b.bucket_end > %s)",
+                (lease["pod_id"], settled_at, coverage_end, window_start),
+            )
+            later_adjustment = tx.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM charges WHERE reservation_id=%s "
+                "AND kind='ADJUSTMENT' AND created_at > %s)",
+                (lease["reservation_id"], settled_at),
+            )
+            if newer_revision or later_adjustment:
+                return LeaseBillingReadiness(
+                    lease_id, "BILLED", None, billed_micro_usd=posted_gpu(), reopened=True
+                )
+
+    evidence = BillingRepository.matched_invoice_periods(tx, lease, window_start, coverage_end)
+    cursor = window_start
+    missing: list[tuple[datetime, datetime]] = []
+    for row in sorted(evidence, key=lambda item: (item["period_start"], item["period_end"])):
+        start = max(window_start, row["period_start"])
+        end = min(coverage_end, row["period_end"])
+        if end <= cursor:
+            continue
+        if start > cursor:
+            missing.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < coverage_end:
+        missing.append((cursor, coverage_end))
+    all_verified = all(row["finality_state"] == "INVOICE_VERIFIED" for row in buckets)
+    if not missing and all_verified:
+        return LeaseBillingReadiness(
+            lease_id, "BILLED", None, billed_micro_usd=posted_gpu(), reopened=False
+        )
+    # Buckets missing or unverified: awaiting an invoice when the missing time has
+    # already been queried past the settle lag, pending provider finality otherwise.
+    for gap_start, gap_end in missing:
+        queried = tx.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM runpod_billing_queries q WHERE "
+            "(%s::text IS NULL OR q.provider_account_ref=%s) "
+            "AND q.result_state IN ('BUCKETS','EMPTY') "
+            "AND (q.payload->>'requested_window_start')::timestamptz <= %s "
+            "AND (q.payload->>'requested_window_end')::timestamptz >= %s "
+            "AND q.observed_at >= %s)",
+            (
+                lease["provider_account_ref"],
+                lease["provider_account_ref"],
+                gap_start,
+                gap_end,
+                gap_end + DEFAULT_SETTLE_LAG,
+            ),
+        )
+        if not queried:
+            return LeaseBillingReadiness(
+                lease_id,
+                "PENDING_PROVIDER_FINALITY",
+                pending_since,
+                missing_windows=tuple(missing),
+            )
+    return LeaseBillingReadiness(
+        lease_id, "AWAITING_INVOICE", pending_since, missing_windows=tuple(missing)
+    )
+
+
+def lease_billing_readiness(db: Database, lease_id: UUID) -> LeaseBillingReadiness:
+    """Readiness for one lease (R7). Read-only; never a spend-release side effect."""
+    with db.transaction(readonly=True) as tx:
+        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (lease_id,))
+        if lease is None:
+            raise NotFound("pod lease not found", lease_id=str(lease_id))
+        return _lease_readiness_in_transaction(tx, lease)
+
+
+def settle_billed_lease(db: Database, budget: Any, *, lease_id: UUID, context: str) -> int:
+    """Post the deterministic BILLED settlement for a final lease (R7).
+
+    The amount is the sum of GPU ACCRUAL + ADJUSTMENT postings on the lease's
+    reservation — no new money; it may be 0. The ledger's SETTLEMENT releases exactly
+    the unused remainder (including from an EXPIRED reservation). A replay is a no-op.
+    Any posted-versus-invoice overstatement is stored as evidence.
+    """
+    with db.transaction(readonly=True) as tx:
+        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (lease_id,))
+        if lease is None:
+            raise NotFound("pod lease not found", lease_id=str(lease_id))
+        readiness = _lease_readiness_in_transaction(tx, lease)
+        if readiness.state != "BILLED":
+            raise Conflict(
+                "lease billing is not final; the hold stays",
+                lease_id=str(lease_id),
+                state=readiness.state,
+            )
+        total = readiness.billed_micro_usd or 0
+        invoice_rows = BillingRepository.matched_invoice_periods(
+            tx,
+            lease,
+            lease["compute_window_start_at"] or lease["create_requested_at"],
+            lease["compute_window_end_at"],
+        )
+        invoice_sum = max((int(row["amount_micro_usd"]) for row in invoice_rows), default=0)
+    receipt = UsageReceipt(
+        receipt_id=uuid5(NAMESPACE_URL, f"runpod-billed-settle:{lease_id}"),
+        provider=lease["provider"],
+        provider_receipt_id=f"podlease-billed:{lease_id}",
+        kind=ReceiptKind.SETTLEMENT,
+        cost_basis=CostBasis.BILLED,
+        reservation_id=lease["reservation_id"],
+        episode_id=lease["owner_episode_id"],
+        season_id=None,
+        category=BudgetCategory.GPU_GENERATION,
+        amount_micro_usd=total,
+        currency="USD",
+        units=0,
+        unit=PriceUnit.GPU_SECOND,
+        interval_start=None,
+        interval_end=None,
+        observed_at=lease["updated_at"],
+        provenance=Provenance.LIVE_PROVIDER,
+    )
+    result = budget.record_usage(receipt)
+    if not result.replayed and total > invoice_sum:
+        with db.transaction() as tx:
+            append_event(
+                tx,
+                aggregate_type="pod_lease",
+                aggregate_id=lease_id,
+                event_type="billing.overstatement_recorded",
+                payload={
+                    "posted_micro_usd": total,
+                    "invoice_micro_usd": invoice_sum,
+                    "overstatement_micro_usd": total - invoice_sum,
+                    "context": context,
+                },
+                correlation_id=lease_id,
+                occurred_at=datetime.now(UTC),
+            )
+    return total
 
 
 def raw_body_sha256(body: bytes) -> str:

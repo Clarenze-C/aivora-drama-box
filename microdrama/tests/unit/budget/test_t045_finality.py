@@ -1,0 +1,492 @@
+"""T045 R7: lease billing finality — readiness states and the BILLED settlement.
+
+Red-first: there was no lease-level BILLED, no BILLED receipt and no release of the
+unused hold; `accounting_readiness` (removed) summed only wholly-inside buckets and
+nothing called it.
+"""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from hashlib import sha256
+
+import pytest
+from budget_support import World
+from t045_support import ACCOUNT_REF, T0, closed_bucket, insert_runpod_lease
+
+from microdrama.budget.billing import lease_billing_readiness, settle_billed_lease
+from microdrama.config import Settings
+from microdrama.contracts.enums import ExecutionMode
+from microdrama.persistence import Database
+
+pytestmark = pytest.mark.db
+
+HOUR = timedelta(hours=1)
+
+
+def _reservation_row(db: Database, reservation_id):
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (reservation_id,))
+    assert row is not None
+    return row
+
+
+def _paid(world: World):
+    world.service._settings = Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+
+
+def _evidence(label: str) -> str:
+    return sha256(f"t045-finality:{label}".encode()).hexdigest()
+
+
+def _seed_straddling(world: World, db: Database, *, reservation_micro_usd: int = 900_000):
+    """A 90-minute runpod lease whose hour buckets straddle two periods."""
+    episode = world.episode()
+    end = T0 + timedelta(minutes=90)
+    with db.transaction() as tx:
+        lease, reservation = insert_runpod_lease(
+            tx,
+            episode.episode_id,
+            pod_id="pod-final",
+            lease_state="RELEASED",
+            pod_state="TERMINATED",
+            create_requested_at=T0,
+            compute_window_start_at=T0,
+            compute_window_end_at=end,
+            stop_verified_at=end,
+            terminate_verified_at=end,
+            reservation_micro_usd=reservation_micro_usd,
+        )
+    return episode, lease, reservation
+
+
+def _buckets_and_verify(world: World, db: Database, repository):
+    """Two hour buckets ingested under one covering query, then matched over [T0, 2h)."""
+    from uuid import uuid4 as _uuid4
+
+    aged = T0 + 2 * HOUR + timedelta(hours=1)
+    first = closed_bucket(pod_id="pod-final", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0)
+    second = closed_bucket(
+        pod_id="pod-final",
+        start=T0 + HOUR,
+        end=T0 + 2 * HOUR,
+        gpu=300_000,
+        cpu=0,
+        disk=0,
+        observed_at=aged,
+    )
+    shared = _uuid4()
+    query = type(first[0]).model_validate(
+        first[0].model_dump(mode="python")
+        | {
+            "query_id": shared,
+            "requested_window_start": T0,
+            "requested_window_end": T0 + 2 * HOUR,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+            "observed_at": aged,
+            "bucket_observation_ids": [first[1].observation_id, second[1].observation_id],
+        }
+    )
+    first_bucket = type(first[1]).model_validate(
+        first[1].model_dump(mode="python")
+        | {
+            "query_id": shared,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+            "observed_at": aged,
+        }
+    )
+    second_bucket = type(second[1]).model_validate(
+        second[1].model_dump(mode="python")
+        | {
+            "query_id": shared,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+        }
+    )
+    repository.ingest(query, [first_bucket, second_bucket])
+    result = repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-final",
+        period_start=T0,
+        period_end=T0 + 2 * HOUR,
+        amount_micro_usd=900_000,
+        currency="USD",
+        evidence_sha256=_evidence("straddle"),
+        source="INVOICE",
+        observed_at=aged,
+    )
+    assert result.outcome == "MATCHED"
+    return (query, first_bucket), (query, second_bucket)
+
+
+def test_straddling_buckets_reach_billed_and_settle_the_exact_remainder(
+    world: World, db: Database
+) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode, lease, reservation = _seed_straddling(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    _buckets_and_verify(world, db, repository)
+
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "BILLED"
+    settled = settle_billed_lease(db, world.service, lease_id=lease, context="t045 finality")
+    assert settled == 900_000  # the amount equals the GPU postings on R
+
+    reservation_row = _reservation_row(db, reservation)
+    assert reservation_row["state"] == "SETTLED"
+    assert reservation_row["settled_micro_usd"] == 900_000
+    counters = world.counters(episode.account_id)
+    assert counters["settled"] == 900_000
+    # The exact remainder (900k hold - 900k posted) is released: nothing stays reserved.
+    assert counters["reserved"] == 0
+
+    with db.transaction(readonly=True) as tx:
+        settlement = tx.fetchone(
+            "SELECT amount_micro_usd, cost_basis, kind FROM charges "
+            "WHERE kind='SETTLEMENT' AND reservation_id=%s",
+            (reservation,),
+        )
+    assert settlement["amount_micro_usd"] == 900_000
+    assert settlement["cost_basis"] == "BILLED"
+
+
+def test_readiness_pending_then_awaiting_invoice_then_billed(world: World, db: Database) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode, lease, _reservation = _seed_straddling(world, db)
+    del episode
+    repository = BillingRepository(db, budget_service=world.service)
+    # Before any query: the window's buckets are unqueried.
+    assert lease_billing_readiness(db, lease).state == "PENDING_PROVIDER_FINALITY"
+    first = closed_bucket(pod_id="pod-final", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0)
+    second = closed_bucket(
+        pod_id="pod-final",
+        start=T0 + HOUR,
+        end=T0 + 2 * HOUR,
+        gpu=300_000,
+        cpu=0,
+        disk=0,
+        observed_at=T0 + 2 * HOUR + timedelta(hours=1),
+    )
+    from uuid import uuid4 as _uuid4
+
+    aged = T0 + 2 * HOUR + timedelta(hours=1)
+    shared = _uuid4()
+    query = type(first[0]).model_validate(
+        first[0].model_dump(mode="python")
+        | {
+            "query_id": shared,
+            "requested_window_start": T0,
+            "requested_window_end": T0 + 2 * HOUR,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+            "observed_at": aged,
+            "bucket_observation_ids": [first[1].observation_id, second[1].observation_id],
+        }
+    )
+    first_bucket = type(first[1]).model_validate(
+        first[1].model_dump(mode="python")
+        | {
+            "query_id": shared,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+            "observed_at": aged,
+        }
+    )
+    second_bucket = type(second[1]).model_validate(
+        second[1].model_dump(mode="python")
+        | {
+            "query_id": shared,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+        }
+    )
+    repository.ingest(query, [first_bucket, second_bucket])
+    # Queried (after the lag) but not yet invoice-verified.
+    pending = lease_billing_readiness(db, lease)
+    assert pending.state == "AWAITING_INVOICE"
+    assert pending.pending_since is not None
+    repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-final",
+        period_start=T0,
+        period_end=T0 + 2 * HOUR,
+        amount_micro_usd=900_000,
+        currency="USD",
+        evidence_sha256=_evidence("awaiting"),
+        source="INVOICE",
+        observed_at=T0 + 2 * HOUR + timedelta(hours=1),
+    )
+    assert lease_billing_readiness(db, lease).state == "BILLED"
+
+
+def test_an_expired_hold_reaches_billed(world: World, db: Database) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode, lease, reservation = _seed_straddling(world, db, reservation_micro_usd=900_000)
+    repository = BillingRepository(db, budget_service=world.service)
+    _buckets_and_verify(world, db, repository)
+    # The hold expired while it waited for the invoice.
+    world.clock.advance(seconds=int((T0 - world.clock.now()).total_seconds()) + 7 * 3600)
+    assert world.service.expire_stale() == 1
+    assert _reservation_row(db, reservation)["state"] == "EXPIRED"
+    settled = settle_billed_lease(db, world.service, lease_id=lease, context="expired hold")
+    assert settled == 900_000
+    row = _reservation_row(db, reservation)
+    assert row["state"] == "SETTLED"
+    assert row["closed_reason"] == "settled after expiry"
+    assert world.counters(episode.account_id)["settled"] == 900_000
+
+
+def test_a_transferred_away_lease_reaches_billed(world: World, db: Database) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode_a = world.episode()
+    episode_b = world.episode(number=2)
+    transfer_instant = T0 + timedelta(minutes=30)
+    with db.transaction() as tx:
+        root, root_reservation = insert_runpod_lease(
+            tx,
+            episode_a.episode_id,
+            pod_id="pod-transfer-final",
+            client_token="tok-tf-root",
+            lease_state="RELEASED",
+            create_requested_at=T0,
+            compute_window_start_at=T0,
+            compute_window_end_at=transfer_instant,
+        )
+        insert_runpod_lease(
+            tx,
+            episode_b.episode_id,
+            pod_id="pod-transfer-final",
+            client_token="tok-tf-recv",
+            lease_state="RELEASED",
+            create_requested_at=transfer_instant,
+            compute_window_start_at=transfer_instant,
+            compute_window_end_at=T0 + HOUR,
+            transferred_from=root,
+        )
+    repository = BillingRepository(db, budget_service=world.service)
+    query, bucket = closed_bucket(
+        pod_id="pod-transfer-final", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0
+    )
+    repository.ingest(query, [bucket])
+    repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-transfer-final",
+        period_start=T0,
+        period_end=T0 + HOUR,
+        amount_micro_usd=600_000,
+        currency="USD",
+        evidence_sha256=_evidence("transfer"),
+        source="INVOICE",
+        observed_at=T0 + 2 * HOUR,
+    )
+    assert lease_billing_readiness(db, root).state == "BILLED"
+    settled = settle_billed_lease(db, world.service, lease_id=root, context="transferred away")
+    assert settled == 300_000  # only the root's half hour of GPU postings
+    assert _reservation_row(db, root_reservation)["state"] == "SETTLED"
+
+
+def test_settlement_replay_adds_no_money(world: World, db: Database) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode, lease, reservation = _seed_straddling(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    _buckets_and_verify(world, db, repository)
+    first = settle_billed_lease(db, world.service, lease_id=lease, context="first")
+    second = settle_billed_lease(db, world.service, lease_id=lease, context="replay")
+    assert second == first == 900_000
+    counters = world.counters(episode.account_id)
+    assert counters["settled"] == 900_000
+    with db.transaction(readonly=True) as tx:
+        assert (
+            tx.fetchval(
+                "SELECT count(*) FROM charges WHERE kind='SETTLEMENT' AND reservation_id=%s",
+                (reservation,),
+            )
+            == 1
+        )
+
+
+def test_post_billed_revision_posts_an_adjustment_and_reopens(world: World, db: Database) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode, lease, reservation = _seed_straddling(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    first, second = _buckets_and_verify(world, db, repository)
+    settle_billed_lease(db, world.service, lease_id=lease, context="billed")
+
+    # The provider revises the second bucket upward after the settlement. The latest
+    # stored revision is the internal verified one; the provider's revision links it.
+    with db.transaction(readonly=True) as tx:
+        latest = tx.fetchone(
+            "SELECT payload FROM runpod_billing_buckets "
+            "WHERE bucket_identity_sha256=%s ORDER BY revision DESC LIMIT 1",
+            (second[1].bucket_identity_sha256,),
+        )
+    latest_model = type(second[1]).model_validate(latest["payload"])
+    revision_payload = latest_model.model_dump(mode="python")
+    from uuid import uuid4 as _uuid4
+
+    revision_query_id = _uuid4()
+    revision_payload.update(
+        observation_id=_uuid4(),
+        query_id=revision_query_id,
+        revision=latest_model.revision + 1,
+        prior_observation_id=latest_model.observation_id,
+        prior_raw_response_sha256=latest_model.raw_response_sha256,
+        total_amount_micro_usd=400_000,
+        gpu_amount_micro_usd=400_000,
+        observed_at=latest_model.observed_at + timedelta(hours=1),
+        finality_state="ALLOCATED_PROVIDER_REPORTED",
+        invoice_verification_id=None,
+    )
+    revision = type(second[1]).model_validate(revision_payload)
+    from uuid import uuid4 as _uuid4
+
+    revision_query = type(second[0]).model_validate(
+        second[0].model_dump(mode="python")
+        | {
+            "query_id": revision_query_id,
+            "raw_response_sha256": sha256(b"t045-finality-revision").hexdigest(),
+            "bucket_observation_ids": [revision.observation_id],
+            "requested_window_start": T0,
+            "requested_window_end": T0 + 2 * HOUR,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+        }
+    )
+    revision = revision.model_copy(
+        update={"raw_response_sha256": revision_query.raw_response_sha256}
+    )
+    repository.ingest(revision_query, [revision])
+
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "BILLED"
+    assert readiness.reopened is True
+    counters = world.counters(episode.account_id)
+    assert counters["settled"] == 1_000_000  # the positive delta added to settled
+    with db.transaction(readonly=True) as tx:
+        adjustments = tx.fetchval(
+            "SELECT count(*) FROM charges WHERE kind='ADJUSTMENT' AND reservation_id=%s",
+            (reservation,),
+        )
+    assert adjustments >= 1
+
+
+def test_overstatement_after_a_downward_revision_is_stored_as_evidence(
+    world: World, db: Database
+) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    episode, lease, _reservation = _seed_straddling(world, db)
+    del episode
+    repository = BillingRepository(db, budget_service=world.service)
+    first, second = _buckets_and_verify(world, db, repository)
+    # A downward provider revision arrives before settlement: negative delta is
+    # evidence only, the posted spend stays higher than the invoice sum.
+    with db.transaction(readonly=True) as tx:
+        latest = tx.fetchone(
+            "SELECT payload FROM runpod_billing_buckets "
+            "WHERE bucket_identity_sha256=%s ORDER BY revision DESC LIMIT 1",
+            (second[1].bucket_identity_sha256,),
+        )
+    latest_model = type(second[1]).model_validate(latest["payload"])
+    revision_payload = latest_model.model_dump(mode="python")
+    from uuid import uuid4 as _uuid4
+
+    revision_query_id = _uuid4()
+    revision_payload.update(
+        observation_id=_uuid4(),
+        query_id=revision_query_id,
+        revision=latest_model.revision + 1,
+        prior_observation_id=latest_model.observation_id,
+        prior_raw_response_sha256=latest_model.raw_response_sha256,
+        total_amount_micro_usd=200_000,
+        gpu_amount_micro_usd=200_000,
+        observed_at=latest_model.observed_at + timedelta(hours=1),
+        finality_state="ALLOCATED_PROVIDER_REPORTED",
+        invoice_verification_id=None,
+    )
+    revision = type(second[1]).model_validate(revision_payload)
+    from uuid import uuid4 as _uuid4
+
+    revision_query = type(second[0]).model_validate(
+        second[0].model_dump(mode="python")
+        | {
+            "query_id": revision_query_id,
+            "raw_response_sha256": sha256(b"t045-finality-downward").hexdigest(),
+            "bucket_observation_ids": [revision.observation_id],
+            "requested_window_start": T0,
+            "requested_window_end": T0 + 2 * HOUR,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + 2 * HOUR,
+        }
+    )
+    revision = revision.model_copy(
+        update={"raw_response_sha256": revision_query.raw_response_sha256}
+    )
+    repository.ingest(revision_query, [revision])
+    # The later invoice matches the latest (lower) sum while posted spend is higher.
+    with db.transaction(readonly=True) as tx:
+        first_evidence_id = tx.fetchval(
+            "SELECT period_evidence_id FROM runpod_billing_period_evidence "
+            "WHERE evidence_sha256=%s",
+            (_evidence("straddle"),),
+        )
+    matched = repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-final",
+        period_start=T0,
+        period_end=T0 + 2 * HOUR,
+        amount_micro_usd=800_000,
+        currency="USD",
+        evidence_sha256=_evidence("downward-match"),
+        source="INVOICE",
+        observed_at=T0 + 3 * HOUR,
+        supersedes_evidence_id=first_evidence_id,
+        actor_ref="owner:test",
+        reason="corrected invoice after the provider revision",
+    )
+    assert matched.outcome == "MATCHED"
+    settled = settle_billed_lease(db, world.service, lease_id=lease, context="overstatement")
+    assert settled == 900_000  # posted sum, not the lower invoice
+    with db.transaction(readonly=True) as tx:
+        events = tx.fetchall(
+            "SELECT payload FROM domain_events WHERE event_type='billing.overstatement_recorded'"
+        )
+    assert len(events) == 1
+    assert events[0]["payload"]["posted_micro_usd"] == 900_000
+    assert events[0]["payload"]["invoice_micro_usd"] == 800_000
+
+
+def test_finality_survives_a_restart_readback(db_dsn: str, world: World, db: Database) -> None:
+    _paid(world)
+    from microdrama.budget.billing import BillingRepository
+
+    _episode, lease, _reservation = _seed_straddling(world, db)
+    repository = BillingRepository(db, budget_service=world.service)
+    _buckets_and_verify(world, db, repository)
+    settle_billed_lease(db, world.service, lease_id=lease, context="restart")
+    from microdrama.persistence import Database as Db
+
+    with Db(db_dsn) as restarted:
+        readiness = lease_billing_readiness(restarted, lease)
+        assert readiness.state == "BILLED"
+        with restarted.transaction(readonly=True) as tx:
+            assert tx.fetchval("SELECT count(*) FROM charges WHERE kind='SETTLEMENT'") == 1
