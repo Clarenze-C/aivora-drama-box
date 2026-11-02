@@ -145,8 +145,13 @@ def largest_remainder(total: int, weights: list[tuple[str, int]]) -> dict[str, i
 
 
 def _ceil_seconds(delta: timedelta) -> int:
-    """Whole seconds, rounding a sub-second interval up to one (never zero)."""
-    return max(1, -(-int(delta.total_seconds() * 1_000_000) // 1_000_000))
+    """Whole seconds, rounding a sub-second interval up to one (never zero).
+
+    T045-FIX B-N1: pure integer arithmetic on the timedelta's exact fields - money
+    and time math never passes through a binary float.
+    """
+    microseconds = (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+    return max(1, -(-microseconds // 1_000_000))
 
 
 class BillingRepository:

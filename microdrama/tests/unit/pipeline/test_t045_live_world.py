@@ -349,3 +349,79 @@ def test_a_charging_render_config_is_refused_for_a_leased_runpod_pod(
             comfy_transport=_FailingTransport("comfy"),
             render_config=_live_render_config(lease_covered=False),
         )
+
+
+def test_a_reservation_bound_to_one_job_cannot_be_spent_under_another(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-N6: the Comfy guard checks the reservation's job binding - a
+    mismatched job id is refused before any request leaves."""
+    import uuid as _uuid
+
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.testing.seed import seed_episode, seed_season
+
+    _seed_registries(
+        db, _live_settings(), recorded_at=T0 - timedelta(minutes=1), live_evidence=True
+    )
+    world = _build(
+        db,
+        tmp_path,
+        runpod_transport=_FailingTransport("runpod"),
+        comfy_transport=_FailingTransport("comfy"),
+    )
+    with db.transaction() as tx:
+        season = seed_season(tx)
+        episode = seed_episode(tx, season)
+        account = _uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
+            "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
+            (account, season, episode),
+        )
+        for category in (
+            "RESEARCH_SCRIPT_PROMPTS_METADATA",
+            "REFERENCES_DIALOGUE",
+            "QA_CAPTIONS",
+            "CPU_STORAGE_TRANSFER",
+            "RECOVERY_HEADROOM",
+            "METERED_MANAGEMENT",
+        ):
+            tx.execute(
+                "INSERT INTO budget_category_allocations (account_id, category, "
+                "allocated_micro_usd, protected) VALUES (%s, %s, 0, %s)",
+                (account, category, "false" if category == "METERED_MANAGEMENT" else "true"),
+            )
+        tx.execute(
+            "INSERT INTO budget_category_allocations (account_id, category, "
+            "allocated_micro_usd, protected) VALUES (%s, 'GPU_GENERATION', 9000000, true)",
+            (account,),
+        )
+        from microdrama.testing.seed import seed_job
+
+        job_a = seed_job(tx, semantic_key="n6:job-a", job_type="render.shot")
+        job_b = seed_job(tx, semantic_key="n6:job-b", job_type="render.shot")
+        reservation = _uuid.uuid4()
+        tx.execute(
+            "INSERT INTO reservations (id, account_id, episode_id, request_id, semantic_key, "
+            "request_hash, category, queue, provider, operation_kind, price, ceilings, "
+            "job_id, reserved_micro_usd, state, expires_at) VALUES (%s, %s, %s, "
+            "%s, %s, %s, 'GPU_GENERATION', 'production', 'comfyui', 'comfy.queue_prompt', "
+            "'{}', '{}', %s, 1000, 'ACTIVE', %s)",
+            (
+                reservation,
+                account,
+                episode,
+                _uuid.uuid4(),
+                f"n6:{reservation}",
+                "0" * 64,
+                job_a,
+                T0 + timedelta(hours=1),
+            ),
+        )
+    world.comfy_client.bind_pod_endpoint("pod-n6", "https://pod-n6-8188.proxy.runpod.net")
+    with pytest.raises(EffectDenied, match="differs from the reservation's job"):
+        with world.comfy_client.authorization_scope(
+            reservation_id=reservation, episode_id=episode, job_id=job_b, operation_id=None
+        ):
+            world.comfy_client.object_info()

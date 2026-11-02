@@ -1356,9 +1356,9 @@ class LeaseService:
                 "INSERT INTO pod_leases (id, schema_version, provider, pod_id, owned_tag, "
                 "client_token, owner_episode_id, owner_job_id, reservation_id, lease_state, "
                 "pod_state, gpu_type, hourly_price_micro_usd, heartbeat_at, lease_expires_at, "
-                "accrued_until, transferred_from, compute_window_start_at) "
+                "accrued_until, transferred_from, compute_window_start_at, provider_account_ref) "
                 "VALUES (%s, '1.0', %s, %s, %s, %s, %s, %s, %s, 'ACTIVE', 'RUNNING', %s, %s, "
-                "%s, %s, %s, %s, %s) RETURNING *",
+                "%s, %s, %s, %s, %s, %s) RETURNING *",
                 (
                     new_id,
                     old["provider"],
@@ -1376,6 +1376,10 @@ class LeaseService:
                     lease_id,
                     # A transfer receiver's compute window starts at the transfer instant.
                     now,
+                    # T045-FIX B-S6: the receiver carries the chain's claim-time account
+                    # label, so the absent-Pod billing proof holds once the Pod is gone
+                    # whoever of the chain terminated it.
+                    old["provider_account_ref"],
                 ),
             )
             assert inserted is not None

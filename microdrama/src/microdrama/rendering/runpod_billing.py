@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 from microdrama.contracts.cost import (
@@ -79,6 +80,11 @@ def durable_pod_ownership_probe(
     return probe
 
 
+def _delta_microseconds(delta: timedelta) -> int:
+    """Exact microseconds of a timedelta, pure integer arithmetic (T045-FIX B-N1)."""
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
 def map_billing_history(
     db: Database,
     history: RunpodBillingHistory,
@@ -115,7 +121,9 @@ def map_billing_history(
         return MappedBillingIngest(query=query, buckets=[])
 
     sizes = {
-        int((record.interval_end - record.interval_start).total_seconds())
+        # T045-FIX B-N1: integer arithmetic - the window rounding never passes
+        # through a binary float.
+        _delta_microseconds(record.interval_end - record.interval_start) // 1_000_000
         for record in history.records
     }
     if len(sizes) != 1:

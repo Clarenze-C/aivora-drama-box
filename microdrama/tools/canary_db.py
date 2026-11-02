@@ -7,12 +7,17 @@ budget account. The T046 staging stack refuses PAID_BENCHMARK, so the canary
 cannot use it — this database is the canary's own.
 
 Safety: it binds 127.0.0.1 on a free port (never 8091 or 8093, the staging
-stack's), starts its own throwaway cluster under a private temp dir, and never
-touches a running container or any other database.
+stack's), never touches a running container or any other database, and refuses to
+stop a cluster whose data directory is not under its own data root.
+
+T045-FIX B-S8: the canary cluster runs in DURABLE mode (fsync, synchronous_commit
+and full_page_writes on) in a stable data directory outside /tmp, created 0700.
+``down`` is a fast (crash-safe) shutdown that KEEPS the data - this database is
+the only ledger of a paid run.
 
 Usage (from ``microdrama/``):
     python tools/canary_db.py up      # start (or report) the canary database
-    python tools/canary_db.py down    # stop and discard the cluster
+    python tools/canary_db.py down    # stop the cluster (fast) and keep its data
     python tools/canary_db.py status  # show the stored state without starting it
 
 State lives in ``out/canary-db.json`` (dsn, port, pid, root).
@@ -33,6 +38,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 STATE_PATH = ROOT / "out" / "canary-db.json"
+#: T045-FIX B-S8: the canary cluster's stable, non-/tmp data root.
+DEFAULT_DATA_ROOT = Path("/root/.local/share/microdrama/canary-pg")
 #: Ports owned by the T046 staging stack — the canary database must never take them.
 FORBIDDEN_PORTS = {8091, 8093}
 
@@ -134,16 +141,17 @@ def _seed(dsn: str) -> None:
     db.close()
 
 
-def up() -> int:
+def up(data_root: Path = DEFAULT_DATA_ROOT) -> int:
     state = _state()
     if state and _reachable(state["dsn"]):
         print(f"canary database already up: {state['dsn']}")
         return 0
     from microdrama.testing.services import EphemeralPostgres
 
-    server = EphemeralPostgres(keep=True)
+    # T045-FIX B-S8: durable settings, stable data root outside /tmp, 0700.
+    server = EphemeralPostgres(keep=True, durable=True, root=data_root)
     while server.port in FORBIDDEN_PORTS:  # pragma: no cover - free-port collision
-        server = EphemeralPostgres(keep=True)
+        server = EphemeralPostgres(keep=True, durable=True, root=data_root)
     dsn = server.start()
     _seed(dsn)
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -173,47 +181,40 @@ def down() -> int:
     if state is None:
         print("no canary database recorded")
         return 0
-    root = Path(state["root"])
+    root = Path(state["root"]).resolve()
+    # T045-FIX B-N5: never stop a cluster this tool does not own - the state file is
+    # untrusted input, its data dir must sit under the canary-db data root.
+    if not root.is_relative_to(DEFAULT_DATA_ROOT.resolve()):
+        print(
+            "refusing to stop a cluster whose data directory is not under "
+            f"{DEFAULT_DATA_ROOT} (state says {root}); stop it by hand"
+        )
+        return 1
     data_dir = root / "data"
     if data_dir.exists():
-        # Stop the throwaway cluster directly; it owns no other state.
+        # T045-FIX B-S8: a fast (crash-safe) shutdown; the data is kept.
         from microdrama.testing.services import find_pg_bindir
 
         bindir = find_pg_bindir()
+        command = [
+            str(bindir / "pg_ctl"),
+            "-D",
+            str(data_dir),
+            "-o",
+            f"-p {state['port']}",
+            "stop",
+            "-m",
+            "fast",
+        ]
         if os.geteuid() == 0:  # pragma: no cover - test suites run as root
             import pwd
 
             pg = pwd.getpwnam("postgres")
-            subprocess.run(
-                [
-                    str(bindir / "pg_ctl"),
-                    "-D",
-                    str(data_dir),
-                    "-o",
-                    f"-p {state['port']}",
-                    "stop",
-                    "-m",
-                    "immediate",
-                ],
-                user=pg.pw_name,
-                check=False,
-                capture_output=True,
-            )
+            subprocess.run(command, user=pg.pw_name, check=False, capture_output=True)
         else:  # pragma: no cover
-            subprocess.run(
-                [
-                    str(bindir / "pg_ctl"),
-                    "-D",
-                    str(data_dir),
-                    "stop",
-                    "-m",
-                    "immediate",
-                ],
-                check=False,
-                capture_output=True,
-            )
+            subprocess.run(command, check=False, capture_output=True)
     STATE_PATH.unlink(missing_ok=True)
-    print("canary database down (cluster data kept in its temp dir)")
+    print(f"canary database down (fast shutdown; cluster data kept at {root})")
     return 0
 
 
@@ -230,9 +231,15 @@ def status() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="canary_db")
     parser.add_argument("command", choices=("up", "down", "status"))
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=DEFAULT_DATA_ROOT,
+        help="the canary cluster's durable data directory (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
     if args.command == "up":
-        return up()
+        return up(data_root=args.data_root)
     if args.command == "down":
         return down()
     return status()

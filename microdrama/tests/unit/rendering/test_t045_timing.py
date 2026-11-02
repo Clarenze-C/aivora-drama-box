@@ -18,6 +18,7 @@ from microdrama.budget import BudgetService
 from microdrama.config import Settings
 from microdrama.contracts.errors import Conflict, NeedsReconciliation
 from microdrama.persistence import Database
+from microdrama.rendering.leases import PodLeaseConfig
 from microdrama.testing.fakes import (
     FakeClock,
     FakePodProvider,
@@ -248,3 +249,31 @@ def test_shutdown_of_an_ambiguous_create_records_the_window_end(db: Database) ->
     assert row["lease_state"] == "RELEASED"
     assert row["compute_window_end_at"] is not None
     assert _reservation_state(db, row["reservation_id"]) == "ACTIVE"
+
+
+def test_a_transfer_receiver_carries_the_chain_account_ref(db: Database) -> None:
+    """T045-FIX B-S6: the receiver lease copies the claim-time account label, so the
+    absent-Pod billing proof holds for the chain whoever terminated the Pod."""
+    import dataclasses
+
+    account_ref = "acct:runpod-t045-bs6"
+    provider = RunpodIdFakePods(clock=FakeClock(T0), ids=SequentialIds("t045-bs6"))
+    world = RenderWorld(
+        db,
+        provider=provider,
+        config=dataclasses.replace(PodLeaseConfig.for_mock(), provider_account_ref=account_ref),
+    )
+    episode_a = world.episode()
+    episode_b = world.episode(number=2)
+    handle, _ = world.claim_and_acquire(episode_a, "t045-bs6-root")
+    root_row = world.lease_row(handle.lease.lease_id)
+    assert root_row["provider_account_ref"] == account_ref
+    world.clock.advance(seconds=600)
+    world.leases.transfer(
+        handle.lease.lease_id,
+        to_episode_id=episode_b.episode_id,
+        to_semantic_key="t045-bs6-recv",
+    )
+    receiver = world.live_leases()[0]
+    assert receiver["transferred_from"] == handle.lease.lease_id
+    assert receiver["provider_account_ref"] == account_ref

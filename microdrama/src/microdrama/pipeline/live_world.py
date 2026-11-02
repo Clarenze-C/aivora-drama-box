@@ -478,10 +478,16 @@ def build_live_benchmark_world(
             or job is None
         ):
             raise EffectDenied("ComfyUI HTTP request lacks a matching active reservation/job")
+        if reservation["job_id"] is not None and reservation["job_id"] != authorization.job_id:
+            # T045-FIX B-N6: a reservation bound to one job may never be spent under
+            # another job's scope (an unbound hold - the canary reserves it per
+            # prompt before its attempt jobs exist - is shared by that prompt's
+            # bounded attempts only).
+            raise EffectDenied("ComfyUI request job differs from the reservation's job")
         if authorization.operation_id is None:
             # Only the catalog read may run before a durable operation exists; the
             # job must still belong to the same episode as the reservation (a canary
-            # reserves one prompt hold shared by its bounded prompt jobs).
+            # reserves one hold PER PROMPT, shared by that prompt's bounded attempts).
             if path != "/object_info":
                 raise EffectDenied("ComfyUI request requires a durable provider operation")
             if job["episode_id"] != authorization.episode_id:

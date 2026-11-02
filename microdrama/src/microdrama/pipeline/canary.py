@@ -880,7 +880,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--authorization-sha256")
     parser.add_argument("--prompts")
-    parser.add_argument("--database-url")
     parser.add_argument("--pod-id")
     parser.add_argument("--period-start")
     parser.add_argument("--period-end")
@@ -894,9 +893,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
-    database_url = args.database_url or settings.database_url
+    # T045-FIX B-N2: the DSN comes from MICRODRAMA_DATABASE_URL only - never from
+    # argv (where every process listing would see it) and never printed with a
+    # password.
+    database_url = settings.database_url
     if not database_url:
-        print("canary: MICRODRAMA_DATABASE_URL (or --database-url) is required", file=sys.stderr)
+        print("canary: MICRODRAMA_DATABASE_URL is required", file=sys.stderr)
         return 2
     store_root = settings.object_store_root or Path("canary-objects")
     store = FilesystemObjectStore(Path(store_root))
@@ -938,11 +940,13 @@ def main(argv: list[str] | None = None) -> int:
                 ("--pod-id", args.pod_id),
                 ("--period-start", args.period_start),
                 ("--period-end", args.period_end),
+                # T045-FIX B-S7: only None is missing - a zero amount is the billed-
+                # zero period (R5 MATCHED_ZERO) and must reach the verification.
                 ("--amount-micro-usd", args.amount_micro_usd),
                 ("--evidence", args.evidence),
                 ("--source", args.source),
             )
-            if not value
+            if value is None
         ]
         if missing:
             print(f"canary invoice requires {', '.join(missing)}", file=sys.stderr)

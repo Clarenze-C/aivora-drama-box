@@ -68,6 +68,24 @@ def _as_pg_user(cmd: list[str]) -> list[str]:
     return cmd
 
 
+def postgres_server_opts(*, durable: bool = False) -> str:
+    """The pg_ctl server options string for a cluster.
+
+    T045-FIX B-S8: ``durable=True`` (the canary database) turns fsync,
+    synchronous_commit and full_page_writes ON - the reservation committed before a
+    Pod create must survive a crash while the Pod exists and bills. Test fixtures
+    keep the fast throwaway settings.
+    """
+    durability = (
+        "-c fsync=on -c synchronous_commit=on -c full_page_writes=on"
+        if durable
+        else "-c fsync=off -c synchronous_commit=off -c full_page_writes=off"
+    )
+    return (
+        f"-p {{port}} -k {{root}} -c listen_addresses=127.0.0.1 {durability} -c max_connections=200"
+    )
+
+
 @dataclass
 class EphemeralPostgres:
     """A throwaway PostgreSQL cluster. ``start()`` returns a superuser DSN."""
@@ -75,6 +93,7 @@ class EphemeralPostgres:
     port: int = field(default_factory=free_port)
     root: Path | None = None
     keep: bool = False
+    durable: bool = False
     _started: bool = False
 
     @property
@@ -115,11 +134,7 @@ class EphemeralPostgres:
                 check=True,
                 capture_output=True,
             )
-        opts = (
-            f"-p {self.port} -k {self.root} -c listen_addresses=127.0.0.1 "
-            "-c fsync=off -c synchronous_commit=off -c full_page_writes=off "
-            "-c max_connections=200"
-        )
+        opts = postgres_server_opts(durable=self.durable).format(port=self.port, root=self.root)
         subprocess.run(
             _as_pg_user(
                 [

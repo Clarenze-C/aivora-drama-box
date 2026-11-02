@@ -19,18 +19,18 @@ from typing import Any
 
 import pytest
 
+from microdrama.budget import BudgetService
 from microdrama.config import Settings
 from microdrama.contracts.enums import ExecutionMode
 from microdrama.contracts.errors import PolicyDenied, SchemaInvalid
-from microdrama.budget import BudgetService
 from microdrama.persistence import Database
 from microdrama.pipeline.canary import load_prompts, run_execute, run_invoice, run_preflight
-from microdrama.rendering import RunpodInvoiceFinality
 from microdrama.pipeline.canary_authorization import (
     CanaryAuthorization,
     load_canary_authorization,
     prompt_pin,
 )
+from microdrama.rendering import RunpodInvoiceFinality
 from microdrama.testing.fakes import FakeClock, SequentialIds
 
 pytestmark = pytest.mark.db
@@ -395,7 +395,8 @@ def test_invoice_entrypoint_stores_only_the_evidence_hash(db: Database, tmp_path
         pod_id="pod-canary-inv", start=start, end=end, gpu=400_000, cpu=50_000, disk=50_000
     )
     from microdrama.budget import BudgetService
-    from microdrama.testing.fakes import FakeClock as _FC, SequentialIds as _SI
+    from microdrama.testing.fakes import FakeClock as _FC
+    from microdrama.testing.fakes import SequentialIds as _SI
 
     RunpodInvoiceFinality(
         db, budget_service=BudgetService(db, _FC(T0), _SI("canary-inv"), _live_settings())
@@ -509,3 +510,56 @@ def test_a_finality_with_a_foreign_budget_service_is_refused_by_the_world(
     billing = RunpodInvoiceFinality(db, budget_service=foreign)
     with pytest.raises(PolicyDenied, match="world's own budget service"):
         _build(db, tmp_path, billing=billing)
+
+
+def test_a_zero_amount_is_not_a_missing_amount(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX B-S7: only None is missing - a zero amount must reach the
+    verification (the R5 billed-zero period / MATCHED_ZERO)."""
+    from microdrama.pipeline import canary as canary_module
+
+    captured: dict[str, Any] = {}
+
+    def _capture(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "invoice MATCHED_ZERO: fixture"
+
+    authorization = _write(tmp_path, _authorization_document())
+    monkeypatch.setattr(canary_module, "run_invoice", _capture)
+    monkeypatch.setattr(canary_module, "Database", lambda _dsn: None)
+    monkeypatch.setenv("MICRODRAMA_DATABASE_URL", "postgresql://canary@127.0.0.1:1/postgres")
+    rc = canary_module.main(
+        [
+            "invoice",
+            "--authorization",
+            str(authorization),
+            "--pod-id",
+            "pod-z",
+            "--period-start",
+            "2026-11-02T12:00:00+00:00",
+            "--period-end",
+            "2026-11-02T13:00:00+00:00",
+            "--amount-micro-usd",
+            "0",
+            "--evidence",
+            "/dev/null",
+            "--source",
+            "INVOICE",
+        ]
+    )
+    assert rc == 0
+    assert captured["amount_micro_usd"] == 0
+
+
+def test_the_dsn_is_never_taken_from_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T045-FIX B-N2: no --database-url flag exists; the DSN comes only from
+    MICRODRAMA_DATABASE_URL and is never printed with a password."""
+    from microdrama.pipeline import canary as canary_module
+
+    monkeypatch.delenv("MICRODRAMA_DATABASE_URL", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        canary_module.main(
+            ["invoice", "--database-url", "postgresql://x/y", "--authorization", "a"]
+        )
+    assert exc.value.code == 2  # argparse rejects the removed flag outright

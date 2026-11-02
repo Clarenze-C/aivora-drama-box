@@ -882,3 +882,14 @@ def test_a_concurrent_adjustment_is_never_dropped_by_the_settlement(
         assert settlement["amount_micro_usd"] == int(posted_before) + adjustment
     finally:
         blocker.close()
+
+
+def test_ceil_seconds_is_exact_integer_arithmetic() -> None:
+    """T045-FIX B-N1: money/time math never passes through a binary float - exact
+    boundaries (1 us, a day and 1 us, exactly one second) round-trip exactly."""
+    from microdrama.budget.billing import _ceil_seconds
+
+    assert _ceil_seconds(timedelta(microseconds=1)) == 1
+    assert _ceil_seconds(timedelta(days=1, microseconds=1)) == 86_401
+    assert _ceil_seconds(timedelta(seconds=1)) == 1
+    assert _ceil_seconds(timedelta(seconds=1, microseconds=1)) == 2
