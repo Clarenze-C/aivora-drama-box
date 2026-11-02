@@ -544,22 +544,48 @@ class BillingRepository:
                         period_evidence_id=str(verified_overlap["period_evidence_id"]),
                     )
             covering_query = tx.fetchone(
-                "SELECT * FROM runpod_billing_queries WHERE provider_account_ref=%s "
-                "AND result_state IN ('BUCKETS','EMPTY') "
-                "AND (payload->>'requested_window_start')::timestamptz <= %s "
-                "AND (payload->>'requested_window_end')::timestamptz >= %s "
-                "AND observed_at >= %s ORDER BY observed_at DESC LIMIT 1",
-                (provider_account_ref, period_start, period_end, period_end + self.settle_lag),
+                # T045-FIX A-N3: the covering query must be Pod-scoped — a BUCKETS
+                # query counts only when it observed this Pod and no other. An EMPTY
+                # query carries no bucket evidence either way (the query contract has
+                # no pod field), so it stays valid coverage for the billed-zero route.
+                "SELECT * FROM runpod_billing_queries q WHERE q.provider_account_ref=%s "
+                "AND q.result_state IN ('BUCKETS','EMPTY') "
+                "AND (q.payload->>'requested_window_start')::timestamptz <= %s "
+                "AND (q.payload->>'requested_window_end')::timestamptz >= %s "
+                "AND q.observed_at >= %s "
+                "AND (q.result_state = 'EMPTY' OR ("
+                "EXISTS (SELECT 1 FROM runpod_billing_buckets b "
+                "WHERE b.query_id = q.query_id AND b.pod_id = %s) "
+                "AND NOT EXISTS (SELECT 1 FROM runpod_billing_buckets b "
+                "WHERE b.query_id = q.query_id AND b.pod_id <> %s))) "
+                "ORDER BY q.observed_at DESC LIMIT 1",
+                (
+                    provider_account_ref,
+                    period_start,
+                    period_end,
+                    period_end + self.settle_lag,
+                    pod_id,
+                    pod_id,
+                ),
             )
             if covering_query is None:
                 raise Conflict("no completed billing query covers the period after the settle lag")
-            skipped = tx.fetchval(
-                "SELECT EXISTS (SELECT 1 FROM runpod_billing_query_skipped_buckets "
-                "WHERE provider_account_ref=%s AND pod_id=%s AND bucket_start < %s "
-                "AND bucket_end > %s)",
+            # T045-FIX A-B1: a skip only refuses the period while no stored closed
+            # bucket of the same identity was observed at or after the skip. Once a
+            # later poll closed it, the skip is historical, not an open question.
+            unresolved_skip = tx.fetchone(
+                "SELECT s.skip_id FROM runpod_billing_query_skipped_buckets s "
+                "WHERE s.provider_account_ref=%s AND s.pod_id=%s AND s.bucket_start < %s "
+                "AND s.bucket_end > %s AND NOT EXISTS ("
+                "SELECT 1 FROM runpod_billing_buckets b "
+                "WHERE b.provider_account_ref = s.provider_account_ref "
+                "AND b.pod_id = s.pod_id AND b.bucket_start = s.bucket_start "
+                "AND b.bucket_end = s.bucket_end "
+                "AND b.bucket_size_seconds = s.bucket_size_seconds "
+                "AND b.observed_at >= s.observed_at) LIMIT 1",
                 (provider_account_ref, pod_id, period_end, period_start),
             )
-            if skipped:
+            if unresolved_skip is not None:
                 raise Conflict(
                     "the period still contains skipped-open buckets; retry once they settle"
                 )
@@ -569,6 +595,19 @@ class BillingRepository:
                 "AND bucket_end > %s ORDER BY bucket_identity_sha256, revision DESC",
                 (provider_account_ref, pod_id, period_end, period_start),
             )
+            # T045-FIX A-N4: a bucket that straddles a period edge must refuse the
+            # verification even when aligned buckets exist at both edges — its amount
+            # is not this period's.
+            straddling = [
+                row
+                for row in rows
+                if row["bucket_start"] < period_start or row["bucket_end"] > period_end
+            ]
+            if straddling:
+                raise SchemaInvalid(
+                    "a billing bucket straddles the period edge; pick a period on bucket "
+                    "boundaries"
+                )
             if rows:
                 if not (
                     any(row["bucket_start"] == period_start for row in rows)
@@ -1015,19 +1054,29 @@ def _lease_readiness_in_transaction(tx: Tx, lease: Any) -> LeaseBillingReadiness
     # Buckets missing or unverified: awaiting an invoice when the missing time has
     # already been queried past the settle lag, pending provider finality otherwise.
     for gap_start, gap_end in missing:
+        # T045-FIX A-N3 (readiness side): the gap query must be Pod-scoped like the
+        # verification covering query — another Pod's response is not this lease's
+        # coverage. Conservative: an unscoped-looking query leaves the lease pending.
         queried = tx.fetchval(
             "SELECT EXISTS (SELECT 1 FROM runpod_billing_queries q WHERE "
             "(%s::text IS NULL OR q.provider_account_ref=%s) "
             "AND q.result_state IN ('BUCKETS','EMPTY') "
             "AND (q.payload->>'requested_window_start')::timestamptz <= %s "
             "AND (q.payload->>'requested_window_end')::timestamptz >= %s "
-            "AND q.observed_at >= %s)",
+            "AND q.observed_at >= %s "
+            "AND (q.result_state = 'EMPTY' OR ("
+            "EXISTS (SELECT 1 FROM runpod_billing_buckets b WHERE b.query_id=q.query_id "
+            "AND b.pod_id=%s) "
+            "AND NOT EXISTS (SELECT 1 FROM runpod_billing_buckets b WHERE b.query_id=q.query_id "
+            "AND b.pod_id<>%s))))",
             (
                 lease["provider_account_ref"],
                 lease["provider_account_ref"],
                 gap_start,
                 gap_end,
                 gap_end + DEFAULT_SETTLE_LAG,
+                lease["pod_id"],
+                lease["pod_id"],
             ),
         )
         if not queried:

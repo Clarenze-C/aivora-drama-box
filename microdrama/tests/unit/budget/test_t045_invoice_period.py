@@ -319,3 +319,236 @@ def test_no_completed_query_after_the_lag_is_refused(world: World, db: Database)
     repository.ingest(query, [bucket])  # everything open: skipped, nothing stored
     with pytest.raises(Conflict, match="query"):
         _verify(repository)
+
+
+# --- T045-FIX: A-B1, A-N3, A-N4 -----------------------------------------------------------
+
+
+def _response(
+    repository: BillingRepository,
+    *,
+    pod_id: str,
+    buckets: list,
+    observed_at,
+    window: tuple,
+) -> None:
+    """Ingest one provider response whose every bucket shares one query."""
+    query_id = uuid4()
+    payload = buckets[0][0].model_dump(mode="python")
+    payload.update(
+        query_id=query_id,
+        requested_window_start=window[0],
+        requested_window_end=window[1],
+        provider_resolved_window_start=window[0],
+        provider_resolved_window_end=window[1],
+        observed_at=observed_at,
+        bucket_observation_ids=[b[1].observation_id for b in buckets],
+    )
+    query = type(buckets[0][0]).model_validate(payload)
+    models = []
+    for b in buckets:
+        body = b[1].model_dump(mode="python")
+        body.update(
+            query_id=query_id,
+            provider_resolved_window_start=window[0],
+            provider_resolved_window_end=window[1],
+            observed_at=observed_at,
+        )
+        models.append(type(b[1]).model_validate(body))
+    repository.ingest(query, models)
+
+
+def _skip_fixtures(pod_id: str) -> list:
+    """Two half-hour buckets covering [T0, T0+1H], gpu 300_000 each."""
+    return [
+        closed_bucket(
+            pod_id=pod_id, start=T0, end=T0 + timedelta(minutes=30), gpu=300_000, cpu=0, disk=0
+        ),
+        closed_bucket(
+            pod_id=pod_id,
+            start=T0 + timedelta(minutes=30),
+            end=T0 + HOUR,
+            gpu=300_000,
+            cpu=0,
+            disk=0,
+        ),
+    ]
+
+
+def test_a_skip_closed_by_a_later_observation_no_longer_blocks_verification(
+    world: World, db: Database
+) -> None:
+    """T045-FIX A-B1: an open poll writes skips; once a later poll of the same buckets
+    observes them closed, the period verifies, the lease reaches BILLED and the hold's
+    remainder is released."""
+    from microdrama.budget.billing import lease_billing_readiness, settle_billed_lease
+    from t045_support import insert_runpod_lease
+
+    repository = _paid(world)
+    episode = world.episode()
+    with db.transaction() as tx:
+        lease_id, reservation_id = insert_runpod_lease(
+            tx,
+            episode.episode_id,
+            pod_id="pod-skip",
+            lease_state="RELEASED",
+            pod_state="TERMINATED",
+            create_requested_at=T0,
+            compute_window_start_at=T0,
+            compute_window_end_at=T0 + HOUR,
+            stop_verified_at=T0 + HOUR,
+            terminate_verified_at=T0 + HOUR,
+            provider_account_ref=ACCOUNT_REF,
+        )
+    buckets = _skip_fixtures("pod-skip")
+    # Poll 1, 10 min into the run: both buckets are still open -> skipped, query UNKNOWN.
+    _response(
+        repository,
+        pod_id="pod-skip",
+        buckets=buckets,
+        observed_at=T0 + timedelta(minutes=10),
+        window=(T0, T0 + HOUR),
+    )
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM runpod_billing_query_skipped_buckets") == 2
+    # Poll 2 (past the settle lag): the same identities, now closed -> stored.
+    _response(
+        repository,
+        pod_id="pod-skip",
+        buckets=buckets,
+        observed_at=T0 + HOUR + timedelta(minutes=20),
+        window=(T0, T0 + HOUR),
+    )
+    result = repository.verify_invoice_period(
+        provider_account_ref=ACCOUNT_REF,
+        pod_id="pod-skip",
+        period_start=T0,
+        period_end=T0 + HOUR,
+        amount_micro_usd=600_000,
+        currency="USD",
+        evidence_sha256=_evidence("skip-closed"),
+        source="INVOICE",
+        observed_at=T0 + 2 * HOUR,
+    )
+    assert result.outcome == "MATCHED"
+    readiness = lease_billing_readiness(db, lease_id)
+    assert readiness.state == "BILLED"
+    settled = settle_billed_lease(db, world.service, lease_id=lease_id, context="t045-fix a-b1")
+    assert settled == 600_000
+    with db.transaction(readonly=True) as tx:
+        reservation = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (reservation_id,))
+    assert reservation["state"] == "SETTLED"
+    # The 300_000 remainder of the 900_000 hold was released, not kept.
+    counters = world.counters(episode.account_id)
+    assert counters["reserved"] == 0
+    assert counters["settled"] == 600_000
+
+
+def test_a_skip_with_no_later_closed_observation_still_refuses(world: World, db: Database) -> None:
+    """T045-FIX A-B1 keeps the refusal when no closed observation follows the skip.
+
+    (This boundary already refused before the fix; it is kept as the guard that the
+    A-B1 change does not over-correct.)"""
+    repository = _paid(world)
+    _seed_episode_with_lease(world, db, pod_id="pod-skip")
+    buckets = _skip_fixtures("pod-skip")
+    _response(
+        repository,
+        pod_id="pod-skip",
+        buckets=buckets,
+        observed_at=T0 + timedelta(minutes=10),
+        window=(T0, T0 + HOUR),
+    )
+    # A later covering poll returns only the first bucket; the second skip never closes.
+    _response(
+        repository,
+        pod_id="pod-skip",
+        buckets=[buckets[0]],
+        observed_at=T0 + HOUR + timedelta(minutes=20),
+        window=(T0, T0 + HOUR),
+    )
+    with pytest.raises(Conflict, match="skipped"):
+        repository.verify_invoice_period(
+            provider_account_ref=ACCOUNT_REF,
+            pod_id="pod-skip",
+            period_start=T0,
+            period_end=T0 + HOUR,
+            amount_micro_usd=600_000,
+            currency="USD",
+            evidence_sha256=_evidence("skip-open"),
+            source="INVOICE",
+            observed_at=T0 + 2 * HOUR,
+        )
+
+
+def test_an_account_scoped_covering_query_is_not_coverage(world: World, db: Database) -> None:
+    """T045-FIX A-N3: a completed query whose buckets belong to another Pod does not
+    cover this Pod's period."""
+    repository = _paid(world)
+    _seed_episode_with_lease(world, db, pod_id="pod-scoped")
+    other = closed_bucket(
+        pod_id="pod-other", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0
+    )
+    repository.ingest(other[0], [other[1]])
+    with pytest.raises(Conflict, match="covers the period"):
+        repository.verify_invoice_period(
+            provider_account_ref=ACCOUNT_REF,
+            pod_id="pod-scoped",
+            period_start=T0,
+            period_end=T0 + HOUR,
+            amount_micro_usd=600_000,
+            currency="USD",
+            evidence_sha256=_evidence("scoped"),
+            source="INVOICE",
+            observed_at=T0 + 2 * HOUR,
+        )
+
+
+def test_a_bucket_straddling_the_period_edge_is_refused(world: World, db: Database) -> None:
+    """T045-FIX A-N4: every counted bucket must lie fully inside the period, even when
+    aligned buckets exist at both edges."""
+    repository = _paid(world)
+    _seed_episode_with_lease(world, db, pod_id="pod-straddle")
+    window = (T0, T0 + HOUR + timedelta(minutes=15))
+    first = closed_bucket(
+        pod_id="pod-straddle",
+        start=T0,
+        end=T0 + timedelta(minutes=30),
+        gpu=300_000,
+        cpu=0,
+        disk=0,
+        query_window=window,
+    )
+    second = closed_bucket(
+        pod_id="pod-straddle",
+        start=T0 + timedelta(minutes=30),
+        end=T0 + HOUR,
+        gpu=300_000,
+        cpu=0,
+        disk=0,
+        query_window=window,
+    )
+    straddler = closed_bucket(
+        pod_id="pod-straddle",
+        start=T0 + timedelta(minutes=45),
+        end=T0 + HOUR + timedelta(minutes=15),
+        gpu=50_000,
+        cpu=0,
+        disk=0,
+        query_window=window,
+    )
+    repository.ingest(first[0], [first[1]])
+    repository.ingest(second[0], [second[1]])
+    repository.ingest(straddler[0], [straddler[1]])
+    with pytest.raises(SchemaInvalid, match="straddle"):
+        repository.verify_invoice_period(
+            provider_account_ref=ACCOUNT_REF,
+            pod_id="pod-straddle",
+            period_start=T0,
+            period_end=T0 + HOUR,
+            amount_micro_usd=600_000,
+            currency="USD",
+            evidence_sha256=_evidence("straddle"),
+            source="INVOICE",
+            observed_at=T0 + 2 * HOUR,
+        )
