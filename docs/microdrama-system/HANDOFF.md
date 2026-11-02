@@ -12,7 +12,7 @@ deployment receipt.
   2026-11-02 review fix round (DB-1..DB-11) and its re-review-1 follow-up
   round (DBR-1..DBR-3 + DBR-6 drill re-run, code commit `95fef89`) are
   committed locally in layered code+docs commits on top and **not pushed** —
-  Opus accepts first. A pre-review snapshot of the formerly dirty tree exists
+  re-review 2 ACCEPTED them; the push waits for the operator. A pre-review snapshot of the formerly dirty tree exists
   at `/root/drama-box-dirty-snapshot-20261101.tar.gz`.
 - Current contract package: **2.15.0** (V2 payload schema version 2.0; V1
   payloads remain readable). Migrations 0019–0024 are present. Contract source
@@ -50,9 +50,10 @@ T044b2 F2/F4/F5/F6 spot-check are CLOSED. Its three follow-ups — DBR-1
 DBR-2 (the reader's overlap check rejected every contract-valid crossfade
 EDL), DBR-3 (unbounded `advisory_lock` wait) — are fixed tests-first
 red→green in commit `95fef89`, and the required DBR-6 drill re-run after
-DB-10 passed 7/7 (loopback compose on 8093, stack left DOWN). What remains
-is ONE scoped re-review of DBR-1..DBR-3 only — the second and last
-re-review round; after it, the operator decides whether to push.
+DB-10 passed 7/7 (loopback compose on 8093, stack left DOWN). **Re-review 2
+(final, scoped DBR-1..3 + DBR-6) ACCEPTED** on 2026-11-02: all four items
+CLOSED, 4 NITs left as is (same review file, last section). The review cycle
+is closed; the only open step is the operator's push decision.
 
 ## What 1 November built (all gated, committed, pushed)
 
