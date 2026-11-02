@@ -25,7 +25,7 @@ from microdrama.core.registry._common import (
     has_real_evidence,
     require_real_evidence_provenance,
 )
-from microdrama.persistence.db import Database, insert_row, jsonb
+from microdrama.persistence.db import Database, Tx, insert_row, jsonb
 
 
 class PresetRegistry:
@@ -37,18 +37,22 @@ class PresetRegistry:
 
     # --- writes -------------------------------------------------------------------
 
-    def record(self, preset: PresetRecord, *, source_provenance: Provenance) -> None:
+    def record(
+        self, preset: PresetRecord, *, source_provenance: Provenance, tx: Tx | None = None
+    ) -> None:
         """Insert a new version and retire the current version of the same preset id.
 
         Versions must strictly increase per ``preset_id``. D3 applies: fake-synthetic data may not
-        name a real evidence source.
+        name a real evidence source. Pass ``tx`` to seed inside a caller-owned transaction
+        (first-boot seeding is all-or-nothing, DB-10).
         """
         provenance = ensure_provenance(source_provenance)
         require_real_evidence_provenance(
             provenance, preset.evidence, what=f"preset {preset.preset_id}"
         )
-        with self._db.transaction() as tx:
-            latest = tx.fetchval(
+
+        def _write(wtx: Tx) -> None:
+            latest = wtx.fetchval(
                 "SELECT max(version) FROM preset_registry WHERE preset_id = %s",
                 (preset.preset_id,),
             )
@@ -57,12 +61,12 @@ class PresetRegistry:
                     f"preset {preset.preset_id}: version {preset.version} must exceed {latest}",
                     current_version=latest,
                 )
-            tx.execute(
+            wtx.execute(
                 "UPDATE preset_registry SET current = false WHERE preset_id = %s AND current",
                 (preset.preset_id,),
             )
             insert_row(
-                tx,
+                wtx,
                 "preset_registry",
                 {
                     "id": deterministic_uuid("preset", preset.preset_id, str(preset.version)),
@@ -76,6 +80,12 @@ class PresetRegistry:
                     "current": True,
                 },
             )
+
+        if tx is not None:
+            _write(tx)
+        else:
+            with self._db.transaction() as fresh:
+                _write(fresh)
 
     # --- reads --------------------------------------------------------------------
 

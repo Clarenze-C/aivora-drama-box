@@ -726,7 +726,7 @@ def test_handler_rechecks_blockers_at_run_time(web, intake_world) -> None:
 
     csrf = _login(web)
     key = _wizard_key(web.get("/ui/intake").text)
-    season_id = _submit_intake(web, csrf, key)
+    _submit_intake(web, csrf, key)
     assert len(intake_world.world.jobs_of(INTAKE_JOB_TYPE)) == 1
     # The registry loses the provider after dispatch (a live configuration fault).
     intake_world.service._research = build_research_service(

@@ -12,6 +12,7 @@ owners exported factories; only this package imports them all.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -96,6 +97,12 @@ _MOCK_INTAKE_ENVELOPE_MICRO_USD = 2_000_000
 #: verified_at at its own fixed 2026-10-27T12:00Z; registry recording refuses a
 #: future verification), and before the pilot's evening release window.
 T0 = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
+
+#: First-boot seeding mutual exclusion (DB-10): a deterministic int64 advisory
+#: lock key shared by every process that builds a pipeline world.
+FIRST_BOOT_SEED_LOCK_KEY = int.from_bytes(
+    hashlib.sha256(b"microdrama:first-boot-seed").digest()[:8], "big", signed=True
+)
 
 
 class _DatabaseClock:
@@ -491,15 +498,23 @@ def build_pipeline_world(
     if seed_registries:
         # Restart-idempotent (T046): a durable deployment boots against an
         # already-seeded database, and re-recording version-1 presets would
-        # Conflict. Seed only when the mock preset catalog is absent; the
-        # per-record seeding helpers replay silently on their own rows.
-        with db.transaction(readonly=True) as tx:
-            already_seeded = tx.fetchone(
-                "SELECT 1 FROM preset_registry WHERE preset_id LIKE 'fake-%' LIMIT 1"
-            )
-        if already_seeded is None:
-            seed_mock_catalog(preset_registry)
-            seed_mock_registries(db, adapters, fake_clock, fake_ids, settings)
+        # Conflict. Seed only when the mock preset catalog is absent.
+        #
+        # DB-10: the old guard was read-then-seed in separate transactions —
+        # two first boots could interleave, and a crash after the catalog
+        # committed left a half-seeded database the guard then skipped forever.
+        # Check and seed now run under a dedicated advisory lock (concurrent
+        # first boots serialize) and inside ONE transaction (all-or-nothing:
+        # a crash mid-seed rolls back, and the next boot seeds completely).
+        with db.advisory_lock(FIRST_BOOT_SEED_LOCK_KEY):
+            with db.transaction(readonly=True) as tx:
+                already_seeded = tx.fetchone(
+                    "SELECT 1 FROM preset_registry WHERE preset_id LIKE 'fake-%' LIMIT 1"
+                )
+            if already_seeded is None:
+                with db.transaction() as tx:
+                    seed_mock_catalog(preset_registry, tx=tx)
+                    seed_mock_registries(db, adapters, fake_clock, fake_ids, settings, tx=tx)
 
     return PipelineWorld(
         settings=settings,

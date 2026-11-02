@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
-import stat
 import sys
 from pathlib import Path
 
@@ -94,6 +93,20 @@ def _serve(settings: Settings, dsn: str) -> int:
     return 0
 
 
+def _write_secret_file(target: Path, secret: str) -> None:
+    """Create the secret file at 0o600 from the first instant (DB-11).
+
+    ``O_CREAT|O_EXCL`` — the file never exists at umask permissions, and an
+    existing file is never silently overwritten (a stale password file must
+    fail loudly, not be replaced under an operator's eye).
+    """
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, secret.encode())
+    finally:
+        os.close(fd)
+
+
 def _create_owner(settings: Settings, dsn: str, args: argparse.Namespace) -> int:
     world, db = _build_world(settings, dsn)
     try:
@@ -106,8 +119,15 @@ def _create_owner(settings: Settings, dsn: str, args: argparse.Namespace) -> int
         owner_id = world.auth.create_owner(args.username, password)
         if args.write_password_to:
             target = Path(args.write_password_to)
-            target.write_text(password + "\n")
-            target.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            try:
+                _write_secret_file(target, password + "\n")
+            except FileExistsError:
+                print(
+                    f"refusing to overwrite {target}; the owner was created — "
+                    "write the password manually or remove the file first",
+                    file=sys.stderr,
+                )
+                return 4
             print(f"[create-owner] {args.username} = {owner_id}; password written 0600 to {target}")
         else:
             # Printed exactly once to stdout; the operator captures or discards it.
@@ -129,7 +149,9 @@ def _health() -> int:
     except Exception as exc:  # noqa: BLE001 — a probe reports, never crashes
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
-    ok = response.status_code == 200
+    # DB-11: the view must actually report ok — a 200 whose payload does not
+    # say so (a proxy error page, a half-started app) is a failed probe.
+    ok = response.status_code == 200 and isinstance(payload, dict) and payload.get("status") == "ok"
     print(json.dumps(payload))
     return 0 if ok else 1
 

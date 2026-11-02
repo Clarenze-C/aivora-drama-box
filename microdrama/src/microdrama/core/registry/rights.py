@@ -71,13 +71,16 @@ class RightsRegistry:
 
     # --- writes -------------------------------------------------------------------
 
-    def record(self, record: RightsRecord, *, source_provenance: Provenance) -> None:
+    def record(
+        self, record: RightsRecord, *, source_provenance: Provenance, tx: Tx | None = None
+    ) -> None:
         """Insert a new version; the previous current version of the same subject is retired.
 
         Versions must strictly increase per (route, subject kind, subject ref). D3: a record built
         from fake-synthetic data may not name a real evidence source. The row id is derived from
         the business key AND the canonical decision columns, so every read can revalidate the row
-        against exactly what was recorded (V-33).
+        against exactly what was recorded (V-33). Pass ``tx`` to seed inside a caller-owned
+        transaction (first-boot seeding is all-or-nothing, DB-10).
         """
         provenance = ensure_provenance(source_provenance)
         name = label(record.rights_route_id, record.subject_ref)
@@ -98,8 +101,9 @@ class RightsRegistry:
             "expires_at": record.expires_at,
             "evidence": canonical_document(record.evidence),
         }
-        with self._db.transaction() as tx:
-            latest = tx.fetchval(
+
+        def _write(wtx: Tx) -> None:
+            latest = wtx.fetchval(
                 "SELECT max(version) FROM rights_registry "
                 "WHERE rights_route_id = %s AND subject_kind = %s AND subject_ref = %s",
                 params,
@@ -109,13 +113,13 @@ class RightsRegistry:
                     f"rights {name}: version {record.version} must exceed {latest}",
                     current_version=latest,
                 )
-            tx.execute(
+            wtx.execute(
                 "UPDATE rights_registry SET current = false "
                 "WHERE rights_route_id = %s AND subject_kind = %s AND subject_ref = %s AND current",
                 params,
             )
             insert_row(
-                tx,
+                wtx,
                 "rights_registry",
                 {
                     "id": deterministic_uuid(
@@ -140,6 +144,12 @@ class RightsRegistry:
                     "current": True,
                 },
             )
+
+        if tx is not None:
+            _write(tx)
+        else:
+            with self._db.transaction() as fresh:
+                _write(fresh)
 
     # --- reads --------------------------------------------------------------------
 

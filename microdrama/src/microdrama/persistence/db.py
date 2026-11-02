@@ -216,6 +216,24 @@ class Database:
                     raise
                 time.sleep(min(0.01 * (2**attempt), 0.2))
 
+    @contextmanager
+    def advisory_lock(self, key: int) -> Iterator[None]:
+        """Hold a session-level PostgreSQL advisory lock on a dedicated connection.
+
+        First-boot administrative mutual exclusion (DB-10): the lock sits on
+        its own short-lived connection, so work done under it keeps the whole
+        pool. If the holder dies, the session ends and the lock releases.
+        """
+        conn = psycopg.connect(self.dsn, autocommit=True)
+        try:
+            conn.execute("SELECT pg_advisory_lock(%s)", (key,))
+            try:
+                yield
+            finally:
+                conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
+        finally:
+            conn.close()
+
 
 # --- small generic helpers -----------------------------------------------------------------
 

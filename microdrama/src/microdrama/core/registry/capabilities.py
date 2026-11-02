@@ -66,19 +66,23 @@ class CapabilityRegistry:
 
     # --- writes -------------------------------------------------------------------
 
-    def record(self, record: CapabilityRecord, *, source_provenance: Provenance) -> None:
+    def record(
+        self, record: CapabilityRecord, *, source_provenance: Provenance, tx: Tx | None = None
+    ) -> None:
         """Insert a new version and retire the current version of the same provider route.
 
         Versions must strictly increase per ``capability_id``. D3 applies: fake-synthetic data
-        may not name a real evidence source.
+        may not name a real evidence source. Pass ``tx`` to seed inside a caller-owned
+        transaction (first-boot seeding is all-or-nothing, DB-10).
         """
         provenance = ensure_provenance(source_provenance)
         name = f"{record.platform.value}/{record.account_ref}/{record.provider_route}"
         require_real_evidence_provenance(provenance, record.evidence, what=f"capability {name}")
         if record.verified_at is not None and record.verified_at > self._clock.now():
             raise SchemaInvalid("capability verified_at is in the future")
-        with self._db.transaction() as tx:
-            latest = tx.fetchval(
+
+        def _write(wtx: Tx) -> None:
+            latest = wtx.fetchval(
                 "SELECT max(version) FROM capability_registry WHERE capability_id = %s",
                 (record.capability_id,),
             )
@@ -87,13 +91,13 @@ class CapabilityRegistry:
                     f"capability {name}: version {record.version} must exceed {latest}",
                     current_version=latest,
                 )
-            tx.execute(
+            wtx.execute(
                 "UPDATE capability_registry SET current = false "
                 "WHERE platform = %s AND account_ref = %s AND provider_route = %s AND current",
                 (record.platform.value, record.account_ref, record.provider_route),
             )
             insert_row(
-                tx,
+                wtx,
                 "capability_registry",
                 {
                     "id": deterministic_uuid(
@@ -111,6 +115,12 @@ class CapabilityRegistry:
                     "current": True,
                 },
             )
+
+        if tx is not None:
+            _write(tx)
+        else:
+            with self._db.transaction() as fresh:
+                _write(fresh)
 
     # --- reads --------------------------------------------------------------------
 

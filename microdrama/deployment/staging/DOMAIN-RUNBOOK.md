@@ -17,7 +17,7 @@ only the operator performs. Nothing below has been run.
 
 1. **Decide the exposure.** Recommended: keep the app loopback-only and expose
    it through the host's existing Traefik (Coolify proxy) instead of opening a
-   port. The compose file publishes `127.0.0.1:${STAGING_APP_PORT:-8091}`.
+   port. The compose file publishes `127.0.0.1:${STAGING_APP_PORT:-8093}`.
 2. **DNS.** Create the `dramabox.aivora.agency` record (Cloudflare, same zone
    practice as `mc.aivora.agency`) pointing at the host. Do not proxy through
    Cloudflare until TLS is confirmed end-to-end.

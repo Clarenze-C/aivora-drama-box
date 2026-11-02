@@ -122,10 +122,14 @@ def mock_catalog_presets() -> list[PresetRecord]:
     ]
 
 
-def seed_mock_catalog(registry) -> None:
-    """Record every mock preset with FAKE_SYNTHETIC provenance (idempotent replay)."""
+def seed_mock_catalog(registry, *, tx=None) -> None:
+    """Record every mock preset with FAKE_SYNTHETIC provenance (idempotent replay).
+
+    Pass ``tx`` to seed inside a caller-owned transaction (DB-10: first-boot
+    seeding is all-or-nothing together with the registries).
+    """
     for record in mock_catalog_presets():
-        registry.record(record, source_provenance=Provenance.FAKE_SYNTHETIC)
+        registry.record(record, source_provenance=Provenance.FAKE_SYNTHETIC, tx=tx)
 
 
 __all__ = [

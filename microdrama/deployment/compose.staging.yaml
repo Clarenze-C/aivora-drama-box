@@ -35,7 +35,7 @@ services:
       MICRODRAMA_HOST: 0.0.0.0   # published on the host loopback below
       MICRODRAMA_PORT: "8000"
     ports:
-      - "127.0.0.1:${STAGING_APP_PORT:-8091}:8000"
+      - "127.0.0.1:${STAGING_APP_PORT:-8093}:8000"
     volumes:
       - staging-objects:/data/objects
     depends_on:

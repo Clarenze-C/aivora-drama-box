@@ -118,14 +118,19 @@ def seed_mock_registries(
     settings: Settings,
     *,
     account: str | None = None,
+    tx=None,
 ) -> None:
-    """Idempotent mock seeding: capabilities from the adapters, the mock rights route."""
+    """Idempotent mock seeding: capabilities from the adapters, the mock rights route.
+
+    Pass ``tx`` to seed inside a caller-owned transaction (DB-10: first-boot
+    seeding is all-or-nothing together with the preset catalog).
+    """
     from .conditions import MOCK_OUTPUT_ROUTE
 
     capability_registry = CapabilityRegistry(db, clock, settings)
     for platform in MOCK_PLATFORMS:
         record = adapters[platform].capability(account or mock_account(platform))
-        capability_registry.record(record, source_provenance=_record_provenance(record))
+        capability_registry.record(record, source_provenance=_record_provenance(record), tx=tx)
 
     rights = RightsRegistry(db, clock, settings)
     rights.record(
@@ -146,9 +151,10 @@ def seed_mock_registries(
             recorded_at=datetime(2026, 10, 21, 0, 0, tzinfo=UTC),
         ),
         source_provenance=Provenance.FAKE_SYNTHETIC,
+        tx=tx,
     )
     for record in _reference_model_rights(ids, clock):
-        rights.record(record, source_provenance=Provenance.FAKE_SYNTHETIC)
+        rights.record(record, source_provenance=Provenance.FAKE_SYNTHETIC, tx=tx)
 
 
 __all__ = [

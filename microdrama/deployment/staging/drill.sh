@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 COMPOSE="docker compose -f deployment/compose.staging.yaml --env-file deployment/staging.env"
 APP_PORT=$(sed -n "s/^STAGING_APP_PORT=//p" deployment/staging.env | tail -1)
-APP_PORT="${APP_PORT:-8091}"
+APP_PORT="${APP_PORT:-8093}"
 BASE="http://127.0.0.1:${APP_PORT}"
 LOG_DIR="deployment/staging/drill-logs"
 LOG="$LOG_DIR/$(date -u +%Y%m%dT%H%M%SZ).log"
