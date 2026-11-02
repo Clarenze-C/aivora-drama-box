@@ -1,0 +1,55 @@
+{
+  "operator": "operator@example.invalid",
+  "change_ref": "change-0000-fixture",
+  "hard_stop_utc": "2026-11-09T12:00:00Z",
+  "max_wall_seconds": 1800,
+  "quote": {
+    "quote_id": "quote-fixture-0000",
+    "currency": "USD",
+    "captured_at": "2026-11-02T10:00:00Z",
+    "expires_at": "2026-11-09T12:00:00Z",
+    "compute_micro_usd_per_hour": 504000,
+    "container_disk_gb": 20,
+    "container_storage_micro_usd_per_gb_month": 100000,
+    "persistent_volume_gb": 5,
+    "persistent_storage_micro_usd_per_gb_month": 200000,
+    "max_storage_exposure_micro_usd": 1200000,
+    "allowed_gpu_types": ["NVIDIA A40"],
+    "host_ram_gb_by_gpu": { "NVIDIA A40": 64 },
+    "maximum_runtime_ms": 600000,
+    "maximum_exposure_micro_usd": 2000000
+  },
+  "caps": {
+    "max_spend_micro_usd": 2000000,
+    "max_storage_gb": 5,
+    "max_prompts": 2,
+    "max_attempts": 2
+  },
+  "rights": {
+    "rights_route_id": "route-video-fixture",
+    "rights_subject_ref": "model-output:fixture",
+    "rights_subject_kind": "MODEL_OUTPUT",
+    "rights_version": 1,
+    "territories": ["TH"],
+    "rights_evidence_id": "rights-evidence-fixture",
+    "eligible_until": "2026-11-09T12:00:00Z"
+  },
+  "pins": {
+    "image_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workflow_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "node_schema_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "output_controls_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "preset_id": "fake-quality-8step",
+    "preset_version": 1,
+    "required_controls": ["SEED", "TEXT_PROMPT"]
+  },
+  "runpod_credential_ref": "credref:runpod-canary-fixture",
+  "comfy_credential_ref": "credref:comfy-canary-fixture",
+  "namespace": "canaryx",
+  "provider_account_ref": "acct:runpod-canary-fixture",
+  "prompt_sha256": [
+    "4c80f52b9a2723ae19306e3f4d67d935bc3cc6dd05c7ac22146563a52aea8f03",
+    "9f093c603c2cd3818048806806e37fa8c59b91e32354f4ee9da398220bff2701"
+  ],
+  "reference_sha256": []
+}
