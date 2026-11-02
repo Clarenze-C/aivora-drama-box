@@ -144,6 +144,11 @@ def largest_remainder(total: int, weights: list[tuple[str, int]]) -> dict[str, i
     return {key: sign * value for key, value in floors.items()}
 
 
+def _ceil_seconds(delta: timedelta) -> int:
+    """Whole seconds, rounding a sub-second interval up to one (never zero)."""
+    return max(1, -(-int(delta.total_seconds() * 1_000_000) // 1_000_000))
+
+
 class BillingRepository:
     """Append-only persistence for canonical 2.13 billing records."""
 
@@ -792,11 +797,11 @@ class BillingRepository:
         if existence is not None:
             for row in leases:
                 lo, hi = clip(row["window_start"], row["window_end"])
-                seconds = int((hi - lo).total_seconds())
-                if seconds > 0:
+                if hi > lo:
+                    seconds = _ceil_seconds(hi - lo)
                     gpu_cpu_weights[row["owner"]] = gpu_cpu_weights.get(row["owner"], 0) + seconds
             covered = sum(gpu_cpu_weights.values())
-            existence_seconds = int((existence[1] - existence[0]).total_seconds())
+            existence_seconds = _ceil_seconds(existence[1] - existence[0])
             if covered < existence_seconds:
                 # Existence covered by no lease belongs to the root lease's episode,
                 # or to the recovery pool when the Pod has no root lease.
@@ -813,19 +818,25 @@ class BillingRepository:
 
         disk_owners = tx.fetchall(
             "SELECT owner_episode_id::text AS owner, "
-            "EXTRACT(EPOCH FROM LEAST(COALESCE(valid_until,%s),%s)-GREATEST(valid_from,%s))::bigint AS seconds "
+            "CEIL(EXTRACT(EPOCH FROM LEAST(COALESCE(valid_until,%s),%s)"
+            "-GREATEST(valid_from,%s)))::bigint AS seconds "
             "FROM pod_storage_ownership WHERE provider='runpod' AND pod_id=%s "
             "AND valid_from<%s AND COALESCE(valid_until,%s)>%s",
             # 5 is ``valid_from < end`` and 6 is ``COALESCE(valid_until, end) > start``:
             # an open row (valid_until NULL) extends to the bucket end and stays
-            # eligible — the pre-T045 binding excluded exactly those rows.
+            # eligible — the pre-T045 binding excluded exactly those rows. CEIL so a
+            # sub-second ownership (a canary that lived seconds) still counts as one
+            # second of owner weight instead of vanishing to a zero-weight row.
             (end, end, start, bucket.pod_id, end, end, start),
         )
         disk_weights: dict[str, int] = {}
         for row in disk_owners:
-            disk_weights[row["owner"]] = disk_weights.get(row["owner"], 0) + max(
-                0, int(row["seconds"])
-            )
+            seconds = max(0, int(row["seconds"]))
+            if seconds > 0:
+                # A zero-second ownership row carries no weight: a zero-weight owner
+                # must not swallow the component as a zero delta — uncovered disk is
+                # recovery, and conservation holds.
+                disk_weights[row["owner"]] = disk_weights.get(row["owner"], 0) + seconds
         if existence is not None:
             disk_covered = sum(disk_weights.values())
             if disk_covered < existence_seconds:

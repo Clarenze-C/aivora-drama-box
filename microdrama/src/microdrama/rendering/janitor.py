@@ -61,7 +61,10 @@ from microdrama.rendering.pods import (
     PodManager,
     resolve_pod_provider,
 )
-from microdrama.rendering.runpod_billing import map_billing_history
+from microdrama.rendering.runpod_billing import (
+    REQUESTED_BUCKET_SIZE_SECONDS,
+    map_billing_history,
+)
 
 
 @dataclass(frozen=True)
@@ -568,6 +571,14 @@ class Janitor:
             until = row["window_end"] or now
             if until <= since:
                 until = since + timedelta(seconds=1)
+            # Round the request up to the end of the final hourly bucket: the
+            # provider returns whole buckets, so an invoice period can only sit on
+            # bucket boundaries if the durable query window covers the full last
+            # bucket of the lease (R5 precondition).
+            remainder = until.timestamp() % REQUESTED_BUCKET_SIZE_SECONDS
+            until = until + timedelta(
+                seconds=REQUESTED_BUCKET_SIZE_SECONDS - remainder if remainder else 0
+            )
             try:
                 history = billing_history(pod_id, since=since, until=until)
                 mapped = map_billing_history(
@@ -584,6 +595,18 @@ class Janitor:
                         action="billing_ingest",
                         outcome="failed",
                         detail=f"{exc.code}: {exc.message}",
+                    )
+                )
+                continue
+            except ValueError as exc:
+                # Malformed provider data (contract validators raise plain
+                # ValueError) fails this pod's ingest without crashing the sweep.
+                report.failures.append(
+                    JanitorAction(
+                        subject=f"pod:{pod_id}",
+                        action="billing_ingest",
+                        outcome="failed",
+                        detail=f"PROVIDER_DATA_INVALID: {exc}",
                     )
                 )
                 continue

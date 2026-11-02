@@ -440,7 +440,9 @@ def build_live_benchmark_world(
                 "SELECT state, operation_kind, episode_id, job_id FROM reservations WHERE id = %s",
                 (authorization.reservation_id,),
             )
-            job = tx.fetchone("SELECT id FROM jobs WHERE id = %s", (authorization.job_id,))
+            job = tx.fetchone(
+                "SELECT id, episode_id FROM jobs WHERE id = %s", (authorization.job_id,)
+            )
             operation = None
             if authorization.operation_id is not None:
                 operation = tx.fetchone(
@@ -453,13 +455,17 @@ def build_live_benchmark_world(
             or reservation["state"] != "ACTIVE"
             or reservation["operation_kind"] != "comfy.queue_prompt"
             or reservation["episode_id"] != authorization.episode_id
-            or reservation["job_id"] != authorization.job_id
             or job is None
         ):
             raise EffectDenied("ComfyUI HTTP request lacks a matching active reservation/job")
         if authorization.operation_id is None:
+            # Only the catalog read may run before a durable operation exists; the
+            # job must still belong to the same episode as the reservation (a canary
+            # reserves one prompt hold shared by its bounded prompt jobs).
             if path != "/object_info":
                 raise EffectDenied("ComfyUI request requires a durable provider operation")
+            if job["episode_id"] != authorization.episode_id:
+                raise EffectDenied("ComfyUI catalog read is scoped to a foreign job")
             return
         if (
             operation is None
@@ -470,9 +476,16 @@ def build_live_benchmark_world(
             or operation["state"] in {"FAILED", "CANCELLED", "SUCCEEDED"}
         ):
             raise EffectDenied("ComfyUI HTTP request lacks a matching durable operation")
-        if authorization_key is not None and operation["external_id"] is not None:
-            if authorization_key != operation["external_id"]:
-                raise EffectDenied("ComfyUI request key differs from durable prompt ID")
+        if (
+            authorization_key is not None
+            and operation["external_id"] is not None
+            # The prompt-id equality control applies where the request key names the
+            # prompt (dispatch, status, history). A /view fetch keys its output file
+            # (node:filename), which the operation match above already binds.
+            and (path == "/prompt" or path.startswith("/history") or path == "/queue")
+            and authorization_key != operation["external_id"]
+        ):
+            raise EffectDenied("ComfyUI request key differs from durable prompt ID")
 
     def comfy_dispatch_guard(authorization: Any) -> None:
         if authorization.operation_id is None:
