@@ -82,7 +82,7 @@ def _authorization_document(**overrides: Any) -> dict[str, Any]:
         "operator": "operator@example.invalid",
         "change_ref": "change-fixture-1",
         "hard_stop_utc": (T0 + timedelta(hours=2)).isoformat(),
-        "max_wall_seconds": 1800,
+        "max_wall_seconds": 600,
         "quote": {
             "quote_id": "quote-canary-1",
             "currency": "USD",

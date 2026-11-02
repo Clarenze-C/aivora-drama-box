@@ -2,7 +2,7 @@
   "operator": "operator@example.invalid",
   "change_ref": "change-0000-fixture",
   "hard_stop_utc": "2026-11-09T12:00:00Z",
-  "max_wall_seconds": 1800,
+  "max_wall_seconds": 600,
   "quote": {
     "quote_id": "quote-fixture-0000",
     "currency": "USD",

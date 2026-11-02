@@ -171,6 +171,13 @@ class CanaryAuthorization(BaseModel):
     def _authorization_rules(self) -> CanaryAuthorization:
         if self.max_wall_seconds <= 0:
             raise ValueError("max_wall_seconds must be positive")
+        # T045-FIX B-S2: the wall clock is bounded by the runtime the quote's exposure
+        # ceiling was proven for - a longer run was never priced.
+        if self.max_wall_seconds * 1000 > self.quote.maximum_runtime_ms:
+            raise ValueError(
+                "max_wall_seconds exceeds the quote's maximum_runtime_ms; the quote "
+                "never priced a run that long"
+            )
         if not _NAMESPACE_RE.fullmatch(self.namespace):
             raise ValueError("namespace must be 4-12 lowercase alphanumerics")
         if not _ACCOUNT_REF_RE.fullmatch(self.provider_account_ref):

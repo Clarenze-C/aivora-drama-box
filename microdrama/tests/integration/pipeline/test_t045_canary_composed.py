@@ -256,7 +256,7 @@ def _authorization_document(**overrides: Any) -> dict[str, Any]:
         "operator": "operator@example.invalid",
         "change_ref": "change-composed-1",
         "hard_stop_utc": (T0 + timedelta(hours=2)).isoformat(),
-        "max_wall_seconds": 1800,
+        "max_wall_seconds": 600,
         "quote": {
             "quote_id": "quote-canary-composed",
             "currency": "USD",
@@ -496,8 +496,8 @@ def test_full_canary_bills_and_releases_the_exact_remainder(db: Database, tmp_pa
     reservation = _reservation_of_lease(db)
     assert reservation["state"] == "SETTLED"
     assert reservation["settled_micro_usd"] == GPU_BUCKET
-    assert reservation["reserved_micro_usd"] == 260_400  # 140 micro-USD/s * 1860s
-    # exactly the GPU bucket settled; the 210_400 remainder was released
+    assert reservation["reserved_micro_usd"] == 92_400  # 140 micro-USD/s * (600s + 60s margin)
+    # exactly the GPU bucket settled; the 42_400 remainder was released
     # T045-FIX B-B1: the Pod lease's BILLED settlement is the ONLY GPU cost. The
     # account total and the sum of all charges equal the invoice total exactly -
     # the Comfy prompt hold settled at zero charge, on top of the run and the replay.
@@ -832,3 +832,65 @@ def test_the_comfy_calls_go_to_the_pods_own_proxy_url(db: Database, tmp_path: Pa
     assert comfy_transport.calls, "the fixture transport saw no ComfyUI traffic"
     for _method, url in comfy_transport.calls:
         assert url.startswith(POD_COMFY_ENDPOINT), url
+
+
+def test_a_wall_clock_longer_than_the_quoted_runtime_is_refused_at_load(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S2: max_wall_seconds*1000 must be <= quote.maximum_runtime_ms."""
+    from microdrama.contracts.errors import SchemaInvalid
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+
+    path = _write_authorization(tmp_path, max_wall_seconds=1800)  # quote allows 600_000 ms
+    with pytest.raises(SchemaInvalid, match="maximum_runtime_ms"):
+        load_canary_authorization(path)
+
+
+def test_holds_above_the_spend_cap_refuse_before_any_reservation_or_transport(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S2: lease hold + prompt holds + storage ceiling + shutdown margin
+    must fit caps.max_spend_micro_usd; the refusal happens with zero transport calls."""
+    from microdrama.contracts.errors import PolicyDenied
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport()
+    # 84_000 lease + 84_000 prompt + 1_200_000 storage + 8_400 shutdown = 1_376_400
+    # against a 1_000_000 cap (still <= the quote's 2_000_000 exposure).
+    with pytest.raises(PolicyDenied, match="spend cap"):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+            caps={"max_spend_micro_usd": 1_000_000},
+        )
+    assert runpod_transport.calls == []
+    assert comfy_transport.calls == []
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM reservations") == 0
+
+
+def test_the_rights_eligible_until_bounds_the_deadline(db: Database, tmp_path: Path) -> None:
+    """T045-FIX B-N3: deadline = min(hard_stop, start+max_wall_seconds, eligible_until)."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport(never_completes=True)
+    eligible_until = T0 + timedelta(seconds=5)
+    result = _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=runpod_transport,
+        comfy_transport=comfy_transport,
+        max_wall_seconds=60,
+        rights={"eligible_until": eligible_until.isoformat()},
+    )
+    record = result.record
+    assert record["deadline_hit"] is True
+    assert record["deadline_utc"] == eligible_until.isoformat()
+    assert record["terminate_verified_at"] is not None

@@ -262,6 +262,34 @@ def node_schema_digest(template: WorkflowTemplate) -> str:
     )
 
 
+def _refuse_unaffordable(authorization: CanaryAuthorization, prompt_count: int) -> None:
+    """T045-FIX B-S2: the computed worst-case holds must fit the authorized spend cap.
+
+    Lease hold + every prompt hold + the quoted storage ceiling + the shutdown
+    margin, all integer micro-USD. Refuses before the first reservation is taken, so
+    nothing is held and no transport call is made.
+    """
+    pod = canary_pod_config(authorization)
+    render = canary_render_config(authorization)
+    assert pod.price is not None and render.price is not None
+    lease_hold = pod.price.unit_price_micro_usd * authorization.max_wall_seconds
+    prompt_units = -(-render.timeout_ms // 1000)  # ceil, integer ms->s
+    prompt_holds = render.price.unit_price_micro_usd * prompt_units * prompt_count
+    storage_ceiling = authorization.quote.max_storage_exposure_micro_usd
+    shutdown_margin = pod.price.unit_price_micro_usd * (-(-pod.shutdown_margin_ms // 1000))
+    total = lease_hold + prompt_holds + storage_ceiling + shutdown_margin
+    if total > authorization.caps.max_spend_micro_usd:
+        raise PolicyDenied(
+            "the computed worst-case holds exceed the authorized spend cap",
+            total_micro_usd=total,
+            cap_micro_usd=authorization.caps.max_spend_micro_usd,
+            lease_hold_micro_usd=lease_hold,
+            prompt_holds_micro_usd=prompt_holds,
+            storage_ceiling_micro_usd=storage_ceiling,
+            shutdown_margin_micro_usd=shutdown_margin,
+        )
+
+
 def _refuse_execute(
     authorization: CanaryAuthorization,
     *,
@@ -434,15 +462,19 @@ def run_execute(
         now=started,
     )
     prompts = load_prompts(authorization, prompts_path)
+    _refuse_unaffordable(authorization, prompt_count=len(prompts))
     references = resolve_reference_assets(db, authorization)
     episode_id = resolve_canary_episode(db)
     template = resolve_pinned_template(db, settings, authorization)
     preset_record = PresetRegistry(db, settings).get(authorization.pins.preset_id)
     assert preset_record is not None  # resolve_pinned_template refused otherwise
 
+    # T045-FIX B-N3: the rights record's eligible_until bounds the run exactly like
+    # the hard stop - the quote's expiry already gates the start.
     deadline = min(
         authorization.hard_stop_utc,
         started + timedelta(seconds=authorization.max_wall_seconds),
+        authorization.rights.eligible_until,
     )
     budget = BudgetService(db, clock, ids, settings)
     world = compose_canary_world(
