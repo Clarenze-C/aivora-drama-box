@@ -1044,7 +1044,7 @@ class BudgetService:
             "AND COALESCE(l.compute_window_start_at, l.create_requested_at, l.created_at) < %s "
             "AND COALESCE(l.compute_window_end_at, l.stop_verified_at, l.terminate_verified_at, %s) > %s "
             "ORDER BY GREATEST(COALESCE(l.compute_window_start_at, l.create_requested_at, "
-            "l.created_at), %s) ASC, l.created_at ASC LIMIT 1 FOR UPDATE",
+            "l.created_at), %s) ASC, l.created_at ASC LIMIT 1 FOR UPDATE OF r",
             (
                 bucket.pod_id,
                 episode_id,
@@ -1060,7 +1060,7 @@ class BudgetService:
                 "SELECT r.* FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
                 "WHERE l.provider='runpod' AND l.pod_id=%s AND l.transferred_from IS NULL "
                 "AND l.owner_episode_id=%s AND r.category='GPU_GENERATION' "
-                "ORDER BY l.created_at ASC LIMIT 1 FOR UPDATE",
+                "ORDER BY l.created_at ASC LIMIT 1 FOR UPDATE OF r",
                 (bucket.pod_id, episode_id),
             )
         return reservation_from_row(row) if row is not None else None

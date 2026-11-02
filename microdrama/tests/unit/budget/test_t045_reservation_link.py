@@ -229,3 +229,57 @@ def test_positive_recovery_still_blocks_until_resolved(world: World, db: Databas
             "WHERE posting_state='RECOVERY_PENDING'"
         )
     assert [row["delta_micro_usd"] for row in pending] == [500_000]
+
+
+def test_a_gpu_billing_post_does_not_lock_the_lease_rows(
+    db_dsn: str, world: World, db: Database
+) -> None:
+    """T045-FIX A-N7: the lease-window lookup locks only the reservation row it posts
+    against (FOR UPDATE OF r) - never the joined pod_leases rows - so a lease
+    lifecycle write such as a heartbeat is not blocked by an in-flight billing post."""
+    import psycopg
+
+    from microdrama.budget import BudgetService
+    from microdrama.testing.fakes import FakeClock, SequentialIds
+
+    _paid(world)
+    episode = world.episode()
+    with db.transaction() as tx:
+        lease, _reservation = insert_runpod_lease(
+            tx,
+            episode.episode_id,
+            pod_id="pod-n7",
+            lease_state="ACTIVE",
+            create_requested_at=T0,
+            compute_window_start_at=T0,
+            compute_window_end_at=T0 + HOUR,
+        )
+    probe: dict[str, bool | None] = {"blocked": None}
+
+    class HeartbeatProbingService(BudgetService):
+        def _post_charge(self, tx, ledger, receipt, reservation, **kwargs):
+            if str(receipt.provider_receipt_id).startswith("billing-allocation:"):
+                try:
+                    with psycopg.connect(db_dsn) as conn:
+                        conn.execute("SET lock_timeout = '500ms'")
+                        conn.execute(
+                            "UPDATE pod_leases SET heartbeat_at = %s WHERE id = %s",
+                            (T0 + timedelta(seconds=1), lease),
+                        )
+                        conn.commit()
+                    probe["blocked"] = False
+                except psycopg.errors.LockNotAvailable:
+                    probe["blocked"] = True
+            return super()._post_charge(tx, ledger, receipt, reservation, **kwargs)
+
+    settings = Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+    service = HeartbeatProbingService(db, FakeClock(BT0), SequentialIds("t045-n7"), settings)
+    query, bucket = closed_bucket(
+        pod_id="pod-n7", start=T0, end=T0 + timedelta(minutes=5), gpu=600_000, cpu=0, disk=0
+    )
+    BillingRepository(db, budget_service=service).ingest(query, [bucket])
+    assert probe["blocked"] is False
