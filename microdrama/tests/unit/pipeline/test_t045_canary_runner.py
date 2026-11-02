@@ -26,6 +26,7 @@ from microdrama.contracts.errors import PolicyDenied, SchemaInvalid
 from microdrama.persistence import Database
 from microdrama.pipeline.canary import load_prompts, run_execute, run_invoice, run_preflight
 from microdrama.pipeline.canary_authorization import (
+    CANARY_EPISODE_ID,
     CanaryAuthorization,
     load_canary_authorization,
     prompt_pin,
@@ -82,6 +83,7 @@ def _real_pins() -> dict[str, Any]:
 def _authorization_document(**overrides: Any) -> dict[str, Any]:
     document: dict[str, Any] = {
         "operator": "operator@example.invalid",
+        "episode_id": CANARY_EPISODE_ID,
         "change_ref": "change-fixture-1",
         "hard_stop_utc": (T0 + timedelta(hours=2)).isoformat(),
         "max_wall_seconds": 600,

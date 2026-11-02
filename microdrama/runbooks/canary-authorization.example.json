@@ -1,6 +1,7 @@
 {
   "operator": "operator@example.invalid",
   "change_ref": "change-0000-fixture",
+  "episode_id": "1c0ffee0-0000-4000-8000-00000000cafe",
   "hard_stop_utc": "2026-11-09T12:00:00Z",
   "max_wall_seconds": 600,
   "quote": {

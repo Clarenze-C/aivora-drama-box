@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from microdrama.budget import BudgetService
 from microdrama.config import Settings
 from microdrama.contracts.enums import ExecutionMode, PodState
 from microdrama.contracts.errors import (
@@ -17,7 +18,6 @@ from microdrama.contracts.errors import (
     TransientProviderError,
 )
 from microdrama.contracts.providers import PodCreateRequest
-from microdrama.budget import BudgetService
 from microdrama.persistence import Database
 from microdrama.rendering.janitor import Janitor
 from microdrama.rendering.leases import PodLeaseConfig

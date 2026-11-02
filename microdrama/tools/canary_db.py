@@ -106,10 +106,14 @@ def _seed(dsn: str) -> None:
         source_provenance=Provenance.LIVE_PROVIDER,
     )
     with db.transaction() as tx:
+        from microdrama.pipeline.canary_authorization import CANARY_EPISODE_ID
         from microdrama.testing.seed import seed_episode, seed_season
 
         season = seed_season(tx)
-        episode = seed_episode(tx, season, number=1)
+        seeded = seed_episode(tx, season, number=1)
+        # T045-FIX B-S9: the deterministic canary episode the authorization pins.
+        episode = uuid.UUID(CANARY_EPISODE_ID)
+        tx.execute("UPDATE episodes SET id=%s WHERE id=%s", (episode, seeded))
         account = uuid.uuid4()
         tx.execute(
             "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
@@ -168,6 +172,7 @@ def up(data_root: Path = DEFAULT_DATA_ROOT) -> int:
         + "\n"
     )
     print(f"canary database up: {dsn}")
+    print(f"canary episode: {CANARY_EPISODE_ID}")
     print(f"state: {STATE_PATH}")
     print(
         "Run the canary with MICRODRAMA_DATABASE_URL set to this DSN "

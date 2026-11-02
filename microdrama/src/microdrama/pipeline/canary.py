@@ -222,19 +222,53 @@ def compose_canary_world(
     )
 
 
-def resolve_canary_episode(db: Database) -> UUID:
-    """The canary database's single seeded episode (oldest with a budget account)."""
+def resolve_canary_episode(db: Database, expected: UUID | None = None) -> UUID:
+    """The canary database's single seeded episode (T045-FIX B-S9).
+
+    The run may charge exactly one episode: refuse unless the database holds exactly
+    one episode with an EPISODE budget account, and - when the authorization pins one
+    - unless it is that episode. A staging/production DSN with many episodes refuses
+    here, before any reservation or transport call.
+    """
     with db.transaction(readonly=True) as tx:
-        row = tx.fetchone(
+        rows = tx.fetchall(
             "SELECT e.id FROM episodes e JOIN budget_accounts a "
             "ON a.episode_id = e.id AND a.scope_kind = 'EPISODE' "
-            "ORDER BY e.created_at LIMIT 1"
+            "ORDER BY e.created_at"
         )
-    if row is None:
+    if not rows:
         raise NotFound(
             "the canary database has no episode with a budget account; seed it (make canary-db)"
         )
-    return row["id"]
+    if len(rows) > 1:
+        raise NotFound(
+            "the canary database has more than one episode with a budget account; the "
+            "canary charges exactly one",
+            episodes=[str(row["id"]) for row in rows],
+        )
+    episode_id = rows[0]["id"]
+    if expected is not None and episode_id != expected:
+        raise NotFound(
+            "the authorization's pinned episode is not this database's canary episode",
+            pinned=str(expected),
+            found=str(episode_id),
+        )
+    return episode_id
+
+
+def refuse_non_loopback_dsn(dsn: str) -> None:
+    """T045-FIX B-S9: the canary DSN must point at loopback - never staging/production."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(dsn)
+    if parsed.scheme != "postgresql":
+        return  # not a TCP DSN; the pool resolves it
+    host = parsed.hostname or ""  # empty host means a local unix socket
+    if host and host not in ("127.0.0.1", "::1", "localhost"):
+        raise EffectDenied(
+            "the canary database DSN must point at loopback; refusing to touch any other database",
+            host=host,
+        )
 
 
 def resolve_pinned_template(
@@ -371,6 +405,18 @@ class CanaryRunResult:
     record_path: Path
 
 
+class CanaryRunNotClean(MicrodramaError):
+    """T045-FIX B-S3: execute started and an effect was sent, then failed.
+
+    The record is already written (``record_path``); the CLI reports STARTED, NOT
+    CLEAN with a distinct exit code instead of a pre-effect refusal.
+    """
+
+    def __init__(self, reason: str, record_path: Path) -> None:
+        super().__init__(reason)
+        self.record_path = record_path
+
+
 def run_preflight(
     authorization_path: str | Path,
     *,
@@ -463,8 +509,11 @@ def run_execute(
     )
     prompts = load_prompts(authorization, prompts_path)
     _refuse_unaffordable(authorization, prompt_count=len(prompts))
+    # T045-FIX B-S9: a non-loopback DSN and a database whose single budget-account
+    # episode is not the pinned one are refused before any reservation or transport.
+    refuse_non_loopback_dsn(db.dsn)
     references = resolve_reference_assets(db, authorization)
-    episode_id = resolve_canary_episode(db)
+    episode_id = resolve_canary_episode(db, expected=UUID(authorization.episode_id))
     template = resolve_pinned_template(db, settings, authorization)
     preset_record = PresetRegistry(db, settings).get(authorization.pins.preset_id)
     assert preset_record is not None  # resolve_pinned_template refused otherwise
@@ -575,6 +624,7 @@ def run_execute(
     prompts_done = 0
     attempts_used = 0
     run_error: MicrodramaError | None = None
+    written: list[Path] = []  # T045-FIX B-S3: the record path, written in the finally
 
     def submit_prompt(prompt: dict[str, Any], index: int) -> bool:
         """Bounded submits for one prompt: <= max_attempts, no blind retries.
@@ -709,51 +759,85 @@ def run_execute(
     except MicrodramaError as exc:
         run_error = exc
         record["blocked_or_uncertain"] += f" run stopped: {exc.code}: {exc.message};"
+    except Exception as exc:  # T045-FIX B-S3: a malformed body etc. still gets its record
+        run_error = exc
+        record["blocked_or_uncertain"] += f" run crashed: {type(exc).__name__}: {exc};"
     finally:
         record["attempts_used"] = attempts_used
-        if lease_id is not None:
-            # Runpod final release: stop -> terminate -> verified read-back (T045-A).
-            shutdown = world.leases.shutdown(lease_id, reason="canary complete")
-            record["stop_verified_at"] = (
-                shutdown.stop_verified_at.isoformat() if shutdown.stop_verified_at else None
-            )
-            record["billing_pending"] = shutdown.billing_pending
-            step(
-                "shutdown",
-                {
-                    "settled_micro_usd": shutdown.settled_micro_usd,
-                    "billing_pending": shutdown.billing_pending,
-                },
-            )
-            with db.transaction(readonly=True) as tx:
-                row = tx.fetchone(
-                    "SELECT terminate_verified_at FROM pod_leases WHERE id = %s", (lease_id,)
+        # T045-FIX B-S3: the record is written even when the shutdown or the sweep
+        # raises - a created Pod must never leave no canary record behind.
+        try:
+            if lease_id is not None:
+                # Runpod final release: stop -> terminate -> verified read-back (T045-A).
+                shutdown = world.leases.shutdown(lease_id, reason="canary complete")
+                record["stop_verified_at"] = (
+                    shutdown.stop_verified_at.isoformat() if shutdown.stop_verified_at else None
                 )
-            if row is not None and row["terminate_verified_at"] is not None:
-                record["terminate_verified_at"] = row["terminate_verified_at"].isoformat()
-        report: JanitorReport = world.janitor.sweep()
-        record["janitor_summary"] = {
-            "failures": [f.to_dict() for f in report.failures],
-            "billing_ingests": [a.to_dict() for a in report.billing_ingests],
-            "budget_holds": [a.to_dict() for a in report.budget_holds],
-        }
-        record["billing_readiness"] = [
-            {
-                "lease_id": str(r.lease_id),
-                "state": r.state,
-                "pending_since": r.pending_since.isoformat() if r.pending_since else None,
+                record["billing_pending"] = shutdown.billing_pending
+                step(
+                    "shutdown",
+                    {
+                        "settled_micro_usd": shutdown.settled_micro_usd,
+                        "billing_pending": shutdown.billing_pending,
+                    },
+                )
+                with db.transaction(readonly=True) as tx:
+                    row = tx.fetchone(
+                        "SELECT terminate_verified_at FROM pod_leases WHERE id = %s", (lease_id,)
+                    )
+                if row is not None and row["terminate_verified_at"] is not None:
+                    record["terminate_verified_at"] = row["terminate_verified_at"].isoformat()
+            report: JanitorReport = world.janitor.sweep()
+            record["janitor_summary"] = {
+                "failures": [f.to_dict() for f in report.failures],
+                "billing_ingests": [a.to_dict() for a in report.billing_ingests],
+                "budget_holds": [a.to_dict() for a in report.budget_holds],
             }
-            for r in world.billing_readiness()
-        ]
-        record["billing_state"] = world.billing_state
-        if not record["blocked_or_uncertain"]:
-            record["blocked_or_uncertain"] = (
-                "billing is PENDING_PROVIDER_FINALITY until the period invoice is "
-                "verified (canary invoice)"
+            record["billing_readiness"] = [
+                {
+                    "lease_id": str(r.lease_id),
+                    "state": r.state,
+                    "pending_since": r.pending_since.isoformat() if r.pending_since else None,
+                }
+                for r in world.billing_readiness()
+            ]
+            record["billing_state"] = world.billing_state
+            if not record["blocked_or_uncertain"]:
+                record["blocked_or_uncertain"] = (
+                    "billing is PENDING_PROVIDER_FINALITY until the period invoice is "
+                    "verified (canary invoice)"
+                )
+        except BaseException as exc:
+            # T045-FIX B-S3: a failed shutdown or sweep still writes the record
+            # below, then re-raises through the NOT CLEAN path.
+            if run_error is None:
+                run_error = exc
+            record["blocked_or_uncertain"] += f" cleanup failed: {type(exc).__name__}: {exc};"
+        finally:
+            effects_sent = bool(
+                record["pod_id"] or record["reservation_ids"] or record["client_tokens"]
             )
+            if run_error is None:
+                record["outcome"] = "COMPLETE"
+            else:
+                record["outcome"] = "NOT_CLEAN"
+                record["not_clean_reason"] = f"{type(run_error).__name__}: {run_error}"
+            written.append(_write_canary_record(record, evidence_dir=evidence_dir, now=clock.now()))
+            record["effects_sent"] = effects_sent
 
-    record_path = _write_canary_record(record, evidence_dir=evidence_dir, now=clock.now())
+    record_path = (
+        written[-1]
+        if written
+        else _write_canary_record(record, evidence_dir=evidence_dir, now=clock.now())
+    )
     if run_error is not None:
+        effects_sent = bool(
+            record["pod_id"] or record["reservation_ids"] or record["client_tokens"]
+        )
+        if effects_sent:
+            raise CanaryRunNotClean(
+                f"{type(run_error).__name__}: {run_error}", record_path
+            ) from run_error
         raise run_error
     return CanaryRunResult(record=record, record_path=record_path)
 
@@ -970,6 +1054,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    except CanaryRunNotClean as exc:
+        # T045-FIX B-S3: an effect was already sent - this is not a refusal.
+        print(
+            f"canary execute STARTED, NOT CLEAN: {exc.message}; record: {exc.record_path}",
+            file=sys.stderr,
+        )
+        return 3
     except MicrodramaError as exc:
         print(f"canary {args.command} refused: {exc.code}: {exc.message}", file=sys.stderr)
         return 2

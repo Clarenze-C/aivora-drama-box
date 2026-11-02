@@ -31,7 +31,7 @@ from microdrama.pipeline.canary import (
     run_execute,
     run_invoice,
 )
-from microdrama.pipeline.canary_authorization import prompt_pin
+from microdrama.pipeline.canary_authorization import CANARY_EPISODE_ID, prompt_pin
 from microdrama.rendering.leases import PodLeaseClaimRequest
 from microdrama.testing.fakes import FakeClock, SequentialIds
 from microdrama.testing.fakes.comfy import FAKE_NODE_CLASSES, VIDEO_OUTPUT_MS
@@ -79,6 +79,7 @@ class RunpodCanaryTransport:
         create_timeout_once: bool = False,
         image: str | None = None,
         no_comfy_port: bool = False,
+        failing_delete: bool = False,
     ) -> None:
         self.state = "RUNNING" if not create_timeout_once else "ABSENT"
         self.create_calls = 0
@@ -86,6 +87,7 @@ class RunpodCanaryTransport:
         self.out_of_band_created = create_timeout_once
         self.image = image or IMAGE_REF
         self.no_comfy_port = no_comfy_port
+        self.failing_delete = failing_delete
         #: T045-FIX B-B2: the image reference the create REQUEST actually carried.
         self.created_image: str | None = None
         self.calls: list[tuple[str, str]] = []
@@ -140,6 +142,8 @@ class RunpodCanaryTransport:
             self.state = "EXITED"
             return _Response(200, b"{}")
         if method == "DELETE":
+            if self.failing_delete:
+                return _Response(503, b"")
             self.state = "GONE"
             return _Response(200, b"{}")
         if "/billing/pods" in url:
@@ -174,9 +178,16 @@ class RunpodCanaryTransport:
 class ComfyCanaryTransport:
     """A scripted ComfyUI surface: object_info/prompt/history/queue/view."""
 
-    def __init__(self, *, drop_node: str | None = None, never_completes: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        drop_node: str | None = None,
+        never_completes: bool = False,
+        malformed_history: bool = False,
+    ) -> None:
         self.drop_node = drop_node
         self.never_completes = never_completes
+        self.malformed_history = malformed_history
         self.calls: list[tuple[str, str]] = []
         self.prompt_id = "canary-prompt-1"
 
@@ -201,6 +212,8 @@ class ComfyCanaryTransport:
         if method == "POST" and url.endswith("/prompt"):
             return json.dumps({"prompt_id": self.prompt_id, "number": 1}).encode()
         if method == "GET" and "/history/" in url:
+            if self.malformed_history:
+                return b"{not json"
             if self.never_completes:
                 return b"{}"
             return json.dumps(
@@ -255,6 +268,7 @@ def _authorization_document(**overrides: Any) -> dict[str, Any]:
     document: dict[str, Any] = {
         "operator": "operator@example.invalid",
         "change_ref": "change-composed-1",
+        "episode_id": CANARY_EPISODE_ID,
         "hard_stop_utc": (T0 + timedelta(hours=2)).isoformat(),
         "max_wall_seconds": 600,
         "quote": {
@@ -305,12 +319,17 @@ def _authorization_document(**overrides: Any) -> dict[str, Any]:
 
 
 def _seed_everything(db: Database) -> None:
+    from microdrama.pipeline.canary_authorization import CANARY_EPISODE_ID
+
     _seed_registries(
         db, _live_settings(), recorded_at=T0 - timedelta(minutes=1), live_evidence=True
     )
     with db.transaction() as tx:
         season = seed_season(tx)
-        episode = seed_episode(tx, season)
+        seeded = seed_episode(tx, season)
+        # T045-FIX B-S9: the deterministic episode the authorization pins.
+        episode = uuid.UUID(CANARY_EPISODE_ID)
+        tx.execute("UPDATE episodes SET id=%s WHERE id=%s", (episode, seeded))
         account = uuid.uuid4()
         tx.execute(
             "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
@@ -791,15 +810,18 @@ def test_a_pod_whose_comfy_endpoint_is_not_its_own_refuses_before_object_info(
     equal https://<pod_id>-8188.proxy.runpod.net. A Pod that exposes no 8188 port
     (endpoint_url None) refuses before any ComfyUI call - the bearer token never
     leaves for an unvalidated host."""
-    from microdrama.contracts.errors import Conflict, EffectDenied
+    import json as _json
+
+    from microdrama.pipeline.canary import CanaryRunNotClean
 
     _seed_everything(db)
     clock = FakeClock(T0)
     runpod_transport = RunpodCanaryTransport(no_comfy_port=True)
     comfy_transport = ComfyCanaryTransport()
     # A Pod that exposes no 8188 port (endpoint_url None) refuses either at the pod
-    # verification or at the endpoint binding - both before any ComfyUI call.
-    with pytest.raises((EffectDenied, Conflict), match="endpoint"):
+    # verification or at the endpoint binding - both before any ComfyUI call. The run
+    # had already sent effects, so it ends NOT CLEAN with a record (T045-FIX B-S3).
+    with pytest.raises(CanaryRunNotClean, match="endpoint"):
         _execute(
             db,
             tmp_path,
@@ -809,8 +831,12 @@ def test_a_pod_whose_comfy_endpoint_is_not_its_own_refuses_before_object_info(
         )
     assert comfy_transport.calls == []  # nothing reached ComfyUI
     assert not any("/object_info" in url for _method, url in comfy_transport.calls)
-    # The shutdown path hits the same verify refusal while adopting the created Pod,
-    # so the Pod's cleanup is the B-S3 not-clean concern, not asserted here.
+    records = sorted((tmp_path / "records").glob("*-canary.json"))
+    assert records, "a run that sent effects must leave its record"
+    record = _json.loads(records[-1].read_text())
+    assert record["outcome"] == "NOT_CLEAN"
+    assert record["not_clean_reason"]
+    assert record["reservation_ids"]  # the claim's hold is in the record
 
 
 def test_the_comfy_calls_go_to_the_pods_own_proxy_url(db: Database, tmp_path: Path) -> None:
@@ -894,3 +920,121 @@ def test_the_rights_eligible_until_bounds_the_deadline(db: Database, tmp_path: P
     assert record["deadline_hit"] is True
     assert record["deadline_utc"] == eligible_until.isoformat()
     assert record["terminate_verified_at"] is not None
+
+
+def test_execute_refuses_a_database_with_two_budget_episodes(db: Database, tmp_path: Path) -> None:
+    """T045-FIX B-S9: the run may charge exactly one episode - a database with two
+    episodes that have budget accounts refuses before any reservation or transport."""
+    from microdrama.contracts.errors import NotFound
+
+    _seed_everything(db)
+    with db.transaction() as tx:
+        season = seed_season(tx)
+        seed_episode(tx, season, number=2)
+        account = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
+            "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
+            (account, season, seed_episode(tx, season, number=3)),
+        )
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport()
+    with pytest.raises(NotFound, match="more than one episode"):
+        _execute(
+            db,
+            tmp_path,
+            clock=FakeClock(T0),
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+        )
+    assert runpod_transport.calls == []
+
+
+def test_execute_refuses_a_mismatched_pinned_episode(db: Database, tmp_path: Path) -> None:
+    """T045-FIX B-S9: the authorization's pinned episode must be this database's."""
+    from microdrama.contracts.errors import NotFound
+
+    _seed_everything(db)
+    other = str(uuid.uuid4())
+    runpod_transport = RunpodCanaryTransport()
+    with pytest.raises(NotFound, match="pinned episode"):
+        _execute(
+            db,
+            tmp_path,
+            clock=FakeClock(T0),
+            runpod_transport=runpod_transport,
+            comfy_transport=ComfyCanaryTransport(),
+            episode_id=other,
+        )
+    assert runpod_transport.calls == []
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM reservations") == 0
+
+
+def test_the_dsn_must_be_loopback() -> None:
+    """T045-FIX B-S9: a non-loopback DSN is refused before any reservation, transport
+    call or database query - never staging or production."""
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.pipeline.canary import refuse_non_loopback_dsn
+
+    for host in ("db.example.com", "10.0.0.5", "staging.internal"):
+        with pytest.raises(EffectDenied, match="loopback"):
+            refuse_non_loopback_dsn(f"postgresql://user@{host}:5432/postgres")
+    refuse_non_loopback_dsn("postgresql://user@127.0.0.1:5544/postgres")
+    refuse_non_loopback_dsn("postgresql://user@localhost:5544/postgres")
+
+
+def test_a_failed_shutdown_still_writes_the_record_with_the_pod(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S3: a DELETE that returns 503 during shutdown leaves a record with
+    outcome NOT_CLEAN and the created Pod's id - never a silent 'refused'."""
+    import json as _json
+
+    from microdrama.pipeline.canary import CanaryRunNotClean
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(failing_delete=True)
+    comfy_transport = ComfyCanaryTransport()
+    with pytest.raises(CanaryRunNotClean) as exc:
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+        )
+    record = _json.loads(exc.value.record_path.read_text())
+    assert record["pod_id"] == POD
+    assert record["client_tokens"]
+    assert record["reservation_ids"]
+    assert record["outcome"] == "NOT_CLEAN"
+
+
+def test_a_malformed_comfy_body_still_leaves_a_record(db: Database, tmp_path: Path) -> None:
+    """T045-FIX B-S3: a non-Microdrama exception (malformed ComfyUI JSON) is recorded
+    too - the shutdown path runs and the record is written before the re-raise."""
+    import json as _json
+
+    from microdrama.pipeline.canary import CanaryRunNotClean
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport(malformed_history=True)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+        )
+    records = sorted((tmp_path / "records").glob("*-canary.json"))
+    assert records
+    record = _json.loads(records[-1].read_text())
+    assert record["outcome"] == "NOT_CLEAN"
+    assert "Error" in record["not_clean_reason"]  # a non-Microdrama exception
+    # The Pod was still stopped and terminated by the shutdown path.
+    assert runpod_transport.state == "GONE"

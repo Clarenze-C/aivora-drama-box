@@ -24,6 +24,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from microdrama.contracts.errors import SchemaInvalid
 
+#: T045-FIX B-S9: the deterministic canary episode the dedicated canary database
+#: seeds (canary_db up prints it); the authorization pins exactly this one.
+CANARY_EPISODE_ID = "1c0ffee0-0000-4000-8000-00000000cafe"
+
 _NAMESPACE_RE = re.compile(r"[a-z0-9]{4,12}")
 _ACCOUNT_REF_RE = re.compile(r"acct:[a-z0-9][a-z0-9._\-]{1,120}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
@@ -154,6 +158,9 @@ class CanaryAuthorization(BaseModel):
 
     operator: str = Field(min_length=1)
     change_ref: str = Field(min_length=1)
+    #: T045-FIX B-S9: the ONE episode the run may charge - execute refuses unless the
+    #: database has exactly one episode with an EPISODE budget account and it is this.
+    episode_id: str = Field(pattern=r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     hard_stop_utc: datetime
     max_wall_seconds: int
     quote: CanaryQuote
