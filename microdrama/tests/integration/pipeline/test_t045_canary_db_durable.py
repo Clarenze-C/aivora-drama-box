@@ -29,10 +29,34 @@ def test_the_durable_cluster_runs_with_fsync_synchronous_commit_and_full_page_wr
 
     from microdrama.testing.services import EphemeralPostgres
 
-    root = tmp_path / "canary-pg"
-    # The same ownership code up() runs: the parent becomes 0755 (traversable by the
-    # postgres OS user), the root/data dir are the server user's own 0700.
+    # T045-FIX O-2: the test builds its own traversable parent - a directory IT
+    # creates and sets to 0755 - under tmp_path's chain only when that chain is
+    # already traversable; otherwise a fresh mkdtemp it also sets to 0755. Either
+    # way it widens no directory it did not create.
+    def traversable_chain(start: Path) -> bool:
+        node = start
+        while True:
+            if stat.S_IMODE(node.stat().st_mode) & 0o055 != 0o055:
+                return False
+            if node.parent == node:
+                return True
+            node = node.parent
+
+    if traversable_chain(tmp_path):
+        parent = tmp_path / "traversable-parent"
+        parent.mkdir()
+    else:
+        import tempfile
+
+        parent = Path(tempfile.mkdtemp())
+    parent.chmod(0o755)
+    tmp_mode_before = stat.S_IMODE(tmp_path.stat().st_mode)
+    root = parent / "canary-pg"
+    # The same ownership code up() runs: the tool creates the chain below the
+    # deepest existing ancestor 0755 (traversable by the postgres OS user); the
+    # root/data dir are the server user's own 0700.
     canary_db._prepare_durable_root(root)
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == tmp_mode_before  # O-2: no widening
     server = EphemeralPostgres(keep=True, durable=True, root=root)
     assert server.port not in canary_db.FORBIDDEN_PORTS
     try:

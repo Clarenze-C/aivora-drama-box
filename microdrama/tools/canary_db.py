@@ -46,29 +46,62 @@ FORBIDDEN_PORTS = {8091, 8093}
 
 
 def _prepare_durable_root(root: Path) -> None:
-    """T045-FIX RR-S2: make the data root reachable by the server's OS user.
+    """T045-FIX RR-S2 + O-2: make the data root reachable by the server's OS user -
+    without ever widening a directory that already existed.
 
     The cluster runs as the ``postgres`` OS user (``runuser -u postgres``); it can
-    only reach the data dir if EVERY directory down to the root is traversable. Each
-    ancestor that is not yet traversable becomes 0755 (the walk stops at the first
-    already-traversable directory, so nothing above it is touched);
-    ``EphemeralPostgres.start`` then owns the root itself (0700, postgres) and initdb
-    creates the data dir 0700 as the server user.
+    only reach the data dir if EVERY directory from ``/`` down to the data root is
+    traversable. Directories that already exist keep their mode: if any of them is
+    not traversable, the command refuses (exit 2) naming it and how to fix it,
+    changing no mode and creating nothing. Only the directories this call creates
+    itself - below the deepest existing ancestor - are made 0755.
+    ``EphemeralPostgres.start`` then owns the root itself (0700, postgres) and
+    initdb creates the data dir 0700 as the server user.
     """
     import stat as _stat
 
-    root.mkdir(parents=True, exist_ok=True)
-    if os.geteuid() != 0:
-        return  # the server runs as the invoking user; no traversal fix needed
-    node = root.parent
-    while True:
-        mode = _stat.S_IMODE(os.stat(node).st_mode)
-        if mode & 0o055 == 0o055:
-            break  # already traversable by the server's OS user
-        os.chmod(node, 0o755)
+    root = root.resolve()
+    missing: list[Path] = []
+    node = root
+    while not node.exists():
+        missing.append(node)
         if node.parent == node:
             break
         node = node.parent
+    if os.geteuid() != 0:
+        # The server runs as the invoking user: create what is missing (0755) and
+        # go - no cross-user traversal requirement applies.
+        for part in reversed(missing):
+            part.mkdir()
+            os.chmod(part, 0o755)
+        return
+    # Every ancestor from / down to the deepest EXISTING node of the root chain
+    # (the data root itself when it already exists) must already be traversable
+    # by the server's OS user; a directory this tool did not create in this call
+    # is never chmod'ed (O-2: the old walk widened e.g. a 0700 operator home).
+    untraversable: list[Path] = []
+    node_chain: list[Path] = []
+    walk = node
+    while True:
+        node_chain.append(walk)
+        if walk.parent == walk:
+            break
+        walk = walk.parent
+    for ancestor in reversed(node_chain):
+        if _stat.S_IMODE(os.stat(ancestor).st_mode) & 0o055 != 0o055:
+            untraversable.append(ancestor)
+    if untraversable:
+        worst = untraversable[-1]  # the failure closest to the data root
+        print(
+            f"canary-db: {worst} is not traversable by the server OS user and this "
+            "tool never changes the mode of a directory it did not create; chmod "
+            "0755 it (or choose a --data-root under a traversable parent) and retry",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    for part in reversed(missing):
+        part.mkdir()
+        os.chmod(part, 0o755)
 
 
 def _state() -> dict | None:
