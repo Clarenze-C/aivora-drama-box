@@ -36,3 +36,7 @@ dist/
 out/
 deployment/staging.env
 deployment/staging/drill-logs/
+
+# T045-FIX O-1: canary object stores never live in the repo (the CLI requires an
+# explicit absolute MICRODRAMA_OBJECT_STORE_ROOT; the durable path is outside it).
+canary-objects/

@@ -137,6 +137,13 @@ is blocked even though the provider endpoint is implemented.
 One authorization document authorizes one bounded run. The exact commands (as T031's
 packet must state them), run from `microdrama/` against the dedicated canary database:
 
+`execute`, `sweep` and `invoice` require `MICRODRAMA_OBJECT_STORE_ROOT` — an explicit
+**absolute** path for the canary object store (the durable location is
+`/var/lib/microdrama/canary-objects`). Without it, or with a relative path, the command
+refuses with exit 2 before any transport or credential call; there is no cwd-relative
+default. `preflight` reads and writes no object store, so it requires none and creates
+none.
+
 ```bash
 # 1) validate the authorization and every gate; print the plan and the sha to approve
 python -m microdrama.pipeline.canary preflight --authorization runbooks/canary-authorization.json
@@ -145,6 +152,7 @@ python -m microdrama.pipeline.canary preflight --authorization runbooks/canary-a
 #    hard stop (T031 authorizes this; T045 runs it only under pytest with fixture
 #    transports). The Comfy endpoint is NEVER a flag: it is late-bound from the
 #    created Pod's own proxy URL.
+MICRODRAMA_OBJECT_STORE_ROOT=/var/lib/microdrama/canary-objects \
 python -m microdrama.pipeline.canary execute \
   --authorization runbooks/canary-authorization.json \
   --authorization-sha256 <hex-from-preflight> \
@@ -152,11 +160,13 @@ python -m microdrama.pipeline.canary execute \
 
 # 3) one janitor pass over the same attested world (any time after the run): stop and
 #    terminate an owned stray Pod, ingest provider billing, run finality
+MICRODRAMA_OBJECT_STORE_ROOT=/var/lib/microdrama/canary-objects \
 python -m microdrama.pipeline.canary sweep \
   --authorization runbooks/canary-authorization.json \
   --authorization-sha256 <hex-from-preflight>
 
 # 4) verify the operator's period invoice once Runpod invoices the canary
+MICRODRAMA_OBJECT_STORE_ROOT=/var/lib/microdrama/canary-objects \
 python -m microdrama.pipeline.canary invoice \
   --authorization runbooks/canary-authorization.json \
   --pod-id <pod-id> --period-start <iso> --period-end <iso> \

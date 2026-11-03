@@ -1259,6 +1259,39 @@ def world_readiness(db: Database, episode_id: UUID) -> list[Any]:
     return [lease_billing_readiness(db, row["id"]) for row in rows]
 
 
+class _NoObjectStore:
+    """T045-FIX O-1: preflight's placeholder store.
+
+    Preflight plans and refuses; it reads and writes no object store, so it must not
+    create one either - ``FilesystemObjectStore`` mkdirs its root on construction,
+    which is how a cwd-relative default once wrote canary objects into the repo.
+    Every method refuses loudly so an accidental preflight store use can never pass
+    silently.
+    """
+
+    def _refuse(self, operation: str, key: str) -> None:
+        raise Conflict(f"preflight uses no object store: {operation} {key!r} refused")
+
+    def put_bytes(self, key: str, data: bytes, *, media_type: str) -> None:
+        self._refuse("put_bytes", key)
+
+    def put_file(self, key: str, source: Path, *, media_type: str) -> None:
+        self._refuse("put_file", key)
+
+    def get_bytes(self, key: str) -> bytes:
+        self._refuse("get_bytes", key)
+
+    def local_path(self, key: str) -> Path:
+        self._refuse("local_path", key)
+
+    def head(self, key: str) -> None:
+        self._refuse("head", key)
+
+    def verify(self, key: str, sha256: str) -> bool:
+        self._refuse("verify", key)
+        return False
+
+
 def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = None) -> int:
     """The canary CLI.
 
@@ -1297,8 +1330,32 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
     if not database_url:
         print("canary: MICRODRAMA_DATABASE_URL is required", file=sys.stderr)
         return 2
-    store_root = settings.object_store_root or Path("canary-objects")
-    store = FilesystemObjectStore(Path(store_root))
+    if args.command == "preflight":
+        # T045-FIX O-1: preflight reads and writes no object store, so it must not
+        # create one either (FilesystemObjectStore mkdirs its root on construction,
+        # which is how a cwd-relative default once wrote canary objects into the
+        # repo). The refusing placeholder keeps the composed world's shape.
+        store: ObjectStore = _NoObjectStore()
+    else:
+        # T045-FIX O-1: every effect-having command requires an explicit absolute
+        # object-store root - no relative default; refuse before anything else is
+        # constructed or called (zero transport calls, zero resolver calls).
+        store_root = settings.object_store_root
+        if not store_root:
+            print(
+                f"canary: MICRODRAMA_OBJECT_STORE_ROOT is required for {args.command} "
+                "(an absolute path; the durable location is /var/lib/microdrama/canary-objects)",
+                file=sys.stderr,
+            )
+            return 2
+        if not Path(store_root).is_absolute():
+            print(
+                "canary: MICRODRAMA_OBJECT_STORE_ROOT must be an absolute path, "
+                f"got {store_root!r}",
+                file=sys.stderr,
+            )
+            return 2
+        store = FilesystemObjectStore(Path(store_root))
     db = Database(database_url)
     # T045-FIX B-S1: the CLI resolves credentials ONLY through FILE refs whose file
     # is owner-only; tests inject their own resolver through the seam.

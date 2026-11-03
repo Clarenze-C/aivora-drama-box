@@ -1240,6 +1240,8 @@ def test_the_sweep_subcommand_terminates_an_owned_stray_pod_and_keeps_the_hold(
     monkeypatch.setenv("MICRODRAMA_EXECUTION_MODE", "PAID_BENCHMARK")
     monkeypatch.setenv("MICRODRAMA_PAID_REQUESTS_ENABLED", "true")
     monkeypatch.setenv("MICRODRAMA_CLOUD_RESOURCES_ENABLED", "true")
+    # T045-FIX O-1: sweep requires an explicit object-store root.
+    monkeypatch.setenv("MICRODRAMA_OBJECT_STORE_ROOT", str(tmp_path / "canary-objects"))
     clock = FakeClock(T0 + timedelta(minutes=30))
     rc = canary_module.main(
         [
@@ -1369,13 +1371,16 @@ def test_a_pod_that_never_reports_ports_stops_at_the_deadline_with_zero_comfy_ca
 # --- T045-FIX B-S10: the composed flow through main(argv) --------------------------------
 
 
-def _main_env(monkeypatch: pytest.MonkeyPatch, db: Database) -> None:
+def _main_env(monkeypatch: pytest.MonkeyPatch, db: Database, tmp_path: Path) -> None:
     from microdrama.pipeline import canary as canary_module
 
     monkeypatch.setenv("MICRODRAMA_DATABASE_URL", db.dsn)
     monkeypatch.setenv("MICRODRAMA_EXECUTION_MODE", "PAID_BENCHMARK")
     monkeypatch.setenv("MICRODRAMA_PAID_REQUESTS_ENABLED", "true")
     monkeypatch.setenv("MICRODRAMA_CLOUD_RESOURCES_ENABLED", "true")
+    # T045-FIX O-1: every main(argv) test sets the object-store root under its
+    # own tmp_path - the CLI has no cwd-relative default any more.
+    monkeypatch.setenv("MICRODRAMA_OBJECT_STORE_ROOT", str(tmp_path / "canary-objects"))
     monkeypatch.setattr(canary_module, "Database", lambda _dsn: db)
 
 
@@ -1389,7 +1394,7 @@ def test_the_full_composed_flow_runs_through_main_argv(
     from microdrama.pipeline.canary_authorization import load_canary_authorization
 
     _seed_everything(db)
-    _main_env(monkeypatch, db)
+    _main_env(monkeypatch, db, tmp_path)
     clock = FakeClock(T0)
     runpod_transport = RunpodCanaryTransport()
     comfy_transport = ComfyCanaryTransport()
@@ -1492,12 +1497,16 @@ def test_preflight_makes_zero_transport_and_zero_resolver_calls(
     db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """T045-FIX B-S10: preflight is a pure plan - no transport call, no credential
-    resolution, before anything is refused or run."""
+    resolution, before anything is refused or run. T045-FIX O-1: preflight reads and
+    writes no object store, so it must not create one either."""
     from microdrama.pipeline import canary as canary_module
-    from microdrama.pipeline.canary_authorization import load_canary_authorization
 
     _seed_everything(db)
-    _main_env(monkeypatch, db)
+    _main_env(monkeypatch, db, tmp_path)
+    monkeypatch.delenv("MICRODRAMA_OBJECT_STORE_ROOT", raising=False)
+    # O-1: with the old cwd-relative default a preflight call mkdir'd
+    # ./canary-objects right where the operator stood - it must not anymore.
+    monkeypatch.chdir(tmp_path)
     resolver_calls: list[str] = []
 
     def resolver(ref: str) -> str | None:
@@ -1507,7 +1516,6 @@ def test_preflight_makes_zero_transport_and_zero_resolver_calls(
     runpod_transport = RunpodCanaryTransport()
     comfy_transport = ComfyCanaryTransport()
     authorization = _write_authorization(tmp_path)
-    _, digest = load_canary_authorization(authorization)
     rc = canary_module.main(
         ["preflight", "--authorization", str(authorization)],
         _injection={
@@ -1521,7 +1529,7 @@ def test_preflight_makes_zero_transport_and_zero_resolver_calls(
     assert runpod_transport.calls == []
     assert comfy_transport.calls == []
     assert resolver_calls == []
-    del digest
+    assert not (tmp_path / "canary-objects").exists()  # O-1: no store created
 
 
 def test_a_failed_attempt_then_success_reuses_the_hold_and_keeps_the_failed_charge(

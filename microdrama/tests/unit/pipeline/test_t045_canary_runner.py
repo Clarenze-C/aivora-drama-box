@@ -531,6 +531,9 @@ def test_a_zero_amount_is_not_a_missing_amount(
     monkeypatch.setattr(canary_module, "run_invoice", _capture)
     monkeypatch.setattr(canary_module, "Database", lambda _dsn: None)
     monkeypatch.setenv("MICRODRAMA_DATABASE_URL", "postgresql://canary@127.0.0.1:1/postgres")
+    # T045-FIX O-1: every main(argv) test sets the object-store root under its own
+    # tmp_path - the CLI has no relative default any more.
+    monkeypatch.setenv("MICRODRAMA_OBJECT_STORE_ROOT", str(tmp_path / "canary-objects"))
     rc = canary_module.main(
         [
             "invoice",
@@ -565,6 +568,65 @@ def test_the_dsn_is_never_taken_from_argv(monkeypatch: pytest.MonkeyPatch) -> No
             ["invoice", "--database-url", "postgresql://x/y", "--authorization", "a"]
         )
     assert exc.value.code == 2  # argparse rejects the removed flag outright
+
+
+# --- T045-FIX O-1: an explicit absolute object-store root --------------------------------
+
+
+def test_execute_without_an_object_store_root_is_refused_before_any_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T045-FIX O-1: execute refuses without MICRODRAMA_OBJECT_STORE_ROOT - exit 2,
+    a message naming the variable, zero transport calls and zero resolver calls.
+    The cwd-relative default that once wrote canary objects into the repo is gone."""
+    from microdrama.pipeline import canary as canary_module
+
+    monkeypatch.setenv("MICRODRAMA_DATABASE_URL", "postgresql://canary@127.0.0.1:1/postgres")
+    monkeypatch.delenv("MICRODRAMA_OBJECT_STORE_ROOT", raising=False)
+    calls: list[str] = []
+
+    def resolver(ref: str) -> str | None:
+        calls.append(f"resolver:{ref}")
+        return "fixture-dummy-value"
+
+    rc = canary_module.main(
+        [
+            "execute",
+            "--authorization",
+            "/dev/null",
+            "--authorization-sha256",
+            "0" * 64,
+            "--prompts",
+            "/dev/null",
+        ],
+        _injection={"credential_resolver": resolver},
+    )
+    assert rc == 2
+    assert calls == []  # zero resolver calls
+    assert "MICRODRAMA_OBJECT_STORE_ROOT" in capsys.readouterr().err
+
+
+def test_a_relative_object_store_root_is_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T045-FIX O-1: a relative root is refused with exit 2 - an effect-having
+    command must never write objects relative to whatever the cwd happens to be."""
+    from microdrama.pipeline import canary as canary_module
+
+    monkeypatch.setenv("MICRODRAMA_DATABASE_URL", "postgresql://canary@127.0.0.1:1/postgres")
+    monkeypatch.setenv("MICRODRAMA_OBJECT_STORE_ROOT", "canary-objects")
+    rc = canary_module.main(
+        [
+            "sweep",
+            "--authorization",
+            "/dev/null",
+            "--authorization-sha256",
+            "0" * 64,
+        ],
+    )
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "absolute" in err and "canary-objects" in err
 
 
 # --- T045-FIX B-S1: a runnable CLI ------------------------------------------------------
