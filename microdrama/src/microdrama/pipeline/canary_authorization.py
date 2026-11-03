@@ -94,19 +94,31 @@ class CanaryQuote(BaseModel):
 
 
 class CanaryCaps(BaseModel):
-    """Hard caps: spend includes storage exposure and the shutdown reserve."""
+    """Hard caps: spend includes storage exposure and the shutdown reserve.
+
+    T045-FIX B-N7: ``max_attempts`` is a GLOBAL cap on submit attempts across all
+    prompts of the run (and each single prompt also gets at most this many).
+    """
 
     max_spend_micro_usd: int
     max_storage_gb: int
     max_prompts: int
-    max_attempts: int
+    max_attempts: int = Field(
+        description=(
+            "GLOBAL cap on submit attempts across ALL prompts of the run; each single "
+            "prompt also gets at most this many. 1..3 by the render contract."
+        )
+    )
 
     @model_validator(mode="after")
     def _cap_rules(self) -> CanaryCaps:
         if min(self.max_spend_micro_usd, self.max_storage_gb, self.max_prompts) <= 0:
             raise ValueError("spend/storage/prompt caps must be positive")
         if not 1 <= self.max_attempts <= 3:
-            raise ValueError("attempts are capped at three per prompt by the render contract")
+            raise ValueError(
+                "attempts are capped at three (a global cap across all prompts, and "
+                "per prompt) by the render contract"
+            )
         return self
 
 

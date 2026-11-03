@@ -446,7 +446,16 @@ class ComfyRenderService:
         # differs from its job's input is refused even when an operation already
         # exists, so altered content can never silently ride the original attempt.
         self._verify_job(job_id, request)
-        token = render_client_token(request.semantic_key)
+        # T045-FIX B-S10: the operation token is per ATTEMPT from the first retry on -
+        # a retry within max_attempts is a new attempt with its own token, so it
+        # dispatches instead of reattaching to the FAILED operation forever (the
+        # prompt's reservation stays per prompt and is reused across attempts). First
+        # attempts keep the historical token form, so existing durable rows and crash
+        # recovery are unchanged.
+        if request.attempt_number > 1:
+            token = render_client_token(f"{request.semantic_key}:a{request.attempt_number}")
+        else:
+            token = render_client_token(request.semantic_key)
         existing = self._find_by_token(token)
         if existing is not None:
             # A durable operation for this attempt already exists: reattach (or replay
@@ -976,6 +985,13 @@ class ComfyRenderService:
                 pass
             return 0
         if self._config.lease_covered:
+            # T045-FIX B-S10: a FAILED lease-covered attempt must NOT settle the
+            # prompt's shared hold - the retry within max_attempts reuses it, and a
+            # settled hold can never dispatch again (provider operations need an
+            # ACTIVE reservation). The failed attempt's GPU cost is not forgiven: the
+            # Pod lease's invoice bucket carries every attempt's execution seconds.
+            if row["state"] == ProviderOperationState.FAILED.value:
+                return 0
             # T045-FIX B-B1: a render on a leased Runpod Pod is paid once — by the
             # Pod lease's BILLED settlement (the provider invoice bucket). The
             # attempt's hold settles at zero charge: same deterministic receipt key,

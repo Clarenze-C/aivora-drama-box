@@ -143,14 +143,20 @@ python -m microdrama.pipeline.canary preflight --authorization runbooks/canary-a
 
 # 2) the bounded run itself, only with the sha preflight printed and only before the
 #    hard stop (T031 authorizes this; T045 runs it only under pytest with fixture
-#    transports)
+#    transports). The Comfy endpoint is NEVER a flag: it is late-bound from the
+#    created Pod's own proxy URL.
 python -m microdrama.pipeline.canary execute \
   --authorization runbooks/canary-authorization.json \
   --authorization-sha256 <hex-from-preflight> \
-  --prompts runbooks/canary-prompts.json \
-  --comfy-endpoint https://<pod>-8188.proxy.runpod.net
+  --prompts runbooks/canary-prompts.json
 
-# 3) verify the operator's period invoice once Runpod invoices the canary
+# 3) one janitor pass over the same attested world (any time after the run): stop and
+#    terminate an owned stray Pod, ingest provider billing, run finality
+python -m microdrama.pipeline.canary sweep \
+  --authorization runbooks/canary-authorization.json \
+  --authorization-sha256 <hex-from-preflight>
+
+# 4) verify the operator's period invoice once Runpod invoices the canary
 python -m microdrama.pipeline.canary invoice \
   --authorization runbooks/canary-authorization.json \
   --pod-id <pod-id> --period-start <iso> --period-end <iso> \
@@ -160,23 +166,37 @@ python -m microdrama.pipeline.canary invoice \
 `preflight` (the default command) validates the authorization and every `live_world`
 gate, resolves no credential value (it only checks the refs are well-formed `credref:`
 names), performs no network access, and prints the plan — caps, pins, quote, hard stop,
-composed Pod image (`microdrama-canary@sha256:<digest>`; the authorization pins the
-digest) — plus `authorization_sha256=<hex>` (the sha256 of the authorization file
-bytes).
+the pinned Pod image (the full `<registry>/<repo>@sha256:<64 hex>` reference the
+authorization carries and the create request sends as-is) — plus
+`authorization_sha256=<hex>` (the sha256 of the authorization file bytes).
 
 `execute --authorization-sha256 <hex>` refuses, typed and before any transport call,
 on: a sha mismatch; `now ≥ hard_stop_utc`; an expired quote; a mode other than
 PAID_BENCHMARK or a missing paid/cloud flag; a spend cap above `episode_cap_micro_usd`;
-or a prompt object whose content hash is not pinned. It then runs runbook steps 1–6
-through the composed `live_world` only: reserve → owned-name Pod create; before the
-first prompt, the `/object_info` digest of the mapped node classes against the pinned
+a non-loopback DSN (every libpq form is parsed; `PGHOST`/`PGHOSTADDR`/`PGSERVICE`
+included); a database whose single budget-account episode is not the pinned
+`episode_id`; or a prompt object whose content hash is not pinned. It then runs runbook
+steps 1–6 through the composed `live_world` only: reserve → owned-name Pod create
+(carrying the pinned full image reference); a bounded wait for the Pod's runtime port,
+then the `/object_info` digest of the mapped node classes against the pinned
 `node_schema_sha256` (a mismatch stops + terminates and submits nothing); bounded
-prompt submits (≤ `max_prompts` distinct prompts, ≤ `max_attempts` total, no blind
-retries — ambiguity stops for a human); output fetch → checksum → durable copy;
-stop → terminate → verified read-back (the T045-A final-release path); janitor ingest.
-`hard_stop_utc`/`max_wall_seconds` are enforced by a deadline that stops and
-terminates. The runner never prints credential values, `Authorization` headers or the
-environment, and its default credential resolver refuses — T031 supplies the real one.
+prompt submits (≤ `max_prompts` distinct prompts, ≤ `max_attempts` **total submit
+attempts across all prompts — a global cap**, no blind retries — ambiguity stops for a
+human); output fetch → checksum → durable copy; stop → terminate → verified read-back
+(the T045-A final-release path); janitor ingest. `hard_stop_utc`/`max_wall_seconds`
+(and the rights record's `eligible_until`) are enforced by a deadline that stops and
+terminates; SIGTERM/SIGINT run the same shutdown path before exit. The runner never
+prints credential values, `Authorization` headers or the environment. Credentials
+resolve ONLY through FILE credential refs whose secret file is owner-only (mode 0600
+or 0400); ENV, VAULT and NONE refs are refused.
+
+`sweep --authorization <file> --authorization-sha256 <hex>` composes the janitor over
+the same attestation, pod config, credentials and durable state and runs ONE pass:
+stop/terminate an owned stray Pod (a Pod that appears after a podless resolution is
+adopted onto its lease, the resolution is marked contradicted, and its cost is ingested
+as an adjustment on the settled hold), ingest provider billing, run finality. The
+quote's expiry gates only the start, so the sweep stays possible after the run; it
+submits no work and takes no reservation.
 
 `invoice` wraps `verify_invoice_period` (R5) from operator evidence: account ref (from
 the authorization), pod id, period, amount, evidence file (**only its sha256 is
@@ -189,7 +209,9 @@ hold and marks the lease DISPUTED.
 
 A fully worked example with obviously fake values ships at
 `microdrama/runbooks/canary-authorization.example.json` (references use `credref:`
-names only). Fields: `operator`, `change_ref`, `hard_stop_utc`, `max_wall_seconds`;
+names only). Fields: `operator`, `change_ref`, `episode_id` (the pinned canary episode
+the database must hold exactly one of, with its budget account), `hard_stop_utc`,
+`max_wall_seconds`;
 `quote` (R10 fields: `quote_id`, USD-only `currency`, `captured_at`, `expires_at`,
 `compute_micro_usd_per_hour`, `container_disk_gb`,
 `container_storage_micro_usd_per_gb_month`, `persistent_volume_gb`,
@@ -197,16 +219,21 @@ names only). Fields: `operator`, `change_ref`, `hard_stop_utc`, `max_wall_second
 `allowed_gpu_types`, `host_ram_gb_by_gpu`, `maximum_runtime_ms`,
 `maximum_exposure_micro_usd`); `caps` (`max_spend_micro_usd` — including storage
 exposure and the shutdown reserve — `max_storage_gb`, `max_prompts`, `max_attempts`
-≤ 3); `rights` (`rights_route_id`, `rights_subject_ref`, `rights_subject_kind`,
-`rights_version`, `territories`, `rights_evidence_id`, `eligible_until`); `pins`
-(`image_digest`, `workflow_sha256`, `node_schema_sha256`, `output_controls_sha256`,
+≤ 3 — a **global cap on submit attempts across all prompts** in the run, and each
+prompt also gets at most this many); `rights` (`rights_route_id`,
+`rights_subject_ref`, `rights_subject_kind`, `rights_version`, `territories`,
+`rights_evidence_id`, `eligible_until`); `pins`
+(`image_ref` — the full `<registry>/<repo>@sha256:<64 hex>` reference, sent as-is on
+create; `workflow_sha256`, `node_schema_sha256`, `output_controls_sha256`,
 `preset_id`, `preset_version`, `required_controls`); `runpod_credential_ref` and
-`comfy_credential_ref` (`credref:` names only); `namespace`;
+`comfy_credential_ref` (`credref:` names only — the canary CLI resolves them ONLY
+from FILE stores whose secret file is mode 0600/0400); `namespace`;
 `provider_account_ref` (an `acct:` label); and the prompt/reference inputs as content
 hashes (`prompt_sha256`, `reference_sha256`). Validation rules worth knowing: the
 hourly rate must be a whole number of micro-USD per GPU-second (integer ledger
 prices), the spend cap cannot exceed the quote's exposure ceiling, the storage cap
-cannot be below the quoted volume, and prompt pins are sha256 of the canonical prompt
+cannot be below the quoted volume, `max_wall_seconds × 1000` must not exceed the
+quote's `maximum_runtime_ms`, and prompt pins are sha256 of the canonical prompt
 object (`{"text", "seed", "negative", ...}`) supplied at execute time via `--prompts`
 and verified before anything is submitted.
 

@@ -202,12 +202,19 @@ class ComfyCanaryTransport:
         never_completes: bool = False,
         malformed_history: bool = False,
         pending_polls: int = 0,
+        fail_first_submit: bool = False,
+        reconcile_on_submit: bool = False,
     ) -> None:
         self.drop_node = drop_node
         self.never_completes = never_completes
         self.malformed_history = malformed_history
         #: T045-FIX B-S1: the first N history polls report nothing yet.
         self.pending_polls = pending_polls
+        #: T045-FIX B-S10: attempt 1 FAILS, attempt 2 succeeds.
+        self.fail_first_submit = fail_first_submit
+        self.submit_calls = 0
+        #: T045-FIX B-S10: the first submit's outcome is unknown (NeedsReconciliation).
+        self.reconcile_on_submit = reconcile_on_submit
         self.history_polls = 0
         self.calls: list[tuple[str, str]] = []
         self.prompt_id = "canary-prompt-1"
@@ -227,10 +234,21 @@ class ComfyCanaryTransport:
         return catalog
 
     def request(self, method: str, url: str, *, headers: Any, body: bytes | None = None) -> bytes:
+        from microdrama.contracts.errors import NeedsReconciliation
+
         self.calls.append((method, url))
         if method == "GET" and url.endswith("/object_info"):
             return json.dumps(self._object_info()).encode()
         if method == "POST" and url.endswith("/prompt"):
+            self.submit_calls += 1
+            if self.reconcile_on_submit and self.submit_calls == 1:
+                raise NeedsReconciliation(
+                    "fixture: the submit's outcome is unknown (provider restart)"
+                )
+            if self.fail_first_submit:
+                self.prompt_id = f"canary-prompt-{self.submit_calls}"
+            else:
+                self.prompt_id = "canary-prompt-1"
             return json.dumps({"prompt_id": self.prompt_id, "number": 1}).encode()
         if method == "GET" and "/history/" in url:
             if self.malformed_history:
@@ -240,24 +258,31 @@ class ComfyCanaryTransport:
                 return b"{}"
             if self.never_completes:
                 return b"{}"
-            return json.dumps(
-                {
-                    self.prompt_id: {
-                        "status": {"completed": True, "status_str": "success"},
-                        "outputs": {
-                            "9": {
-                                "video": [
-                                    {
-                                        "filename": "canary_out.mp4",
-                                        "subfolder": "",
-                                        "type": "output",
-                                    }
-                                ]
+            failed = self.fail_first_submit and url.rsplit("/", 1)[-1] == "canary-prompt-1"
+            status = (
+                {"completed": False, "status_str": "error"}
+                if failed
+                else {
+                    "completed": True,
+                    "status_str": "success",
+                }
+            )
+            outputs = (
+                {}
+                if failed
+                else {
+                    "9": {
+                        "video": [
+                            {
+                                "filename": "canary_out.mp4",
+                                "subfolder": "",
+                                "type": "output",
                             }
-                        },
+                        ]
                     }
                 }
-            ).encode()
+            )
+            return json.dumps({self.prompt_id: {"status": status, "outputs": outputs}}).encode()
         if method == "GET" and url.endswith("/queue"):
             return json.dumps(
                 {"queue_running": [[0, self.prompt_id]], "queue_pending": []}
@@ -1339,3 +1364,237 @@ def test_a_pod_that_never_reports_ports_stops_at_the_deadline_with_zero_comfy_ca
     record = _json.loads(records[-1].read_text())
     assert record["outcome"] == "NOT_CLEAN"
     assert record["deadline_hit"] is True
+
+
+# --- T045-FIX B-S10: the composed flow through main(argv) --------------------------------
+
+
+def _main_env(monkeypatch: pytest.MonkeyPatch, db: Database) -> None:
+    from microdrama.pipeline import canary as canary_module
+
+    monkeypatch.setenv("MICRODRAMA_DATABASE_URL", db.dsn)
+    monkeypatch.setenv("MICRODRAMA_EXECUTION_MODE", "PAID_BENCHMARK")
+    monkeypatch.setenv("MICRODRAMA_PAID_REQUESTS_ENABLED", "true")
+    monkeypatch.setenv("MICRODRAMA_CLOUD_RESOURCES_ENABLED", "true")
+    monkeypatch.setattr(canary_module, "Database", lambda _dsn: db)
+
+
+def test_the_full_composed_flow_runs_through_main_argv(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX B-S10: execute -> sweep -> invoice -> sweep, all through main(argv)
+    with the test-only injection seam. The account total and the charge sum equal
+    the invoice, and the finalization rows exist."""
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+
+    _seed_everything(db)
+    _main_env(monkeypatch, db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport()
+    authorization = _write_authorization(tmp_path)
+    _, digest = load_canary_authorization(authorization)
+    injection = {
+        "runpod_transport": runpod_transport,
+        "comfy_transport": comfy_transport,
+        "clock": clock,
+        "ids": SequentialIds("main-argv"),
+        "credential_resolver": lambda _ref: "fixture-dummy-value",
+        "evidence_dir": tmp_path / "records",
+        "sleep": lambda seconds: clock.advance(ms=int(seconds * 1000)),
+    }
+    rc = canary_module.main(
+        [
+            "execute",
+            "--authorization",
+            str(authorization),
+            "--authorization-sha256",
+            digest,
+            "--prompts",
+            str(_write_prompts(tmp_path)),
+        ],
+        _injection=injection,
+    )
+    assert rc == 0
+    assert runpod_transport.state == "GONE"
+
+    clock.advance(seconds=2 * 3600 + 1800)
+    assert (
+        canary_module.main(
+            ["sweep", "--authorization", str(authorization), "--authorization-sha256", digest],
+            _injection=injection,
+        )
+        == 0
+    )
+    evidence = tmp_path / "invoice-main.pdf"
+    evidence.write_bytes(b"fixture operator invoice")
+    invoice_total = GPU_BUCKET + CPU_BUCKET + DISK_BUCKET
+    rc = canary_module.main(
+        [
+            "invoice",
+            "--authorization",
+            str(authorization),
+            "--pod-id",
+            POD,
+            "--period-start",
+            T0.isoformat(),
+            "--period-end",
+            WINDOW_END.isoformat(),
+            "--amount-micro-usd",
+            str(invoice_total),
+            "--evidence",
+            str(evidence),
+            "--source",
+            "INVOICE",
+            "--observed-at",
+            (T0 + timedelta(hours=3)).isoformat(),
+        ],
+        _injection=injection,
+    )
+    assert rc == 0
+    clock.advance(seconds=600)
+    assert (
+        canary_module.main(
+            ["sweep", "--authorization", str(authorization), "--authorization-sha256", digest],
+            _injection=injection,
+        )
+        == 0
+    )
+    # The account total and the provider-reported charge sum equal the invoice (the
+    # lease SETTLEMENT finalizes the accrual it covers - the raw charge-table sum
+    # double-counts by ledger design, as recorded for B-B1); the ledger side of the
+    # verification left its finalization rows.
+    assert _account_counters(db)["settled"] == invoice_total
+    assert _provider_reported_total(db) == invoice_total
+    charges_before_replay = _charge_total(db)
+    with db.transaction(readonly=True) as tx:
+        finalizations = tx.fetchval("SELECT count(*) FROM runpod_billing_budget_finalizations")
+        reservation_state = tx.fetchval(
+            "SELECT state FROM reservations WHERE operation_kind='pod.lease'"
+        )
+    assert finalizations >= 1
+    assert reservation_state == "SETTLED"
+    # A replayed sweep after the verified invoice adds no money.
+    clock.advance(seconds=600)
+    assert (
+        canary_module.main(
+            ["sweep", "--authorization", str(authorization), "--authorization-sha256", digest],
+            _injection=injection,
+        )
+        == 0
+    )
+    assert _charge_total(db) == charges_before_replay
+    assert _account_counters(db)["settled"] == invoice_total
+
+
+def test_preflight_makes_zero_transport_and_zero_resolver_calls(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX B-S10: preflight is a pure plan - no transport call, no credential
+    resolution, before anything is refused or run."""
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+
+    _seed_everything(db)
+    _main_env(monkeypatch, db)
+    resolver_calls: list[str] = []
+
+    def resolver(ref: str) -> str | None:
+        resolver_calls.append(ref)
+        return "fixture-dummy-value"
+
+    runpod_transport = RunpodCanaryTransport()
+    comfy_transport = ComfyCanaryTransport()
+    authorization = _write_authorization(tmp_path)
+    _, digest = load_canary_authorization(authorization)
+    rc = canary_module.main(
+        ["preflight", "--authorization", str(authorization)],
+        _injection={
+            "runpod_transport": runpod_transport,
+            "comfy_transport": comfy_transport,
+            "clock": FakeClock(T0),
+            "credential_resolver": resolver,
+        },
+    )
+    assert rc == 0
+    assert runpod_transport.calls == []
+    assert comfy_transport.calls == []
+    assert resolver_calls == []
+    del digest
+
+
+def test_a_failed_attempt_then_success_reuses_the_hold_and_keeps_the_failed_charge(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S10: attempt 1 fails, attempt 2 succeeds within max_attempts. One
+    prompt hold is REUSED by the retry, and the failed attempt keeps its settlement
+    row (R1: the execution seconds were spent) - lease-covered, so at zero charge."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy_transport = ComfyCanaryTransport(fail_first_submit=True)
+    result = _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=RunpodCanaryTransport(),
+        comfy_transport=comfy_transport,
+    )
+    record = result.record
+    assert comfy_transport.submit_calls == 2
+    assert record["attempts_used"] == 2
+    step_names = [step["step"] for step in record["steps"]]
+    assert "prompt_failed" in step_names and "prompt_succeeded" in step_names
+    # ONE prompt reservation, reused by both attempts: the failed attempt left the
+    # shared hold ACTIVE for the retry (B-S10), and the success settled it at zero.
+    with db.transaction(readonly=True) as tx:
+        holds = tx.fetchall(
+            "SELECT id, state, settled_micro_usd FROM reservations "
+            "WHERE operation_kind='comfy.queue_prompt'"
+        )
+        attempt_settlements = tx.fetchall(
+            "SELECT c.amount_micro_usd FROM charges c "
+            "JOIN reservations r ON r.id = c.reservation_id "
+            "WHERE r.operation_kind='comfy.queue_prompt' AND c.kind='SETTLEMENT'"
+        )
+        failed_operations = tx.fetchval(
+            "SELECT count(*) FROM provider_operations WHERE state='FAILED'"
+        )
+        succeeded_operations = tx.fetchval(
+            "SELECT count(*) FROM provider_operations WHERE state='SUCCEEDED'"
+        )
+    assert len(holds) == 1
+    assert holds[0]["state"] == "SETTLED"  # settled at prompt end
+    assert holds[0]["settled_micro_usd"] == 0  # lease-covered (B-B1)
+    assert len(attempt_settlements) == 1
+    assert attempt_settlements[0]["amount_micro_usd"] == 0
+    # R1: the failed attempt stays charged - its operation row is durably FAILED
+    # (never erased, never refunded) and its GPU seconds live in the lease invoice.
+    assert failed_operations == 1 and succeeded_operations == 1
+
+
+def test_a_needs_reconciliation_during_submit_stops_for_a_human(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S10: a submit whose outcome is unknown stops the run for a human -
+    no blind retry, no second create, and the shutdown path still runs."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy_transport = ComfyCanaryTransport(reconcile_on_submit=True)
+    runpod_transport = RunpodCanaryTransport()
+    result = _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=runpod_transport,
+        comfy_transport=comfy_transport,
+    )
+    record = result.record
+    assert comfy_transport.submit_calls == 1  # never resubmitted blind
+    assert record["attempts_used"] == 1
+    assert record["ambiguous"], "the ambiguity must be recorded for the human"
+    assert "ambiguous submit/poll stopped for a human" in record["blocked_or_uncertain"]
+    # The shutdown path ran: the owned Pod was stopped and terminated.
+    assert runpod_transport.state == "GONE"
+    assert any(call[0] == "DELETE" for call in runpod_transport.calls)
+    assert record["terminate_verified_at"] is not None

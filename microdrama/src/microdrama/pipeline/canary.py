@@ -790,10 +790,13 @@ def run_execute(
     written: list[Path] = []  # T045-FIX B-S3: the record path, written in the finally
 
     def submit_prompt(prompt: dict[str, Any], index: int) -> bool:
-        """Bounded submits for one prompt: <= max_attempts, no blind retries.
+        """Bounded submits for one prompt, no blind retries.
 
-        Returns True when the prompt produced a SUCCEEDED attempt. Ambiguity
-        (NeedsReconciliation) records itself and stops — a human decides.
+        ``max_attempts`` is a GLOBAL cap shared by every prompt of the run (B-N7):
+        ``attempts_used`` counts across prompts, and each single prompt also gets at
+        most ``max_attempts`` tries. Returns True when the prompt produced a SUCCEEDED
+        attempt. Ambiguity (NeedsReconciliation) records itself and stops — a human
+        decides.
         """
         nonlocal attempts_used
         attempt_number = 1
@@ -1147,11 +1150,14 @@ def run_sweep(
 ) -> dict[str, Any]:
     """T045-FIX B-S1: ``canary sweep`` - one janitor pass over the attested world.
 
-    Composes exactly the world ``execute`` composes (the same live_world gates) and
-    runs ONE janitor sweep: stop/terminate an owned stray Pod, ingest provider
-    billing, run finality. The quote's expiry gates only the start, so a sweep may
-    run after it; nothing here submits work or takes a reservation.
+    Composes the janitor over the SAME attestation, pod config, credentials and
+    durable state ``execute`` uses, and runs ONE sweep: stop/terminate an owned
+    stray Pod, ingest provider billing, run finality. The janitor is independently
+    invokable in production and does not re-run the attested live_world gates - the
+    quote's expiry gates only the start - so a sweep stays possible after the run.
+    Nothing here submits work or takes a reservation.
     """
+    del store, comfy_transport  # the sweep touches no object store and no ComfyUI
     authorization, digest = load_canary_authorization(authorization_path)
     clock = clock or SystemClock()
     ids = ids or UuidIds()
@@ -1173,34 +1179,61 @@ def run_sweep(
     refuse_non_loopback_dsn(db.dsn)
     resolve_reference_assets(db, authorization)
     episode_id = resolve_canary_episode(db, expected=UUID(authorization.episode_id))
-    budget = BudgetService(db, clock, ids, settings)
-    world = compose_canary_world(
-        authorization,
-        settings=settings,
-        db=db,
-        budget=budget,
-        store=store,
-        clock=clock,
-        ids=ids,
+    from microdrama.rendering import RunpodInvoiceFinality, build_janitor
+    from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
+    from microdrama.rendering.runpod_transport import RunpodRestProvider
+
+    owned_tag = f"microdrama-owned:{authorization.namespace}"
+    provider = RunpodRestProvider(
+        settings,
+        credential_ref=authorization.runpod_credential_ref,
         credential_resolver=credential_resolver,
-        runpod_transport=runpod_transport,
-        comfy_transport=comfy_transport,
+        attestation=canary_attestation(authorization),
+        now=clock.now,
+        reservation_guard=lambda _request, _attestation: None,
+        cleanup_guard=lambda _operation, _pod_id: None,
+        absent_pod_ownership_probe=durable_pod_ownership_probe(
+            db, owned_tag=owned_tag, provider_account_ref=authorization.provider_account_ref
+        ),
+        transport=runpod_transport,
     )
-    report = world.janitor.sweep()
+    budget = BudgetService(db, clock, ids, settings)
+    janitor = build_janitor(
+        db,
+        budget,
+        provider,
+        clock,
+        ids,
+        settings,
+        canary_pod_config(authorization),
+        RunpodInvoiceFinality(db, budget_service=budget),
+    )
+    report = janitor.sweep()
     readiness = [
         {
             "lease_id": str(r.lease_id),
             "state": r.state,
             "pending_since": r.pending_since.isoformat() if r.pending_since else None,
         }
-        for r in world.billing_readiness()
+        for r in world_readiness(db, episode_id)
     ]
     return {
         "episode_id": str(episode_id),
         "report": report.to_dict(),
         "readiness": readiness,
-        "billing_state": world.billing_state,
     }
+
+
+def world_readiness(db: Database, episode_id: UUID) -> list[Any]:
+    """R7 readiness for every lease of the episode, read-only."""
+    from microdrama.budget.billing import lease_billing_readiness
+
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT id FROM pod_leases WHERE owner_episode_id=%s ORDER BY created_at",
+            (episode_id,),
+        )
+    return [lease_billing_readiness(db, row["id"]) for row in rows]
 
 
 def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = None) -> int:
@@ -1256,6 +1289,8 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                     settings=settings,
                     db=Database(database_url),
                     store=store,
+                    clock=injection.get("clock"),
+                    ids=injection.get("ids"),
                 )
             )
             return 0
