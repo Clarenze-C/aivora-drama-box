@@ -67,6 +67,11 @@ from microdrama.rendering.runpod_billing import (
     map_billing_history,
 )
 
+#: T045-FIX B-S4: the per-Pod billing-ingest backoff doubles from 5 minutes to 1 hour.
+INGEST_BACKOFF_BASE = timedelta(minutes=5)
+INGEST_BACKOFF_CAP = timedelta(hours=1)
+DEFAULT_SETTLE_LAG = timedelta(minutes=15)
+
 
 @dataclass(frozen=True)
 class JanitorAction:
@@ -595,16 +600,21 @@ class Janitor:
             "SELECT l.pod_id, MIN(l.provider_account_ref) AS account_ref, "
             "MIN(COALESCE(l.create_requested_at, l.created_at)) AS window_start, "
             "GREATEST(MAX(l.compute_window_end_at), MAX(l.terminate_verified_at)) "
-            "AS window_end, MIN(l.next_finality_check_at) AS backoff "
+            "AS window_end, MIN(l.next_finality_check_at) AS backoff, "
+            "MAX(l.terminate_verified_at) AS terminated_at, "
+            "b.next_ingest_at, b.attempts AS ingest_attempts, "
+            "b.post_terminate_ingest_done "
             "FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
+            "LEFT JOIN runpod_billing_ingest_backoff b ON b.pod_id = l.pod_id "
             "WHERE l.provider = 'runpod' AND l.pod_id IS NOT NULL "
             "AND l.owned_tag = %s AND r.state IN ('ACTIVE', 'EXPIRED') "
-            "GROUP BY l.pod_id "
+            "GROUP BY l.pod_id, b.next_ingest_at, b.attempts, b.post_terminate_ingest_done "
             "HAVING MIN(l.next_finality_check_at) IS NULL "
             "OR MIN(l.next_finality_check_at) <= %s "
             "ORDER BY MIN(l.created_at)",
             (self._config.owned_tag, now),
         )
+        settle_lag = getattr(self._finality, "settle_lag", DEFAULT_SETTLE_LAG)
         for row in pods:
             pod_id = row["pod_id"]
             if not row["account_ref"]:
@@ -614,6 +624,41 @@ class Janitor:
                         action="billing_ingest",
                         outcome="failed",
                         detail="lease has no provider account label; billing cannot be attributed",
+                    )
+                )
+                continue
+            # T045-FIX B-S4: the persisted per-Pod ingest backoff paces the provider
+            # billing endpoint across sweeps (and across janitor restarts) - on
+            # success, replay and failure alike.
+            if row["next_ingest_at"] is not None and row["next_ingest_at"] > now:
+                continue
+            attempts = int(row["ingest_attempts"] or 0)
+            terminated = row["terminated_at"] is not None
+            window_end = row["window_end"]
+            if (
+                window_end is not None
+                and (now - window_end) < settle_lag
+                and not (terminated and not row["post_terminate_ingest_done"])
+            ):
+                # The window's last bucket cannot have settled yet; retry when it
+                # can. A terminated Pod gets exactly one ingest inside the lag
+                # (its terminal read), then waits like everything else.
+                self._record_ingest_backoff(
+                    pod_id,
+                    row["account_ref"],
+                    now=now,
+                    attempts=attempts,
+                    outcome="SKIPPED_OPEN",
+                    detail="window end is within the settle lag",
+                    next_ingest_at=window_end + settle_lag,
+                    post_terminate_ingest_done=bool(row["post_terminate_ingest_done"]),
+                )
+                report.billing_ingests.append(
+                    JanitorAction(
+                        subject=f"pod:{pod_id}",
+                        action="billing_ingest",
+                        outcome="SKIPPED_OPEN",
+                        detail="window end is within the settle lag; no provider call",
                     )
                 )
                 continue
@@ -635,10 +680,33 @@ class Janitor:
                     self._db, history, provider_account_ref=row["account_ref"]
                 )
                 ingested = 0
+                skipped_open = 0
                 if mapped is not None:
                     self._finality.ingest(mapped.query, mapped.buckets)
-                    ingested = len(mapped.buckets)
+                    # T045-FIX B-S4: count what actually settled - the repository
+                    # stores only buckets past the settle lag and skips open ones.
+                    closed = [
+                        bucket
+                        for bucket in mapped.buckets
+                        if bucket.bucket_end <= mapped.query.observed_at - settle_lag
+                    ]
+                    ingested = len(closed)
+                    skipped_open = len(mapped.buckets) - ingested
             except MicrodramaError as exc:
+                # T045-FIX B-S4: the failure is durable (hold-keeping evidence) and
+                # backed off; the hold stays.
+                self._record_ingest_backoff(
+                    pod_id,
+                    row["account_ref"],
+                    now=now,
+                    attempts=attempts,
+                    outcome="FAILED",
+                    detail=f"{exc.code}: {exc.message}",
+                    next_ingest_at=None,
+                    post_terminate_ingest_done=bool(
+                        row["post_terminate_ingest_done"] or terminated
+                    ),
+                )
                 report.failures.append(
                     JanitorAction(
                         subject=f"pod:{pod_id}",
@@ -651,6 +719,18 @@ class Janitor:
             except ValueError as exc:
                 # Malformed provider data (contract validators raise plain
                 # ValueError) fails this pod's ingest without crashing the sweep.
+                self._record_ingest_backoff(
+                    pod_id,
+                    row["account_ref"],
+                    now=now,
+                    attempts=attempts,
+                    outcome="FAILED",
+                    detail=f"PROVIDER_DATA_INVALID: {exc}",
+                    next_ingest_at=None,
+                    post_terminate_ingest_done=bool(
+                        row["post_terminate_ingest_done"] or terminated
+                    ),
+                )
                 report.failures.append(
                     JanitorAction(
                         subject=f"pod:{pod_id}",
@@ -660,11 +740,33 @@ class Janitor:
                     )
                 )
                 continue
+            # T045-FIX B-S4: stored, skipped-open and replayed are reported
+            # separately - an all-open response is never "INGESTED".
+            if ingested:
+                outcome, detail = "INGESTED", f"{ingested} bucket(s) stored"
+            elif skipped_open:
+                outcome, detail = "SKIPPED_OPEN", f"{skipped_open} open bucket(s) skipped"
+            else:
+                outcome, detail = "REPLAYED", "nothing new over the lease window"
+            if skipped_open and ingested:
+                detail += f", {skipped_open} open bucket(s) skipped"
+            self._record_ingest_backoff(
+                pod_id,
+                row["account_ref"],
+                now=now,
+                attempts=attempts,
+                outcome=(
+                    "STORED" if ingested else "REPLAYED" if not skipped_open else "SKIPPED_OPEN"
+                ),
+                detail=detail,
+                next_ingest_at=None,
+                post_terminate_ingest_done=bool(row["post_terminate_ingest_done"] or terminated),
+            )
             action = JanitorAction(
                 subject=f"pod:{pod_id}",
                 action="billing_ingest",
-                outcome="INGESTED" if ingested else "REPLAY",
-                detail=f"{ingested} bucket(s) stored over the lease window",
+                outcome=outcome,
+                detail=detail,
             )
             report.billing_ingests.append(action)
             self._evidence(
@@ -677,6 +779,48 @@ class Janitor:
                     "window_end": until.isoformat(),
                 },
                 now,
+            )
+
+    def _record_ingest_backoff(
+        self,
+        pod_id: str,
+        account_ref: str,
+        *,
+        now: datetime,
+        attempts: int,
+        outcome: str,
+        detail: str,
+        next_ingest_at: datetime | None,
+        post_terminate_ingest_done: bool,
+    ) -> None:
+        """T045-FIX B-S4: persist the per-Pod ingest attempt and its backoff.
+
+        The delay doubles from a 5-minute base to a one-hour cap; ``next_ingest_at``
+        overrides the doubling when the caller knows the earliest useful retry (a
+        window that must first pass the settle lag).
+        """
+        delay = min(INGEST_BACKOFF_BASE * (2 ** min(attempts, 12)), INGEST_BACKOFF_CAP)
+        when = next_ingest_at or (now + delay)
+        with self._db.transaction() as tx:
+            tx.execute(
+                "INSERT INTO runpod_billing_ingest_backoff "
+                "(pod_id, provider_account_ref, next_ingest_at, attempts, "
+                "post_terminate_ingest_done, last_outcome, last_detail, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (pod_id) DO UPDATE SET next_ingest_at = EXCLUDED.next_ingest_at, "
+                "attempts = EXCLUDED.attempts, post_terminate_ingest_done = "
+                "EXCLUDED.post_terminate_ingest_done, last_outcome = EXCLUDED.last_outcome, "
+                "last_detail = EXCLUDED.last_detail, updated_at = EXCLUDED.updated_at",
+                (
+                    pod_id,
+                    account_ref,
+                    when,
+                    attempts + 1,
+                    post_terminate_ingest_done,
+                    outcome,
+                    detail[:500],
+                    now,
+                ),
             )
 
     # --- phase 5: terminal leases with unsettled holds --------------------------------------

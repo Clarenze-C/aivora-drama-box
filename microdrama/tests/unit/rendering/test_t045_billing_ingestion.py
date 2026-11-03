@@ -87,6 +87,9 @@ class ScriptedBillingTransport:
             return _Response(200, _pod_json().encode())
         if "/billing/pods" in url:
             return _Response(200, self.billing_json())
+        if method == "DELETE":
+            self.pod_present = False
+            return _Response(200, b"{}")
         raise AssertionError(f"unexpected fixture call: {method} {url}")
 
 
@@ -373,7 +376,8 @@ def test_an_exact_replay_of_the_same_response_adds_nothing(db: Database) -> None
     assert first.failures == []
     after_first = _counts(db)
     assert after_first["runpod_billing_buckets"] == 1
-    # Clear the backoff the first pending settle scheduled, then sweep again.
+    # Clear the backoff the first pending settle scheduled, then sweep again (the
+    # ingest's own 5-minute backoff has expired by +30 minutes).
     with db.transaction() as tx:
         tx.execute("UPDATE pod_leases SET next_finality_check_at = NULL")
     second = _janitor(
@@ -381,7 +385,8 @@ def test_an_exact_replay_of_the_same_response_adds_nothing(db: Database) -> None
     ).sweep()
     assert second.failures == []
     assert _counts(db) == after_first
-    replayed = [a for a in second.billing_ingests if a.outcome == "REPLAY"]
+    # T045-FIX B-S4: a nothing-new response is reported REPLAYED (was REPLAY).
+    replayed = [a for a in second.billing_ingests if a.outcome == "REPLAYED"]
     assert replayed and replayed[0].subject == f"pod:{POD}"
 
 
@@ -449,3 +454,184 @@ def test_open_buckets_are_skipped_and_the_query_is_unknown(db: Database) -> None
         skipped = tx.fetchval("SELECT count(*) FROM runpod_billing_query_skipped_buckets")
     assert query["result_state"] == "UNKNOWN"
     assert skipped == 1
+
+
+def _open_records(*, end: datetime | None = None) -> list[dict[str, Any]]:
+    """One bucket that is still open at the sweep instant."""
+    return [
+        {
+            "podId": POD,
+            "startTime": WINDOW_START.isoformat().replace("+00:00", "Z"),
+            "endTime": (end or WINDOW_END).isoformat().replace("+00:00", "Z"),
+            "totalAmount": "0.070000",
+            "gpuAmount": "0.050000",
+            "cpuAmount": "0.010000",
+            "diskAmount": "0.010000",
+        }
+    ]
+
+
+def _paid_settings() -> Settings:
+    return Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+
+
+def _backoff_row(db: Database) -> dict[str, Any] | None:
+    with db.transaction(readonly=True) as tx:
+        return tx.fetchone("SELECT * FROM runpod_billing_ingest_backoff WHERE pod_id=%s", (POD,))
+
+
+def test_four_sweeps_on_a_running_pod_make_one_provider_call(db: Database) -> None:
+    """T045-FIX B-S4: the ingest backoff is persisted per Pod - sweeps 20 s apart on
+    a running Pod make exactly one provider billing call, and the all-open response
+    is reported as SKIPPED_OPEN, never INGESTED."""
+    clock = FakeClock(SWEEP_AT)
+    transport = ScriptedBillingTransport(
+        records=_open_records(end=SWEEP_AT + timedelta(hours=1)), pod_present=True
+    )
+    provider = RunpodRestProvider(
+        _paid_settings(),
+        credential_ref="credref:runpod",
+        credential_resolver=lambda _ref: "fixture-dummy-value",
+        attestation=_attestation(),
+        now=clock.now,
+        reservation_guard=lambda *_a, **_k: None,
+        cleanup_guard=lambda *_o, **_k: None,
+        absent_pod_ownership_probe=lambda *_a, **_k: None,
+        transport=transport,
+    )
+    _seed_terminated_lease(db, terminate=False, reservation_state="ACTIVE")
+    # A running pod: the lease is live (not expired, heartbeating, no verified
+    # terminate), hold ACTIVE.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET stop_verified_at=NULL, terminate_verified_at=NULL, "
+            "lease_state='ACTIVE', lease_expires_at=%s, heartbeat_at=%s WHERE pod_id=%s",
+            (SWEEP_AT + timedelta(hours=1), SWEEP_AT, POD),
+        )
+    billing_calls = lambda: [c for c in transport.calls if "/billing/pods" in c[1]]  # noqa: E731
+    for offset in (0, 20, 40, 60):
+        clock.advance(seconds=offset)
+        # A live worker heartbeats: the running pod must not be janitor-cleaned.
+        with db.transaction() as tx:
+            tx.execute("UPDATE pod_leases SET heartbeat_at=%s WHERE pod_id=%s", (clock.now(), POD))
+        _janitor(db, provider, now=clock.now(), seq=f"bs4-{offset}").sweep()
+    assert len(billing_calls()) == 1
+    row = _backoff_row(db)
+    assert row is not None and row["last_outcome"] == "SKIPPED_OPEN"
+
+
+def test_an_ingest_failure_is_persisted_and_backed_off(db: Database) -> None:
+    """T045-FIX B-S4: a failed ingest is durable hold-keeping evidence and the next
+    sweep inside the backoff makes no provider call."""
+
+    from microdrama.contracts.errors import ProviderError
+
+    class _FailingBilling(ScriptedBillingTransport):
+        def request(self, method, url, **kwargs):
+            self.calls.append((method, url))
+            if "/billing/pods" in url:
+                raise ProviderError("Runpod billing endpoint is down (fixture)")
+            return super().request(method, url, **kwargs)
+
+    transport = _FailingBilling(records=_open_records(), pod_present=True)
+    provider = RunpodRestProvider(
+        _paid_settings(),
+        credential_ref="credref:runpod",
+        credential_resolver=lambda _ref: "fixture-dummy-value",
+        attestation=_attestation(),
+        now=lambda: SWEEP_AT,
+        reservation_guard=lambda *_a, **_k: None,
+        cleanup_guard=lambda *_o, **_k: None,
+        absent_pod_ownership_probe=lambda *_a, **_k: None,
+        transport=transport,
+    )
+    _seed_terminated_lease(db)
+    report = _janitor(db, provider, now=SWEEP_AT, seq="bs4-fail").sweep()
+    assert any(a.outcome == "failed" for a in report.failures)
+    row = _backoff_row(db)
+    assert row is not None and row["last_outcome"] == "FAILED"
+    assert "fixture" in row["last_detail"]
+    billing_calls = [c for c in transport.calls if "/billing/pods" in c[1]]
+    assert len(billing_calls) == 1
+    _janitor(db, provider, now=SWEEP_AT + timedelta(seconds=30), seq="bs4-fail2").sweep()
+    billing_calls = [c for c in transport.calls if "/billing/pods" in c[1]]
+    assert len(billing_calls) == 1  # backed off, no new billing call
+
+
+def test_sweep_soon_then_later_then_invoice_reaches_billed(db: Database) -> None:
+    """T045-FIX B-S4 + A-B1 end to end: a sweep 10 minutes after the run (buckets
+    still open), the two-hour sweep stores them, the invoice matches, the hold
+    settles BILLED."""
+    transport = ScriptedBillingTransport(records=_open_records(), pod_present=False)
+    clock = FakeClock(WINDOW_END + timedelta(minutes=10))
+    provider = RunpodRestProvider(
+        _paid_settings(),
+        credential_ref="credref:runpod",
+        credential_resolver=lambda _ref: "fixture-dummy-value",
+        attestation=_attestation(),
+        now=clock.now,
+        reservation_guard=lambda *_a, **_k: None,
+        cleanup_guard=lambda *_o, **_k: None,
+        absent_pod_ownership_probe=durable_pod_ownership_probe(
+            db, owned_tag=TAG, provider_account_ref=ACCOUNT
+        ),
+        transport=transport,
+    )
+    lease, _reservation, _account = _seed_terminated_lease(db)
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
+            "valid_from, valid_until, creating_lease_id) VALUES (%s, 'runpod', %s, "
+            "(SELECT owner_episode_id FROM pod_leases WHERE id=%s), %s, %s, %s)",
+            (uuid.uuid4(), POD, lease, WINDOW_START, WINDOW_END, lease),
+        )
+    first = _janitor(db, provider, now=clock.now(), seq="bs4-e2e-1").sweep()
+    del first  # the early sweep is paced; its exact outcome is asserted per-case above
+    clock.advance(ms=110 * 60 * 1000)
+    second = _janitor(db, provider, now=clock.now(), seq="bs4-e2e-2").sweep()
+    assert any(a.outcome == "INGESTED" for a in second.billing_ingests)
+    # The operator's period invoice matches, and the finality sweep settles BILLED.
+    settings = Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+    budget = BudgetService(db, clock, SequentialIds("bs4-e2e-inv"), settings)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    result = finality.verify_invoice_period(
+        provider_account_ref=ACCOUNT,
+        pod_id=POD,
+        period_start=WINDOW_START,
+        period_end=WINDOW_END,
+        amount_micro_usd=70_000,
+        currency="USD",
+        evidence_sha256="e" * 64,
+        source="INVOICE",
+        observed_at=clock.now(),
+    )
+    assert result.outcome == "MATCHED"
+    settled = finality.settle_lease(
+        db,
+        budget,
+        settings,
+        lease_id=lease,
+        context="bs4 e2e",
+        now=clock.now(),
+    )
+    assert settled.settled_micro_usd == 50_000  # the GPU bucket
+    with db.transaction(readonly=True) as tx:
+        state = tx.fetchval(
+            "SELECT r.state FROM reservations r JOIN pod_leases l ON l.reservation_id=r.id "
+            "WHERE l.pod_id=%s",
+            (POD,),
+        )
+    assert state == "SETTLED"
+
+
+def _lease_id(db: Database) -> uuid.UUID:
+    with db.transaction(readonly=True) as tx:
+        return tx.fetchval("SELECT id FROM pod_leases WHERE pod_id=%s", (POD,))
