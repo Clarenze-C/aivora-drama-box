@@ -1,0 +1,8 @@
+import importlib.util, sys
+WT = "/tmp/claude-0/-root-AIVORA/53361f07-0734-4ee2-8460-f2bbb5df02ac/scratchpad/wt-rr2/microdrama"
+sys.path.insert(0, WT + "/src"); sys.path.insert(0, WT + "/tests")
+spec = importlib.util.spec_from_file_location("wt_conftest", WT + "/tests/conftest.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+for k, v in vars(m).items():
+    if not k.startswith("__"):
+        globals()[k] = v

@@ -1,0 +1,53 @@
+import os, sys
+sys.path.insert(0, "src")
+from microdrama.pipeline.canary import refuse_non_loopback_dsn
+def t(dsn, **env):
+    saved = {k: os.environ.pop(k, None) for k in ("PGHOST","PGHOSTADDR","PGSERVICE")}
+    os.environ.update(env)
+    try:
+        refuse_non_loopback_dsn(dsn); r = "PASS"
+    except Exception as e:
+        r = "REFUSED(" + type(e).__name__ + ")"
+    for k in env: os.environ.pop(k, None)
+    for k, v in saved.items():
+        if v is not None: os.environ[k] = v
+    print(f"{r:28} {dsn!r} {env or ''}")
+t("postgresql://%31%32%37.0.0.1/db")
+t("postgresql://%70rod.example.com/db")
+t("postgresql://prod%2eexample.com/db")
+t("host=' 127.0.0.1' dbname=x")
+t("host=' prod.example.com' dbname=x")
+t("host= dbname=x")
+t("hostaddr=10.0.0.5 dbname=x")
+t("hostaddr=127.0.0.1 dbname=x")
+t("host=prod hostaddr=127.0.0.1")
+t("postgresql://[::1]/db")
+t("postgresql://[2001:db8::1]/db")
+t("postgresql://[::1]:5432,[2001:db8::1]/db")
+t("host=localhost. dbname=x")
+t("host=run/pg dbname=x")
+t("host=/var/run/postgresql dbname=x")
+t("host=/tmp/../tmp/x dbname=x")
+t("host=127.0.0.1,prod.example.com dbname=x")
+t("host=127.0.0.1,,dbname=x")
+t("dbname=x", PGHOST="a.example.com,127.0.0.1")
+t("dbname=x", PGHOST="127.0.0.1,b.example.com")
+t("dbname=x", PGHOST="127.0.0.1")
+t("dbname=x", PGHOSTADDR="10.1.1.1")
+t("host=localhost dbname=x", PGHOSTADDR="10.1.1.1")
+t("host=localhost dbname=x", PGSERVICE="prod")
+t("postgresql:///db?host=prod.example.com")
+t("postgresql://127.0.0.1/db?host=prod.example.com")
+t("postgres://u@prod.example.com/db")
+t("postgresql://127.0.0.1/db?service=x")
+t("postgresql://127.0.0.1/db?hostaddr=10.1.1.1")
+t("postgresql://localhost,/db")
+t("not a dsn at all ===")
+t("")
+t("localhost")
+t("host=LOCALHOST dbname=x")
+t("host=0.0.0.0 dbname=x")
+t("host=127.1 dbname=x")
+t("host=127.0.0.2 dbname=x")
+t("host=::ffff:127.0.0.1 dbname=x")
+t("host=@abstract dbname=x")

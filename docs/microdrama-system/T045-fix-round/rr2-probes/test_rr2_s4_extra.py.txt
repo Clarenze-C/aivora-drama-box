@@ -1,0 +1,70 @@
+import importlib.util, sys, uuid
+from datetime import timedelta
+WT = "/tmp/claude-0/-root-AIVORA/53361f07-0734-4ee2-8460-f2bbb5df02ac/scratchpad/wt-rr2/microdrama"
+spec = importlib.util.spec_from_file_location("ing", WT + "/tests/unit/rendering/test_t045_billing_ingestion.py")
+ing = importlib.util.module_from_spec(spec); sys.modules["ing"] = ing; spec.loader.exec_module(ing)
+import pytest
+pytestmark = pytest.mark.db
+
+
+class FailDelete(ing.OrphanPodBillingTransport):
+    fail = True
+    def request(self, method, url, *, headers, body=None):
+        if method == "DELETE" and self.fail:
+            self.calls.append((method, url))
+            return ing._Response(503, b"{}")
+        return super().request(method, url, headers=headers, body=body)
+
+
+def test_terminate_failure_then_retry(db):
+    from microdrama.rendering.runpod_transport import pod_name
+    lease, res, acct = ing._seed_podless_resolved_lease(db)
+    t = FailDelete(records=[ing._record()], name=pod_name(ing.NS, ing.LATE_TOKEN))
+    r1 = ing._janitor(db, ing._orphan_provider(t, db), seq="x1").sweep()
+    print("FAILS1", [(f.action, f.detail) for f in r1.failures])
+    t.fail = False
+    t.status = "RUNNING"  # pod still running at provider (stop result lost)
+    r2 = ing._janitor(db, ing._orphan_provider(t, db), seq="x2").sweep()
+    print("R2", [(a.action, a.outcome) for a in r2.orphan_pods], [(f.action) for f in r2.failures])
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone("SELECT pod_id, terminate_verified_at FROM pod_leases WHERE id=%s", (lease,))
+    print("ROW", dict(row), t.status)
+    assert row["terminate_verified_at"] is not None, "terminate never retried"
+
+
+def test_no_resolution_late_pod(db, monkeypatch):
+    from microdrama.rendering.runpod_transport import pod_name
+    from microdrama.budget.billing import BillingRepository
+    monkeypatch.setattr(BillingRepository, "resolve_podless_create", lambda *a, **k: None)
+    lease, res, acct = ing._seed_podless_resolved_lease(db)
+    monkeypatch.undo()
+    t = ing.OrphanPodBillingTransport(records=[ing._record()], name=pod_name(ing.NS, ing.LATE_TOKEN))
+    r = ing._janitor(db, ing._orphan_provider(t, db), seq="n1").sweep()
+    assert any(a.action == "adopt_late_pod" for a in r.orphan_pods)
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall("SELECT kind, amount_micro_usd FROM charges WHERE reservation_id=%s", (res,))
+        st = tx.fetchval("SELECT state FROM reservations WHERE id=%s", (res,))
+    print("NORES", st, [(r["kind"], r["amount_micro_usd"]) for r in rows])
+    assert any(r["kind"] in ("ACCRUAL","ADJUSTMENT") and r["amount_micro_usd"]>0 for r in rows)
+
+
+def test_concurrent_sweeps(db):
+    import threading
+    from microdrama.rendering.runpod_transport import pod_name
+    lease, res, acct = ing._seed_podless_resolved_lease(db)
+    t = ing.OrphanPodBillingTransport(records=[ing._record()], name=pod_name(ing.NS, ing.LATE_TOKEN))
+    errs = []
+    def go(i):
+        try:
+            ing._janitor(db, ing._orphan_provider(t, db), seq=f"c{i}").sweep()
+        except Exception as e:
+            errs.append(repr(e))
+    ths = [threading.Thread(target=go, args=(i,)) for i in range(3)]
+    [x.start() for x in ths]; [x.join() for x in ths]
+    print("ERRS", errs)
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall("SELECT kind, category, amount_micro_usd FROM charges WHERE reservation_id=%s ORDER BY created_at", (res,))
+        tot = tx.fetchval("SELECT COALESCE(SUM(amount_micro_usd),0) FROM charges WHERE account_id=%s", (acct,))
+    print("CH", [tuple(r.values()) if hasattr(r,'values') else r for r in rows], tot)
+    adj = [r for r in rows if r["kind"] == "ADJUSTMENT" and r["category"]=="GPU_GENERATION"]
+    assert len(adj) == 1 and adj[0]["amount_micro_usd"] == 400_000

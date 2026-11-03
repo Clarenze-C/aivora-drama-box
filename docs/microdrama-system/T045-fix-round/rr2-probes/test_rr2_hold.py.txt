@@ -1,0 +1,25 @@
+import importlib.util, sys, json
+WT = "/tmp/claude-0/-root-AIVORA/53361f07-0734-4ee2-8460-f2bbb5df02ac/scratchpad/wt-rr2/microdrama"
+spec = importlib.util.spec_from_file_location("cmp", WT + "/tests/integration/pipeline/test_t045_canary_composed.py")
+c = importlib.util.module_from_spec(spec); sys.modules["cmp"] = c; spec.loader.exec_module(c)
+import pytest
+pytestmark = pytest.mark.db
+
+def test_final_failed_attempt_hold(db, tmp_path):
+    from microdrama.pipeline import canary as cm
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+    from microdrama.persistence.object_store import FilesystemObjectStore
+    c._seed_everything(db)
+    doc = c._authorization_document(caps={"max_attempts": 1})
+    p = tmp_path / "a.json"; p.write_text(json.dumps(doc, indent=2))
+    _, digest = load_canary_authorization(p)
+    clock = c.FakeClock(c.T0)
+    res = cm.run_execute(p, expected_sha256=digest, settings=c._live_settings(), db=db,
+        store=FilesystemObjectStore(tmp_path/"o"), prompts_path=c._write_prompts(tmp_path),
+        clock=clock, ids=c.SequentialIds("h"), credential_resolver=lambda _r: "x",
+        runpod_transport=c.RunpodCanaryTransport(), comfy_transport=c.ComfyCanaryTransport(fail_first_submit=True),
+        evidence_dir=tmp_path/"rec", sleep=lambda s: clock.advance(ms=int(s*1000)))
+    with db.transaction(readonly=True) as tx:
+        holds = tx.fetchall("SELECT state, reserved_micro_usd, expires_at FROM reservations WHERE operation_kind='comfy.queue_prompt'")
+        acct = tx.fetchone("SELECT reserved_outstanding_micro_usd FROM budget_accounts LIMIT 1")
+    print("HOLDS", [dict(h) for h in holds], "OUTSTANDING", acct["reserved_outstanding_micro_usd"], res.record["billing_state"] if "billing_state" in res.record else None)
