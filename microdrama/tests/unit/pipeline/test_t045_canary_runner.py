@@ -565,3 +565,77 @@ def test_the_dsn_is_never_taken_from_argv(monkeypatch: pytest.MonkeyPatch) -> No
             ["invoice", "--database-url", "postgresql://x/y", "--authorization", "a"]
         )
     assert exc.value.code == 2  # argparse rejects the removed flag outright
+
+
+# --- T045-FIX B-S1: a runnable CLI ------------------------------------------------------
+
+
+def test_the_cli_resolves_credentials_only_from_owner_only_files(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S1: the canary resolver accepts FILE refs whose file is owner-only
+    (0600/0400); ENV, VAULT and NONE refs are refused, and so is any group- or
+    other-readable file. Messages name the ref, the kind and the path - never a value."""
+    import os as _os
+
+    from microdrama.contracts.errors import CapabilityUnavailable, EffectDenied
+    from microdrama.core.registry.credentials import CredentialStore, CredentialStoreKind
+    from microdrama.pipeline.canary import _canary_credential_resolver
+
+    store = CredentialStore(db, _live_settings())
+    secret = tmp_path / "runpod.key"
+    secret.write_text("fixture-dummy-value\n")
+    _os.chmod(secret, 0o600)
+    store.register(
+        ref="credref:runpod-file",
+        purpose="canary runpod key",
+        provider="runpod",
+        store=CredentialStoreKind.FILE,
+        locator=str(secret),
+    )
+    resolver = _canary_credential_resolver(db, _live_settings())
+    assert resolver("credref:runpod-file") == "fixture-dummy-value"
+    _os.chmod(secret, 0o400)
+    assert resolver("credref:runpod-file") == "fixture-dummy-value"
+    for mode in (0o644, 0o640, 0o604, 0o666, 0o777):
+        _os.chmod(secret, mode)
+        with pytest.raises(EffectDenied, match="owner-only"):
+            resolver("credref:runpod-file")
+    _os.chmod(secret, 0o600)
+    # ENV, VAULT and NONE stores are refused outright - files only.
+    store.register(
+        ref="credref:runpod-env",
+        purpose="canary runpod key",
+        provider="runpod",
+        store=CredentialStoreKind.ENV,
+        locator="MICRODRAMA_RUNPOD_KEY",
+    )
+    store.register(
+        ref="credref:runpod-vault",
+        purpose="canary runpod key",
+        provider="runpod",
+        store=CredentialStoreKind.VAULT,
+        locator="vault/led/runpod",
+    )
+    store.register(
+        ref="credref:runpod-none",
+        purpose="canary runpod key",
+        provider="runpod",
+        store=CredentialStoreKind.NONE,
+        locator="",
+    )
+    for ref in ("credref:runpod-env", "credref:runpod-vault", "credref:runpod-none"):
+        with pytest.raises(EffectDenied, match="only from a FILE store"):
+            resolver(ref)
+    # An unregistered ref and an unreadable file are capability failures, not refusals.
+    with pytest.raises(CapabilityUnavailable, match="not registered"):
+        resolver("credref:never-registered")
+    store.register(
+        ref="credref:runpod-absent",
+        purpose="canary runpod key",
+        provider="runpod",
+        store=CredentialStoreKind.FILE,
+        locator=str(tmp_path / "absent.key"),
+    )
+    with pytest.raises(CapabilityUnavailable, match="not readable"):
+        resolver("credref:runpod-absent")

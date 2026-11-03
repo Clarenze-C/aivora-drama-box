@@ -27,6 +27,7 @@ from microdrama.config import Settings
 from microdrama.contracts.enums import ExecutionMode
 from microdrama.persistence import Database
 from microdrama.pipeline.canary import (
+    CanaryRunNotClean,
     compose_canary_world,
     run_execute,
     run_invoice,
@@ -184,10 +185,14 @@ class ComfyCanaryTransport:
         drop_node: str | None = None,
         never_completes: bool = False,
         malformed_history: bool = False,
+        pending_polls: int = 0,
     ) -> None:
         self.drop_node = drop_node
         self.never_completes = never_completes
         self.malformed_history = malformed_history
+        #: T045-FIX B-S1: the first N history polls report nothing yet.
+        self.pending_polls = pending_polls
+        self.history_polls = 0
         self.calls: list[tuple[str, str]] = []
         self.prompt_id = "canary-prompt-1"
 
@@ -214,6 +219,9 @@ class ComfyCanaryTransport:
         if method == "GET" and "/history/" in url:
             if self.malformed_history:
                 return b"{not json"
+            self.history_polls += 1
+            if self.pending_polls and self.history_polls <= self.pending_polls:
+                return b"{}"
             if self.never_completes:
                 return b"{}"
             return json.dumps(
@@ -375,6 +383,7 @@ def _execute(
     clock: FakeClock,
     runpod_transport: RunpodCanaryTransport,
     comfy_transport: ComfyCanaryTransport,
+    sleep: Any = None,
     **overrides: Any,
 ):
     from microdrama.persistence.object_store import FilesystemObjectStore
@@ -396,7 +405,9 @@ def _execute(
         runpod_transport=runpod_transport,
         comfy_transport=comfy_transport,
         evidence_dir=tmp_path / "records",
-        sleep=lambda seconds: clock.advance(ms=int(seconds * 1000)),
+        sleep=sleep
+        if sleep is not None
+        else (lambda seconds: clock.advance(ms=int(seconds * 1000))),
     )
 
 
@@ -1091,3 +1102,170 @@ def test_a_malformed_comfy_body_still_leaves_a_record(db: Database, tmp_path: Pa
     assert "Error" in record["not_clean_reason"]  # a non-Microdrama exception
     # The Pod was still stopped and terminated by the shutdown path.
     assert runpod_transport.state == "GONE"
+
+
+# --- T045-FIX B-S1: a runnable CLI ------------------------------------------------------
+
+
+def test_the_poll_loop_waits_at_least_two_seconds_between_polls(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S1: the real time.sleep is the default and every provider poll
+    waits at least the 2-second floor - the loop can never hot-loop the provider."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    waits: list[float] = []
+
+    def recording_sleep(seconds: float) -> None:
+        waits.append(seconds)
+        clock.advance(ms=int(seconds * 1000))
+
+    comfy = ComfyCanaryTransport(pending_polls=2)
+    _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=RunpodCanaryTransport(),
+        comfy_transport=comfy,
+        sleep=recording_sleep,
+    )
+    assert comfy.history_polls >= 3  # two pending polls, then the completed one
+    assert waits, "the poll loop must have waited between polls"
+    assert all(wait >= 2.0 for wait in waits), waits
+
+
+def test_the_sweep_subcommand_terminates_an_owned_stray_pod_and_keeps_the_hold(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX B-S1: `canary sweep --authorization ... --authorization-sha256 ...`
+    composes the same attested world and runs ONE janitor pass through main(argv):
+    an orphaned owned Pod is stopped and terminated, and the lease hold stays
+    (billing finality is still pending)."""
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+    from microdrama.rendering.runpod_transport import pod_name
+
+    _seed_everything(db)
+    token = "md-pod-sweep-fixture-token"
+    transport = RunpodCanaryTransport()
+    transport.out_of_band_created = True
+    transport.state = "RUNNING"
+    transport.last_name = pod_name(NS, token)
+    episode = uuid.UUID(CANARY_EPISODE_ID)
+    reservation = uuid.uuid4()
+    lease = uuid.uuid4()
+    with db.transaction() as tx:
+        season = tx.fetchval("SELECT season_id FROM episodes WHERE id=%s", (episode,))
+        account = tx.fetchval("SELECT id FROM budget_accounts WHERE episode_id=%s", (episode,))
+        tx.execute(
+            "INSERT INTO reservations (id, account_id, request_id, semantic_key, "
+            "request_hash, category, queue, provider, operation_kind, price, ceilings, "
+            "reserved_micro_usd, state, expires_at) VALUES (%s, %s, %s, %s, %s, "
+            "'GPU_GENERATION', 'production', 'runpod', 'pod.lease', '{}', '{}', 92400, "
+            "'ACTIVE', %s)",
+            (
+                reservation,
+                account,
+                uuid.uuid4(),
+                f"sweep:{reservation}",
+                "0" * 64,
+                T0 + timedelta(hours=4),
+            ),
+        )
+        tx.execute(
+            "INSERT INTO pod_leases (id, provider, pod_id, owned_tag, client_token, "
+            "owner_episode_id, reservation_id, lease_state, pod_state, gpu_type, "
+            "hourly_price_micro_usd, lease_expires_at, create_requested_at, "
+            "provider_account_ref) VALUES (%s, 'runpod', NULL, %s, %s, %s, %s, "
+            "'CLAIMED', 'REQUESTED', 'A40', %s, %s, %s, %s)",
+            (
+                lease,
+                f"microdrama-owned:{NS}",
+                token,
+                episode,
+                reservation,
+                QUOTE_PER_HOUR,
+                T0 - timedelta(minutes=1),
+                T0,
+                ACCOUNT,
+            ),
+        )
+        del season
+    authorization = _write_authorization(tmp_path)
+    _, digest = load_canary_authorization(authorization)
+    monkeypatch.setenv("MICRODRAMA_DATABASE_URL", db.dsn)
+    # main() builds its own Database from the env DSN; tests hand it the open fixture.
+    monkeypatch.setattr(canary_module, "Database", lambda _dsn: db)
+    monkeypatch.setenv("MICRODRAMA_EXECUTION_MODE", "PAID_BENCHMARK")
+    monkeypatch.setenv("MICRODRAMA_PAID_REQUESTS_ENABLED", "true")
+    monkeypatch.setenv("MICRODRAMA_CLOUD_RESOURCES_ENABLED", "true")
+    clock = FakeClock(T0 + timedelta(minutes=30))
+    rc = canary_module.main(
+        [
+            "sweep",
+            "--authorization",
+            str(authorization),
+            "--authorization-sha256",
+            digest,
+        ],
+        _injection={
+            "runpod_transport": transport,
+            "comfy_transport": ComfyCanaryTransport(),
+            "clock": clock,
+            "ids": SequentialIds("sweep-cli"),
+            "credential_resolver": lambda _ref: "fixture-dummy-value",
+        },
+    )
+    assert rc == 0
+    # The stray owned Pod was stopped AND terminated by the one janitor pass.
+    assert transport.state == "GONE"
+    assert any(call[0] == "DELETE" for call in transport.calls)
+    # The hold is kept: billing finality is pending, nothing was released.
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT state, reserved_micro_usd FROM reservations WHERE id=%s", (reservation,)
+        )
+        lease_row = tx.fetchone(
+            "SELECT pod_id, terminate_verified_at FROM pod_leases WHERE id=%s", (lease,)
+        )
+    assert row is not None and row["state"] == "ACTIVE"
+    assert row["reserved_micro_usd"] == 92_400
+    assert lease_row is not None
+    assert lease_row["pod_id"] == POD
+    assert lease_row["terminate_verified_at"] is not None
+
+
+def test_sigterm_during_polling_runs_the_shutdown_path(db: Database, tmp_path: Path) -> None:
+    """T045-FIX B-S1: SIGTERM while a prompt is pending raises into the shutdown
+    path - the owned Pod is stopped and terminated and the record is written."""
+    import os as _os
+    import signal as _signal
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy = ComfyCanaryTransport(never_completes=True)
+    delivered: list[bool] = []
+
+    def sleep_and_interrupt(seconds: float) -> None:
+        clock.advance(ms=int(seconds * 1000))
+        if not delivered:
+            delivered.append(True)
+            _os.kill(_os.getpid(), _signal.SIGTERM)
+
+    transport = RunpodCanaryTransport()
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=transport,
+            comfy_transport=comfy,
+            sleep=sleep_and_interrupt,
+        )
+    assert transport.state == "GONE"  # stopped AND terminated by the shutdown path
+    assert any(call[0] == "DELETE" for call in transport.calls)
+    records = sorted((tmp_path / "records").glob("*.json"))
+    assert records, "the canary record must exist even after SIGTERM"
+    record = json.loads(records[-1].read_text())
+    assert record["outcome"] == "NOT_CLEAN"
+    assert "SIGTERM" in record["not_clean_reason"]

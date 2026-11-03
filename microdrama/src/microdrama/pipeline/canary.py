@@ -19,7 +19,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
+import stat
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -39,6 +42,7 @@ from microdrama.contracts.enums import (
     RightsSubjectKind,
 )
 from microdrama.contracts.errors import (
+    CapabilityUnavailable,
     EffectDenied,
     MicrodramaError,
     NeedsReconciliation,
@@ -82,10 +86,104 @@ MICRO_USD_PER_HOUR_DENOMINATOR = 3600
 
 
 def _refusing_resolver(_ref: str) -> str | None:
-    """The default resolver: nothing resolves outside T031's operator packet."""
+    """The library default: nothing resolves outside T031's operator packet."""
     raise EffectDenied(
         "no credential resolver is configured; T031 supplies one under the operator's authorization"
     )
+
+
+#: T045-FIX B-S1: the provider poll loop never runs faster than one call per 2 s.
+POLL_INTERVAL_FLOOR_SECONDS = 2.0
+
+
+def _canary_credential_resolver(db: Any, settings: Settings) -> Callable[[str], str | None]:
+    """T045-FIX B-S1: the canary CLI's credential resolver - FILE refs only.
+
+    ENV and VAULT refs (and NONE, which names no store at all) are refused: a canary
+    run's secrets come from operator-placed files, not from the ambient environment.
+    A FILE ref's file must be owner-only (mode 0600 or 0400). Error messages name the
+    ref, the store kind and the path - never the value.
+    """
+    from microdrama.core.registry.credentials import CredentialStore
+
+    store = CredentialStore(db, settings)
+
+    def resolve(ref: str) -> str | None:
+        with db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT store, locator, revoked_at FROM credential_refs WHERE ref = %s",
+                (ref,),
+            )
+        if row is None:
+            raise CapabilityUnavailable(
+                f"credential ref {ref} is not registered", credential_ref=ref
+            )
+        if row["revoked_at"] is not None:
+            raise CapabilityUnavailable(f"credential ref {ref} is revoked", credential_ref=ref)
+        kind = str(row["store"])
+        if kind != "FILE":
+            raise EffectDenied(
+                f"the canary resolves credential ref {ref} only from a FILE store; "
+                f"{kind} is refused",
+                credential_ref=ref,
+                store=kind,
+            )
+        path = str(row["locator"])
+        try:
+            mode = stat.S_IMODE(os.stat(path).st_mode)
+        except OSError:
+            raise CapabilityUnavailable(
+                f"credential ref {ref}: secret file is not readable",
+                credential_ref=ref,
+                path=path,
+            ) from None
+        if mode not in (0o600, 0o400):
+            raise EffectDenied(
+                f"the canary reads credential ref {ref} only from an owner-only secret "
+                "file (mode 0600 or 0400)",
+                credential_ref=ref,
+                path=path,
+                mode=oct(mode),
+            )
+        return store.resolve(ref)
+
+    return resolve
+
+
+class _CanaryInterrupted(Exception):
+    """T045-FIX B-S1: SIGTERM/SIGINT during a run - the shutdown path still runs."""
+
+    def __init__(self, signal_name: str) -> None:
+        super().__init__(f"interrupted by {signal_name}")
+        self.signal_name = signal_name
+
+
+def _install_interrupt_handlers() -> (
+    tuple[dict[int, Any], Callable[[], None]] | tuple[None, Callable[[], None]]
+):
+    """T045-FIX B-S1: SIGTERM/SIGINT raise so the shutdown path runs before exit.
+
+    Returns the restore callable plus the saved handlers (None when not in the main
+    thread, where signal handlers cannot be installed).
+    """
+    saved: dict[int, Any] = {}
+
+    def handler(signum: int, _frame: Any) -> None:  # pragma: no cover - signal path
+        raise _CanaryInterrupted(signal.Signals(signum).name)
+
+    def restore() -> None:
+        for signum, previous in saved.items():
+            try:
+                signal.signal(signum, previous)
+            except (ValueError, OSError):  # pragma: no cover - thread moved
+                pass
+
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            saved[signum] = signal.signal(signum, handler)
+    except ValueError:  # not the main thread - nothing to install
+        return None, restore
+    return saved, restore
 
 
 def canary_attestation(authorization: CanaryAuthorization) -> RunpodQuoteAttestation:
@@ -539,7 +637,7 @@ def run_execute(
     runpod_transport: RunpodTransport | None = None,
     comfy_transport: HttpTransport | None = None,
     evidence_dir: Path | None = None,
-    sleep: Callable[[float], None] = lambda _s: None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> CanaryRunResult:
     """Run runbook steps 1-6 through the composed world only (R11).
 
@@ -548,11 +646,22 @@ def run_execute(
     The run itself is bounded by ``min(hard_stop_utc, start + max_wall_seconds)``;
     the deadline and every ambiguity stop and terminate the owned Pod and submit
     nothing further. The janitor is the backstop.
+
+    T045-FIX B-S1: the real ``time.sleep`` is the default and every provider poll
+    waits at least ``POLL_INTERVAL_FLOOR_SECONDS`` (2 s); SIGTERM/SIGINT raise into
+    the shutdown path so the owned Pod is stopped and the record written before exit.
     """
     authorization, digest = load_canary_authorization(authorization_path)
     clock = clock or SystemClock()
     ids = ids or UuidIds()
     started = clock.now()
+
+    def poll_sleep() -> None:
+        # T045-FIX B-S1: a poll loop may never hot-loop the provider - every wait is
+        # at least the 2-second floor, whatever the caller asked for.
+        sleep(POLL_INTERVAL_FLOOR_SECONDS)
+
+    _saved_handlers, restore_handlers = _install_interrupt_handlers()
     _refuse_execute(
         authorization,
         expected_sha256=expected_sha256,
@@ -703,7 +812,7 @@ def run_execute(
                     if clock.now() >= deadline:
                         record["deadline_hit"] = True
                         return False
-                    sleep(0.05)
+                    poll_sleep()
                     status = world.comfy.poll(status.operation_id)
             except NeedsReconciliation as exc:
                 record["ambiguous"].append(
@@ -816,6 +925,7 @@ def run_execute(
         run_error = exc
         record["blocked_or_uncertain"] += f" run crashed: {type(exc).__name__}: {exc};"
     finally:
+        restore_handlers()  # T045-FIX B-S1: the shutdown path has run; previous wins restored
         record["attempts_used"] = attempts_used
         # T045-FIX B-S3: the record is written even when the shutdown or the sweep
         # raises - a created Pod must never leave no canary record behind.
@@ -1006,13 +1116,91 @@ def _parse_datetime(value: str) -> datetime:
     return parsed
 
 
-def main(argv: list[str] | None = None) -> int:
+def run_sweep(
+    authorization_path: str | Path,
+    *,
+    expected_sha256: str,
+    settings: Settings,
+    db: Database,
+    store: ObjectStore,
+    clock: Clock | None = None,
+    ids: Any = None,
+    credential_resolver: Callable[[str], str | None] = _refusing_resolver,
+    runpod_transport: RunpodTransport | None = None,
+    comfy_transport: HttpTransport | None = None,
+) -> dict[str, Any]:
+    """T045-FIX B-S1: ``canary sweep`` - one janitor pass over the attested world.
+
+    Composes exactly the world ``execute`` composes (the same live_world gates) and
+    runs ONE janitor sweep: stop/terminate an owned stray Pod, ingest provider
+    billing, run finality. The quote's expiry gates only the start, so a sweep may
+    run after it; nothing here submits work or takes a reservation.
+    """
+    authorization, digest = load_canary_authorization(authorization_path)
+    clock = clock or SystemClock()
+    ids = ids or UuidIds()
+    if expected_sha256 != digest:
+        raise PolicyDenied("authorization sha256 mismatch; re-run preflight and copy its value")
+    if settings.execution_mode is not ExecutionMode.PAID_BENCHMARK:
+        raise EffectDenied("canary sweep requires PAID_BENCHMARK mode")
+    settings.require_effect(EffectKind.PAID_REQUEST, what="canary sweep")
+    settings.require_effect(EffectKind.CLOUD_RESOURCE, what="canary sweep")
+    if settings.public_actions_enabled:
+        raise EffectDenied("a canary can never enable public actions")
+    if authorization.caps.max_spend_micro_usd > settings.episode_cap_micro_usd:
+        raise PolicyDenied(
+            "the canary spend cap exceeds the configured episode cap",
+            cap_micro_usd=authorization.caps.max_spend_micro_usd,
+            episode_cap_micro_usd=settings.episode_cap_micro_usd,
+        )
+    # The same pre-world refusals as execute: loopback DSN, pinned episode.
+    refuse_non_loopback_dsn(db.dsn)
+    resolve_reference_assets(db, authorization)
+    episode_id = resolve_canary_episode(db, expected=UUID(authorization.episode_id))
+    budget = BudgetService(db, clock, ids, settings)
+    world = compose_canary_world(
+        authorization,
+        settings=settings,
+        db=db,
+        budget=budget,
+        store=store,
+        clock=clock,
+        ids=ids,
+        credential_resolver=credential_resolver,
+        runpod_transport=runpod_transport,
+        comfy_transport=comfy_transport,
+    )
+    report = world.janitor.sweep()
+    readiness = [
+        {
+            "lease_id": str(r.lease_id),
+            "state": r.state,
+            "pending_since": r.pending_since.isoformat() if r.pending_since else None,
+        }
+        for r in world.billing_readiness()
+    ]
+    return {
+        "episode_id": str(episode_id),
+        "report": report.to_dict(),
+        "readiness": readiness,
+        "billing_state": world.billing_state,
+    }
+
+
+def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = None) -> int:
+    """The canary CLI.
+
+    ``_injection`` is a TEST-ONLY seam (B-S10): fixture transports, resolver, clock,
+    ids, sleep and evidence dir flow through ``main(argv)`` without a live provider.
+    The operator CLI never passes it.
+    """
+    injection = _injection or {}
     parser = argparse.ArgumentParser(prog="microdrama.pipeline.canary")
     parser.add_argument(
         "command",
         nargs="?",
         default="preflight",
-        choices=("preflight", "execute", "invoice"),
+        choices=("preflight", "execute", "sweep", "invoice"),
     )
     parser.add_argument("--authorization", required=True)
     parser.add_argument("--authorization-sha256")
@@ -1039,6 +1227,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     store_root = settings.object_store_root or Path("canary-objects")
     store = FilesystemObjectStore(Path(store_root))
+    db = Database(database_url)
+    # T045-FIX B-S1: the CLI resolves credentials ONLY through FILE refs whose file
+    # is owner-only; tests inject their own resolver through the seam.
+    resolver = injection.get("credential_resolver") or _canary_credential_resolver(db, settings)
 
     try:
         if args.command == "preflight":
@@ -1062,13 +1254,49 @@ def main(argv: list[str] | None = None) -> int:
                 args.authorization,
                 expected_sha256=args.authorization_sha256,
                 settings=settings,
-                db=Database(database_url),
+                db=db,
                 store=store,
                 prompts_path=args.prompts,
-                credential_resolver=_refusing_resolver,
+                credential_resolver=resolver,
+                runpod_transport=injection.get("runpod_transport"),
+                comfy_transport=injection.get("comfy_transport"),
+                clock=injection.get("clock"),
+                ids=injection.get("ids"),
+                sleep=injection.get("sleep", time.sleep),
+                evidence_dir=injection.get("evidence_dir"),
             )
             print(f"canary execute complete; record: {result.record_path}")
             print(f"billing_state: {result.record.get('billing_state')}")
+            return 0
+        if args.command == "sweep":
+            # T045-FIX B-S1: one janitor pass over the same attested world.
+            if not args.authorization_sha256:
+                print(
+                    "canary sweep requires --authorization-sha256 (from preflight)",
+                    file=sys.stderr,
+                )
+                return 2
+            summary = run_sweep(
+                args.authorization,
+                expected_sha256=args.authorization_sha256,
+                settings=settings,
+                db=db,
+                store=store,
+                clock=injection.get("clock"),
+                ids=injection.get("ids"),
+                credential_resolver=resolver,
+                runpod_transport=injection.get("runpod_transport"),
+                comfy_transport=injection.get("comfy_transport"),
+            )
+            print(f"canary sweep at {summary['report']['swept_at']}:")
+            for section in ("stopped_pods", "billing_ingests", "budget_holds", "failures"):
+                for action in summary["report"][section]:
+                    print(
+                        f"  {action['action']} {action['subject']}: {action['outcome']}"
+                        f"{' ' + action['detail'] if action['detail'] else ''}"
+                    )
+            for item in summary["readiness"]:
+                print(f"  lease {item['lease_id']}: {item['state']}")
             return 0
         # invoice
         missing = [
@@ -1114,6 +1342,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 3
+    except _CanaryInterrupted as exc:
+        # T045-FIX B-S1: the shutdown path has run; the operator asked us to stop.
+        print(
+            f"canary {args.command} stopped by {exc.signal_name}; the shutdown path ran",
+            file=sys.stderr,
+        )
+        return 130
     except MicrodramaError as exc:
         print(f"canary {args.command} refused: {exc.code}: {exc.message}", file=sys.stderr)
         return 2
