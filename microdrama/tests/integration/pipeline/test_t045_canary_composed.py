@@ -1089,6 +1089,37 @@ def test_every_dsn_form_is_parsed_for_its_real_host(monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("PGHOST")
 
 
+def test_the_dsn_guard_checks_pghostaddr_and_pgservice_even_with_a_named_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T045-FIX F-5: a DSN that names host=localhost is not enough - libpq prefers
+    PGHOSTADDR when both are set, and a service file can name anything. PGHOSTADDR
+    must pass the loopback rule unless the DSN pins its own hostaddr; PGSERVICE is
+    refused whenever it is set."""
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.pipeline.canary import refuse_non_loopback_dsn
+
+    monkeypatch.setenv("PGHOSTADDR", "10.1.1.1")
+    with pytest.raises(EffectDenied, match="loopback") as exc_info:
+        refuse_non_loopback_dsn("postgresql://user@localhost/db")
+    assert exc_info.value.details.get("named_by") == "PGHOSTADDR"
+    assert exc_info.value.details.get("host") == "10.1.1.1"
+    monkeypatch.delenv("PGHOSTADDR")
+
+    monkeypatch.setenv("PGSERVICE", "prod")
+    with pytest.raises(EffectDenied, match="service"):
+        refuse_non_loopback_dsn("postgresql://user@localhost/db")
+    monkeypatch.delenv("PGSERVICE")
+
+    # A loopback PGHOSTADDR with a named host passes, and a DSN-pinned hostaddr
+    # makes the environment value inert.
+    monkeypatch.setenv("PGHOSTADDR", "127.0.0.1")
+    refuse_non_loopback_dsn("postgresql://user@localhost/db")
+    monkeypatch.setenv("PGHOSTADDR", "10.1.1.1")
+    refuse_non_loopback_dsn("postgresql://user@localhost/db?hostaddr=127.0.0.1")
+    monkeypatch.delenv("PGHOSTADDR")
+
+
 def test_a_failed_shutdown_still_writes_the_record_with_the_pod(
     db: Database, tmp_path: Path
 ) -> None:

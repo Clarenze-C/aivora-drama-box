@@ -407,6 +407,15 @@ def refuse_non_loopback_dsn(dsn: str) -> None:
             "loopback host explicitly",
             service=str(params["service"]),
         )
+    # T045-FIX F-5: PGSERVICE is refused whenever it is set - a service file can
+    # name any host and inject any parameter, so "the DSN already names a host"
+    # is no defence against it.
+    if os.environ.get("PGSERVICE"):
+        raise EffectDenied(
+            "PGSERVICE is set; a service file can name any host - unset it and name "
+            "the loopback host explicitly",
+            env_var="PGSERVICE",
+        )
     hosts = params.get("host")
     hostaddrs = params.get("hostaddr")
     if hosts is None and hostaddrs is None:
@@ -416,13 +425,15 @@ def refuse_non_loopback_dsn(dsn: str) -> None:
             value = os.environ.get(var)
             if value:
                 _refuse_non_loopback_host(value, named_by=var)
-        if os.environ.get("PGSERVICE"):
-            raise EffectDenied(
-                "the canary database DSN names no host and PGSERVICE is set; a service "
-                "file can name any host - name the loopback host explicitly",
-                env_var="PGSERVICE",
-            )
         return
+    # T045-FIX F-5: with a DSN-named host, a set PGHOSTADDR still wins in libpq
+    # (libpq prefers hostaddr), so it must pass the loopback rule unless the DSN
+    # pins its own hostaddr, which makes the environment value inert. PGHOST keeps
+    # today's rule: an explicit DSN host overrides it.
+    if hostaddrs is None:
+        env_hostaddr = os.environ.get("PGHOSTADDR")
+        if env_hostaddr:
+            _refuse_non_loopback_host(env_hostaddr, named_by="PGHOSTADDR")
     if hosts is not None:
         _refuse_non_loopback_host(str(hosts), named_by="DSN host")
     if hostaddrs is not None:
