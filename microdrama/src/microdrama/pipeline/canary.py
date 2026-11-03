@@ -43,6 +43,7 @@ from microdrama.contracts.enums import (
 )
 from microdrama.contracts.errors import (
     CapabilityUnavailable,
+    Conflict,
     EffectDenied,
     MicrodramaError,
     NeedsReconciliation,
@@ -868,10 +869,25 @@ def run_execute(
         handle = world.leases.ensure_pod(lease_id)
         record["pod_id"] = handle.lease.pod_id
         step("create_pod", {"pod_id": record["pod_id"]})
-        # T045-FIX B-B2: the Comfy base URL is late-bound from the created Pod and
-        # must be exactly its own proxy URL; anything else refuses before any
-        # ComfyUI call (the bearer token never reaches an unvalidated host).
-        pod_info = world.manager.get(handle.lease.pod_id)
+        # T045-FIX B-B2 + RR-N5: the Comfy base URL is late-bound from the created
+        # Pod and must be exactly its own proxy URL; anything else refuses before any
+        # ComfyUI call (the bearer token never reaches an unvalidated host). A real
+        # Pod can be RUNNING before its runtime block reports the 8188 port, so the
+        # read-back is polled (never faster than the 2 s floor) until it exposes the
+        # endpoint or the run deadline runs out.
+        pod_info = None
+        while True:
+            read_back = world.manager.get(handle.lease.pod_id)
+            if read_back is not None and read_back.endpoint_url:
+                pod_info = read_back
+                break
+            if clock.now() >= deadline:
+                record["deadline_hit"] = True
+                raise Conflict(
+                    "the created Pod exposed no Comfy endpoint before the run deadline",
+                    pod_id=handle.lease.pod_id,
+                )
+            poll_sleep()
         world.comfy_client.bind_pod_endpoint(handle.lease.pod_id, pod_info.endpoint_url)
         step("comfy_endpoint_bound", {"endpoint": pod_info.endpoint_url})
 

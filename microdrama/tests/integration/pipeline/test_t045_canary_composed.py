@@ -81,6 +81,8 @@ class RunpodCanaryTransport:
         image: str | None = None,
         no_comfy_port: bool = False,
         failing_delete: bool = False,
+        late_port_reads: int = 0,
+        never_port_reads: bool = False,
     ) -> None:
         self.state = "RUNNING" if not create_timeout_once else "ABSENT"
         self.create_calls = 0
@@ -89,12 +91,23 @@ class RunpodCanaryTransport:
         self.image = image or IMAGE_REF
         self.no_comfy_port = no_comfy_port
         self.failing_delete = failing_delete
+        #: T045-FIX RR-N5: read-backs may lag the create response on the runtime port.
+        self.late_port_reads = late_port_reads
+        self.never_port_reads = never_port_reads
+        self.get_reads = 0
         #: T045-FIX B-B2: the image reference the create REQUEST actually carried.
         self.created_image: str | None = None
         self.calls: list[tuple[str, str]] = []
 
-    def _pod_json(self, name: str) -> dict[str, Any]:
-        ports = [] if self.no_comfy_port else [{"private": 8188, "public": 8188, "type": "http"}]
+    def _ports_visible(self, *, on_create: bool) -> list[dict[str, Any]]:
+        port = [{"private": 8188, "public": 8188, "type": "http"}]
+        if self.no_comfy_port or (on_create is False and self.never_port_reads):
+            return []
+        if on_create is False and self.late_port_reads and self.get_reads <= self.late_port_reads:
+            return []
+        return port
+
+    def _pod_json(self, name: str, *, on_create: bool = False) -> dict[str, Any]:
         return {
             "id": POD,
             "name": name,
@@ -103,7 +116,7 @@ class RunpodCanaryTransport:
             "cost": f"{QUOTE_PER_HOUR / 1_000_000:.6f}",
             "createdAt": T0.isoformat().replace("+00:00", "Z"),
             "gpu": {"id": "A40", "count": 1, "memory": 48},
-            "runtime": {"ports": ports},
+            "runtime": {"ports": self._ports_visible(on_create=on_create)},
         }
 
     def request(
@@ -125,7 +138,9 @@ class RunpodCanaryTransport:
                 return _Response(503, b"")
             self.last_name = json.loads(body or b"{}")["name"]
             self.state = "RUNNING"
-            return _Response(200, json.dumps(self._pod_json(self.last_name)).encode())
+            return _Response(
+                200, json.dumps(self._pod_json(self.last_name, on_create=True)).encode()
+            )
         if method == "GET" and url.startswith("https://api.runpod.io/v2/pods?"):
             pods = []
             if self.out_of_band_created and self.state in ("RUNNING", "EXITED"):
@@ -135,6 +150,7 @@ class RunpodCanaryTransport:
         if method == "GET" and url.startswith("https://api.runpod.io/v2/pods/"):
             if self.state in ("ABSENT", "GONE"):
                 return _Response(404, b"")
+            self.get_reads += 1
             return _Response(
                 200, json.dumps(self._pod_json(getattr(self, "last_name", "x"))).encode()
             )
@@ -1269,3 +1285,57 @@ def test_sigterm_during_polling_runs_the_shutdown_path(db: Database, tmp_path: P
     record = json.loads(records[-1].read_text())
     assert record["outcome"] == "NOT_CLEAN"
     assert "SIGTERM" in record["not_clean_reason"]
+
+
+# --- T045-FIX RR-N5: wait for the created Pod's runtime port before binding ---------------
+
+
+def test_a_pod_that_reports_its_port_late_still_proceeds(db: Database, tmp_path: Path) -> None:
+    """T045-FIX RR-N5: a Pod whose read-backs report no 8188 port for the first two
+    reads (a RUNNING pod whose runtime block is not populated yet) is polled - the run
+    proceeds once the port appears."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(late_port_reads=2)
+    comfy_transport = ComfyCanaryTransport()
+    result = _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=runpod_transport,
+        comfy_transport=comfy_transport,
+    )
+    assert runpod_transport.get_reads >= 3  # two portless reads, then the port
+    assert any("/object_info" in url for _method, url in comfy_transport.calls)
+    assert result.record["outcome"] == "COMPLETE"
+
+
+def test_a_pod_that_never_reports_ports_stops_at_the_deadline_with_zero_comfy_calls(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX RR-N5: a Pod whose read-backs never expose the 8188 port stops at the
+    run deadline - stopped, terminated, NOT CLEAN - with zero ComfyUI calls."""
+    import json as _json
+
+    from microdrama.pipeline.canary import CanaryRunNotClean
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(never_port_reads=True)
+    comfy_transport = ComfyCanaryTransport()
+    with pytest.raises(CanaryRunNotClean, match="no Comfy endpoint"):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+        )
+    assert comfy_transport.calls == []  # the bearer token never left for the Pod
+    assert runpod_transport.state == "GONE"  # stopped AND terminated at the deadline
+    assert any(call[0] == "DELETE" for call in runpod_transport.calls)
+    records = sorted((tmp_path / "records").glob("*.json"))
+    assert records
+    record = _json.loads(records[-1].read_text())
+    assert record["outcome"] == "NOT_CLEAN"
+    assert record["deadline_hit"] is True
