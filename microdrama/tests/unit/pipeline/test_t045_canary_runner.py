@@ -701,3 +701,46 @@ def test_the_cli_resolves_credentials_only_from_owner_only_files(
     )
     with pytest.raises(CapabilityUnavailable, match="not readable"):
         resolver("credref:runpod-absent")
+
+
+def test_the_cli_refuses_a_symlinked_or_foreign_owned_secret_file(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX B-S1 (rest): the resolver lstats - a symlinked key file is refused
+    (never followed), and so is a file owned by another user. The residual
+    check-then-read gap is accepted on this single-operator host (noted in the
+    evidence)."""
+    import os as _os
+
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.core.registry.credentials import CredentialStore, CredentialStoreKind
+    from microdrama.pipeline.canary import _canary_credential_resolver
+
+    store = CredentialStore(db, _live_settings())
+    secret = tmp_path / "runpod.key"
+    secret.write_text("fixture-dummy-value\n")
+    _os.chmod(secret, 0o600)
+    link = tmp_path / "runpod-key-link"
+    link.symlink_to(secret)
+    for ref, locator in (
+        ("credref:runpod-link", str(link)),
+        ("credref:runpod-foreign", str(secret)),
+    ):
+        store.register(
+            ref=ref,
+            purpose="canary runpod key",
+            provider="runpod",
+            store=CredentialStoreKind.FILE,
+            locator=locator,
+        )
+    resolver = _canary_credential_resolver(db, _live_settings())
+    with pytest.raises(EffectDenied, match="symlink"):
+        resolver("credref:runpod-link")
+    # A foreign owner is refused: chown the file to another real user (this suite
+    # runs as root; a non-root host cannot chown, so the branch is skipped there).
+    if _os.geteuid() == 0:
+        _os.chown(secret, 1, 1)
+        with pytest.raises(EffectDenied, match="owned by the invoking user"):
+            resolver("credref:runpod-foreign")
+    else:  # pragma: no cover - the suite runs as root on this host
+        pytest.skip("chowning to a foreign owner needs root")

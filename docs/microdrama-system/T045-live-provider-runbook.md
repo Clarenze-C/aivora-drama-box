@@ -197,8 +197,9 @@ human); output fetch → checksum → durable copy; stop → terminate → verif
 (and the rights record's `eligible_until`) are enforced by a deadline that stops and
 terminates; SIGTERM/SIGINT run the same shutdown path before exit. The runner never
 prints credential values, `Authorization` headers or the environment. Credentials
-resolve ONLY through FILE credential refs whose secret file is owner-only (mode 0600
-or 0400); ENV, VAULT and NONE refs are refused.
+resolve ONLY through FILE credential refs whose secret file is a real file (never a
+symlink), owned by the invoking user, and owner-only (mode 0600 or 0400); ENV, VAULT
+and NONE refs are refused.
 
 `sweep --authorization <file> --authorization-sha256 <hex>` composes the janitor over
 the same attestation, pod config, credentials and durable state and runs ONE pass:

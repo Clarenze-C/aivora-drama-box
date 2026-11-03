@@ -103,8 +103,11 @@ def _canary_credential_resolver(db: Any, settings: Settings) -> Callable[[str], 
 
     ENV and VAULT refs (and NONE, which names no store at all) are refused: a canary
     run's secrets come from operator-placed files, not from the ambient environment.
-    A FILE ref's file must be owner-only (mode 0600 or 0400). Error messages name the
-    ref, the store kind and the path - never the value.
+    A FILE ref's file must be a real file (never a symlink, B-S1 rest: lstat, not
+    stat), owned by the invoking user, and owner-only (mode 0600 or 0400). Error
+    messages name the ref, the store kind and the path - never the value. The
+    check-then-read gap between these checks and the open is accepted on this
+    single-operator host.
     """
     from microdrama.core.registry.credentials import CredentialStore
 
@@ -132,13 +135,33 @@ def _canary_credential_resolver(db: Any, settings: Settings) -> Callable[[str], 
             )
         path = str(row["locator"])
         try:
-            mode = stat.S_IMODE(os.stat(path).st_mode)
+            file_stat = os.lstat(path)
         except OSError:
             raise CapabilityUnavailable(
                 f"credential ref {ref}: secret file is not readable",
                 credential_ref=ref,
                 path=path,
             ) from None
+        if stat.S_ISLNK(file_stat.st_mode):
+            # T045-FIX B-S1 (rest): a symlink is never followed - the mode of the
+            # link's target says nothing about who can rewrite the link itself.
+            raise EffectDenied(
+                f"the canary reads credential ref {ref} only from a real owner-only "
+                "file (mode 0600 or 0400), never through a symlink",
+                credential_ref=ref,
+                path=path,
+            )
+        if file_stat.st_uid != os.geteuid():
+            # T045-FIX B-S1 (rest): a file owned by another user is refused even
+            # when its mode is 0600 - the owner can rewrite it under this process.
+            raise EffectDenied(
+                f"the canary reads credential ref {ref} only from a secret file "
+                "owned by the invoking user",
+                credential_ref=ref,
+                path=path,
+                owner_uid=file_stat.st_uid,
+            )
+        mode = stat.S_IMODE(file_stat.st_mode)
         if mode not in (0o600, 0o400):
             raise EffectDenied(
                 f"the canary reads credential ref {ref} only from an owner-only secret "
