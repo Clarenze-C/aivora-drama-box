@@ -299,6 +299,33 @@ class LiveBenchmarkWorld:
         )
 
 
+def durable_cleanup_guard(db: Database) -> Callable[[str, str], None]:
+    """T045-FIX B-S1 + F-3: the shared Runpod cleanup guard.
+
+    A stop or terminate may only touch a Pod with a durable owned lease row - the
+    token-bound record that ties the effect to a reservation and an account. Shared
+    by the attested live world and the canary sweep (F-3: the sweep used to pass a
+    no-op guard, dropping this protection for every janitor stop/terminate). The
+    stops the janitor rulings require all carry lease rows: the adoption (RR-S4)
+    and the failed-terminate retry (F-1) attach the Pod before the tail, so the
+    guard never blocks them.
+    """
+
+    def cleanup_guard(operation_kind: str, pod_id: str) -> None:
+        with db.transaction(readonly=True) as tx:
+            lease = tx.fetchone(
+                "SELECT id, lease_state FROM pod_leases WHERE provider = 'runpod' "
+                "AND pod_id = %s ORDER BY created_at DESC LIMIT 1",
+                (pod_id,),
+            )
+        if lease is None:
+            raise EffectDenied("Runpod cleanup has no durable owned lease", pod_id=pod_id)
+        if operation_kind not in {"pod.stop", "pod.terminate"}:
+            raise EffectDenied("unsupported Runpod cleanup operation")
+
+    return cleanup_guard
+
+
 def build_live_benchmark_world(
     settings: Settings,
     db: Database,
@@ -409,17 +436,8 @@ def build_live_benchmark_world(
         if reservation is None or reservation["state"] != "ACTIVE":
             raise EffectDenied("Runpod create reservation is not active")
 
-    def cleanup_guard(operation_kind: str, pod_id: str) -> None:
-        with db.transaction(readonly=True) as tx:
-            lease = tx.fetchone(
-                "SELECT id, lease_state FROM pod_leases WHERE provider = 'runpod' "
-                "AND pod_id = %s ORDER BY created_at DESC LIMIT 1",
-                (pod_id,),
-            )
-            if lease is None:
-                raise EffectDenied("Runpod cleanup has no durable owned lease")
-            if operation_kind not in {"pod.stop", "pod.terminate"}:
-                raise EffectDenied("unsupported Runpod cleanup operation")
+    # T045-FIX F-3: the shared guard (see durable_cleanup_guard) - never a no-op.
+    cleanup_guard = durable_cleanup_guard(db)
 
     owned_tag = f"microdrama-owned:{attestation.namespace}"
 

@@ -68,6 +68,7 @@ from microdrama.pipeline.live_world import (
     LiveBenchmarkWorld,
     RunpodQuoteEvidence,
     build_live_benchmark_world,
+    durable_cleanup_guard,
 )
 from microdrama.rendering.comfy_jobs import ComfyRenderConfig, render_id_for
 from microdrama.rendering.comfy_transport import HttpTransport
@@ -1258,7 +1259,11 @@ def run_sweep(
         attestation=canary_attestation(authorization),
         now=clock.now,
         reservation_guard=lambda _request, _attestation: None,
-        cleanup_guard=lambda _operation, _pod_id: None,
+        # T045-FIX F-3: the shared durable cleanup guard, never a no-op - a sweep's
+        # stop/terminate may only touch a Pod with a durable owned lease row. The
+        # adoption (RR-S4) and the failed-terminate retry (F-1) attach the Pod
+        # before the tail, so the janitor rulings' stops all pass it.
+        cleanup_guard=durable_cleanup_guard(db),
         absent_pod_ownership_probe=durable_pod_ownership_probe(
             db, owned_tag=owned_tag, provider_account_ref=authorization.provider_account_ref
         ),
@@ -1464,7 +1469,13 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 comfy_transport=injection.get("comfy_transport"),
             )
             print(f"canary sweep at {summary['report']['swept_at']}:")
-            for section in ("stopped_pods", "billing_ingests", "budget_holds", "failures"):
+            # T045-FIX F-3: stopped_pods is a list of pod ids (strings), not actions -
+            # the orphan paths (RR-S4 adoption, F-1 tail, plain orphan stop) populate
+            # it, and treating the ids as action dicts crashed the CLI print.
+            stopped = summary["report"]["stopped_pods"]
+            if stopped:
+                print(f"  stopped pods: {', '.join(stopped)}")
+            for section in ("billing_ingests", "budget_holds", "failures"):
                 for action in summary["report"][section]:
                     print(
                         f"  {action['action']} {action['subject']}: {action['outcome']}"

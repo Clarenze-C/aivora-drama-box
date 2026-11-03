@@ -1309,6 +1309,50 @@ def test_the_sweep_subcommand_terminates_an_owned_stray_pod_and_keeps_the_hold(
     assert lease_row["terminate_verified_at"] is not None
 
 
+def test_the_sweep_refuses_to_stop_a_pod_the_cleanup_guard_does_not_accept(
+    db: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """T045-FIX F-3: the sweep composes the shared durable cleanup guard - never a
+    no-op. An owned-NAME Pod with no durable lease row anywhere (a name collision,
+    or a Pod from a lost database) is refused: no stop, no terminate, zero
+    POST /action and DELETE calls, the failure recorded for the operator. Owned
+    Pods with lease rows still go through the janitor rulings (the B-S1 sweep test
+    above)."""
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+    from microdrama.rendering.runpod_transport import pod_name
+
+    _seed_everything(db)
+    transport = RunpodCanaryTransport()
+    transport.out_of_band_created = True
+    transport.state = "RUNNING"
+    transport.last_name = pod_name(NS, "ghost-token-with-no-lease")
+    _main_env(monkeypatch, db, tmp_path)
+    authorization = _write_authorization(tmp_path)
+    _, digest = load_canary_authorization(authorization)
+    rc = canary_module.main(
+        ["sweep", "--authorization", str(authorization), "--authorization-sha256", digest],
+        _injection={
+            "runpod_transport": transport,
+            "comfy_transport": ComfyCanaryTransport(),
+            "clock": FakeClock(T0 + timedelta(minutes=30)),
+            "ids": SequentialIds("sweep-guard"),
+            "credential_resolver": lambda _ref: "fixture-dummy-value",
+        },
+    )
+    assert rc == 0
+    effect_calls = [
+        c for c in transport.calls if (c[0] == "POST" and "/action" in c[1]) or c[0] == "DELETE"
+    ]
+    assert effect_calls == []  # F-3: the guard refused before any stop/terminate call
+    assert transport.state == "RUNNING"  # the Pod is untouched
+    out = capsys.readouterr().out
+    assert "stop_orphan" in out and "failed" in out  # the refusal is surfaced
+
+
 def test_sigterm_during_polling_runs_the_shutdown_path(db: Database, tmp_path: Path) -> None:
     """T045-FIX B-S1: SIGTERM while a prompt is pending raises into the shutdown
     path - the owned Pod is stopped and terminated and the record is written."""
