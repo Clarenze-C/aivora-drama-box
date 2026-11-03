@@ -1598,3 +1598,60 @@ def test_a_needs_reconciliation_during_submit_stops_for_a_human(
     assert runpod_transport.state == "GONE"
     assert any(call[0] == "DELETE" for call in runpod_transport.calls)
     assert record["terminate_verified_at"] is not None
+
+
+# --- T045-FIX B-N7: max_attempts is a global cap across all prompts ----------------------
+
+
+def test_max_attempts_is_a_global_cap_across_all_prompts(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX B-N7: the cap counts submit attempts across ALL prompts of the run -
+    when prompt 1 exhausts it, prompt 2 is never submitted - and the authorization
+    field says exactly that."""
+    import json as _json
+
+    from microdrama.persistence.object_store import FilesystemObjectStore
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import (
+        CanaryCaps,
+        load_canary_authorization,
+    )
+
+    _seed_everything(db)
+    prompts = [_prompt(), _prompt() | {"seed": 20261103}]
+    document = _authorization_document(
+        caps={"max_prompts": 2, "max_attempts": 2},
+        prompt_sha256=[prompt_pin(item) for item in prompts],
+    )
+    prompts_path = tmp_path / "prompts-two.json"
+    prompts_path.write_text(_json.dumps(prompts))
+    authorization = tmp_path / "canary-two.json"
+    authorization.write_text(_json.dumps(document, indent=2))
+    _, digest = load_canary_authorization(authorization)
+    comfy_transport = ComfyCanaryTransport(fail_first_submit=True)
+    clock = FakeClock(T0)
+    result = canary_module.run_execute(
+        authorization,
+        expected_sha256=digest,
+        settings=_live_settings(),
+        db=db,
+        store=FilesystemObjectStore(tmp_path / "objects"),
+        prompts_path=prompts_path,
+        clock=clock,
+        ids=SequentialIds("b-n7"),
+        credential_resolver=lambda _ref: "fixture-dummy-value",
+        runpod_transport=RunpodCanaryTransport(),
+        comfy_transport=comfy_transport,
+        evidence_dir=tmp_path / "records",
+        sleep=lambda seconds: clock.advance(ms=int(seconds * 1000)),
+    )
+    # Prompt 1 burned both allowed attempts (fail, then succeed); prompt 2 got none.
+    assert comfy_transport.submit_calls == 2
+    assert result.record["attempts_used"] == 2
+    assert "attempt cap reached" in result.record["blocked_or_uncertain"]
+    steps = [step for step in result.record["steps"] if step["step"] == "prompts"]
+    assert steps and steps[0]["detail"]["submitted"] == 1
+    # The authorization field description states the global semantics.
+    description = str(CanaryCaps.model_fields["max_attempts"].description)
+    assert "GLOBAL" in description and "across ALL prompts" in description

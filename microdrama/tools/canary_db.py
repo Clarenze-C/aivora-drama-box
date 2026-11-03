@@ -20,7 +20,7 @@ Usage (from ``microdrama/``):
     python tools/canary_db.py down    # stop the cluster (fast) and keep its data
     python tools/canary_db.py status  # show the stored state without starting it
 
-State lives in ``out/canary-db.json`` (dsn, port, pid, root).
+State lives in ``out/canary-db.json`` (dsn, port, root, data_root).
 """
 
 from __future__ import annotations
@@ -38,10 +38,37 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 STATE_PATH = ROOT / "out" / "canary-db.json"
-#: T045-FIX B-S8: the canary cluster's stable, non-/tmp data root.
-DEFAULT_DATA_ROOT = Path("/root/.local/share/microdrama/canary-pg")
+#: T045-FIX B-S8 + RR-S2: the canary cluster's stable, non-/tmp data root, under a
+#: parent the postgres OS user can traverse (0755).
+DEFAULT_DATA_ROOT = Path("/var/lib/microdrama/canary-pg")
 #: Ports owned by the T046 staging stack — the canary database must never take them.
 FORBIDDEN_PORTS = {8091, 8093}
+
+
+def _prepare_durable_root(root: Path) -> None:
+    """T045-FIX RR-S2: make the data root reachable by the server's OS user.
+
+    The cluster runs as the ``postgres`` OS user (``runuser -u postgres``); it can
+    only reach the data dir if EVERY directory down to the root is traversable. Each
+    ancestor that is not yet traversable becomes 0755 (the walk stops at the first
+    already-traversable directory, so nothing above it is touched);
+    ``EphemeralPostgres.start`` then owns the root itself (0700, postgres) and initdb
+    creates the data dir 0700 as the server user.
+    """
+    import stat as _stat
+
+    root.mkdir(parents=True, exist_ok=True)
+    if os.geteuid() != 0:
+        return  # the server runs as the invoking user; no traversal fix needed
+    node = root.parent
+    while True:
+        mode = _stat.S_IMODE(os.stat(node).st_mode)
+        if mode & 0o055 == 0o055:
+            break  # already traversable by the server's OS user
+        os.chmod(node, 0o755)
+        if node.parent == node:
+            break
+        node = node.parent
 
 
 def _state() -> dict | None:
@@ -61,7 +88,12 @@ def _reachable(dsn: str) -> bool:
 
 
 def _seed(dsn: str) -> None:
-    """Apply migrations and seed the canary's registries and episode."""
+    """Apply migrations and seed the canary's registries and episode.
+
+    T045-FIX RR-S3: idempotent on kept data - when the pinned canary episode already
+    exists (a previous ``up``), the seeded rows are verified (fixed episode id, its
+    budget account, the rights route and the benchmark preset) and nothing is written.
+    """
     from microdrama.config import Settings
     from microdrama.contracts.enums import (
         EvidenceSource,
@@ -80,84 +112,120 @@ def _seed(dsn: str) -> None:
     migrate(dsn)
     settings = Settings()
     db = Database(dsn, min_size=1, max_size=5).open()
-    preset_registry = PresetRegistry(db, settings)
-    preset = next(p for p in mock_catalog_presets() if p.preset_id == "fake-quality-8step")
-    preset = preset.model_copy(update={"gpu_type": "A40", "host_ram_gb": 64})
-    preset_registry.record(preset, source_provenance=Provenance.FAKE_SYNTHETIC)
-    rights_registry = RightsRegistry(db, SystemClock(), settings)
-    now = datetime.now(UTC)
-    rights_registry.record(
-        RightsRecord(
-            record_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "canary-rights-route")),
-            rights_route_id="route-video-fake",
-            version=1,
-            subject_kind=RightsSubjectKind.MODEL_OUTPUT,
-            subject_ref="model-output:qualified",
-            territories=["TH"],
-            commercial_use=True,
-            output_release_allowed=True,
-            # Real labels: a FAKE_FIXTURE record reads UNKNOWN outside OFFLINE_MOCK.
-            evidence=[
-                EvidenceRef(source=EvidenceSource.LICENSE_DOCUMENT, ref="canary:rights-license")
-            ],
-            status=RightsStatus.ELIGIBLE,
-            recorded_at=now,
-        ),
-        source_provenance=Provenance.LIVE_PROVIDER,
-    )
-    with db.transaction() as tx:
+    try:
         from microdrama.pipeline.canary_authorization import CANARY_EPISODE_ID
         from microdrama.testing.seed import seed_episode, seed_season
 
-        season = seed_season(tx)
-        seeded = seed_episode(tx, season, number=1)
         # T045-FIX B-S9: the deterministic canary episode the authorization pins.
         episode = uuid.UUID(CANARY_EPISODE_ID)
-        tx.execute("UPDATE episodes SET id=%s WHERE id=%s", (episode, seeded))
-        account = uuid.uuid4()
-        tx.execute(
-            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, cap_micro_usd) "
-            "VALUES (%s, 'EPISODE', %s, %s, 10000000)",
-            (account, season, episode),
+        with db.transaction(readonly=True) as tx:
+            seeded_episode = tx.fetchone(
+                "SELECT 1 FROM episodes e JOIN budget_accounts a ON a.episode_id = e.id "
+                "AND a.scope_kind = 'EPISODE' WHERE e.id = %s",
+                (episode,),
+            )
+            preset = tx.fetchval(
+                "SELECT 1 FROM preset_registry WHERE preset_id = %s AND current",
+                ("fake-quality-8step",),
+            )
+            rights = tx.fetchval(
+                "SELECT 1 FROM rights_registry WHERE rights_route_id = %s AND current",
+                ("route-video-fake",),
+            )
+        if seeded_episode is not None:
+            # Kept data: verify the rest of the seed is present, then write nothing.
+            missing = [
+                name for name, present in (("preset", preset), ("rights", rights)) if not present
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"the kept canary data is missing its {missing}; "
+                    "rebuild the canary database from scratch"
+                )
+            return
+        preset_registry = PresetRegistry(db, settings)
+        preset = next(p for p in mock_catalog_presets() if p.preset_id == "fake-quality-8step")
+        preset = preset.model_copy(update={"gpu_type": "A40", "host_ram_gb": 64})
+        preset_registry.record(preset, source_provenance=Provenance.FAKE_SYNTHETIC)
+        rights_registry = RightsRegistry(db, SystemClock(), settings)
+        now = datetime.now(UTC)
+        rights_registry.record(
+            RightsRecord(
+                record_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "canary-rights-route")),
+                rights_route_id="route-video-fake",
+                version=1,
+                subject_kind=RightsSubjectKind.MODEL_OUTPUT,
+                subject_ref="model-output:qualified",
+                territories=["TH"],
+                commercial_use=True,
+                output_release_allowed=True,
+                # Real labels: a FAKE_FIXTURE record reads UNKNOWN outside OFFLINE_MOCK.
+                evidence=[
+                    EvidenceRef(source=EvidenceSource.LICENSE_DOCUMENT, ref="canary:rights-license")
+                ],
+                status=RightsStatus.ELIGIBLE,
+                recorded_at=now,
+            ),
+            source_provenance=Provenance.LIVE_PROVIDER,
         )
-        for category in (
-            "RESEARCH_SCRIPT_PROMPTS_METADATA",
-            "REFERENCES_DIALOGUE",
-            "QA_CAPTIONS",
-            "CPU_STORAGE_TRANSFER",
-            "RECOVERY_HEADROOM",
-        ):
+        with db.transaction() as tx:
+            season = seed_season(tx)
+            seeded = seed_episode(tx, season, number=1)
+            tx.execute("UPDATE episodes SET id=%s WHERE id=%s", (episode, seeded))
+            account = uuid.uuid4()
+            tx.execute(
+                "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, "
+                "cap_micro_usd) VALUES (%s, 'EPISODE', %s, %s, 10000000)",
+                (account, season, episode),
+            )
+            for category in (
+                "RESEARCH_SCRIPT_PROMPTS_METADATA",
+                "REFERENCES_DIALOGUE",
+                "QA_CAPTIONS",
+                "CPU_STORAGE_TRANSFER",
+                "RECOVERY_HEADROOM",
+            ):
+                tx.execute(
+                    "INSERT INTO budget_category_allocations (account_id, category, "
+                    "allocated_micro_usd, protected) VALUES (%s, %s, 0, true)",
+                    (account, category),
+                )
             tx.execute(
                 "INSERT INTO budget_category_allocations (account_id, category, "
-                "allocated_micro_usd, protected) VALUES (%s, %s, 0, true)",
-                (account, category),
+                "allocated_micro_usd, protected) VALUES (%s, 'GPU_GENERATION', 9000000, true)",
+                (account,),
             )
-        tx.execute(
-            "INSERT INTO budget_category_allocations (account_id, category, "
-            "allocated_micro_usd, protected) VALUES (%s, 'GPU_GENERATION', 9000000, true)",
-            (account,),
-        )
-        tx.execute(
-            "INSERT INTO budget_category_allocations (account_id, category, "
-            "allocated_micro_usd, protected) VALUES (%s, 'METERED_MANAGEMENT', 0, false)",
-            (account,),
-        )
-    db.close()
+            tx.execute(
+                "INSERT INTO budget_category_allocations (account_id, category, "
+                "allocated_micro_usd, protected) VALUES (%s, 'METERED_MANAGEMENT', 0, false)",
+                (account,),
+            )
+    finally:
+        db.close()
 
 
-def up(data_root: Path = DEFAULT_DATA_ROOT) -> int:
+def up(data_root: Path | None = None) -> int:
+    data_root = data_root or DEFAULT_DATA_ROOT
     state = _state()
     if state and _reachable(state["dsn"]):
         print(f"canary database already up: {state['dsn']}")
         return 0
     from microdrama.testing.services import EphemeralPostgres
 
-    # T045-FIX B-S8: durable settings, stable data root outside /tmp, 0700.
+    # T045-FIX B-S8 + RR-S2: durable settings, a stable data root outside /tmp whose
+    # parent the server OS user can traverse.
+    _prepare_durable_root(data_root)
     server = EphemeralPostgres(keep=True, durable=True, root=data_root)
     while server.port in FORBIDDEN_PORTS:  # pragma: no cover - free-port collision
         server = EphemeralPostgres(keep=True, durable=True, root=data_root)
     dsn = server.start()
-    _seed(dsn)
+    try:
+        _seed(dsn)
+    except BaseException:
+        # T045-FIX RR-S3: a failure after the server started must stop it - a running
+        # cluster without a state file is impossible.
+        server.stop()
+        raise
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(
         json.dumps(
@@ -165,6 +233,8 @@ def up(data_root: Path = DEFAULT_DATA_ROOT) -> int:
                 "dsn": dsn,
                 "port": server.port,
                 "root": str(server.root),
+                # T045-FIX RR-N2: the root ``up`` was given, so ``down`` can validate.
+                "data_root": str(data_root.resolve()),
                 "started_at": datetime.now(UTC).isoformat(),
             },
             indent=2,
@@ -183,18 +253,22 @@ def up(data_root: Path = DEFAULT_DATA_ROOT) -> int:
     return 0
 
 
-def down() -> int:
+def down(data_root: Path | None = None) -> int:
+    data_root = data_root or DEFAULT_DATA_ROOT
     state = _state()
     if state is None:
         print("no canary database recorded")
         return 0
     root = Path(state["root"]).resolve()
-    # T045-FIX B-N5: never stop a cluster this tool does not own - the state file is
-    # untrusted input, its data dir must sit under the canary-db data root.
-    if not root.is_relative_to(DEFAULT_DATA_ROOT.resolve()):
+    # T045-FIX B-N5 + RR-N2: never stop a cluster this tool does not own - the state
+    # file is untrusted input. The data dir must sit under the root ``up`` recorded,
+    # and the operator's --data-root must equal it.
+    recorded = Path(state.get("data_root", state["root"])).resolve()
+    expected = data_root.resolve()
+    if root != expected or recorded != expected:
         print(
             "refusing to stop a cluster whose data directory is not under "
-            f"{DEFAULT_DATA_ROOT} (state says {root}); stop it by hand"
+            f"{expected} (state says {root}, recorded root {recorded}); stop it by hand"
         )
         return 1
     data_dir = root / "data"
@@ -248,7 +322,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "up":
         return up(data_root=args.data_root)
     if args.command == "down":
-        return down()
+        # T045-FIX RR-N2: down accepts the same --data-root up was given.
+        return down(data_root=args.data_root)
     return status()
 
 
