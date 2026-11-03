@@ -174,6 +174,9 @@ ALTER TABLE pod_leases
 -- T045-FIX A-S1: the audited operator resolution for a create that was sent but never
 -- produced a Pod. One resolution per lease, append-only, with the attestation (actor,
 -- reason, evidence sha) and its instant. It posts the BILLED 0 settlement.
+-- T045-FIX RR-S4: a Pod that appears later contradicts the resolution. The attestation
+-- columns stay immutable; the contradiction columns are set exactly once (NULL -> value)
+-- and never rewritten or cleared. DELETE stays forbidden.
 CREATE TABLE runpod_podless_create_resolutions (
   resolution_id uuid PRIMARY KEY,
   lease_id uuid NOT NULL UNIQUE REFERENCES pod_leases(id),
@@ -181,10 +184,40 @@ CREATE TABLE runpod_podless_create_resolutions (
   reason text NOT NULL CHECK (reason <> ''),
   evidence_sha256 text NOT NULL CHECK (evidence_sha256 ~ '^[0-9a-f]{64}$'),
   resolved_at timestamptz NOT NULL,
+  contradicted_at timestamptz,
+  contradicted_pod_id text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TRIGGER runpod_podless_create_resolutions_append_only
-  BEFORE UPDATE OR DELETE ON runpod_podless_create_resolutions
+CREATE FUNCTION md_podless_resolution_contradict_once() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.contradicted_at IS NOT NULL
+     AND NEW.contradicted_at IS DISTINCT FROM OLD.contradicted_at THEN
+    RAISE EXCEPTION 'runpod_podless_create_resolutions.contradicted_at is set once'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF OLD.contradicted_pod_id IS NOT NULL
+     AND NEW.contradicted_pod_id IS DISTINCT FROM OLD.contradicted_pod_id THEN
+    RAISE EXCEPTION 'runpod_podless_create_resolutions.contradicted_pod_id is set once'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.contradicted_at IS NOT NULL AND NEW.contradicted_pod_id IS NULL THEN
+    RAISE EXCEPTION 'a contradicted podless resolution names its Pod'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF (NEW.resolution_id, NEW.lease_id, NEW.actor_ref, NEW.reason, NEW.evidence_sha256,
+      NEW.resolved_at, NEW.created_at) IS DISTINCT FROM
+     (OLD.resolution_id, OLD.lease_id, OLD.actor_ref, OLD.reason, OLD.evidence_sha256,
+      OLD.resolved_at, OLD.created_at) THEN
+    RAISE EXCEPTION 'runpod_podless_create_resolutions is append-only'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER runpod_podless_create_resolutions_update_guard
+  BEFORE UPDATE ON runpod_podless_create_resolutions
+  FOR EACH ROW EXECUTE FUNCTION md_podless_resolution_contradict_once();
+CREATE TRIGGER runpod_podless_create_resolutions_no_delete
+  BEFORE DELETE ON runpod_podless_create_resolutions
   FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 CREATE TRIGGER runpod_podless_create_resolutions_no_truncate
   BEFORE TRUNCATE ON runpod_podless_create_resolutions

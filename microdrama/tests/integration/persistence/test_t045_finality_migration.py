@@ -390,6 +390,35 @@ def test_migration_0025_adds_fix_round_columns_and_tables(db: Database) -> None:
         tx.execute("UPDATE runpod_podless_create_resolutions SET reason='rewritten'")
     with pytest.raises(Conflict), db.transaction() as tx:
         tx.execute("DELETE FROM runpod_podless_create_resolutions")
+    # T045-FIX RR-S4: the contradiction columns are set exactly once, never rewritten
+    # or cleared, and a contradiction names its Pod.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s, "
+            "contradicted_pod_id='pod-late' WHERE lease_id=%s",
+            (T0 + timedelta(hours=1), lease),
+        )
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute(
+            "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s "
+            "WHERE lease_id=%s",
+            (T0 + timedelta(hours=2), lease),
+        )
+    with pytest.raises(Conflict), db.transaction() as tx:
+        tx.execute(
+            "UPDATE runpod_podless_create_resolutions SET contradicted_at=NULL, "
+            "contradicted_pod_id=NULL WHERE lease_id=%s",
+            (lease,),
+        )
+    with db.transaction() as tx:
+        row = tx.fetchone(
+            "SELECT contradicted_at, contradicted_pod_id "
+            "FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+            (lease,),
+        )
+    assert row is not None
+    assert row["contradicted_at"] == T0 + timedelta(hours=1)
+    assert row["contradicted_pod_id"] == "pod-late"
     with pytest.raises(DuplicateSemanticKey), db.transaction() as tx:
         tx.execute(
             "INSERT INTO runpod_podless_create_resolutions (resolution_id, lease_id, "

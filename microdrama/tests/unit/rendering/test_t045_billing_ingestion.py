@@ -635,3 +635,327 @@ def test_sweep_soon_then_later_then_invoice_reaches_billed(db: Database) -> None
 def _lease_id(db: Database) -> uuid.UUID:
     with db.transaction(readonly=True) as tx:
         return tx.fetchval("SELECT id FROM pod_leases WHERE pod_id=%s", (POD,))
+
+
+# --- T045-FIX RR-S4: a Pod that appears after a podless resolution is never a lost charge
+
+LATE_TOKEN = "md-pod-late-appearing-token"
+RESOLVED_AT = T0 + timedelta(minutes=30)
+INVOICE_END = T0 + timedelta(hours=3)  # the hourly boundary the ingest rounded up to
+
+
+class OrphanPodBillingTransport(ScriptedBillingTransport):
+    """Serves one owned RUNNING Pod in the list until it is stopped and terminated."""
+
+    def __init__(self, *, records: list[dict[str, Any]], name: str) -> None:
+        super().__init__(records=records, pod_present=True)
+        self.name = name
+        self.status = "RUNNING"
+        self.last_billing_query: tuple[str, str] | None = None
+
+    def billing_json(self) -> bytes:
+        # The resolved window mirrors what was asked for, so later sweeps that
+        # report later buckets stay inside the provider-resolved window.
+        start, end = self.last_billing_query or (
+            WINDOW_START.isoformat().replace("+00:00", "Z"),
+            WINDOW_END.isoformat().replace("+00:00", "Z"),
+        )
+        return json.dumps(
+            {
+                "records": self.records,
+                "metadata": {"query": {"startTime": start, "endTime": end}},
+            }
+        ).encode()
+
+    def _pod_doc(self) -> dict[str, Any]:
+        return {
+            "id": POD,
+            "name": self.name,
+            "image": IMAGE,
+            "status": self.status,
+            "cost": "0.504000",
+            "createdAt": WINDOW_START.isoformat().replace("+00:00", "Z"),
+            "gpu": {"id": "NVIDIA A40", "count": 1, "memory": 48},
+            "runtime": {},
+        }
+
+    def request(
+        self, method: str, url: str, *, headers: Any, body: bytes | None = None
+    ) -> _Response:
+        self.calls.append((method, url))
+        if method == "GET" and url.startswith("https://api.runpod.io/v2/pods?"):
+            pods = [] if self.status == "GONE" else [self._pod_doc()]
+            return _Response(200, json.dumps({"pods": pods, "pagination": {}}).encode())
+        if url.startswith("https://api.runpod.io/v2/pods/") and method == "GET":
+            if self.status == "GONE":
+                return _Response(404, b"")
+            return _Response(200, json.dumps(self._pod_doc()).encode())
+        if method == "POST" and url.endswith("/action"):
+            self.status = "EXITED"
+            return _Response(200, b"{}")
+        if "/billing/pods" in url:
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = urlparse(url)
+            if parsed.query:
+                query = parse_qs(parsed.query)
+                self.last_billing_query = (query["startTime"][0], query["endTime"][0])
+            return _Response(200, self.billing_json())
+        if method == "DELETE":
+            self.status = "GONE"
+            return _Response(200, b"{}")
+        raise AssertionError(f"unexpected fixture call: {method} {url}")
+
+
+def _zero_record(start: datetime, end: datetime) -> dict[str, Any]:
+    """A closed zero bucket - the Pod billed nothing in that hour."""
+    iso = lambda dt: dt.isoformat().replace("+00:00", "Z")  # noqa: E731
+    return {
+        "podId": POD,
+        "startTime": iso(start),
+        "endTime": iso(end),
+        "totalAmount": "0.000000",
+        "gpuAmount": "0.000000",
+        "cpuAmount": "0.000000",
+        "diskAmount": "0.000000",
+    }
+
+
+def _seed_podless_resolved_lease(db: Database) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """A sent-but-podless create the operator resolved: hold SETTLED at 0, lease RELEASED.
+
+    The resolution runs through the real repository (with a real budget service), so
+    the BILLED-0 SETTLEMENT charge and the released hold are the production ones.
+    """
+    from microdrama.budget.billing import BillingRepository
+
+    reservation = uuid.uuid4()
+    lease = uuid.uuid4()
+    with db.transaction() as tx:
+        season = seed_season(tx)
+        episode = seed_episode(tx, season)
+        account = uuid.uuid4()
+        tx.execute(
+            "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, "
+            "cap_micro_usd, reserved_outstanding_micro_usd) "
+            "VALUES (%s, 'EPISODE', %s, %s, 10000000, 504000)",
+            (account, season, episode),
+        )
+        for category in (
+            "RESEARCH_SCRIPT_PROMPTS_METADATA",
+            "REFERENCES_DIALOGUE",
+            "QA_CAPTIONS",
+            "CPU_STORAGE_TRANSFER",
+            "RECOVERY_HEADROOM",
+            "METERED_MANAGEMENT",
+        ):
+            tx.execute(
+                "INSERT INTO budget_category_allocations (account_id, category, "
+                "allocated_micro_usd, protected) VALUES (%s, %s, 0, true)",
+                (account, category),
+            )
+        tx.execute(
+            "INSERT INTO budget_category_allocations (account_id, category, "
+            "allocated_micro_usd, reserved_outstanding_micro_usd, protected) "
+            "VALUES (%s, 'GPU_GENERATION', 9000000, 504000, true)",
+            (account,),
+        )
+        tx.execute(
+            "INSERT INTO reservations (id, account_id, request_id, semantic_key, "
+            "request_hash, category, queue, provider, operation_kind, price, ceilings, "
+            "reserved_micro_usd, state, expires_at) VALUES (%s, %s, %s, %s, %s, "
+            "'GPU_GENERATION', 'production', 'runpod', 'pod.lease', '{}', '{}', 504000, "
+            "'ACTIVE', %s)",
+            (
+                reservation,
+                account,
+                uuid.uuid4(),
+                f"t045r:{reservation}",
+                "0" * 64,
+                T0 + timedelta(hours=6),
+            ),
+        )
+        tx.execute(
+            "INSERT INTO pod_leases (id, provider, pod_id, owned_tag, client_token, "
+            "owner_episode_id, reservation_id, lease_state, pod_state, gpu_type, "
+            "hourly_price_micro_usd, lease_expires_at, create_requested_at, "
+            "compute_window_start_at, provider_account_ref) "
+            "VALUES (%s, 'runpod', NULL, %s, %s, %s, %s, 'RELEASED', 'UNKNOWN', "
+            "'NVIDIA A40', 504000, %s, %s, %s, %s)",
+            (
+                lease,
+                TAG,
+                LATE_TOKEN,
+                episode,
+                reservation,
+                T0 + timedelta(hours=2),
+                WINDOW_START,
+                WINDOW_START,
+                ACCOUNT,
+            ),
+        )
+    settings = _paid_settings()
+    budget = BudgetService(db, FakeClock(RESOLVED_AT), SequentialIds("rrs4-resolve"), settings)
+    BillingRepository(db, budget_service=budget).resolve_podless_create(
+        lease,
+        actor_ref="operator@fixture",
+        reason="console shows no pod and no charge",
+        evidence_sha256="f" * 64,
+        now=RESOLVED_AT,
+    )
+    return lease, reservation, account
+
+
+def _orphan_provider(
+    transport: OrphanPodBillingTransport,
+    db: Database,
+    *,
+    now: Any = None,
+) -> RunpodRestProvider:
+    return RunpodRestProvider(
+        _paid_settings(),
+        credential_ref="credref:runpod",
+        credential_resolver=lambda _ref: "fixture-dummy-value",
+        attestation=_attestation(),
+        now=now or (lambda: SWEEP_AT),
+        reservation_guard=lambda *_a, **_k: None,
+        cleanup_guard=lambda *_o, **_k: None,
+        absent_pod_ownership_probe=durable_pod_ownership_probe(
+            db, owned_tag=TAG, provider_account_ref=ACCOUNT
+        ),
+        transport=transport,
+    )
+
+
+def test_a_late_pod_after_a_podless_resolution_is_adopted_terminated_and_billed(
+    db: Database,
+) -> None:
+    """T045-FIX RR-S4: an owned Pod that appears after the podless resolution is
+    attached to its terminal lease, stopped/terminated/verified, contradicts the
+    resolution, and its cost is ingested as an ADJUSTMENT on the SETTLED hold."""
+    from microdrama.rendering.runpod_transport import pod_name
+
+    lease, reservation, account = _seed_podless_resolved_lease(db)
+    transport = OrphanPodBillingTransport(records=[_record()], name=pod_name(NS, LATE_TOKEN))
+    report = _janitor(db, _orphan_provider(transport, db), seq="rrs4-adopt").sweep()
+    assert any(a.action == "adopt_late_pod" for a in report.orphan_pods)
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT pod_id, terminate_verified_at FROM pod_leases WHERE id=%s", (lease,)
+        )
+    assert row["pod_id"] == POD
+    assert row["terminate_verified_at"] is not None
+    assert any(c[0] == "DELETE" for c in transport.calls)  # terminated, not just stopped
+    # The GPU bucket posts as an ADJUSTMENT on the SETTLED reservation.
+    with db.transaction(readonly=True) as tx:
+        adjustment = tx.fetchval(
+            "SELECT amount_micro_usd FROM charges WHERE reservation_id=%s "
+            "AND kind='ADJUSTMENT' AND category='GPU_GENERATION'",
+            (reservation,),
+        )
+    assert adjustment == 400_000  # the GPU bucket (0.400000 USD)
+    # A later sweep past the settle lag re-queries (now reporting the later zero
+    # buckets) so the full period can be verified.
+    clock = FakeClock(SWEEP_AT)
+    clock.advance(seconds=50 * 60)  # 15:20 - past INVOICE_END + the 15-minute settle lag
+    transport.records = [
+        _record(),
+        _zero_record(T0 + timedelta(hours=1), T0 + timedelta(hours=2)),
+        _zero_record(T0 + timedelta(hours=2), INVOICE_END),
+    ]
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="rrs4-cover"
+    ).sweep()
+    settings = _paid_settings()
+    budget = BudgetService(db, clock, SequentialIds("rrs4-inv"), settings)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    result = finality.verify_invoice_period(
+        provider_account_ref=ACCOUNT,
+        pod_id=POD,
+        period_start=WINDOW_START,
+        period_end=INVOICE_END,
+        amount_micro_usd=500_000,
+        currency="USD",
+        evidence_sha256="c" * 64,
+        source="INVOICE",
+        observed_at=clock.now(),
+    )
+    assert result.outcome == "MATCHED"
+    with db.transaction(readonly=True) as tx:
+        total = tx.fetchval(
+            "SELECT COALESCE(SUM(amount_micro_usd),0)::bigint FROM charges WHERE account_id=%s",
+            (account,),
+        )
+    assert total == 500_000  # the account total equals the invoice
+
+
+def test_a_contradicted_resolution_no_longer_reads_billed_zero(db: Database) -> None:
+    """T045-FIX RR-S4: once contradicted, the resolution no longer short-circuits
+    readiness to BILLED 0 - the lease is pending on the Pod's own billing until the
+    invoice verifies, then BILLED REOPENED."""
+    from microdrama.budget.billing import lease_billing_readiness
+    from microdrama.rendering.runpod_transport import pod_name
+
+    lease, _reservation, _account = _seed_podless_resolved_lease(db)
+    transport = OrphanPodBillingTransport(records=[_record()], name=pod_name(NS, LATE_TOKEN))
+    _janitor(db, _orphan_provider(transport, db), seq="rrs4-contr").sweep()
+    with db.transaction(readonly=True) as tx:
+        res = tx.fetchone(
+            "SELECT contradicted_at, contradicted_pod_id "
+            "FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+            (lease,),
+        )
+    assert res is not None
+    assert res["contradicted_at"] is not None
+    assert res["contradicted_pod_id"] == POD
+    readiness = lease_billing_readiness(db, lease)
+    # Never BILLED 0 from the resolution again: readiness now carries the Pod's own
+    # posted GPU cost (the REOPENED reading of a settled lease whose evidence moved).
+    assert readiness.billed_micro_usd == 400_000
+    assert readiness.reopened is True
+    clock = FakeClock(SWEEP_AT)
+    clock.advance(seconds=50 * 60)  # a covering query past the settle lag, then the invoice
+    transport.records = [
+        _record(),
+        _zero_record(T0 + timedelta(hours=1), T0 + timedelta(hours=2)),
+        _zero_record(T0 + timedelta(hours=2), INVOICE_END),
+    ]
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="rrs4-contr2"
+    ).sweep()
+    settings = _paid_settings()
+    budget = BudgetService(db, clock, SequentialIds("rrs4-contr3"), settings)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    result = finality.verify_invoice_period(
+        provider_account_ref=ACCOUNT,
+        pod_id=POD,
+        period_start=WINDOW_START,
+        period_end=INVOICE_END,
+        amount_micro_usd=500_000,
+        currency="USD",
+        evidence_sha256="d" * 64,
+        source="INVOICE",
+        observed_at=clock.now(),
+    )
+    assert result.outcome == "MATCHED"
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "BILLED"
+    assert readiness.reopened is True
+    assert readiness.billed_micro_usd == 400_000
+
+
+def test_a_second_sweep_after_the_late_pod_adoption_adds_nothing(db: Database) -> None:
+    """T045-FIX RR-S4: the adoption is one-shot - a later sweep stores no new query,
+    bucket, allocation or charge."""
+    from microdrama.rendering.runpod_transport import pod_name
+
+    _seed_podless_resolved_lease(db)
+    transport = OrphanPodBillingTransport(records=[_record()], name=pod_name(NS, LATE_TOKEN))
+    clock = FakeClock(SWEEP_AT)
+    _janitor(db, _orphan_provider(transport, db), now=clock.now(), seq="rrs4-a").sweep()
+    before = _counts(db)
+    assert before["runpod_billing_queries"] >= 1  # the adoption led to an ingest
+    assert before["charges"] >= 1
+    clock.advance(seconds=20 * 60)
+    _janitor(db, _orphan_provider(transport, db), now=clock.now(), seq="rrs4-b").sweep()
+    assert _counts(db) == before

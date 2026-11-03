@@ -66,6 +66,7 @@ from microdrama.rendering.runpod_billing import (
     REQUESTED_BUCKET_SIZE_SECONDS,
     map_billing_history,
 )
+from microdrama.rendering.runpod_transport import pod_name
 
 #: T045-FIX B-S4: the per-Pod billing-ingest backoff doubles from 5 minutes to 1 hour.
 INGEST_BACKOFF_BASE = timedelta(minutes=5)
@@ -468,6 +469,121 @@ class Janitor:
 
     # --- phase 2: provider-side orphans ---------------------------------------------------
 
+    def _terminal_podless_lease(self, pod) -> dict[str, Any] | None:
+        """T045-FIX RR-S4: the terminal lease a late owned Pod belongs to.
+
+        Every owned Pod has a lease row and a client token from before its create was
+        sent. A Pod no live lease holds, whose create token names a terminal lease with
+        no Pod attached, is that lease's late Pod - not a foreign orphan.
+        """
+        rows = self._db_query(
+            "SELECT id, client_token FROM pod_leases WHERE provider = %s AND owned_tag = %s "
+            "AND pod_id IS NULL AND create_requested_at IS NOT NULL "
+            "AND lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+            "ORDER BY created_at DESC",
+            (self._manager.provider_id, self._config.owned_tag),
+        )
+        namespace = self._config.owned_tag.removeprefix("microdrama-owned:")
+        for row in rows:
+            if pod.client_token is not None and pod.client_token == row["client_token"]:
+                return row
+            if pod.name == pod_name(namespace, row["client_token"]):
+                return row
+        return None
+
+    def _adopt_late_pod(self, pod, lease_id: UUID, now: datetime, report: JanitorReport) -> None:
+        """Attach a late Pod to its terminal lease, then stop/terminate/verify it.
+
+        The lease stays terminal (its hold may already be SETTLED at 0 by a podless
+        resolution); the accounting continues through the Pod's own billing: the
+        resolution is marked contradicted, the cost is ingested as an ADJUSTMENT on
+        the settled reservation (the ledger allows it), and readiness is computed from
+        the Pod's billing - never BILLED 0 from the contradicted resolution.
+        """
+        with self._db.transaction() as tx:
+            current = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
+            if current is None or current["pod_id"] is not None:
+                return  # raced: attached (or gone) while we looked it up
+            update_with_revision(
+                tx,
+                "pod_leases",
+                lease_id,
+                current["revision"],
+                {
+                    "pod_id": pod.pod_id,
+                    "pod_state": PodState.RUNNING.value
+                    if pod.state is PodState.RUNNING
+                    else PodState.UNKNOWN.value,
+                },
+                now=now,
+            )
+            self._lease_event(
+                tx,
+                lease_id,
+                "pod_lease.activated",
+                {"pod_id": pod.pod_id, "adopted_by": "janitor:late-pod"},
+                now,
+            )
+            contradicted = tx.execute(
+                "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s, "
+                "contradicted_pod_id=%s WHERE lease_id=%s AND contradicted_at IS NULL",
+                (now, pod.pod_id, lease_id),
+            )
+            if contradicted:
+                self._lease_event(
+                    tx,
+                    lease_id,
+                    "billing.podless_resolution_contradicted",
+                    {"pod_id": pod.pod_id, "contradicted_at": now.isoformat()},
+                    now,
+                )
+        # An owned Pod is storage the pipeline owns from its create request (T045 R3).
+        open_storage_ownership(self._db, lease_id, pod.pod_id)
+        try:
+            state = self._manager.stop(pod.pod_id)
+            if self._manager.is_runpod():
+                # T045 R8 + RR-S4: stop, terminate and verify, writing the durable
+                # terminate the billing window and the ownership close read back.
+                state = self._manager.terminate(pod.pod_id)
+                terminate_verified = record_terminate_verified(self._db, lease_id, now)
+                close_storage_ownership(self._db, "runpod", pod.pod_id, terminate_verified)
+        except MicrodramaError as exc:
+            report.failures.append(
+                JanitorAction(
+                    subject=f"pod:{pod.pod_id}",
+                    action="adopt_late_pod",
+                    outcome="failed",
+                    detail=f"{exc.code}: {exc.message}",
+                )
+            )
+            self._evidence(
+                f"pod:{pod.pod_id}",
+                "janitor.action_failed",
+                {"error": exc.code, "detail": str(exc.message), "lease_id": str(lease_id)},
+                now,
+            )
+            return
+        report.orphan_pods.append(
+            JanitorAction(
+                subject=f"pod:{pod.pod_id}",
+                action="adopt_late_pod",
+                outcome=state.value,
+                detail=f"late Pod adopted onto terminal lease {lease_id}",
+            )
+        )
+        report.stopped_pods.append(pod.pod_id)
+        self._evidence(
+            f"pod:{pod.pod_id}",
+            "janitor.late_pod_adopted",
+            {
+                "provider": self._manager.provider_id,
+                "pod_id": pod.pod_id,
+                "lease_id": str(lease_id),
+                "pod_state": state.value,
+            },
+            now,
+        )
+
     def _sweep_provider_orphans(self, now: datetime, report: JanitorReport) -> None:
         try:
             pods = self._manager.find_owned()
@@ -492,6 +608,13 @@ class Janitor:
             if live:
                 continue
             if pod.state is not PodState.RUNNING:
+                continue
+            terminal = self._terminal_podless_lease(pod)
+            if terminal is not None:
+                # T045-FIX RR-S4: this Pod belongs to a sent create whose lease closed
+                # podless - adopt it so its cost is ingested, never stopped as a
+                # nameless orphan whose charge is lost.
+                self._adopt_late_pod(pod, terminal["id"], now, report)
                 continue
             try:
                 state = self._manager.stop(pod.pod_id)
@@ -607,7 +730,13 @@ class Janitor:
             "FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
             "LEFT JOIN runpod_billing_ingest_backoff b ON b.pod_id = l.pod_id "
             "WHERE l.provider = 'runpod' AND l.pod_id IS NOT NULL "
-            "AND l.owned_tag = %s AND r.state IN ('ACTIVE', 'EXPIRED') "
+            "AND l.owned_tag = %s AND (r.state IN ('ACTIVE', 'EXPIRED') "
+            # T045-FIX RR-S4: a Pod adopted after a podless resolution is ingested
+            # although its hold is SETTLED - its cost posts as an ADJUSTMENT on the
+            # settled reservation, which the ledger allows.
+            "OR (r.state = 'SETTLED' AND EXISTS (SELECT 1 FROM "
+            "runpod_podless_create_resolutions p WHERE p.lease_id = l.id "
+            "AND p.contradicted_at IS NOT NULL))) "
             "GROUP BY l.pod_id, b.next_ingest_at, b.attempts, b.post_terminate_ingest_done "
             "HAVING MIN(l.next_finality_check_at) IS NULL "
             "OR MIN(l.next_finality_check_at) <= %s "

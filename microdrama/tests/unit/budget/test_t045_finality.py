@@ -765,6 +765,33 @@ def test_a_pod_appearing_after_a_resolution_does_not_double_settle(
     assert world.counters(episode.account_id)["settled"] == 0
 
 
+def test_a_budgetless_repository_refuses_a_podless_resolution_without_writing_it(
+    world: World, db: Database
+) -> None:
+    """T045-FIX RR-N1: the budget service is checked FIRST - a budget-less repository
+    refuses and leaves no resolution row, no window end and no settlement behind."""
+    from microdrama.budget.billing import BillingRepository
+    from microdrama.contracts.errors import Conflict
+
+    _paid(world)
+    _episode, lease, _reservation = _seed_podless_sent_create(world, db)
+    repository = BillingRepository(db, budget_service=None)
+    with pytest.raises(Conflict, match="budget service"):
+        repository.resolve_podless_create(
+            lease,
+            actor_ref="owner:test",
+            reason="console shows no Pod and no charge",
+            evidence_sha256=_evidence("budgetless"),
+        )
+    with db.transaction(readonly=True) as tx:
+        assert tx.fetchval("SELECT count(*) FROM runpod_podless_create_resolutions") == 0
+        assert tx.fetchval("SELECT count(*) FROM charges WHERE kind='SETTLEMENT'") == 0
+        window_end = tx.fetchval(
+            "SELECT compute_window_end_at FROM pod_leases WHERE id=%s", (lease,)
+        )
+    assert window_end is None
+
+
 def test_a_pod_without_a_window_start_is_pending_not_billed_zero(
     world: World, db: Database
 ) -> None:
