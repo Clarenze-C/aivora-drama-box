@@ -591,6 +591,11 @@ def test_sweep_soon_then_later_then_invoice_reaches_billed(db: Database) -> None
         )
     first = _janitor(db, provider, now=clock.now(), seq="bs4-e2e-1").sweep()
     del first  # the early sweep is paced; its exact outcome is asserted per-case above
+    # T045-FIX RR-N3: the early sweep WROTE its skip row - the open bucket is durable
+    # evidence - and the invoice still matches after it (asserted below).
+    with db.transaction(readonly=True) as tx:
+        skipped = tx.fetchval("SELECT count(*) FROM runpod_billing_query_skipped_buckets")
+    assert skipped >= 1
     clock.advance(ms=110 * 60 * 1000)
     second = _janitor(db, provider, now=clock.now(), seq="bs4-e2e-2").sweep()
     assert any(a.outcome == "INGESTED" for a in second.billing_ingests)
@@ -959,3 +964,66 @@ def test_a_second_sweep_after_the_late_pod_adoption_adds_nothing(db: Database) -
     clock.advance(seconds=20 * 60)
     _janitor(db, _orphan_provider(transport, db), now=clock.now(), seq="rrs4-b").sweep()
     assert _counts(db) == before
+
+
+# --- T045-FIX B-N1: the hourly rounding is pure integer arithmetic ------------------------
+
+
+def test_the_bucket_rounding_matches_the_integer_reference_at_boundaries() -> None:
+    """T045-FIX B-N1: the janitor's hourly window rounding uses integer microseconds.
+
+    Boundary instants (exact hour, hour - 1 us, sub-second offsets) and a randomized
+    sweep all match an integer reference computed independently from the calendar
+    components."""
+    import calendar
+    import random
+    from datetime import UTC as _UTC
+
+    from microdrama.rendering.runpod_billing import _EPOCH, round_up_to_bucket_end
+
+    def reference(until: datetime) -> datetime:
+        # Independent integer reference: whole seconds from the calendar, then the
+        # microseconds - never a float epoch value.
+        epoch_seconds = calendar.timegm(until.utctimetuple())
+        total_us = epoch_seconds * 1_000_000 + until.microsecond
+        bucket_us = 3600 * 1_000_000
+        remainder = total_us % bucket_us
+        if remainder:
+            total_us += bucket_us - remainder
+        return _EPOCH + timedelta(microseconds=total_us)
+
+    boundaries = [
+        datetime(2026, 11, 2, 12, 0, 0, tzinfo=_UTC),  # exact hour: unchanged
+        datetime(2026, 11, 2, 11, 59, 59, 999999, tzinfo=_UTC),  # hour - 1 us
+        datetime(2026, 11, 2, 12, 0, 0, 1, tzinfo=_UTC),  # hour + 1 us
+        datetime(2026, 11, 2, 12, 30, 0, tzinfo=_UTC),  # half hour
+        datetime(2026, 11, 2, 12, 0, 30, 500000, tzinfo=_UTC),  # sub-second offset
+        datetime(2100, 2, 13, 23, 59, 59, 999999, tzinfo=_UTC),  # far future
+    ]
+    rng = random.Random(20261103)
+    for _ in range(2000):
+        boundaries.append(
+            datetime(2026, 1, 1, tzinfo=_UTC)
+            + timedelta(microseconds=rng.randrange(400 * 24 * 3600 * 1_000_000))
+        )
+    for instant in boundaries:
+        assert round_up_to_bucket_end(instant) == reference(instant), instant
+    # The exact-hour instant is a no-op; hour - 1 us rounds up to the next boundary.
+    assert round_up_to_bucket_end(boundaries[0]) == boundaries[0]
+    assert round_up_to_bucket_end(boundaries[1]) == boundaries[0]
+
+
+def test_no_float_time_math_remains_in_the_rounding_paths() -> None:
+    """T045-FIX B-N1: money/time math in the rounding paths is integer or Decimal -
+    the banned float forms (`timestamp() %`, `total_seconds()` in the duration
+    computation) are gone from the janitor's ingest and the billing allocations."""
+    import inspect
+    from pathlib import Path
+
+    import microdrama.budget.billing as billing_module
+    import microdrama.rendering.janitor as janitor_module
+
+    janitor_source = Path(inspect.getfile(janitor_module)).read_text()
+    assert ".timestamp()" not in janitor_source
+    billing_source = Path(inspect.getfile(billing_module)).read_text()
+    assert "total_seconds()" not in billing_source

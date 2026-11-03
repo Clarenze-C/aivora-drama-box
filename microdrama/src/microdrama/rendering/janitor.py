@@ -63,8 +63,8 @@ from microdrama.rendering.pods import (
     resolve_pod_provider,
 )
 from microdrama.rendering.runpod_billing import (
-    REQUESTED_BUCKET_SIZE_SECONDS,
     map_billing_history,
+    round_up_to_bucket_end,
 )
 from microdrama.rendering.runpod_transport import pod_name
 
@@ -798,11 +798,9 @@ class Janitor:
             # Round the request up to the end of the final hourly bucket: the
             # provider returns whole buckets, so an invoice period can only sit on
             # bucket boundaries if the durable query window covers the full last
-            # bucket of the lease (R5 precondition).
-            remainder = until.timestamp() % REQUESTED_BUCKET_SIZE_SECONDS
-            until = until + timedelta(
-                seconds=REQUESTED_BUCKET_SIZE_SECONDS - remainder if remainder else 0
-            )
+            # bucket of the lease (R5 precondition). T045-FIX B-N1: integer
+            # microseconds - never a float epoch second.
+            until = round_up_to_bucket_end(until)
             try:
                 history = billing_history(pod_id, since=since, until=until)
                 mapped = map_billing_history(

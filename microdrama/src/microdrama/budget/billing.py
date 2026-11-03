@@ -936,7 +936,8 @@ class BillingRepository:
         ownership rows do not cover is recovery, never a neighbouring episode.
         """
         start, end = bucket.bucket_start, bucket.bucket_end
-        duration = max(1, int((end - start).total_seconds()))
+        # T045-FIX B-N1: exact integer seconds - never the float seconds form.
+        duration = max(1, (end - start) // timedelta(seconds=1))
         leases = tx.fetchall(
             "SELECT id, owner_episode_id::text AS owner, transferred_from, "
             "COALESCE(compute_window_start_at, create_requested_at, created_at) AS window_start, "

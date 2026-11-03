@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from microdrama.contracts.cost import (
@@ -83,6 +83,25 @@ def durable_pod_ownership_probe(
 def _delta_microseconds(delta: timedelta) -> int:
     """Exact microseconds of a timedelta, pure integer arithmetic (T045-FIX B-N1)."""
     return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+#: The integer-epoch reference instant for the bucket rounding below.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def round_up_to_bucket_end(until: datetime) -> datetime:
+    """Round a window end up to the end of its final hourly bucket (T045-FIX B-N1).
+
+    The provider returns whole buckets, so an invoice period can only sit on bucket
+    boundaries if the durable query window covers the full last bucket of the lease
+    (R5 precondition). Pure integer microseconds - never a float epoch second.
+    """
+    bucket_us = REQUESTED_BUCKET_SIZE_SECONDS * 1_000_000
+    until_us = _delta_microseconds(until - _EPOCH)
+    remainder = until_us % bucket_us
+    if remainder:
+        return until + timedelta(microseconds=bucket_us - remainder)
+    return until
 
 
 def map_billing_history(
