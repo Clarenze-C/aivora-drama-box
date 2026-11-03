@@ -187,6 +187,22 @@ def _install_interrupt_handlers() -> (
     return saved, restore
 
 
+def _ignore_interrupts_during_shutdown(note: Callable[[str], None]) -> None:
+    """T045-FIX F-2: while the shutdown path runs, repeat SIGTERM/SIGINT are
+    ignored and logged - a default-action kill mid-shutdown would strand the owned
+    Pod and lose the canary record. Each delivery is noted through ``note``; the
+    pre-run handlers are restored once the record is written."""
+
+    def handler(signum: int, _frame: Any) -> None:  # pragma: no cover - signal path
+        note(f"ignored {signal.Signals(signum).name} during shutdown")
+
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, handler)
+    except ValueError:  # pragma: no cover - not the main thread
+        pass
+
+
 def canary_attestation(authorization: CanaryAuthorization) -> RunpodQuoteAttestation:
     quote = authorization.quote
     return RunpodQuoteAttestation(
@@ -679,7 +695,9 @@ def run_execute(
         # at least the 2-second floor, whatever the caller asked for.
         sleep(POLL_INTERVAL_FLOOR_SECONDS)
 
-    _saved_handlers, restore_handlers = _install_interrupt_handlers()
+    # T045-FIX F-2: the interrupt handlers are installed INSIDE the try (below), so
+    # a refusal below raises with the previous handlers still in place - nothing is
+    # installed before any effect exists that a signal would need to clean up.
     _refuse_execute(
         authorization,
         expected_sha256=expected_sha256,
@@ -795,6 +813,7 @@ def run_execute(
         "deadline_hit": False,
         "ambiguous": [],
         "blocked_or_uncertain": "",
+        "ignored_interrupts": [],
     }
 
     def step(name: str, detail: Any) -> None:
@@ -871,7 +890,14 @@ def run_execute(
             attempt_number += 1
         return False
 
+    # T045-FIX F-2: a no-op until the handlers are installed inside the try below
+    # (a BaseException landing between the try and the install must not NameError
+    # the finally), and never installed before any effect exists to clean up.
+    def restore_handlers() -> None:
+        return None
+
     try:
+        _saved_handlers, restore_handlers = _install_interrupt_handlers()
         # Runbook step 1: reserve and create the owned-name Pod.
         handle = world.leases.claim(
             PodLeaseClaimRequest(
@@ -961,7 +987,11 @@ def run_execute(
         run_error = exc
         record["blocked_or_uncertain"] += f" run crashed: {type(exc).__name__}: {exc};"
     finally:
-        restore_handlers()  # T045-FIX B-S1: the shutdown path has run; previous wins restored
+        # T045-FIX F-2: while the shutdown path runs below, repeat SIGTERM/SIGINT
+        # are ignored and logged (a default-action kill mid-shutdown would strand
+        # the Pod and lose the record); the previous handlers are restored only
+        # after the record is written, at the end of this finally.
+        _ignore_interrupts_during_shutdown(record["ignored_interrupts"].append)
         record["attempts_used"] = attempts_used
         # T045-FIX B-S3: the record is written even when the shutdown or the sweep
         # raises - a created Pod must never leave no canary record behind.
@@ -1040,6 +1070,9 @@ def run_execute(
                 record["not_clean_reason"] = f"{type(run_error).__name__}: {run_error}"
             written.append(_write_canary_record(record, evidence_dir=evidence_dir, now=clock.now()))
             record["effects_sent"] = effects_sent
+        # T045-FIX F-2: the record is written - the pre-run handlers come back now,
+        # never before the shutdown path ran.
+        restore_handlers()
 
     record_path = (
         written[-1]

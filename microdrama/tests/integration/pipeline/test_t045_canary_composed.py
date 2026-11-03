@@ -1345,6 +1345,139 @@ def test_sigterm_during_polling_runs_the_shutdown_path(db: Database, tmp_path: P
     assert "SIGTERM" in record["not_clean_reason"]
 
 
+# --- T045-FIX F-2: signal handlers across the shutdown path ------------------------------
+
+
+class SigtermOnStopTransport(RunpodCanaryTransport):
+    """Delivers a second SIGTERM when the shutdown path first stops the Pod."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.delivered = False
+
+    def request(self, method: str, url: str, *, headers: Any, body: bytes | None = None) -> Any:
+        import os as _os
+        import signal as _signal
+
+        if method == "POST" and url.endswith("/action") and not self.delivered:
+            self.delivered = True
+            _os.kill(_os.getpid(), _signal.SIGTERM)
+        return super().request(method, url, headers=headers, body=body)
+
+
+def test_a_second_sigterm_during_shutdown_does_not_kill_the_run(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX F-2: a SIGTERM delivered WHILE the shutdown runs (here: when the
+    stop request goes out) is ignored and logged - the previous handlers are
+    restored only after the record is written, so the default action never fires:
+    stop/terminate still complete and the record exists."""
+    import os as _os
+    import signal as _signal
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy = ComfyCanaryTransport(never_completes=True)
+    transport = SigtermOnStopTransport()
+    delivered: list[bool] = []
+
+    def sleep_and_interrupt(seconds: float) -> None:
+        clock.advance(ms=int(seconds * 1000))
+        if not delivered:
+            delivered.append(True)
+            _os.kill(_os.getpid(), _signal.SIGTERM)
+
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=transport,
+            comfy_transport=comfy,
+            sleep=sleep_and_interrupt,
+        )
+    # The shutdown path survived the second signal: stopped AND terminated.
+    assert transport.delivered, "the second SIGTERM must arrive during the shutdown"
+    assert transport.state == "GONE"
+    assert any(call[0] == "DELETE" for call in transport.calls)
+    records = sorted((tmp_path / "records").glob("*.json"))
+    assert records, "the canary record must exist even after the second SIGTERM"
+    record = json.loads(records[-1].read_text())
+    assert record["terminate_verified_at"] is not None
+    assert record["ignored_interrupts"] == ["ignored SIGTERM during shutdown"]
+
+
+def test_sigint_takes_the_same_path_as_sigterm(db: Database, tmp_path: Path) -> None:
+    """T045-FIX F-2: SIGINT raises into the same shutdown path as SIGTERM - the
+    owned Pod is stopped and terminated and the record is written."""
+    import os as _os
+    import signal as _signal
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy = ComfyCanaryTransport(never_completes=True)
+    delivered: list[bool] = []
+
+    def sleep_and_interrupt(seconds: float) -> None:
+        clock.advance(ms=int(seconds * 1000))
+        if not delivered:
+            delivered.append(True)
+            _os.kill(_os.getpid(), _signal.SIGINT)
+
+    transport = RunpodCanaryTransport()
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=transport,
+            comfy_transport=comfy,
+            sleep=sleep_and_interrupt,
+        )
+    assert transport.state == "GONE"
+    assert any(call[0] == "DELETE" for call in transport.calls)
+    records = sorted((tmp_path / "records").glob("*.json"))
+    record = json.loads(records[-1].read_text())
+    assert record["outcome"] == "NOT_CLEAN"
+    assert "SIGINT" in record["not_clean_reason"]
+
+
+def test_a_refused_execute_leaves_the_previous_handlers_in_place(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX F-2: a refusal that raises before the run body (a sha mismatch) must
+    not leak the canary interrupt handlers - the previous handlers are still
+    installed afterwards."""
+    import signal as _signal
+
+    from microdrama.contracts.errors import MicrodramaError
+    from microdrama.persistence.object_store import FilesystemObjectStore
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+
+    _seed_everything(db)
+    authorization = _write_authorization(tmp_path)
+    _, digest = load_canary_authorization(authorization)
+    before = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+    with pytest.raises(MicrodramaError):
+        canary_module.run_execute(
+            authorization,
+            expected_sha256="0" * 64,  # never the real digest: refused
+            settings=_live_settings(),
+            db=db,
+            store=FilesystemObjectStore(tmp_path / "objects"),
+            prompts_path=_write_prompts(tmp_path),
+            clock=FakeClock(T0),
+            ids=SequentialIds("f2-refused"),
+            credential_resolver=lambda _ref: "fixture-dummy-value",
+            runpod_transport=RunpodCanaryTransport(),
+            comfy_transport=ComfyCanaryTransport(),
+            evidence_dir=tmp_path / "records",
+        )
+    after = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+    assert after == before
+
+
 # --- T045-FIX RR-N5: wait for the created Pod's runtime port before binding ---------------
 
 
