@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -256,19 +257,71 @@ def resolve_canary_episode(db: Database, expected: UUID | None = None) -> UUID:
     return episode_id
 
 
-def refuse_non_loopback_dsn(dsn: str) -> None:
-    """T045-FIX B-S9: the canary DSN must point at loopback - never staging/production."""
-    from urllib.parse import urlparse
+#: T045-FIX RR-S1: the only hosts a canary DSN may name.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
-    parsed = urlparse(dsn)
-    if parsed.scheme != "postgresql":
-        return  # not a TCP DSN; the pool resolves it
-    host = parsed.hostname or ""  # empty host means a local unix socket
-    if host and host not in ("127.0.0.1", "::1", "localhost"):
+
+def _refuse_non_loopback_host(value: str, *, named_by: str) -> None:
+    """Every comma-separated host entry must be loopback or a unix-socket directory."""
+    for entry in str(value).split(","):
+        entry = entry.strip()
+        # An absolute path is libpq's unix-socket directory form (local by construction).
+        if entry in _LOOPBACK_HOSTS or entry.startswith("/"):
+            continue
         raise EffectDenied(
             "the canary database DSN must point at loopback; refusing to touch any other database",
-            host=host,
+            host=entry,
+            named_by=named_by,
         )
+
+
+def refuse_non_loopback_dsn(dsn: str) -> None:
+    """T045-FIX B-S9 + RR-S1: the canary DSN must point at loopback - never staging
+    or production, in EVERY form libpq accepts.
+
+    The DSN is parsed with psycopg's own ``conninfo_to_dict`` (URL forms including the
+    ``postgres://`` scheme, keyword/value strings, query-string overrides, multi-host
+    lists, ``hostaddr``), so the guard sees the host libpq would actually connect to.
+    A ``service`` definition is refused (a service file can name any host). A hostless
+    DSN falls back to ``PGHOST``/``PGHOSTADDR``/``PGSERVICE``; those are read by name
+    only and must pass the same rule. Error messages name the variable and the host -
+    never a password.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    try:
+        params = dict(conninfo_to_dict(dsn))
+    except Exception as exc:  # psycopg raises ProgrammingError on junk
+        raise EffectDenied(
+            "the canary database DSN is not parseable; refusing to guess what it points at",
+            detail=str(exc).splitlines()[0] if str(exc) else type(exc).__name__,
+        ) from exc
+    if params.get("service"):
+        raise EffectDenied(
+            "the canary database DSN may not use a service definition; name the "
+            "loopback host explicitly",
+            service=str(params["service"]),
+        )
+    hosts = params.get("host")
+    hostaddrs = params.get("hostaddr")
+    if hosts is None and hostaddrs is None:
+        # The DSN names no host: libpq would fall back to the PG* environment - the
+        # same loopback rule applies to each (read by name only, never a password).
+        for var in ("PGHOST", "PGHOSTADDR"):
+            value = os.environ.get(var)
+            if value:
+                _refuse_non_loopback_host(value, named_by=var)
+        if os.environ.get("PGSERVICE"):
+            raise EffectDenied(
+                "the canary database DSN names no host and PGSERVICE is set; a service "
+                "file can name any host - name the loopback host explicitly",
+                env_var="PGSERVICE",
+            )
+        return
+    if hosts is not None:
+        _refuse_non_loopback_host(str(hosts), named_by="DSN host")
+    if hostaddrs is not None:
+        _refuse_non_loopback_host(str(hostaddrs), named_by="DSN hostaddr")
 
 
 def resolve_pinned_template(

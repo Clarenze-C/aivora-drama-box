@@ -984,6 +984,59 @@ def test_the_dsn_must_be_loopback() -> None:
     refuse_non_loopback_dsn("postgresql://user@localhost:5544/postgres")
 
 
+def test_every_dsn_form_is_parsed_for_its_real_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T045-FIX RR-S1: the loopback guard reads every DSN form through libpq's own
+    parser - the postgres:// scheme, keyword/value DSNs, a query-string host override,
+    multi-host lists, service definitions and a hostless DSN's PG* fallback all name
+    their real host. Unparseable input is refused, and the accepted forms are loopback
+    hosts and absolute unix-socket directories."""
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.pipeline.canary import refuse_non_loopback_dsn
+
+    refused = [
+        "postgres://u@prod.example.com/db",  # libpq's other URL scheme
+        "host=prod.example.com dbname=x",  # keyword/value form
+        "postgresql://127.0.0.1/db?host=prod.example.com",  # query host overrides the URL host
+        "postgresql:///db?host=prod.example.com",
+        "postgresql://u@127.0.0.1,prod.example.com/db",  # multi-host with one remote
+        "postgresql://u@prod.example.com,127.0.0.1/db",
+        "postgresql://127.0.0.1/db?hostaddr=10.0.0.5",  # hostaddr must be loopback too
+        "service=x",  # a service file can name any host
+        "hostaddr=10.0.0.5",
+        "postgresql://u:p@127.0.0.1/db?host=prod.example.com&password=x",  # never a password leak
+    ]
+    for dsn in refused:
+        with pytest.raises(EffectDenied, match="loopback|service"):
+            refuse_non_loopback_dsn(dsn)
+    with pytest.raises(EffectDenied, match="parse"):
+        refuse_non_loopback_dsn("not a dsn at all ://")
+    # A hostless DSN falls back to PGHOST/PGHOSTADDR/PGSERVICE - the same rule applies.
+    for var in ("PGHOST", "PGHOSTADDR"):
+        monkeypatch.setenv(var, "prod.example.com")
+        with pytest.raises(EffectDenied, match="loopback"):
+            refuse_non_loopback_dsn("postgres://")
+        monkeypatch.delenv(var)
+    monkeypatch.setenv("PGSERVICE", "staging")
+    with pytest.raises(EffectDenied, match="service"):
+        refuse_non_loopback_dsn("postgres://")
+    monkeypatch.delenv("PGSERVICE")
+    # Accepted: loopback hosts, IPv6 loopback, socket directories, a loopback PGHOST.
+    for dsn in (
+        "postgresql://127.0.0.1/db",
+        "postgresql://localhost:5544/postgres",
+        "postgresql://[::1]/db",
+        "host=/var/run/postgresql dbname=x",
+        # a multi-host list of nothing but loopback (the keyword form carries IPv6)
+        "host=127.0.0.1,::1,localhost dbname=x",
+    ):
+        refuse_non_loopback_dsn(dsn)
+    monkeypatch.setenv("PGHOST", "/var/run/postgresql")
+    refuse_non_loopback_dsn("postgres://")
+    monkeypatch.setenv("PGHOST", "127.0.0.1")
+    refuse_non_loopback_dsn("postgres://")
+    monkeypatch.delenv("PGHOST")
+
+
 def test_a_failed_shutdown_still_writes_the_record_with_the_pod(
     db: Database, tmp_path: Path
 ) -> None:
