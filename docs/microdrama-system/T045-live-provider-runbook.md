@@ -183,8 +183,9 @@ authorization carries and the create request sends as-is) — plus
 `execute --authorization-sha256 <hex>` refuses, typed and before any transport call,
 on: a sha mismatch; `now ≥ hard_stop_utc`; an expired quote; a mode other than
 PAID_BENCHMARK or a missing paid/cloud flag; a spend cap above `episode_cap_micro_usd`;
-a non-loopback DSN (every libpq form is parsed; `PGHOST`/`PGHOSTADDR`/`PGSERVICE`
-included); a database whose single budget-account episode is not the pinned
+a non-loopback DSN (every libpq form is parsed; `PGSERVICE` is refused whenever it is
+set and `PGHOSTADDR` must be loopback even when the DSN names its own `host`); a
+database whose single budget-account episode is not the pinned
 `episode_id`; or a prompt object whose content hash is not pinned. It then runs runbook
 steps 1–6 through the composed `live_world` only: reserve → owned-name Pod create
 (carrying the pinned full image reference); a bounded wait for the Pod's runtime port,
@@ -193,9 +194,13 @@ then the `/object_info` digest of the mapped node classes against the pinned
 prompt submits (≤ `max_prompts` distinct prompts, ≤ `max_attempts` **total submit
 attempts across all prompts — a global cap**, no blind retries — ambiguity stops for a
 human); output fetch → checksum → durable copy; stop → terminate → verified read-back
-(the T045-A final-release path); janitor ingest. `hard_stop_utc`/`max_wall_seconds`
+(the T045-A final-release path); janitor ingest. A prompt that ends without success
+(attempt cap, run stop, deadline) settles its still-open hold at zero - nothing stays
+reserved that no retry can reuse. `hard_stop_utc`/`max_wall_seconds`
 (and the rights record's `eligible_until`) are enforced by a deadline that stops and
-terminates; SIGTERM/SIGINT run the same shutdown path before exit. The runner never
+terminates; SIGTERM/SIGINT run the same shutdown path before exit, and further
+SIGTERM/SIGINT arriving while the shutdown runs are ignored and logged, never killing
+the run mid-cleanup. The runner never
 prints credential values, `Authorization` headers or the environment. Credentials
 resolve ONLY through FILE credential refs whose secret file is a real file (never a
 symlink), owned by the invoking user, and owner-only (mode 0600 or 0400); ENV, VAULT
@@ -205,9 +210,13 @@ and NONE refs are refused.
 the same attestation, pod config, credentials and durable state and runs ONE pass:
 stop/terminate an owned stray Pod (a Pod that appears after a podless resolution is
 adopted onto its lease, the resolution is marked contradicted, and its cost is ingested
-as an adjustment on the settled hold), ingest provider billing, run finality. The
-quote's expiry gates only the start, so the sweep stays possible after the run; it
-submits no work and takes no reservation.
+as an adjustment on the settled hold; a terminate that failed mid-tail is retried to a
+verified terminate and a closed storage ownership), ingest provider billing, run
+finality. The sweep composes the same durable cleanup guard as the run: a stop or
+terminate only ever touches a Pod with a durable owned lease row - an owned-NAME Pod
+with no lease row anywhere is refused with zero stop/terminate calls and the refusal
+recorded. The quote's expiry gates only the start, so the sweep stays possible after
+the run; it submits no work and takes no reservation.
 
 `invoice` wraps `verify_invoice_period` (R5) from operator evidence: account ref (from
 the authorization), pod id, period, amount, evidence file (**only its sha256 is
@@ -274,8 +283,14 @@ It starts a fresh loopback PostgreSQL on a free port (never 8091 or 8093 and nev
 running container's port), applies every migration, and seeds the canary's registries
 (the rights route with real evidence labels so it stays eligible in PAID_BENCHMARK,
 the enabled benchmark preset) plus one canary episode with its budget account. The
+durable data root defaults to `/var/lib/microdrama/canary-pg` (`--data-root` overrides
+it for both `up` and `down`); preparation never changes the mode of a directory that
+already existed - if any ancestor from `/` down is not traversable by the server OS
+user, the command refuses with exit 2 naming it, and only the directories it creates
+itself are 0755. The
 DSN is printed and stored in `out/canary-db.json`; run the canary with
-`MICRODRAMA_DATABASE_URL` set to it. The runner resolves the single seeded canary
+`MICRODRAMA_DATABASE_URL` set to it (loopback only - the guard parses every libpq form
+and never takes the DSN from argv). The runner resolves the single seeded canary
 episode (oldest with a budget account) — the canary database must not be shared with
 production data.
 

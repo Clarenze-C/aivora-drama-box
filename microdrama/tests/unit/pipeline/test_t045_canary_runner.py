@@ -182,6 +182,17 @@ def test_the_example_authorization_file_is_valid() -> None:
     assert authorization.runpod_credential_ref.startswith("credref:")
 
 
+def test_the_example_prompts_file_loads_against_the_example_authorization() -> None:
+    """T045-FIX (docs): the runbook's example prompts file loads through the real
+    parser against the example authorization's pins."""
+    from microdrama.pipeline.canary import load_prompts
+
+    root = Path(__file__).resolve().parents[3] / "runbooks"
+    authorization, _ = load_canary_authorization(root / "canary-authorization.example.json")
+    prompts = load_prompts(authorization, root / "canary-prompts.example.json")
+    assert prompts and len(prompts) == len(authorization.prompt_sha256)
+
+
 @pytest.mark.parametrize(
     ("override", "match"),
     [
