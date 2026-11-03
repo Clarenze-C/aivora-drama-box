@@ -281,3 +281,59 @@ def test_terminal_status_replay_does_not_touch_the_server(submitted) -> None:
     replay = world.service.poll(status.operation_id)
     assert replay.replayed
     assert len(world.client.calls) == calls_before
+
+
+# --- T045-FIX F-4: production lease-covered FAILED attempts settle their own hold ----
+
+
+def test_a_failed_lease_covered_production_attempt_settles_its_own_hold(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX F-4: production routing gives every attempt its own hold, so a FAILED
+    lease-covered attempt settles it at once - at zero charge (B-B1) - and the hold is
+    never left ACTIVE. Only the canary defers a FAILED settlement for a retry
+    (retry_reuses_hold) and it settles the hold at prompt end; that deferral must not
+    leak into production."""
+    from datetime import UTC as _UTC
+    from datetime import datetime
+
+    from microdrama.config import Settings
+    from microdrama.contracts.cost import PriceQuote
+    from microdrama.contracts.enums import ExecutionMode, PriceSource, PriceUnit
+
+    world = ComfyWorld(
+        db,
+        tmp_path / "store",
+        scenarios=(ComfyScenario.EXECUTED_WITHOUT_OUTPUT,),
+        # The lease-covered settle path is a live-path concept (B-B1): it posts a
+        # BILLED receipt, which offline-mock provenance forbids, and the synthetic
+        # mock price is offline-only. The transports stay fakes; only the settings
+        # mark the world non-mock and the price is a real provider quote, as in the
+        # canary (_gpu_second_price).
+        settings=Settings(
+            execution_mode=ExecutionMode.PAID_BENCHMARK,
+            paid_requests_enabled=True,
+            cloud_resources_enabled=True,
+        ),
+        config=ComfyRenderConfig(
+            price=PriceQuote(
+                currency="USD",
+                unit=PriceUnit.GPU_SECOND,
+                unit_price_micro_usd=250,
+                source=PriceSource.PROVIDER_QUOTE,
+                price_table_version="f4-prod-quote",
+                as_of=datetime(2026, 11, 3, tzinfo=_UTC),
+            ),
+            lease_covered=True,
+        ),
+    )
+    ep = world.episode()
+    attempt = world.attempt(ep)
+    status = world.service.submit(attempt.request, job_id=attempt.job_id)
+    world.clock.advance(ms=EXECUTION_MS)
+    done = world.service.poll(status.operation_id)
+    assert done.state is ProviderOperationState.FAILED
+    assert done.settled_micro_usd == 0  # lease-covered: zero charge (B-B1)
+    reservation = world.reservation_row(attempt.request.reservation_id)
+    assert reservation["state"] == "SETTLED"  # F-4: production settles FAILED at once
+    assert world.counters(ep.account_id)["reserved"] == 0  # nothing stays reserved

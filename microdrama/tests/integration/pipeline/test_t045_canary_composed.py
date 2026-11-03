@@ -1573,6 +1573,44 @@ def test_a_failed_attempt_then_success_reuses_the_hold_and_keeps_the_failed_char
     assert failed_operations == 1 and succeeded_operations == 1
 
 
+def test_a_failed_final_attempt_settles_the_prompt_hold(db: Database, tmp_path: Path) -> None:
+    """T045-FIX F-4: with max_attempts=1 and a failing attempt no retry follows, so
+    the prompt's shared hold must not stay reserved past the run - it settles at zero
+    and the account carries nothing outstanding for it."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy_transport = ComfyCanaryTransport(fail_first_submit=True)
+    result = _execute(
+        db,
+        tmp_path,
+        clock=clock,
+        runpod_transport=RunpodCanaryTransport(),
+        comfy_transport=comfy_transport,
+        caps={"max_attempts": 1},
+    )
+    record = result.record
+    assert comfy_transport.submit_calls == 1  # the cap allowed exactly one attempt
+    with db.transaction(readonly=True) as tx:
+        hold = tx.fetchone(
+            "SELECT id, state, settled_micro_usd FROM reservations "
+            "WHERE operation_kind='comfy.queue_prompt'"
+        )
+        other_outstanding = tx.fetchval(
+            "SELECT COALESCE(SUM(reserved_micro_usd), 0) FROM reservations "
+            "WHERE state = 'ACTIVE' AND operation_kind <> 'comfy.queue_prompt'"
+        )
+        account = tx.fetchone("SELECT reserved_outstanding_micro_usd FROM budget_accounts LIMIT 1")
+    assert hold is not None
+    assert hold["state"] == "SETTLED"  # F-4: not left ACTIVE with no retry to reuse it
+    assert hold["settled_micro_usd"] == 0  # lease-covered: zero charge (B-B1)
+    assert any(
+        s["step"] == "prompt_hold_settled" and s["detail"]["reservation_id"] == str(hold["id"])
+        for s in record["steps"]
+    )
+    # The account carries nothing outstanding for the prompt hold.
+    assert account["reserved_outstanding_micro_usd"] == other_outstanding
+
+
 def test_a_needs_reconciliation_during_submit_stops_for_a_human(
     db: Database, tmp_path: Path
 ) -> None:

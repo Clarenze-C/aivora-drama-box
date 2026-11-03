@@ -152,6 +152,12 @@ class ComfyRenderConfig:
     poll_after_ms: int = 1_000
     required_media_kinds: tuple[str, ...] = ("video",)
     lease_covered: bool = False
+    # T045-FIX B-S10 + F-4: True only on the canary path, where retries within
+    # max_attempts reuse the prompt's single shared hold - a FAILED attempt leaves
+    # that hold ACTIVE for the retry, and the prompt-end path settles it at zero
+    # when no retry follows. Production routing gives every attempt its own hold,
+    # so its FAILED lease-covered attempts settle at once, as before.
+    retry_reuses_hold: bool = False
 
     @classmethod
     def for_mock(cls) -> ComfyRenderConfig:
@@ -985,12 +991,19 @@ class ComfyRenderService:
                 pass
             return 0
         if self._config.lease_covered:
-            # T045-FIX B-S10: a FAILED lease-covered attempt must NOT settle the
-            # prompt's shared hold - the retry within max_attempts reuses it, and a
-            # settled hold can never dispatch again (provider operations need an
-            # ACTIVE reservation). The failed attempt's GPU cost is not forgiven: the
-            # Pod lease's invoice bucket carries every attempt's execution seconds.
-            if row["state"] == ProviderOperationState.FAILED.value:
+            # T045-FIX B-S10 + F-4: a FAILED lease-covered attempt must NOT settle
+            # the prompt's shared hold while a retry can still reuse it - a settled
+            # hold can never dispatch again (provider operations need an ACTIVE
+            # reservation). Only the canary reuses holds across retries
+            # (retry_reuses_hold); production routing gives every attempt its own
+            # hold, so its FAILED lease-covered attempts settle here at once, as
+            # before the hold-reuse change. The failed attempt's GPU cost is not
+            # forgiven either way: the Pod lease's invoice bucket carries every
+            # attempt's execution seconds.
+            if (
+                row["state"] == ProviderOperationState.FAILED.value
+                and self._config.retry_reuses_hold
+            ):
                 return 0
             # T045-FIX B-B1: a render on a leased Runpod Pod is paid once — by the
             # Pod lease's BILLED settlement (the provider invoice bucket). The
@@ -1055,6 +1068,52 @@ class ComfyRenderService:
         )
         self._budget.record_usage(receipt)
         return self._settled_amount(row["reservation_id"])
+
+    def settle_open_prompt_hold(
+        self, reservation_id: UUID, *, reason: str, now: datetime | None = None
+    ) -> bool:
+        """T045-FIX F-4: settle a prompt's still-open shared hold at zero charge.
+
+        A FAILED lease-covered attempt on a ``retry_reuses_hold`` config deliberately
+        leaves the prompt's hold ACTIVE for the retry (B-S10). When the prompt ends
+        without success - attempt cap reached, run stopped, deadline hit - nothing can
+        reuse the hold any more and it must not stay reserved past its expiry: post the
+        same deterministic zero-charge SETTLEMENT the attempt path posts, with the
+        ending's ``reason`` recorded by the caller (the contract's UsageReceipt carries
+        no free-text field). Idempotent: a hold that already moved on (settled,
+        released, absent) is a no-op returning False.
+        """
+        with self._db.transaction(readonly=True) as tx:
+            reservation = tx.fetchone("SELECT * FROM reservations WHERE id = %s", (reservation_id,))
+        if reservation is None or reservation["state"] != ReservationState.ACTIVE.value:
+            return False
+        observed_at = now or self._now()
+        self._budget.record_usage(
+            UsageReceipt(
+                receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle-prompt-end:{reservation_id}"),
+                provider=reservation["provider"],
+                provider_receipt_id=f"comfy-settle-prompt-end:{reservation_id}",
+                kind=ReceiptKind.SETTLEMENT,
+                cost_basis=CostBasis.BILLED,
+                reservation_id=reservation_id,
+                episode_id=reservation["episode_id"],
+                season_id=None,
+                job_id=None,
+                category=BudgetCategory.GPU_GENERATION,
+                amount_micro_usd=0,
+                currency="USD",
+                units=0,
+                unit=PriceUnit.GPU_SECOND,
+                # A prompt-end finalization measures no interval (the attempts'
+                # own settlements carry their execution windows); leaving both
+                # None also never mixes the caller's clock with DB-stamped times.
+                interval_start=None,
+                interval_end=None,
+                observed_at=observed_at,
+                provenance=self.provenance,
+            )
+        )
+        return True
 
 
 def build_comfy_render_service(

@@ -284,8 +284,14 @@ def canary_pod_config(authorization: CanaryAuthorization) -> PodLeaseConfig:
 def canary_render_config(authorization: CanaryAuthorization) -> ComfyRenderConfig:
     """T045-FIX B-B1: the canary renders on a leased Runpod Pod, so the render is
     lease-covered - the prompt holds reserve at the real quote but settle at zero
-    charge; the Pod lease's BILLED settlement is the only GPU cost."""
-    return ComfyRenderConfig(price=_gpu_second_price(authorization), lease_covered=True)
+    charge; the Pod lease's BILLED settlement is the only GPU cost.
+
+    T045-FIX B-S10 + F-4: retries within ``max_attempts`` reuse the prompt's single
+    shared hold, so a FAILED attempt leaves it ACTIVE for the retry and the
+    prompt-end path settles it at zero when no retry follows."""
+    return ComfyRenderConfig(
+        price=_gpu_second_price(authorization), lease_covered=True, retry_reuses_hold=True
+    )
 
 
 def compose_canary_world(
@@ -949,6 +955,23 @@ def run_execute(
         # T045-FIX B-S3: the record is written even when the shutdown or the sweep
         # raises - a created Pod must never leave no canary record behind.
         try:
+            # T045-FIX F-4: a prompt that ended without success (attempt cap
+            # reached, run stopped, deadline hit) has no retry left to reuse its
+            # hold - settle every still-open prompt hold at zero now, before the
+            # shutdown, so nothing stays reserved past its expiry. Best effort per
+            # hold: a settle failure is recorded and never blocks the Pod shutdown.
+            for hold_id in prompt_holds.values():
+                try:
+                    settled = world.comfy.settle_open_prompt_hold(
+                        hold_id, reason="prompt ended without success", now=clock.now()
+                    )
+                except MicrodramaError as exc:
+                    record["blocked_or_uncertain"] += (
+                        f" prompt hold settle failed: {exc.code}: {exc.message};"
+                    )
+                    continue
+                if settled:
+                    step("prompt_hold_settled", {"reservation_id": str(hold_id), "amount": 0})
             if lease_id is not None:
                 # Runpod final release: stop -> terminate -> verified read-back (T045-A).
                 shutdown = world.leases.shutdown(lease_id, reason="canary complete")
