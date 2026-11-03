@@ -137,6 +137,10 @@ class Janitor:
         self._settings = settings
         self._config = config
         self._manager = PodManager(provider, clock, config, stop_attempts=config.stop_attempts)
+        # T045-FIX F-1: owned Pod ids the current sweep's orphan scan still sees
+        # (None until a scan runs or when the scan failed - never an empty set,
+        # which would claim the provider listed nothing).
+        self._present_owned_pod_ids: frozenset[str] | None = None
 
     # --- evidence ----------------------------------------------------------------------
 
@@ -539,29 +543,8 @@ class Janitor:
                 )
         # An owned Pod is storage the pipeline owns from its create request (T045 R3).
         open_storage_ownership(self._db, lease_id, pod.pod_id)
-        try:
-            state = self._manager.stop(pod.pod_id)
-            if self._manager.is_runpod():
-                # T045 R8 + RR-S4: stop, terminate and verify, writing the durable
-                # terminate the billing window and the ownership close read back.
-                state = self._manager.terminate(pod.pod_id)
-                terminate_verified = record_terminate_verified(self._db, lease_id, now)
-                close_storage_ownership(self._db, "runpod", pod.pod_id, terminate_verified)
-        except MicrodramaError as exc:
-            report.failures.append(
-                JanitorAction(
-                    subject=f"pod:{pod.pod_id}",
-                    action="adopt_late_pod",
-                    outcome="failed",
-                    detail=f"{exc.code}: {exc.message}",
-                )
-            )
-            self._evidence(
-                f"pod:{pod.pod_id}",
-                "janitor.action_failed",
-                {"error": exc.code, "detail": str(exc.message), "lease_id": str(lease_id)},
-                now,
-            )
+        state = self._stop_terminate_and_verify(pod, lease_id, now, report, action="adopt_late_pod")
+        if state is None:
             return
         report.orphan_pods.append(
             JanitorAction(
@@ -584,6 +567,49 @@ class Janitor:
             now,
         )
 
+    def _stop_terminate_and_verify(
+        self,
+        pod,
+        lease_id: UUID,
+        now: datetime,
+        report: JanitorReport,
+        *,
+        action: str,
+    ) -> PodState | None:
+        """T045 R8 + RR-S4 + F-1: the shared stop -> terminate -> verify -> close tail.
+
+        Writes the durable terminate the billing window and the ownership close read
+        back. Returns the verified terminal state, or ``None`` when the tail failed:
+        the failure is recorded (per-Pod, like every stop/terminate failure) and the
+        next sweep retries - ``terminate_verified_at`` stays NULL and storage
+        ownership stays open until the tail completes.
+        """
+        try:
+            state = self._manager.stop(pod.pod_id)
+            if self._manager.is_runpod():
+                # T045 R8 + RR-S4: stop, terminate and verify, writing the durable
+                # terminate the billing window and the ownership close read back.
+                state = self._manager.terminate(pod.pod_id)
+                terminate_verified = record_terminate_verified(self._db, lease_id, now)
+                close_storage_ownership(self._db, "runpod", pod.pod_id, terminate_verified)
+        except MicrodramaError as exc:
+            report.failures.append(
+                JanitorAction(
+                    subject=f"pod:{pod.pod_id}",
+                    action=action,
+                    outcome="failed",
+                    detail=f"{exc.code}: {exc.message}",
+                )
+            )
+            self._evidence(
+                f"pod:{pod.pod_id}",
+                "janitor.action_failed",
+                {"error": exc.code, "detail": str(exc.message), "lease_id": str(lease_id)},
+                now,
+            )
+            return None
+        return state
+
     def _sweep_provider_orphans(self, now: datetime, report: JanitorReport) -> None:
         try:
             pods = self._manager.find_owned()
@@ -596,7 +622,14 @@ class Janitor:
                     detail=f"{exc.code}: {exc.message}",
                 )
             )
+            # The scan's view of which owned Pods still exist is unknown; the
+            # billing phase must not defer on it (None, not an empty set).
+            self._present_owned_pod_ids = None
             return
+        # T045-FIX F-1: the pods this sweep's scan can still see - only these can
+        # re-run the stop -> terminate -> verify tail, so only these may defer
+        # their billing ingest on an unverified terminal terminate (below).
+        self._present_owned_pod_ids = frozenset(pod.pod_id for pod in pods)
         for pod in pods:
             if pod.owned_tag != self._config.owned_tag:
                 continue  # defence in depth: never touch anything not exactly ours
@@ -606,6 +639,47 @@ class Janitor:
                 (self._manager.provider_id, pod.pod_id),
             )
             if live:
+                continue
+            unverified = self._db_query(
+                "SELECT id FROM pod_leases WHERE provider = %s AND pod_id = %s "
+                "AND lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+                "AND terminate_verified_at IS NULL",
+                (self._manager.provider_id, pod.pod_id),
+            )
+            if unverified:
+                # T045-FIX F-1: an owned Pod held by a terminal lease whose terminate
+                # never verified (the adoption or the shutdown died mid-tail) gets the
+                # same stop -> terminate -> verify -> close tail - never the plain
+                # orphan stop, which would leave terminate_verified_at NULL, storage
+                # ownership open and the volume cost accruing forever. This covers
+                # every terminal lease, not only adopted ones; a failure is recorded
+                # per Pod and the next sweep retries the tail.
+                lease_id = unverified[0]["id"]
+                state = self._stop_terminate_and_verify(
+                    pod, lease_id, now, report, action="terminate_terminal_pod"
+                )
+                if state is not None:
+                    report.orphan_pods.append(
+                        JanitorAction(
+                            subject=f"pod:{pod.pod_id}",
+                            action="terminate_terminal_pod",
+                            outcome=state.value,
+                            detail=f"terminal lease {lease_id} terminate verified, "
+                            "storage ownership closed",
+                        )
+                    )
+                    report.stopped_pods.append(pod.pod_id)
+                    self._evidence(
+                        f"pod:{pod.pod_id}",
+                        "janitor.terminal_pod_terminate_verified",
+                        {
+                            "provider": self._manager.provider_id,
+                            "pod_id": pod.pod_id,
+                            "lease_id": str(lease_id),
+                            "pod_state": state.value,
+                        },
+                        now,
+                    )
                 continue
             if pod.state is not PodState.RUNNING:
                 continue
@@ -725,6 +799,10 @@ class Janitor:
             "GREATEST(MAX(l.compute_window_end_at), MAX(l.terminate_verified_at)) "
             "AS window_end, MIN(l.next_finality_check_at) AS backoff, "
             "MAX(l.terminate_verified_at) AS terminated_at, "
+            "BOOL_OR(l.lease_state IN ('CLAIMED', 'ACTIVE', 'TRANSFERRING')) "
+            "AS has_live_lease, "
+            "BOOL_OR(l.lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+            "AND l.terminate_verified_at IS NULL) AS has_unverified_terminal_lease, "
             "b.next_ingest_at, b.attempts AS ingest_attempts, "
             "b.post_terminate_ingest_done "
             "FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "
@@ -753,6 +831,34 @@ class Janitor:
                         action="billing_ingest",
                         outcome="failed",
                         detail="lease has no provider account label; billing cannot be attributed",
+                    )
+                )
+                continue
+            if (
+                row["has_unverified_terminal_lease"]
+                and not row["has_live_lease"]
+                and self._present_owned_pod_ids is not None
+                and pod_id in self._present_owned_pod_ids
+            ):
+                # T045-FIX F-1: a terminal lease's billing window is final only at
+                # its verified terminate. A Pod the scan still sees, held by a
+                # terminal lease whose terminate never verified (the adoption or
+                # the shutdown died mid-tail), is re-run by the orphan sweep's
+                # stop -> terminate -> verify tail, which runs before this phase;
+                # ingesting now would stamp this Pod's buckets with the narrower
+                # pre-terminate window, which a later covering query cannot
+                # re-stamp (the repository replays an already-stored bucket by
+                # raw-response hash). The ingest defers to the tail - no provider
+                # call, no backoff row; the next sweep re-evaluates for free. A
+                # Pod the scan no longer sees has no tail left to wait for and
+                # keeps the absent-pod ownership-proof path.
+                report.billing_ingests.append(
+                    JanitorAction(
+                        subject=f"pod:{pod_id}",
+                        action="billing_ingest",
+                        outcome="DEFERRED",
+                        detail="terminal lease terminate not verified yet; "
+                        "waiting for the stop/terminate/verify tail",
                     )
                 )
                 continue

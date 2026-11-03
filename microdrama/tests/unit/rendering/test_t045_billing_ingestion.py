@@ -966,6 +966,114 @@ def test_a_second_sweep_after_the_late_pod_adoption_adds_nothing(db: Database) -
     assert _counts(db) == before
 
 
+# --- T045-FIX F-1: a terminal lease's Pod whose terminate failed is never left open --------
+
+
+class FailTerminateTransport(OrphanPodBillingTransport):
+    """Serves 503 on DELETE while ``fail_terminate`` is set - a terminate the next
+    sweep must retry (F-1)."""
+
+    fail_terminate = True
+
+    def request(
+        self, method: str, url: str, *, headers: Any, body: bytes | None = None
+    ) -> _Response:
+        if method == "DELETE" and self.fail_terminate:
+            self.calls.append((method, url))
+            return _Response(503, b"{}")
+        return super().request(method, url, headers=headers, body=body)
+
+
+def test_a_failed_terminate_is_retried_to_verified_closed_and_billed(db: Database) -> None:
+    """T045-FIX F-1: an owned Pod held by a terminal lease whose terminate failed
+    (the adoption committed, the tail did not) is not left merely stopped by the next
+    sweep: the orphan path re-runs stop -> terminate -> verify -> close, readiness
+    advances to the invoice match, and a third sweep adds nothing."""
+    from microdrama.budget.billing import lease_billing_readiness
+    from microdrama.rendering.runpod_transport import pod_name
+
+    lease, _reservation, account = _seed_podless_resolved_lease(db)
+    transport = FailTerminateTransport(records=[_record()], name=pod_name(NS, LATE_TOKEN))
+    first = _janitor(db, _orphan_provider(transport, db), seq="f1-a").sweep()
+    assert any(f.action == "adopt_late_pod" and f.outcome == "failed" for f in first.failures)
+    # The same sweep must not ingest billing over a window that is not final: the
+    # terminate never verified, so the tail retry can only widen the window later.
+    assert any(a.outcome == "DEFERRED" for a in first.billing_ingests)
+    assert not any(a.outcome == "INGESTED" for a in first.billing_ingests)
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT pod_id, terminate_verified_at FROM pod_leases WHERE id=%s", (lease,)
+        )
+        ownership_open = tx.fetchval(
+            "SELECT count(*) FROM pod_storage_ownership WHERE provider='runpod' "
+            "AND pod_id=%s AND valid_until IS NULL",
+            (POD,),
+        )
+    assert row["pod_id"] == POD  # the adoption committed before the failed tail
+    assert row["terminate_verified_at"] is None  # F-1: the tail never completed
+    assert ownership_open == 1  # storage ownership stays open while unverified
+
+    # Second sweep: the provider still shows the Pod RUNNING (the stop's effect was
+    # lost with the failed terminate). The orphan path must run the full tail, never
+    # a bare orphan stop.
+    transport.fail_terminate = False
+    transport.status = "RUNNING"
+    _janitor(db, _orphan_provider(transport, db), seq="f1-b").sweep()
+    assert any(c[0] == "DELETE" for c in transport.calls)  # terminate retried
+    with db.transaction(readonly=True) as tx:
+        verified = tx.fetchval("SELECT terminate_verified_at FROM pod_leases WHERE id=%s", (lease,))
+        ownership_open = tx.fetchval(
+            "SELECT count(*) FROM pod_storage_ownership WHERE provider='runpod' "
+            "AND pod_id=%s AND valid_until IS NULL",
+            (POD,),
+        )
+    assert verified is not None
+    assert ownership_open == 0  # closed at the persisted terminate instant
+
+    # Readiness then advances to the invoice match.
+    clock = FakeClock(SWEEP_AT)
+    clock.advance(seconds=50 * 60)  # past INVOICE_END + the settle lag
+    transport.records = [
+        _record(),
+        _zero_record(T0 + timedelta(hours=1), T0 + timedelta(hours=2)),
+        _zero_record(T0 + timedelta(hours=2), INVOICE_END),
+    ]
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="f1-c"
+    ).sweep()
+    settings = _paid_settings()
+    budget = BudgetService(db, clock, SequentialIds("f1-inv"), settings)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    result = finality.verify_invoice_period(
+        provider_account_ref=ACCOUNT,
+        pod_id=POD,
+        period_start=WINDOW_START,
+        period_end=INVOICE_END,
+        amount_micro_usd=500_000,
+        currency="USD",
+        evidence_sha256="e" * 64,
+        source="INVOICE",
+        observed_at=clock.now(),
+    )
+    assert result.outcome == "MATCHED"
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "BILLED"
+    with db.transaction(readonly=True) as tx:
+        total = tx.fetchval(
+            "SELECT COALESCE(SUM(amount_micro_usd),0)::bigint FROM charges WHERE account_id=%s",
+            (account,),
+        )
+    assert total == 500_000  # the account total equals the invoice
+
+    # A third sweep adds nothing.
+    before = _counts(db)
+    clock.advance(seconds=20 * 60)
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="f1-d"
+    ).sweep()
+    assert _counts(db) == before
+
+
 # --- T045-FIX B-N1: the hourly rounding is pure integer arithmetic ------------------------
 
 
