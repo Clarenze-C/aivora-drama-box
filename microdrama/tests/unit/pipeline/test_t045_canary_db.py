@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
 
 import canary_db  # noqa: E402
 
-pytestmark = pytest.mark.db
+# T045-FIX F-6: no module-wide db mark - only the tests that request the ``db``
+# fixture carry pytest.mark.db; the rest are pure unit tests over the tool module.
 
 
 def test_durable_mode_turns_on_fsync_synchronous_commit_and_full_page_writes() -> None:
@@ -234,6 +235,7 @@ def _fake_server_factory(tmp_path: Path, dsn: str) -> tuple[type, dict[str, list
     return _FakeServer, events
 
 
+@pytest.mark.db
 def test_up_down_up_leaves_one_episode_and_a_valid_state_file(
     db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -247,7 +249,6 @@ def test_up_down_up_leaves_one_episode_and_a_valid_state_file(
     monkeypatch.setattr("microdrama.testing.services.EphemeralPostgres", fake)
     state = tmp_path / "canary-db.json"
     monkeypatch.setattr(canary_db, "STATE_PATH", state)
-    monkeypatch.setattr(canary_db, "DEFAULT_DATA_ROOT", tmp_path / "canary-pg")
     stopped: list[list[str]] = []
     monkeypatch.setattr(canary_db.subprocess, "run", lambda cmd, **k: stopped.append(cmd))
     monkeypatch.setattr(canary_db.os, "geteuid", lambda: 1000)
@@ -266,6 +267,7 @@ def test_up_down_up_leaves_one_episode_and_a_valid_state_file(
     assert Path(recorded["data_root"]) == tmp_path / "canary-pg"
 
 
+@pytest.mark.db
 def test_an_injected_seed_failure_leaves_no_running_server(
     db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -280,7 +282,6 @@ def test_an_injected_seed_failure_leaves_no_running_server(
     monkeypatch.setattr(services, "EphemeralPostgres", fake)
     monkeypatch.setattr("microdrama.testing.services.EphemeralPostgres", fake)
     monkeypatch.setattr(canary_db, "STATE_PATH", tmp_path / "canary-db.json")
-    monkeypatch.setattr(canary_db, "DEFAULT_DATA_ROOT", tmp_path / "canary-pg")
     # T045-FIX O-2: non-root caller (the server lifecycle is faked here; the
     # traversal refusal is covered by the O-2 tests above).
     monkeypatch.setattr(canary_db.os, "geteuid", lambda: 1000)
