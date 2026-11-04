@@ -1128,6 +1128,39 @@ def test_the_dsn_guard_checks_pghostaddr_and_pgservice_even_with_a_named_host(
     monkeypatch.delenv("PGHOSTADDR")
 
 
+def test_a_record_write_failure_still_restores_the_original_handlers(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX CR-7: restore_handlers() runs on EVERY path out of the shutdown -
+    including a _write_canary_record() exception (it sat outside the inner
+    finally). The process that catches that write error must not keep the
+    shutdown handler that silently ignores future SIGTERM/SIGINT."""
+    import signal as _signal
+
+    from microdrama.pipeline import canary as canary_module
+
+    _seed_everything(db)
+    before = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("fixture: record write failed")
+
+    monkeypatch.setattr(canary_module, "_write_canary_record", _boom)
+    transport = RunpodCanaryTransport()
+    with pytest.raises(RuntimeError, match="record write failed"):
+        _execute(
+            db,
+            tmp_path,
+            clock=FakeClock(T0),
+            runpod_transport=transport,
+            comfy_transport=ComfyCanaryTransport(),
+        )
+    # The shutdown path had already run when the write failed.
+    assert transport.state == "GONE"
+    after = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGINT))
+    assert after == before  # CR-7: the originals are back, not the ignore handlers
+
+
 def test_a_failed_shutdown_still_writes_the_record_with_the_pod(
     db: Database, tmp_path: Path
 ) -> None:

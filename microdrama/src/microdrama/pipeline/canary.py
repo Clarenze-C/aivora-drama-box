@@ -1127,11 +1127,18 @@ def run_execute(
             else:
                 record["outcome"] = "NOT_CLEAN"
                 record["not_clean_reason"] = f"{type(run_error).__name__}: {run_error}"
-            written.append(_write_canary_record(record, evidence_dir=evidence_dir, now=clock.now()))
+            try:
+                written.append(
+                    _write_canary_record(record, evidence_dir=evidence_dir, now=clock.now())
+                )
+            finally:
+                # T045-FIX F-2 + CR-7: the pre-run handlers come back on EVERY path
+                # out of the shutdown - after the record is written on the normal
+                # path, and even when the record write itself fails (the write
+                # error propagates after the restore; the signal-ignoring shutdown
+                # handler never survives this function).
+                restore_handlers()
             record["effects_sent"] = effects_sent
-        # T045-FIX F-2: the record is written - the pre-run handlers come back now,
-        # never before the shutdown path ran.
-        restore_handlers()
 
     record_path = (
         written[-1]
