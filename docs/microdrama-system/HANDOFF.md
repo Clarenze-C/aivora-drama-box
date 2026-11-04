@@ -32,14 +32,13 @@ apply:
 
 ## Checkout and safety
 
-- Repo: `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`. Remote head
-  `f7f135b`. **The T045 commits on top are NOT pushed; pushing needs the
-  operator's approval** (open decision, below).
+- Repo: `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`, **pushed level
+  with the remote** (operator-approved 2026-11-04; local and remote both at
+  `d8604ea`).
 - The working tree is clean. Contract package **2.15.0** (V2 payload schema
   version 2.0; V1 payloads remain readable). Migrations 0019–0025 are present;
-  0025 (T045) is unpushed and edited in place during the fix round — no
-  persistent database has it. Contract source and generated artifacts are
-  guardian-owned.
+  0025 (T045) was edited in place during the fix round — no persistent database
+  has it. Contract source and generated artifacts are guardian-owned.
 - No real Runpod Pod, paid model request, platform post, account test or
   public action has been performed. OFFLINE_MOCK remains the only composed
   mode; the staging deployment refuses all others. T031–T035 are not
@@ -84,8 +83,9 @@ The full record (reviews, rulings, briefs, reports) is
 
 ## Open operator decisions
 
-1. **Push the T045 commits** (`f7f135b..HEAD`, 69+ commits, all offline work
-   described above). Nothing has been pushed; the branch push needs approval.
+1. ~~Push the T045 commits~~ **DONE 2026-11-04**: the operator approved and the
+   branch is pushed (`f7f135b..d8604ea` → aivora-drama-box
+   `feat/microdrama-m0-m4`). Remote and local are level.
 2. **T031 authorization, when ready.** The canary packet
    ([T031-authorization-packet.md](T031-authorization-packet.md)) is final in
    shape: preconditions in §1 (key rotation first, rights route, pins, quote,
