@@ -221,7 +221,11 @@ the run; it submits no work and takes no reservation.
 `invoice` wraps `verify_invoice_period` (R5) from operator evidence: account ref (from
 the authorization), pod id, period, amount, evidence file (**only its sha256 is
 stored**), source (`INVOICE`/`CONSOLE`), and the optional `--supersedes`/`--actor`/
-`--reason` for an audited supersede. A MATCHED invoice lets the janitor's next sweep
+`--reason` for an audited supersede. `--observed-at` (optional, an ISO-8601 instant)
+overrides the moment the evidence was observed — pass it when verifying a period from
+a saved invoice after the fact, so the observation is the operator's reading time
+rather than the verification command's wall clock; without it the current time is
+used. A MATCHED invoice lets the janitor's next sweep
 settle the lease BILLED and release exactly the unused remainder; a mismatch keeps the
 hold and marks the lease DISPUTED.
 
