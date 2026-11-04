@@ -10,8 +10,12 @@ Nothing here has been executed. No Pod, paid request or provider call has been m
 
 ## 1. Preconditions — every box must be true before `execute`
 
-- [ ] **T045 is ACCEPTED** in `task_status.csv`. The runner and finality code below exist only once
-      T045-A/B are built, reviewed and accepted.
+- [x] **T045 is DONE** in `task_status.csv` (2026-11-04): T045-A/B built, the full fix round
+      (sessions 1–7) closed by a three-round Codex review cycle ending ACCEPT, and the
+      orchestrator confirmed `make check` (unit 2770 / contract 462 / integration 268) and
+      `make pilot` (two HUMAN gates, 16 exports, 303,000 synthetic micro-USD) at the final
+      HEAD under CPUQuota=45%. The commands in §5 are the final CLI as the runbook states
+      them.
 - [ ] **The RunPod API key is rotated.** On 2026-11-02 the old key was printed into a GLM build
       session, which sends its output to z.ai.
   - Create the new key in the Runpod console.
@@ -32,7 +36,8 @@ Nothing here has been executed. No Pod, paid request or provider call has been m
       node-schema sha256 of the mapped node classes, output-controls sha256, preset id and version.
 - [ ] **A quote has been captured** from the Runpod console within the quote's validity window
       (section 3). The docs page does not list GPU prices.
-- [ ] **A dedicated canary database exists** (T045-B runbook step). The T046 staging stack refuses
+- [ ] **A dedicated canary database exists** (§5, the `canary_db` commands; durable root defaults
+      to `/var/lib/microdrama/canary-pg`, `--data-root` overrides). The T046 staging stack refuses
       PAID_BENCHMARK by design.
 - [ ] **The Comfy endpoint credential**, if the image needs one, is a separate `credref:` in the
       same 0600 style.
@@ -74,10 +79,13 @@ evidence.
 | Shutdown / billing reserve | **$1.00** | |
 | **Total spend cap** | **$5.00 = 5,000,000 micro-USD** | Sum $4.29, rounded up; under the SPEC §6 $10 episode cap |
 
-## 5. Runner commands (valid once T045 is ACCEPTED; T045-B builds them)
+## 5. Runner commands (final CLI, as the T045 runbook states them; T045 DONE 2026-11-04)
 
 Run them from the operator's own shell only, never inside an agent session. The authorization file
-lives outside the repo.
+lives outside the repo (`/root/.secrets/drama-box/…`). `MICRODRAMA_DATABASE_URL` is loopback-only
+and never a CLI flag; `MICRODRAMA_OBJECT_STORE_ROOT` must be an **absolute** path — `execute`,
+`sweep` and `invoice` refuse with exit 2 without one. The Comfy endpoint is never a flag: it is
+late-bound from the created Pod's own proxy URL. `preflight` reads and writes no object store.
 
 ```bash
 cd /root/AIVORA/drama-box/microdrama
@@ -85,26 +93,43 @@ export MICRODRAMA_EXECUTION_MODE=PAID_BENCHMARK
 export MICRODRAMA_PAID_REQUESTS_ENABLED=true
 export MICRODRAMA_CLOUD_RESOURCES_ENABLED=true
 export MICRODRAMA_DATABASE_URL='<dedicated canary DB, loopback>'
+export MICRODRAMA_OBJECT_STORE_ROOT=/var/lib/microdrama/canary-objects
+
+# The dedicated canary database (durable root defaults to /var/lib/microdrama/canary-pg)
+make canary-db                                            # up;   or: python tools/canary_db.py up
+python tools/canary_db.py status                          # prints the DSN, stored in out/canary-db.json
+python tools/canary_db.py down                            # when finished
 
 # 1. Preflight: no network, no credential values; prints the plan and authorization_sha256
 .venv/bin/python -m microdrama.pipeline.canary preflight \
   --authorization /root/.secrets/drama-box/t031-canary-auth.json
 
-# 2. Execute: only with the sha256 that preflight printed for this exact file
+# 2. Execute: only with the sha256 preflight printed, only before the authorized hard stop
 .venv/bin/python -m microdrama.pipeline.canary execute \
   --authorization /root/.secrets/drama-box/t031-canary-auth.json \
-  --authorization-sha256 <hex from step 1>
+  --authorization-sha256 <hex-from-preflight> \
+  --prompts /root/.secrets/drama-box/t031-canary-prompts.json
 
-# 3. Later, when the console/invoice line for the Pod is available: record invoice evidence
+# 3. One janitor pass over the same attested world (any time after the run)
+.venv/bin/python -m microdrama.pipeline.canary sweep \
+  --authorization /root/.secrets/drama-box/t031-canary-auth.json \
+  --authorization-sha256 <hex-from-preflight>
+
+# 4. Verify the operator's period invoice once Runpod invoices the canary.
+#    --source is INVOICE or CONSOLE; --evidence is the exported file; --observed-at
+#    (optional, ISO-8601) records when the operator observed the invoice.
 .venv/bin/python -m microdrama.pipeline.canary invoice \
   --authorization /root/.secrets/drama-box/t031-canary-auth.json \
-  --pod-id <pod> --period-start <utc> --period-end <utc> \
-  --amount-micro-usd <n> --evidence-file <console export> --source runpod-console
+  --pod-id <pod-id> --period-start <iso> --period-end <iso> \
+  --amount-micro-usd <int> --source INVOICE --evidence <invoice-file> \
+  [--observed-at <iso-8601>]
 ```
 
-T045-B fixes the exact flag names. This section is updated from the T045-B report before sign-off.
-The authorization schema and a fake-valued example will be at
-`microdrama/runbooks/canary-authorization.example.json`.
+The authorization file itself (schema and a fake-valued example:
+`microdrama/runbooks/canary-authorization.example.json`, which loads through the real parser in
+tests) must carry, among the runbook's fields: the `episode_id` the canary is attributed to, the
+**full image reference** `<registry>/<repo>@sha256:<64 hex>` for the pinned Pod image, and
+`max_attempts` as **one global cap** (there is no per-prompt attempts field).
 
 ## 6. Stop conditions (the runner enforces them; the operator watches for them)
 
