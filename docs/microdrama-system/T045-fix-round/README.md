@@ -28,8 +28,11 @@ scratchpad paths now point to this folder.
 | `T045-FIX-REPORT.md` | Session 5's close-out report (sessions 1–5): every ruling's commit, the changed-tests audit, the gates. |
 | `codex-review-brief-t045fix5.md` | The scoped Codex review brief for `7faef9e..HEAD` (operator-approved 4 Nov). |
 | `codex-review-t045fix5.md` | The Codex review: FIX-REQUIRED, 4 BLOCKING / 3 NON-BLOCKING / 1 NIT (CR-1..CR-8), recovered from the session rollout after the sandbox refused the write, with the orchestrator rulings appended. |
-| `brief-t045-fix6.md` | **Session 6's brief:** fixes CR-1..CR-8 under the rulings. |
-| `T045-FIX6-REPORT.md` | Session 6's report. Doesn't exist yet. |
+| `brief-t045-fix6.md` | Session 6's brief: fixes CR-1..CR-8 under the rulings. |
+| `T045-FIX6-REPORT.md` | Session 6's report: all 8 fixed red→green, gates green (unit 2767 / contract 462 / integration 268). |
+| `rereview-brief-t045fix6.md` | The scoped Codex re-review brief (fixed findings + the two test adjustments only). |
+| `rereview-t045fix6.md` | The re-review: 7/8 CLOSED, both test adjustments LEGITIMATE; CR-3 residual BLOCKING + new CR-9 BLOCKING → rulings appended → `brief-t045-fix7.md`. |
+| `brief-t045-fix7.md` | **Session 7's brief:** the CR-3 residual and CR-9. |
 
 ## History
 
@@ -42,6 +45,9 @@ scratchpad paths now point to this folder.
 | Fix session 4 (429 after 24 min) | `b05b66a` (RR-N3, B-N1) | F-1 written but **uncommitted** in the working tree |
 | Fix session 5 (4 Nov, clean finish) | `10d7d31..c51c709` (12) | All 9 remaining rulings fixed red→green; gates green (unit 2765 / contract 462 / integration 263), re-confirmed by the orchestrator → `T045-FIX-REPORT.md` |
 | Scoped Codex review (4 Nov 06:58Z, operator-approved) | `7faef9e..c51c709` | FIX-REQUIRED: CR-1..CR-8 (4 BLOCKING) → rulings in `codex-review-t045fix5.md` → `brief-t045-fix6.md` |
+| Fix session 6 (4 Nov) | `ea6a48f..2adf453` (9) | All 8 CR fixes red→green; gates green → `T045-FIX6-REPORT.md` |
+| Codex re-review (4 Nov, fixed findings only) | `72c54fc..2adf453` | FIX-REQUIRED: CR-1/2/4..8 CLOSED, adjustments LEGITIMATE; CR-3 residual + CR-9 BLOCKING → `rereview-t045fix6.md` → `brief-t045-fix7.md` |
+| Fix session 7 (CR-3 residual, CR-9) | — | **Open work**; verification of its fixes needs an operator decision (two-round cap reached this cycle) |
 
 **Session 6 (CR fixes) is the open work.** The Sonnet re-review cap applied to the closed DB cycle and the
 round-1/2 T045 cycle; the Codex review of 4 Nov started a fresh verification layer for the post-round-2 fixes.
