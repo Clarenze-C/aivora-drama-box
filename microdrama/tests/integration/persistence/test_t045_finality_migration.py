@@ -400,8 +400,7 @@ def test_migration_0025_adds_fix_round_columns_and_tables(db: Database) -> None:
         )
     with pytest.raises(Conflict), db.transaction() as tx:
         tx.execute(
-            "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s "
-            "WHERE lease_id=%s",
+            "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s WHERE lease_id=%s",
             (T0 + timedelta(hours=2), lease),
         )
     with pytest.raises(Conflict), db.transaction() as tx:
