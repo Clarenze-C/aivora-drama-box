@@ -1918,7 +1918,9 @@ def test_a_persistent_settle_failure_fails_the_run_not_clean(
 
     calls = {"n": 0}
 
-    def failing_settle(self: ComfyRenderService, reservation_id: uuid.UUID, *, reason: str, now=None):
+    def failing_settle(
+        self: ComfyRenderService, reservation_id: uuid.UUID, *, reason: str, now=None
+    ):
         calls["n"] += 1
         raise MicrodramaError("fixture: persistent settle failure")
 

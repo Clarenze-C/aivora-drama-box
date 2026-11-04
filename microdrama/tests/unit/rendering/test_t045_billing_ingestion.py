@@ -1200,7 +1200,9 @@ def test_an_ambiguous_terminate_completes_by_absence_never_a_second_delete(
             "WHERE id=%s",
             (account,),
         )
-        reservation_state = tx.fetchval("SELECT state FROM reservations WHERE id=%s", (reservation,))
+        reservation_state = tx.fetchval(
+            "SELECT state FROM reservations WHERE id=%s", (reservation,)
+        )
     assert counters["settled_micro_usd"] == 500_000  # the account settles at the invoice
     assert counters["reserved_outstanding_micro_usd"] == 0  # nothing stays reserved
     assert reservation_state == "SETTLED"

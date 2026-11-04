@@ -1121,9 +1121,7 @@ class ComfyRenderService:
                 append_event(
                     tx,
                     aggregate_type="prompt_hold",
-                    aggregate_id=uuid5(
-                        RENDERING_NAMESPACE, f"prompt-hold-settle:{reservation_id}"
-                    ),
+                    aggregate_id=uuid5(RENDERING_NAMESPACE, f"prompt-hold-settle:{reservation_id}"),
                     event_type="prompt_hold.zero_settled",
                     payload={
                         "reason": reason,
