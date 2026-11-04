@@ -899,7 +899,16 @@ class Janitor:
             "BOOL_OR(l.lease_state IN ('CLAIMED', 'ACTIVE', 'TRANSFERRING')) "
             "AS has_live_lease, "
             "BOOL_OR(l.lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
-            "AND l.terminate_verified_at IS NULL) AS has_unverified_terminal_lease, "
+            "AND l.terminate_verified_at IS NULL "
+            # T045-FIX CR-3 residual: a lease superseded by a later lease on the
+            # same Pod is history - its NULL terminate is by design (the final
+            # holder owns the terminate, exactly as the two terminate selections
+            # exclude superseded leases). Counting it as unverified termination
+            # deferred the ingest forever while the Pod stayed listed.
+            "AND NOT EXISTS (SELECT 1 FROM pod_leases sup WHERE "
+            "sup.provider = l.provider AND sup.pod_id = l.pod_id "
+            "AND sup.id <> l.id AND sup.created_at > l.created_at)) "
+            "AS has_unverified_terminal_lease, "
             "b.next_ingest_at, b.attempts AS ingest_attempts, "
             "b.post_terminate_ingest_done "
             "FROM pod_leases l JOIN reservations r ON r.id = l.reservation_id "

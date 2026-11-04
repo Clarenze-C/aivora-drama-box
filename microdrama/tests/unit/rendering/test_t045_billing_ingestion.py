@@ -1299,6 +1299,78 @@ def test_warm_transfer_history_never_re_terminates_and_stays_idempotent(
     assert _counts(db) == before
 
 
+def test_a_transfer_history_with_the_final_holder_verified_ingests_and_advances(
+    db: Database,
+) -> None:
+    """T045-FIX CR-3 residual: the billing aggregate's unverified-termination flag
+    counted a warm transfer's historical NULL terminates, so an A -> B -> C history
+    (C verified, the Pod still listed TERMINATED) deferred ingest forever and the
+    lease could never reach BILLED. The aggregate excludes superseded leases exactly
+    like the two terminate selections: the final holder owns the terminate, C's
+    verified terminate makes the window final, the FIRST sweep INGESTS (buckets
+    stored), readiness advances, and a later sweep adds nothing."""
+    from microdrama.budget.billing import lease_billing_readiness
+    from microdrama.rendering.runpod_transport import pod_name
+
+    _a_id, _b_id, final = _seed_warm_transfer_history(db)
+    # The closed storage-ownership row a real transfer history leaves on the final
+    # holder (C held storage until its verified terminate); without it the fixture
+    # Pod's disk component would be forever-uncovered recovery, not a lease window.
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
+            "valid_from, valid_until, creating_lease_id) VALUES (%s, 'runpod', %s, "
+            "(SELECT owner_episode_id FROM pod_leases WHERE id=%s), %s, %s, %s)",
+            (uuid.uuid4(), POD, final, WINDOW_START, WINDOW_END, final),
+        )
+    pre = lease_billing_readiness(db, final)
+    assert pre.state == "PENDING_PROVIDER_FINALITY"  # nothing ingested yet
+
+    transport = OrphanPodBillingTransport(records=[_record()], name=pod_name(NS, "cr3r"))
+    transport.status = "TERMINATED"  # Runpod still lists the terminated Pod
+    first = _janitor(db, _orphan_provider(transport, db), seq="cr3r-a").sweep()
+    # The history never re-runs the terminate tail (CR-3) ...
+    assert not any(c[0] in ("POST", "DELETE") for c in transport.calls)
+    assert first.failures == []
+    # ... and its by-design NULLs no longer defer the ingest: the bucket over C's
+    # final window is stored on the first sweep (the residual's green line is
+    # successful ingestion, not zero-provider-call stability).
+    assert any(a.outcome == "INGESTED" for a in first.billing_ingests)
+    assert not any(a.outcome == "DEFERRED" for a in first.billing_ingests)
+    assert _counts(db)["runpod_billing_buckets"] == 1
+    readiness = lease_billing_readiness(db, final)
+    assert readiness.state == "AWAITING_INVOICE"  # advanced past provider finality
+
+    # A later sweep adds nothing (the response replays byte-identical).
+    before = _counts(db)
+    clock = FakeClock(SWEEP_AT)
+    clock.advance(seconds=20 * 60)
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="cr3r-b"
+    ).sweep()
+    assert _counts(db) == before
+
+    # Finality progress: the period invoice matches over C's window and the final
+    # holder's lease reaches BILLED.
+    clock.advance(seconds=20 * 60)
+    settings = _paid_settings()
+    budget = BudgetService(db, clock, SequentialIds("cr3r-inv"), settings)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    result = finality.verify_invoice_period(
+        provider_account_ref=ACCOUNT,
+        pod_id=POD,
+        period_start=WINDOW_START,
+        period_end=WINDOW_END,
+        amount_micro_usd=500_000,
+        currency="USD",
+        evidence_sha256="6" * 64,
+        source="INVOICE",
+        observed_at=clock.now(),
+    )
+    assert result.outcome == "MATCHED"
+    assert lease_billing_readiness(db, final).state == "BILLED"
+
+
 # --- T045-FIX B-N1: the hourly rounding is pure integer arithmetic ------------------------
 
 
