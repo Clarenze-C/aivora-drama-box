@@ -32,7 +32,10 @@ scratchpad paths now point to this folder.
 | `T045-FIX6-REPORT.md` | Session 6's report: all 8 fixed red→green, gates green (unit 2767 / contract 462 / integration 268). |
 | `rereview-brief-t045fix6.md` | The scoped Codex re-review brief (fixed findings + the two test adjustments only). |
 | `rereview-t045fix6.md` | The re-review: 7/8 CLOSED, both test adjustments LEGITIMATE; CR-3 residual BLOCKING + new CR-9 BLOCKING → rulings appended → `brief-t045-fix7.md`. |
-| `brief-t045-fix7.md` | **Session 7's brief:** the CR-3 residual and CR-9. |
+| `brief-t045-fix7.md` | Session 7's brief: the CR-3 residual and CR-9. |
+| `T045-FIX7-REPORT.md` | Session 7's report: both fixed red→green, gates green (unit 2770 / contract 462 / integration 268). |
+| `rereview-brief-t045fix7.md` | Round-3 brief (operator-approved): only the two fix commits against the rulings. |
+| `rereview-t045fix7.md` | **Round 3: ACCEPT.** Both SATISFIES-RULING, no new findings, tests AST-identical. Cycle CLOSED; T045 DONE. |
 
 ## History
 
@@ -47,7 +50,8 @@ scratchpad paths now point to this folder.
 | Scoped Codex review (4 Nov 06:58Z, operator-approved) | `7faef9e..c51c709` | FIX-REQUIRED: CR-1..CR-8 (4 BLOCKING) → rulings in `codex-review-t045fix5.md` → `brief-t045-fix6.md` |
 | Fix session 6 (4 Nov) | `ea6a48f..2adf453` (9) | All 8 CR fixes red→green; gates green → `T045-FIX6-REPORT.md` |
 | Codex re-review (4 Nov, fixed findings only) | `72c54fc..2adf453` | FIX-REQUIRED: CR-1/2/4..8 CLOSED, adjustments LEGITIMATE; CR-3 residual + CR-9 BLOCKING → `rereview-t045fix6.md` → `brief-t045-fix7.md` |
-| Fix session 7 (CR-3 residual, CR-9) | — | **Open work**; verification of its fixes needs an operator decision (two-round cap reached this cycle) |
+| Fix session 7 (CR-3 residual, CR-9) | `d7f59a6..1ce71cb` (3) | Both fixed red→green; gates green (orchestrator re-confirmed) → `T045-FIX7-REPORT.md` |
+| Codex round 3 (operator-approved) | `e56c952..1ce71cb` | **ACCEPT** — cycle CLOSED; T045 set DONE 4 Nov |
 
 **Session 6 (CR fixes) is the open work.** The Sonnet re-review cap applied to the closed DB cycle and the
 round-1/2 T045 cycle; the Codex review of 4 Nov started a fresh verification layer for the post-round-2 fixes.
