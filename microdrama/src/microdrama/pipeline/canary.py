@@ -97,6 +97,11 @@ def _refusing_resolver(_ref: str) -> str | None:
 #: T045-FIX B-S1: the provider poll loop never runs faster than one call per 2 s.
 POLL_INTERVAL_FLOOR_SECONDS = 2.0
 
+#: T045-FIX CR-4: attempts for one prompt hold's final zero settlement inside the
+#: shutdown window; a failure that survives all of them fails the run NOT_CLEAN
+#: (an ACTIVE hold must never be stranded unobserved past run end).
+PROMPT_HOLD_SETTLE_ATTEMPTS = 3
+
 
 def _canary_credential_resolver(db: Any, settings: Settings) -> Callable[[str], str | None]:
     """T045-FIX B-S1: the canary CLI's credential resolver - FILE refs only.
@@ -1020,20 +1025,32 @@ def run_execute(
         # T045-FIX B-S3: the record is written even when the shutdown or the sweep
         # raises - a created Pod must never leave no canary record behind.
         try:
-            # T045-FIX F-4: a prompt that ended without success (attempt cap
-            # reached, run stopped, deadline hit) has no retry left to reuse its
-            # hold - settle every still-open prompt hold at zero now, before the
-            # shutdown, so nothing stays reserved past its expiry. Best effort per
-            # hold: a settle failure is recorded and never blocks the Pod shutdown.
+            # T045-FIX F-4 + CR-4: a prompt that ended without success (attempt
+            # cap reached, run stopped, deadline hit) has no retry left to reuse
+            # its hold - settle every still-open prompt hold at zero now, before
+            # the shutdown, so nothing stays reserved past its expiry. A settle
+            # failure is retried inside the shutdown window (a transient database
+            # or budget error must not strand the hold); one that survives every
+            # attempt is escalated after the shutdown below - the run can never
+            # end COMPLETE with a possibly-ACTIVE hold.
+            settle_failures: list[MicrodramaError] = []
             for hold_id in prompt_holds.values():
-                try:
-                    settled = world.comfy.settle_open_prompt_hold(
-                        hold_id, reason="prompt ended without success", now=clock.now()
-                    )
-                except MicrodramaError as exc:
+                settle_error: MicrodramaError | None = None
+                for _ in range(PROMPT_HOLD_SETTLE_ATTEMPTS):
+                    try:
+                        settled = world.comfy.settle_open_prompt_hold(
+                            hold_id, reason="prompt ended without success", now=clock.now()
+                        )
+                        settle_error = None
+                        break
+                    except MicrodramaError as exc:
+                        settle_error = exc
+                if settle_error is not None:
                     record["blocked_or_uncertain"] += (
-                        f" prompt hold settle failed: {exc.code}: {exc.message};"
+                        f" prompt hold settle failed after {PROMPT_HOLD_SETTLE_ATTEMPTS} "
+                        f"attempts: {settle_error.code}: {settle_error.message};"
                     )
+                    settle_failures.append(settle_error)
                     continue
                 if settled:
                     step("prompt_hold_settled", {"reservation_id": str(hold_id), "amount": 0})
@@ -1072,6 +1089,13 @@ def run_execute(
                 for r in world.billing_readiness()
             ]
             record["billing_state"] = world.billing_state
+            if settle_failures and run_error is None:
+                # T045-FIX CR-4: the Pod shutdown and the sweep above have run;
+                # a settle failure that survived the bounded retry means the hold
+                # may still be ACTIVE past run end with nothing to recover it.
+                # Fail the run's outcome - never swallow it into
+                # blocked_or_uncertain alone - so the operator sees it.
+                run_error = settle_failures[0]
             if not record["blocked_or_uncertain"]:
                 record["blocked_or_uncertain"] = (
                     "billing is PENDING_PROVIDER_FINALITY until the period invoice is "

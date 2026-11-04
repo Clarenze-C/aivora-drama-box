@@ -1827,6 +1827,88 @@ def test_a_failed_final_attempt_settles_the_prompt_hold(db: Database, tmp_path: 
     assert account["reserved_outstanding_micro_usd"] == other_outstanding
 
 
+# --- T045-FIX CR-4: a settle failure never strands the hold unobserved ---------------------
+
+
+def test_a_transient_settle_failure_is_retried_inside_the_shutdown(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX CR-4: a transient settle failure (database or budget error at the
+    final settlement) is retried inside the shutdown window - the third attempt
+    settles the hold and the run still ends COMPLETE with nothing reserved."""
+    from microdrama.contracts.errors import MicrodramaError
+    from microdrama.rendering.comfy_jobs import ComfyRenderService
+
+    calls = {"n": 0}
+    real_settle = ComfyRenderService.settle_open_prompt_hold
+
+    def flaky_settle(self: ComfyRenderService, reservation_id: uuid.UUID, *, reason: str, now=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise MicrodramaError(f"fixture: transient settle failure {calls['n']}")
+        return real_settle(self, reservation_id, reason=reason, now=now)
+
+    monkeypatch.setattr(ComfyRenderService, "settle_open_prompt_hold", flaky_settle)
+    _seed_everything(db)
+    result = _execute(
+        db,
+        tmp_path,
+        clock=FakeClock(T0),
+        runpod_transport=RunpodCanaryTransport(),
+        comfy_transport=ComfyCanaryTransport(fail_first_submit=True),
+        caps={"max_attempts": 1},
+    )
+    assert calls["n"] == 3  # CR-4: the bounded retry ran inside the shutdown window
+    assert result.record["outcome"] == "COMPLETE"  # recovered - not escalated
+    hold = _prompt_reservation(db)
+    assert hold is not None
+    assert hold["state"] == "SETTLED"  # the third attempt settled it
+    assert hold["settled_micro_usd"] == 0
+
+
+def test_a_persistent_settle_failure_fails_the_run_not_clean(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T045-FIX CR-4: when the bounded retry is exhausted the run ends NOT_CLEAN
+    naming the settle failure - never a silent COMPLETE that leaves an ACTIVE hold
+    past run end with nothing to recover it. The Pod shutdown still runs first."""
+    from microdrama.contracts.errors import MicrodramaError
+    from microdrama.rendering.comfy_jobs import ComfyRenderService
+
+    calls = {"n": 0}
+
+    def failing_settle(self: ComfyRenderService, reservation_id: uuid.UUID, *, reason: str, now=None):
+        calls["n"] += 1
+        raise MicrodramaError("fixture: persistent settle failure")
+
+    monkeypatch.setattr(ComfyRenderService, "settle_open_prompt_hold", failing_settle)
+    _seed_everything(db)
+    transport = RunpodCanaryTransport()
+    with pytest.raises(CanaryRunNotClean) as exc_info:
+        _execute(
+            db,
+            tmp_path,
+            clock=FakeClock(T0),
+            runpod_transport=transport,
+            comfy_transport=ComfyCanaryTransport(fail_first_submit=True),
+            caps={"max_attempts": 1},
+        )
+    del exc_info
+    records = sorted((tmp_path / "records").glob("*.json"))
+    record = json.loads(records[-1].read_text())
+    assert calls["n"] == 3  # the bounded retry, then escalation
+    assert record["outcome"] == "NOT_CLEAN"
+    assert "prompt hold settle failed" in record["blocked_or_uncertain"]
+    assert "persistent settle failure" in record["not_clean_reason"]
+    # The escalation never skips the Pod shutdown: it stopped AND terminated.
+    assert transport.state == "GONE"
+    assert record["terminate_verified_at"] is not None
+    # The hold honestly stays ACTIVE - the run failed loudly over it.
+    hold = _prompt_reservation(db)
+    assert hold is not None
+    assert hold["state"] == "ACTIVE"
+
+
 def test_a_needs_reconciliation_during_submit_stops_for_a_human(
     db: Database, tmp_path: Path
 ) -> None:
