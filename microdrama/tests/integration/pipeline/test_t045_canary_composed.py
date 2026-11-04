@@ -1909,6 +1909,44 @@ def test_a_persistent_settle_failure_fails_the_run_not_clean(
     assert hold["state"] == "ACTIVE"
 
 
+def test_the_prompt_hold_settle_reason_is_persisted_and_recorded(
+    db: Database, tmp_path: Path
+) -> None:
+    """T045-FIX CR-5: the zero settlement's reason is durably recorded - a
+    ``prompt_hold.zero_settled`` event carries it next to the settlement, in the
+    same transaction - and the ``prompt_hold_settled`` record step names it, so a
+    reviewer can tell WHY the hold settled at zero (here: the attempt cap)."""
+    from uuid import uuid5
+
+    from microdrama.rendering.leases import RENDERING_NAMESPACE
+
+    _seed_everything(db)
+    result = _execute(
+        db,
+        tmp_path,
+        clock=FakeClock(T0),
+        runpod_transport=RunpodCanaryTransport(),
+        comfy_transport=ComfyCanaryTransport(fail_first_submit=True),
+        caps={"max_attempts": 1},
+    )
+    record = result.record
+    hold = _prompt_reservation(db)
+    assert hold is not None
+    settle_steps = [s for s in record["steps"] if s["step"] == "prompt_hold_settled"]
+    assert settle_steps, "the settle step must be recorded"
+    assert settle_steps[0]["detail"]["reason"] == "prompt ended without success"
+    with db.transaction(readonly=True) as tx:
+        event = tx.fetchone(
+            "SELECT payload FROM domain_events WHERE event_type='prompt_hold.zero_settled' "
+            "AND aggregate_id=%s",
+            (uuid5(RENDERING_NAMESPACE, f"prompt-hold-settle:{hold['id']}"),),
+        )
+    assert event is not None  # CR-5: persisted next to the settlement
+    assert event["payload"]["reason"] == "prompt ended without success"
+    assert event["payload"]["amount_micro_usd"] == 0
+    assert event["payload"]["reservation_id"] == str(hold["id"])
+
+
 def test_a_needs_reconciliation_during_submit_stops_for_a_human(
     db: Database, tmp_path: Path
 ) -> None:

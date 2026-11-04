@@ -38,7 +38,7 @@ from uuid import UUID, uuid5
 
 from pydantic import ValidationError
 
-from microdrama.budget import BudgetService, Reservation, ReservationState
+from microdrama.budget import BudgetService, Reservation, ReservationState, policy
 from microdrama.config import Settings
 from microdrama.contracts.cost import (
     BudgetReservationRequest,
@@ -79,6 +79,7 @@ from microdrama.contracts.infra import Clock, IdGenerator, ObjectStore
 from microdrama.contracts.media import AssetDescriptor
 from microdrama.contracts.providers import ComfyClient, ComfyOutputFile, ComfyProgressEvent
 from microdrama.contracts.v2 import PromptManifest, verify_v2_record_hash
+from microdrama.core.events import append_event
 from microdrama.core.provider_ops import begin, needs_reconcile, record_result
 from microdrama.persistence.db import Database, Tx
 from microdrama.rendering.comfy_assets import persist_output, prepare_output
@@ -1072,47 +1073,66 @@ class ComfyRenderService:
     def settle_open_prompt_hold(
         self, reservation_id: UUID, *, reason: str, now: datetime | None = None
     ) -> bool:
-        """T045-FIX F-4: settle a prompt's still-open shared hold at zero charge.
+        """T045-FIX F-4 + CR-5: settle a prompt's still-open shared hold at zero charge.
 
         A FAILED lease-covered attempt on a ``retry_reuses_hold`` config deliberately
         leaves the prompt's hold ACTIVE for the retry (B-S10). When the prompt ends
         without success - attempt cap reached, run stopped, deadline hit - nothing can
         reuse the hold any more and it must not stay reserved past its expiry: post the
-        same deterministic zero-charge SETTLEMENT the attempt path posts, with the
-        ending's ``reason`` recorded by the caller (the contract's UsageReceipt carries
-        no free-text field). Idempotent: a hold that already moved on (settled,
-        released, absent) is a no-op returning False.
+        same deterministic zero-charge SETTLEMENT the attempt path posts. The ending's
+        ``reason`` is PERSISTED (CR-5): the contract's UsageReceipt carries no
+        free-text field, so it rides an append-only ``prompt_hold.zero_settled`` event
+        in the SAME transaction as the settlement - a retry that re-runs this method
+        replays the receipt and appends nothing. Idempotent: a hold that already moved
+        on (settled, released, absent) is a no-op returning False.
         """
         with self._db.transaction(readonly=True) as tx:
             reservation = tx.fetchone("SELECT * FROM reservations WHERE id = %s", (reservation_id,))
         if reservation is None or reservation["state"] != ReservationState.ACTIVE.value:
             return False
         observed_at = now or self._now()
-        self._budget.record_usage(
-            UsageReceipt(
-                receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle-prompt-end:{reservation_id}"),
-                provider=reservation["provider"],
-                provider_receipt_id=f"comfy-settle-prompt-end:{reservation_id}",
-                kind=ReceiptKind.SETTLEMENT,
-                cost_basis=CostBasis.BILLED,
-                reservation_id=reservation_id,
-                episode_id=reservation["episode_id"],
-                season_id=None,
-                job_id=None,
-                category=BudgetCategory.GPU_GENERATION,
-                amount_micro_usd=0,
-                currency="USD",
-                units=0,
-                unit=PriceUnit.GPU_SECOND,
-                # A prompt-end finalization measures no interval (the attempts'
-                # own settlements carry their execution windows); leaving both
-                # None also never mixes the caller's clock with DB-stamped times.
-                interval_start=None,
-                interval_end=None,
-                observed_at=observed_at,
-                provenance=self.provenance,
-            )
+        receipt = UsageReceipt(
+            receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle-prompt-end:{reservation_id}"),
+            provider=reservation["provider"],
+            provider_receipt_id=f"comfy-settle-prompt-end:{reservation_id}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=CostBasis.BILLED,
+            reservation_id=reservation_id,
+            episode_id=reservation["episode_id"],
+            season_id=None,
+            job_id=None,
+            category=BudgetCategory.GPU_GENERATION,
+            amount_micro_usd=0,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            # A prompt-end finalization measures no interval (the attempts'
+            # own settlements carry their execution windows); leaving both
+            # None also never mixes the caller's clock with DB-stamped times.
+            interval_start=None,
+            interval_end=None,
+            observed_at=observed_at,
+            provenance=self.provenance,
         )
+        policy.check_receipt_admissible(receipt, self._settings)
+        with self._db.transaction() as tx:
+            result = self._budget.record_usage_in_transaction(tx, receipt)
+            if not result.replayed:
+                append_event(
+                    tx,
+                    aggregate_type="prompt_hold",
+                    aggregate_id=uuid5(
+                        RENDERING_NAMESPACE, f"prompt-hold-settle:{reservation_id}"
+                    ),
+                    event_type="prompt_hold.zero_settled",
+                    payload={
+                        "reason": reason,
+                        "reservation_id": str(reservation_id),
+                        "amount_micro_usd": 0,
+                    },
+                    correlation_id=reservation_id,
+                    occurred_at=observed_at,
+                )
         return True
 
 

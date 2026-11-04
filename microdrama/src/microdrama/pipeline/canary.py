@@ -1053,7 +1053,16 @@ def run_execute(
                     settle_failures.append(settle_error)
                     continue
                 if settled:
-                    step("prompt_hold_settled", {"reservation_id": str(hold_id), "amount": 0})
+                    # T045-FIX CR-5: the settle reason travels with the record step
+                    # (it is persisted next to the settlement by the service).
+                    step(
+                        "prompt_hold_settled",
+                        {
+                            "reservation_id": str(hold_id),
+                            "amount": 0,
+                            "reason": "prompt ended without success",
+                        },
+                    )
             if lease_id is not None:
                 # Runpod final release: stop -> terminate -> verified read-back (T045-A).
                 shutdown = world.leases.shutdown(lease_id, reason="canary complete")
