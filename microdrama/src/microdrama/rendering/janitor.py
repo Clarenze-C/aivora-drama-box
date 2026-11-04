@@ -185,6 +185,7 @@ class Janitor:
         report = JanitorReport(swept_at=now)
         self._sweep_leases(now, report)
         self._sweep_provider_orphans(now, report)
+        self._complete_absent_terminal_terminates(now, report)
         self._sweep_unbound_holds(now, report)
         self._sweep_billing_ingestion(now, report)
         self._sweep_open_ownership(now, report)
@@ -642,9 +643,18 @@ class Janitor:
                 continue
             unverified = (
                 self._db_query(
-                    "SELECT id FROM pod_leases WHERE provider = %s AND pod_id = %s "
-                    "AND lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
-                    "AND terminate_verified_at IS NULL",
+                    "SELECT id FROM pod_leases cur WHERE cur.provider = %s AND cur.pod_id = %s "
+                    "AND cur.lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+                    "AND cur.terminate_verified_at IS NULL "
+                    # T045-FIX CR-3: a lease superseded by a later lease on the same
+                    # Pod (a warm transfer, a reclaim) is history - the FINAL holder
+                    # owns the terminate. A transferred-away lease's NULL terminate
+                    # is by design (leases.py: it has no verified stop of its own);
+                    # re-terminating on its behalf can block ingest and invoice
+                    # finality with an unnecessary DELETE.
+                    "AND NOT EXISTS (SELECT 1 FROM pod_leases sup WHERE "
+                    "sup.provider = cur.provider AND sup.pod_id = cur.pod_id "
+                    "AND sup.id <> cur.id AND sup.created_at > cur.created_at)",
                     (self._manager.provider_id, pod.pod_id),
                 )
                 if self._manager.is_runpod()
@@ -730,6 +740,86 @@ class Janitor:
                     "pod_id": pod.pod_id,
                     "owned_tag": pod.owned_tag,
                     "outcome": state.value,
+                },
+                now,
+            )
+
+    def _complete_absent_terminal_terminates(self, now: datetime, report: JanitorReport) -> None:
+        """T045-FIX CR-2: finish a terminal lease whose Pod the scan no longer sees.
+
+        An ambiguous terminate (the DELETE took effect at Runpod, the answer was a
+        503) leaves the lease terminal with ``terminate_verified_at`` NULL and
+        storage ownership open - and the Pod absent from ``find_owned()``, so the
+        F-1 retry tail can never run over it again. The sweep completes that tail
+        BY ABSENCE: the durable lease row plus this sweep's successful scan is the
+        evidence the Pod is gone, so the verified terminate is written and storage
+        ownership closed WITHOUT a provider DELETE that could double-bill.
+
+        Runpod-scoped like the rest of the tail. Superseded (transferred-away)
+        leases are excluded exactly as in the F-1 selection (CR-3): the final
+        holder owns the terminate.
+        """
+        if not self._manager.is_runpod():
+            return
+        if self._present_owned_pod_ids is None:
+            # The scan failed or never ran: absence is not knowable this sweep.
+            return
+        rows = self._db_query(
+            "SELECT cur.id, cur.pod_id FROM pod_leases cur "
+            "WHERE cur.provider = %s AND cur.owned_tag = %s AND cur.pod_id IS NOT NULL "
+            "AND cur.lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+            "AND cur.terminate_verified_at IS NULL "
+            # T045-FIX CR-3: the same superseded-lease exclusion as the F-1 tail.
+            "AND NOT EXISTS (SELECT 1 FROM pod_leases sup WHERE "
+            "sup.provider = cur.provider AND sup.pod_id = cur.pod_id "
+            "AND sup.id <> cur.id AND sup.created_at > cur.created_at) "
+            "ORDER BY cur.created_at",
+            (self._manager.provider_id, self._config.owned_tag),
+        )
+        for row in rows:
+            pod_id = row["pod_id"]
+            if pod_id in self._present_owned_pod_ids:
+                # The scan still sees this Pod: the F-1 tail in the orphan sweep
+                # owns it (stop -> terminate -> verify), never this pass.
+                continue
+            lease_id = row["id"]
+            try:
+                verified = record_terminate_verified(self._db, lease_id, now)
+                close_storage_ownership(self._db, "runpod", pod_id, verified)
+            except MicrodramaError as exc:
+                report.failures.append(
+                    JanitorAction(
+                        subject=f"pod:{pod_id}",
+                        action="terminate_verified_by_absence",
+                        outcome="failed",
+                        detail=f"{exc.code}: {exc.message}",
+                    )
+                )
+                self._evidence(
+                    f"pod:{pod_id}",
+                    "janitor.action_failed",
+                    {"error": exc.code, "detail": str(exc.message), "lease_id": str(lease_id)},
+                    now,
+                )
+                continue
+            report.orphan_pods.append(
+                JanitorAction(
+                    subject=f"pod:{pod_id}",
+                    action="terminate_verified_by_absence",
+                    outcome="TERMINATED",
+                    detail=f"terminal lease {lease_id} completed by absence (the scan no "
+                    "longer sees the Pod); storage ownership closed",
+                )
+            )
+            report.stopped_pods.append(pod_id)
+            self._evidence(
+                f"pod:{pod_id}",
+                "janitor.terminal_pod_terminate_verified_by_absence",
+                {
+                    "provider": self._manager.provider_id,
+                    "pod_id": pod_id,
+                    "lease_id": str(lease_id),
+                    "terminate_verified_at": verified.isoformat(),
                 },
                 now,
             )
@@ -857,8 +947,8 @@ class Janitor:
                 # re-stamp (the repository replays an already-stored bucket by
                 # raw-response hash). The ingest defers to the tail - no provider
                 # call, no backoff row; the next sweep re-evaluates for free. A
-                # Pod the scan no longer sees has no tail left to wait for and
-                # keeps the absent-pod ownership-proof path.
+                # Pod the scan no longer sees was completed by absence (CR-2)
+                # before this phase, so its window is final here.
                 report.billing_ingests.append(
                     JanitorAction(
                         subject=f"pod:{pod_id}",

@@ -178,6 +178,8 @@ def _seed_terminated_lease(
     reservation_state: str = "ACTIVE",
     pod_id: str = POD,
     terminate: bool = True,
+    owned_tag: str = TAG,
+    provider_account_ref: str = ACCOUNT,
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """An episode, account, active hold and a terminated runpod lease over the window."""
     reservation = uuid.uuid4()
@@ -238,7 +240,7 @@ def _seed_terminated_lease(
             (
                 lease,
                 pod_id,
-                TAG,
+                owned_tag,
                 f"tok-{lease}",
                 episode,
                 reservation,
@@ -248,7 +250,7 @@ def _seed_terminated_lease(
                 WINDOW_END,
                 WINDOW_END,
                 WINDOW_END if terminate else None,
-                ACCOUNT,
+                provider_account_ref,
             ),
         )
     return lease, reservation, account
@@ -426,9 +428,12 @@ def test_ingestion_reads_an_absent_pod_through_the_durable_ownership_proof(
 def test_without_the_ownership_proof_an_absent_pod_billing_read_is_refused(
     db: Database,
 ) -> None:
-    lease, _, _ = _seed_terminated_lease(db, pod_id="pod-never-terminated", terminate=False)
-    with db.transaction() as tx:
-        tx.execute("UPDATE pod_leases SET pod_id = %s WHERE id = %s", (POD, lease))
+    # T045-FIX CR-2: a terminal lease of THIS janitor's own tag whose Pod the scan
+    # no longer sees is completed by absence before the billing phase, so the
+    # refused read is pinned on a lease carrying a FOREIGN account label - the
+    # durable row proves no ATTESTED account owns this Pod, so the ownership
+    # probe must refuse the read no matter what the sweep completed.
+    _seed_terminated_lease(db, terminate=False, provider_account_ref="acct:runpod-other")
     transport = ScriptedBillingTransport(records=[_record()], pod_present=False)
     provider = _provider(transport, db)
     report = _janitor(db, provider).sweep()
@@ -1070,6 +1075,224 @@ def test_a_failed_terminate_is_retried_to_verified_closed_and_billed(db: Databas
     clock.advance(seconds=20 * 60)
     _janitor(
         db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="f1-d"
+    ).sweep()
+    assert _counts(db) == before
+
+
+# --- T045-FIX CR-2: an ambiguous terminate never strands an absent Pod's lease -------------
+
+
+class AmbiguousTerminateTransport(OrphanPodBillingTransport):
+    """A DELETE that takes effect at Runpod but answers 503 (the ambiguous case).
+
+    The Pod is GONE from every later scan, so the F-1 retry tail can never run
+    over it again."""
+
+    def __init__(self, *, records: list[dict[str, Any]], name: str) -> None:
+        super().__init__(records=records, name=name)
+        self.deletes = 0
+
+    def request(
+        self, method: str, url: str, *, headers: Any, body: bytes | None = None
+    ) -> _Response:
+        if method == "DELETE":
+            self.deletes += 1
+            self.status = "GONE"  # the delete DID take effect...
+            self.calls.append((method, url))
+            return _Response(503, b"{}")  # ...but the answer is ambiguous
+        return super().request(method, url, headers=headers, body=body)
+
+
+def test_an_ambiguous_terminate_completes_by_absence_never_a_second_delete(
+    db: Database,
+) -> None:
+    """T045-FIX CR-2: a DELETE that took effect at Runpod but returned 503 strands
+    the lease: the Pod is absent from the next scan, so the F-1 retry tail never
+    runs, ingest does not defer, and billing_history refuses the absent Pod forever
+    (the ownership probe needs a verified terminate). The next sweep must complete
+    the tail BY ABSENCE - terminate_verified_at written, storage ownership closed -
+    without a provider DELETE that could double-bill; readiness then advances to
+    the invoice match and a later sweep adds nothing."""
+    from microdrama.budget.billing import lease_billing_readiness
+    from microdrama.rendering.leases import open_storage_ownership
+    from microdrama.rendering.runpod_transport import pod_name
+
+    lease, reservation, account = _seed_terminated_lease(db, terminate=False)
+    open_storage_ownership(db, lease, POD)
+    transport = AmbiguousTerminateTransport(records=[_record()], name=pod_name(NS, "cr2"))
+    first = _janitor(db, _orphan_provider(transport, db), seq="cr2-a").sweep()
+    assert any(
+        f.action == "terminate_terminal_pod" and f.outcome == "failed" for f in first.failures
+    )
+    # The same sweep defers the ingest: the window is not final while the tail owes
+    # its verified terminate (F-1).
+    assert any(a.outcome == "DEFERRED" for a in first.billing_ingests)
+    assert not any(a.outcome == "INGESTED" for a in first.billing_ingests)
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone("SELECT terminate_verified_at FROM pod_leases WHERE id=%s", (lease,))
+        ownership_open = tx.fetchval(
+            "SELECT count(*) FROM pod_storage_ownership WHERE provider='runpod' "
+            "AND pod_id=%s AND valid_until IS NULL",
+            (POD,),
+        )
+    assert row["terminate_verified_at"] is None  # the ambiguous tail never completed
+    assert ownership_open == 1
+    assert transport.deletes == 1
+
+    # Second sweep: the scan no longer sees the Pod (the delete took effect). The
+    # sweep must COMPLETE the tail by absence - never issue another DELETE.
+    second = _janitor(db, _orphan_provider(transport, db), seq="cr2-b").sweep()
+    assert transport.deletes == 1  # CR-2: no second DELETE that could double-bill
+    assert any(
+        a.action == "terminate_verified_by_absence" and a.subject == f"pod:{POD}"
+        for a in second.orphan_pods
+    )
+    with db.transaction(readonly=True) as tx:
+        verified = tx.fetchval("SELECT terminate_verified_at FROM pod_leases WHERE id=%s", (lease,))
+        ownership_open = tx.fetchval(
+            "SELECT count(*) FROM pod_storage_ownership WHERE provider='runpod' "
+            "AND pod_id=%s AND valid_until IS NULL",
+            (POD,),
+        )
+    assert verified is not None  # CR-2: completed by absence
+    assert ownership_open == 0  # closed at the persisted terminate instant
+
+    # Past the finality backoff, the absent Pod's billing reads through the durable
+    # ownership proof (the same staging as the F-1 tail) and readiness advances to
+    # the invoice match.
+    clock = FakeClock(SWEEP_AT)
+    clock.advance(seconds=50 * 60)  # past INVOICE_END + the settle lag
+    transport.records = [
+        _record(),
+        _zero_record(T0 + timedelta(hours=1), T0 + timedelta(hours=2)),
+        _zero_record(T0 + timedelta(hours=2), INVOICE_END),
+    ]
+    third = _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="cr2-c"
+    ).sweep()
+    assert any(a.outcome == "INGESTED" for a in third.billing_ingests)
+    settings = _paid_settings()
+    budget = BudgetService(db, clock, SequentialIds("cr2-inv"), settings)
+    finality = RunpodInvoiceFinality(db, budget_service=budget)
+    result = finality.verify_invoice_period(
+        provider_account_ref=ACCOUNT,
+        pod_id=POD,
+        period_start=WINDOW_START,
+        period_end=INVOICE_END,
+        amount_micro_usd=500_000,
+        currency="USD",
+        evidence_sha256="5" * 64,
+        source="INVOICE",
+        observed_at=clock.now(),
+    )
+    assert result.outcome == "MATCHED"
+    readiness = lease_billing_readiness(db, lease)
+    assert readiness.state == "BILLED"
+    # One sweep past the match (and the finality backoff) posts the BILLED
+    # settlement of the still-ACTIVE hold (the one-time finalization, not a leak).
+    clock.advance(seconds=20 * 60)
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="cr2-d"
+    ).sweep()
+    with db.transaction(readonly=True) as tx:
+        counters = tx.fetchone(
+            "SELECT settled_micro_usd, reserved_outstanding_micro_usd FROM budget_accounts "
+            "WHERE id=%s",
+            (account,),
+        )
+        reservation_state = tx.fetchval("SELECT state FROM reservations WHERE id=%s", (reservation,))
+    assert counters["settled_micro_usd"] == 500_000  # the account settles at the invoice
+    assert counters["reserved_outstanding_micro_usd"] == 0  # nothing stays reserved
+    assert reservation_state == "SETTLED"
+
+    # A later sweep adds nothing.
+    before = _counts(db)
+    clock.advance(seconds=20 * 60)
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="cr2-e"
+    ).sweep()
+    assert _counts(db) == before
+
+
+# --- T045-FIX CR-3: a transferred-away lease never owns the terminate ----------------------
+
+
+def _seed_warm_transfer_history(db: Database) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Two warm transfers on one Pod (A -> B -> C), the shape leases.py leaves.
+
+    A and B are RELEASED with terminate_verified_at NULL BY DESIGN (a lease that
+    transferred away has no verified stop of its own); C is the final holder,
+    terminated and verified. Runpod can still list the Pod as TERMINATED."""
+    final, reservation, _account = _seed_terminated_lease(db, terminate=True)
+    with db.transaction() as tx:
+        history = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (final,))
+        a_id, b_id = uuid.uuid4(), uuid.uuid4()
+        for lease_id, transferred_from, created_at in (
+            (a_id, None, T0 - timedelta(hours=2)),
+            (b_id, a_id, T0 - timedelta(hours=1)),
+        ):
+            tx.execute(
+                "INSERT INTO pod_leases (id, provider, pod_id, owned_tag, client_token, "
+                "owner_episode_id, reservation_id, lease_state, pod_state, gpu_type, "
+                "hourly_price_micro_usd, lease_expires_at, create_requested_at, "
+                "compute_window_start_at, compute_window_end_at, transferred_from, "
+                "terminate_verified_at, provider_account_ref, created_at) "
+                "VALUES (%s, 'runpod', %s, %s, %s, %s, %s, 'RELEASED', 'TERMINATED', "
+                "'NVIDIA A40', 504000, %s, %s, %s, %s, %s, NULL, %s, %s)",
+                (
+                    lease_id,
+                    POD,
+                    TAG,
+                    f"tok-{lease_id}",
+                    history["owner_episode_id"],
+                    reservation,
+                    T0 + timedelta(hours=2),
+                    WINDOW_START,
+                    WINDOW_START,
+                    WINDOW_END,
+                    transferred_from,
+                    ACCOUNT,
+                    created_at,
+                ),
+            )
+        # C is the final holder: it inherited the Pod from B.
+        tx.execute("UPDATE pod_leases SET transferred_from=%s WHERE id=%s", (b_id, final))
+    return a_id, b_id, final
+
+
+def test_warm_transfer_history_never_re_terminates_and_stays_idempotent(
+    db: Database,
+) -> None:
+    """T045-FIX CR-3: the F-1 selection must not pick up a warm transfer's
+    historical leases - their NULL terminate is intentional, the FINAL holder owns
+    the terminate. After the final holder terminated and verified, while Runpod
+    still lists the Pod TERMINATED, the sweep issues no stop and no DELETE, the
+    history keeps its NULL timestamps, and later sweeps add nothing."""
+    from microdrama.rendering.runpod_transport import pod_name
+
+    a_id, b_id, _final = _seed_warm_transfer_history(db)
+    transport = OrphanPodBillingTransport(records=[_record()], name=pod_name(NS, "cr3"))
+    transport.status = "TERMINATED"  # Runpod still lists the terminated Pod
+    first = _janitor(db, _orphan_provider(transport, db), seq="cr3-a").sweep()
+    # No historical lease is picked up: zero stop, zero DELETE on the whole sweep.
+    assert not any(c[0] in ("POST", "DELETE") for c in transport.calls)
+    assert first.failures == []
+    with db.transaction(readonly=True) as tx:
+        still_null = {
+            row["id"]
+            for row in tx.fetchall(
+                "SELECT id FROM pod_leases WHERE pod_id=%s AND terminate_verified_at IS NULL",
+                (POD,),
+            )
+        }
+    assert still_null == {a_id, b_id}  # the transfer history stays NULL by design
+    before = _counts(db)
+    # A second sweep, and a third past the ingest backoff: nothing is added.
+    _janitor(db, _orphan_provider(transport, db), seq="cr3-b").sweep()
+    clock = FakeClock(SWEEP_AT)
+    clock.advance(seconds=20 * 60)
+    _janitor(
+        db, _orphan_provider(transport, db, now=clock.now), now=clock.now(), seq="cr3-c"
     ).sweep()
     assert _counts(db) == before
 
