@@ -50,13 +50,17 @@ def _prepare_durable_root(root: Path) -> None:
     without ever widening a directory that already existed.
 
     The cluster runs as the ``postgres`` OS user (``runuser -u postgres``); it can
-    only reach the data dir if EVERY directory from ``/`` down to the data root is
-    traversable. Directories that already exist keep their mode: if any of them is
-    not traversable, the command refuses (exit 2) naming it and how to fix it,
-    changing no mode and creating nothing. Only the directories this call creates
-    itself - below the deepest existing ancestor - are made 0755.
+    only reach the data dir if EVERY directory from ``/`` down to the data root's
+    PARENT is traversable. Directories that already exist keep their mode: if any
+    of them is not traversable, the command refuses (exit 2) naming it and how to
+    fix it, changing no mode and creating nothing. Only the directories this call
+    creates itself - below the deepest existing ancestor - are made 0755.
     ``EphemeralPostgres.start`` then owns the root itself (0700, postgres) and
     initdb creates the data dir 0700 as the server user.
+
+    T045-FIX CR-1: the data root itself is NEVER in the checked chain when it
+    already exists - after a real ``up`` it is 0700 and owned by the server's OS
+    user (its correct state), and a kept-data restart must pass, not refuse.
     """
     import stat as _stat
 
@@ -75,13 +79,15 @@ def _prepare_durable_root(root: Path) -> None:
             part.mkdir()
             os.chmod(part, 0o755)
         return
-    # Every ancestor from / down to the deepest EXISTING node of the root chain
-    # (the data root itself when it already exists) must already be traversable
-    # by the server's OS user; a directory this tool did not create in this call
-    # is never chmod'ed (O-2: the old walk widened e.g. a 0700 operator home).
+    # Every ancestor from / down to the data root's PARENT must already be
+    # traversable by the server's OS user (CR-1: when the data root itself
+    # already exists, the checked chain stops at its parent - the root is the
+    # server user's own 0700 and never a traversal failure); a directory this
+    # tool did not create in this call is never chmod'ed (O-2: the old walk
+    # widened e.g. a 0700 operator home).
     untraversable: list[Path] = []
     node_chain: list[Path] = []
-    walk = node
+    walk = node.parent if node == root else node
     while True:
         node_chain.append(walk)
         if walk.parent == walk:
