@@ -1371,6 +1371,78 @@ def test_a_transfer_history_with_the_final_holder_verified_ingests_and_advances(
     assert lease_billing_readiness(db, final).state == "BILLED"
 
 
+# --- T045-FIX CR-9: a foreign-account lease is never this scan's to terminate --------------
+
+FOREIGN_ACCOUNT = "acct:runpod-other"
+
+
+def test_an_empty_scan_never_completes_a_foreign_account_lease(db: Database) -> None:
+    """T045-FIX CR-9: the absence-completion pass matched provider and owned_tag
+    only, so an empty successful scan of account A stamped a verified terminate and
+    closed storage ownership on a same-tag lease labeled for account B - absence
+    was established for A's scan view only, and B's Pod may still exist and accrue.
+    The pass matches the manager's configured account label on the durable row:
+    the foreign lease stays untouched."""
+    from microdrama.rendering.leases import open_storage_ownership
+
+    lease, _reservation, _account = _seed_terminated_lease(
+        db, terminate=False, provider_account_ref=FOREIGN_ACCOUNT
+    )
+    open_storage_ownership(db, lease, POD)
+    transport = ScriptedBillingTransport(records=[_record()], pod_present=False)
+    report = _janitor(db, _provider(transport, db), seq="cr9-a").sweep()
+    # The scan succeeded and saw nothing - but absence in A's view is not absence
+    # in B's, so the foreign-account terminal lease is never selected.
+    assert not any(a.action == "terminate_verified_by_absence" for a in report.orphan_pods)
+    assert not any(c[0] == "DELETE" for c in transport.calls)
+    with db.transaction(readonly=True) as tx:
+        verified = tx.fetchval("SELECT terminate_verified_at FROM pod_leases WHERE id=%s", (lease,))
+        ownership_open = tx.fetchval(
+            "SELECT count(*) FROM pod_storage_ownership WHERE provider='runpod' "
+            "AND pod_id=%s AND valid_until IS NULL",
+            (POD,),
+        )
+    assert verified is None  # no terminate stamp on a foreign-account lease
+    assert ownership_open == 1  # storage ownership stays open - B's janitor owns it
+
+
+def test_the_terminate_tail_ignores_a_foreign_account_lease_for_a_present_pod(
+    db: Database,
+) -> None:
+    """T045-FIX CR-9: the F-1 tail selection matched provider and pod_id only, so a
+    present Pod held (per the durable row) by a foreign-account terminal lease drew
+    account A's stop -> terminate -> verify tail - a DELETE of B's Pod on A's scan
+    evidence. The selection matches the manager's configured account label: no
+    stop, no DELETE, no stamp, and billing defers to the lease's own account."""
+    from microdrama.rendering.leases import open_storage_ownership
+    from microdrama.rendering.runpod_transport import pod_name
+
+    lease, _reservation, _account = _seed_terminated_lease(
+        db, terminate=False, provider_account_ref=FOREIGN_ACCOUNT
+    )
+    open_storage_ownership(db, lease, POD)
+    transport = OrphanPodBillingTransport(records=[_record()], name=pod_name(NS, "cr9b"))
+    transport.status = "TERMINATED"  # the scan lists the Pod
+    report = _janitor(db, _orphan_provider(transport, db), seq="cr9-b").sweep()
+    assert not any(c[0] in ("POST", "DELETE") for c in transport.calls)
+    assert not any(
+        a.action in ("terminate_terminal_pod", "stop_orphan") for a in report.orphan_pods
+    )
+    with db.transaction(readonly=True) as tx:
+        verified = tx.fetchval("SELECT terminate_verified_at FROM pod_leases WHERE id=%s", (lease,))
+        ownership_open = tx.fetchval(
+            "SELECT count(*) FROM pod_storage_ownership WHERE provider='runpod' "
+            "AND pod_id=%s AND valid_until IS NULL",
+            (POD,),
+        )
+    assert verified is None  # the tail never ran over the foreign lease
+    assert ownership_open == 1  # never closed by another account's scan
+    # Money-safe wait: A's ingest defers on the unverified terminate (B's janitor
+    # owns the tail and the window is not final for A to read).
+    deferred = [a for a in report.billing_ingests if a.subject == f"pod:{POD}"]
+    assert deferred and all(a.outcome == "DEFERRED" for a in deferred)
+
+
 # --- T045-FIX B-N1: the hourly rounding is pure integer arithmetic ------------------------
 
 

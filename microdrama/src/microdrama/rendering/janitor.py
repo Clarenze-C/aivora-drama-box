@@ -654,8 +654,17 @@ class Janitor:
                     # finality with an unnecessary DELETE.
                     "AND NOT EXISTS (SELECT 1 FROM pod_leases sup WHERE "
                     "sup.provider = cur.provider AND sup.pod_id = cur.pod_id "
-                    "AND sup.id <> cur.id AND sup.created_at > cur.created_at)",
-                    (self._manager.provider_id, pod.pod_id),
+                    "AND sup.id <> cur.id AND sup.created_at > cur.created_at) "
+                    # T045-FIX CR-9: only this manager's own account label - the
+                    # scan sees this account's Pods, and a foreign-account lease
+                    # on a present Pod is never this scan's to stop, terminate,
+                    # verify or close (its own account's janitor owns it).
+                    "AND cur.provider_account_ref = %s",
+                    (
+                        self._manager.provider_id,
+                        pod.pod_id,
+                        self._config.provider_account_ref,
+                    ),
                 )
                 if self._manager.is_runpod()
                 else []
@@ -757,7 +766,10 @@ class Janitor:
 
         Runpod-scoped like the rest of the tail. Superseded (transferred-away)
         leases are excluded exactly as in the F-1 selection (CR-3): the final
-        holder owns the terminate.
+        holder owns the terminate. Only leases carrying this manager's configured
+        account label are selected (CR-9): absence in one account's scan view is
+        not absence in another's, so a foreign-account lease is never completed,
+        closed or deleted by this pass.
         """
         if not self._manager.is_runpod():
             return
@@ -773,8 +785,19 @@ class Janitor:
             "AND NOT EXISTS (SELECT 1 FROM pod_leases sup WHERE "
             "sup.provider = cur.provider AND sup.pod_id = cur.pod_id "
             "AND sup.id <> cur.id AND sup.created_at > cur.created_at) "
+            # T045-FIX CR-9: only this manager's own account label. Absence was
+            # established for THIS account's scan view only, so a scan of account
+            # A must never complete or close a lease labeled for account B (B's
+            # Pod may still exist and accrue under B's credential; B's janitor
+            # owns the terminate). An unconfigured label selects nothing - no
+            # label, no attributable ownership.
+            "AND cur.provider_account_ref = %s "
             "ORDER BY cur.created_at",
-            (self._manager.provider_id, self._config.owned_tag),
+            (
+                self._manager.provider_id,
+                self._config.owned_tag,
+                self._config.provider_account_ref,
+            ),
         )
         for row in rows:
             pod_id = row["pod_id"]
