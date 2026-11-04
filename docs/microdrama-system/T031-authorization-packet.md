@@ -154,12 +154,22 @@ tests) must carry, among the runbook's fields: the `episode_id` the canary is at
 
 | Item | Operator value |
 |------|----------------|
-| Change reference | |
-| Rights route (A / B / C) and evidence id | |
-| GPU and console price/hour, quote id, capture time UTC | |
-| Spend cap (micro-USD) | |
-| Max wall time, hard stop UTC | |
-| Disk sizes (container / volume) | |
-| Key rotated (date) and credref name | |
-| Isolated account (yes/no; prepaid balance) | |
-| Approved by / date | |
+| Change reference | `T031-canary-20261104-run1` (authorization_sha256 `b09bf5fa0b17db996fca288ab02ff8db3398a7ba78d4dc988758d204e9582202`) |
+| Rights route (A / B / C) and evidence id | **A** (Wan2.2-class permissive / canary lifecycle only, outputs private) — canary DB seeds the eligible fixture route `route-video-fake`, evidence `canary:rights-license` |
+| GPU and console price/hour, quote id, capture time UTC | NVIDIA A40 secure **$0.59/h** (recorded 590,400 µUSD/h = 164 µUSD/s, the whole-µUSD/second rate at/above the live price); quote `runpod-console-20261104T2350Z-A40EU-SE1`, captured 2026-11-04T23:22:10Z, expires 01:22:10Z; stock LOW at EU-SE-1 |
+| Spend cap (micro-USD) | **5,000,000** ($5.00, operator instruction 2026-11-04) |
+| Max wall time, hard stop UTC | 5400 s (90 min); hard stop 2026-11-05T01:22:10Z |
+| Disk sizes (container / volume) | 50 GB / 100 GB |
+| Key rotated (date) and credref name | rotated 2026-11-03T01:22Z (`rpa_MQQQRWRSOU` "aivora-ovh-sg", old key deleted 01:19Z); `credref:runpod-drama-box-canary` → `/root/.secrets/drama-box/runpod-canary.key` (0600, placed 2026-11-04); `credref:comfy-drama-box-canary` → `comfy-canary.token` (0600) |
+| Isolated account (yes/no; prepaid balance) | No — shared account as fallback, idle at sign-off (0 pods, $0.00 in 7 days); janitor scoped to the `canaryx` owned-name namespace |
+| Approved by / date | clarenze.c, 2026-11-04 ("Execute T031 RunPod run. Spend cap $5.") |
+
+Sign-off notes (2026-11-04): the image pin is
+`ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f1cf77b85bf987a7a8ccc2d1760186c7c6f088ecd2b3fadacd0cab869`
+(built and smoke-tested locally this date; make the GHCR package **public**
+before execute — RunPod has no pushable registry, and a private image would need
+a registry credential the create request does not carry). Packet §4's "5
+attempts" is superseded by the shipped contract: `max_attempts ≤ 3` (2 prompts /
+3 attempts authorized). The quote window and hard stop above are live for the
+2026-11-04/05 window; a later run re-captures them (2 h validity) and re-prints
+the sha.

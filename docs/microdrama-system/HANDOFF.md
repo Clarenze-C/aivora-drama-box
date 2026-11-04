@@ -86,24 +86,23 @@ The full record (reviews, rulings, briefs, reports) is
 1. ~~Push the T045 commits~~ **DONE 2026-11-04**: the operator approved and the
    branch is pushed (`f7f135b..d8604ea` → aivora-drama-box
    `feat/microdrama-m0-m4`). Remote and local are level.
-2. **T031 authorization — preparation DONE 2026-11-04, spend cap $5 set by the
-   operator; still not runnable.** Key rotation verified via the RunPod audit
-   log (old key deleted 2026-11-03T01:19:40Z, "aivora-ovh-sg" created 01:22Z).
-   Every locally-derivable precondition is ready — see
-   [T031-preparation.md](../../microdrama/evidence/T031-preparation.md): canary
-   DB up, credrefs registered, authorization + prompts drafts pass every
-   preflight gate, one shipped T045 defect fixed (the canary CLI never opened
-   its DB pool — real runs died with PoolClosed). Remaining blockers, in order:
-   (a) **the canary container image does not exist** — the mock workflow needs a
-   stub ComfyUI image exposing FakeVideoModelSampler/VHS (a stock image fails
-   the /object_info gate by design); build, push, pin its digest. (b) The
-   operator moves the rotated key out of `~/.claude/.env` into
-   `/root/.secrets/drama-box/runpod-canary.key` (0600) — the packet forbids
-   `.env` and the runner resolves FILE credrefs only. (c) Refresh the quote
-   window/hard stop and sign §8 (quote validity is 2 h). (d) Re-check GPU stock
-   — at 19:25Z the whole allowlist read NONE (L40S secure $1.09/h also breaches
-   the $0.86 cap). (e) §5 commands run from the operator's own shell, never an
-   agent session.
+2. **T031 authorization — SIGNED 2026-11-04, run-ready pending one browser
+   click.** Key rotation verified via the RunPod audit log; the rotated key is
+   placed at `/root/.secrets/drama-box/runpod-canary.key` (0600) with the comfy
+   token beside it; both FILE credrefs registered; canary DB up; two shipped
+   T045 defects fixed tests-first (CLI never opened its DB pool; pod create
+   never declared the 8188 HTTP port — see
+   [T031-preparation.md](../../microdrama/evidence/T031-preparation.md)); the
+   canary image is built, smoke-tested locally (98-frame mp4) and pushed to
+   `ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f…cab869`; the authorization
+   (`T031-canary-20261104-run1`, sha `b09bf5fa…82202`) passes every preflight
+   gate; §8 is signed (spend cap $5, wall 90 min, 2 prompts / 3 attempts — the
+   packet §4 "5 attempts" line is superseded by the contract's ≤3).
+   **Remaining before execute:** make the GHCR package PUBLIC (browser-only,
+   GitHub → Packages → drama-canary → Package settings → Change visibility),
+   re-check A40 stock (LOW at EU-SE-1 at 23:22Z), and run §5 from the
+   operator's shell. The quote window/hard stop (expires 2026-11-05T01:22:10Z)
+   must be re-captured for any later run.
 
 ## What remains, in order
 
