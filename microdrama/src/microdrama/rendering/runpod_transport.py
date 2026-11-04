@@ -242,7 +242,17 @@ class RunpodRestProvider:
                 "Runpod API temporarily unavailable", status=response.status
             )
         if response.status < 200 or response.status >= 300:
-            raise ProviderError("Runpod rejected request", status=response.status)
+            # T031 run3 (2026-11-04): three consecutive create refusals were
+            # diagnosed blind because the provider's error body and status never
+            # reached the operator. Carry both in the message (bounded excerpt;
+            # provider error bodies are diagnostics, not secrets).
+            detail = ""
+            if response.body:
+                detail = response.body.decode("utf-8", "replace").strip()[:500]
+            raise ProviderError(
+                f"Runpod rejected request: HTTP {response.status} {detail}".strip(),
+                status=response.status,
+            )
         if not response.body:
             return {}
         try:

@@ -15,6 +15,7 @@ from microdrama.contracts.errors import (
     EffectDenied,
     NeedsReconciliation,
     PolicyDenied,
+    ProviderError,
     TransientProviderError,
 )
 from microdrama.contracts.providers import PodCreateRequest
@@ -217,6 +218,25 @@ def test_create_timeout_with_incomplete_list_remains_unknown() -> None:
 
     provider = _provider(ScriptedTransport(handler))
     with pytest.raises(NeedsReconciliation):
+        provider.create_pod(_request())
+
+
+def test_rejected_request_carries_provider_status_and_body() -> None:
+    """T031 run3 (2026-11-04): three consecutive create refusals were diagnosed
+    blind because the adapter discarded the provider's error body and status from
+    the message. A rejection must carry both so the operator's record and the CLI
+    line state what Runpod actually said."""
+
+    def handler(method: str, url: str, _body: bytes | None) -> Response:
+        if method == "POST":
+            return Response(
+                422,
+                json.dumps({"detail": "gpu type not available in cloud"}).encode(),
+            )
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(ScriptedTransport(handler))
+    with pytest.raises(ProviderError, match="422.*gpu type not available in cloud"):
         provider.create_pod(_request())
 
 
