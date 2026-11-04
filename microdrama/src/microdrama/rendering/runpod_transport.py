@@ -321,6 +321,11 @@ class RunpodRestProvider:
             "image": request.container_image,
             "gpu": {"id": request.gpu_type_allowlist[0], "count": 1},
             "disk": self._attestation.container_disk_gb,
+            # T031 prep (2026-11-04): the Comfy endpoint is reached through
+            # https://<pod-id>-8188.proxy.runpod.net, which Runpod only serves when
+            # the HTTP port is declared AT CREATION (ports cannot be added to a
+            # running pod). The transport later requires runtime port private 8188.
+            "ports": ["8188/http"],
         }
         if request.volume_gb:
             payload["mounts"] = {"persistent": {"size": request.volume_gb, "path": "/workspace"}}

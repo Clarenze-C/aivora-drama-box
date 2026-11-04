@@ -1470,7 +1470,17 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
             )
             return 2
         store = FilesystemObjectStore(Path(store_root))
+    # T031 prep (2026-11-04): the CLI opens its own pool here - constructing
+    # Database() without open() left every real (non-pytest-seam) invocation dying
+    # with PoolClosed before the first gate. open() is idempotent, so the test
+    # seam's already-open fixture Database is unaffected, and a seam that hands
+    # back None (refusal-path unit tests with a stubbed run_*) is skipped. The
+    # pool is deliberately not closed on exit: each canary command is a one-shot
+    # process (the runbook's §5), and closing here would close the shared fixture
+    # between sequential main(argv) calls.
     db = Database(database_url)
+    if db is not None:
+        db.open()
     # T045-FIX B-S1: the CLI resolves credentials ONLY through FILE refs whose file
     # is owner-only; tests inject their own resolver through the seam.
     resolver = injection.get("credential_resolver") or _canary_credential_resolver(db, settings)
@@ -1481,7 +1491,7 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 run_preflight(
                     args.authorization,
                     settings=settings,
-                    db=Database(database_url),
+                    db=db,
                     store=store,
                     clock=injection.get("clock"),
                     ids=injection.get("ids"),
@@ -1571,7 +1581,7 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
         print(
             run_invoice(
                 settings=settings,
-                db=Database(database_url),
+                db=db,
                 provider_account_ref=authorization.provider_account_ref,
                 pod_id=args.pod_id,
                 period_start=_parse_datetime(args.period_start),

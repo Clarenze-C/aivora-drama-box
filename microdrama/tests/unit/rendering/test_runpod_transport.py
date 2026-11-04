@@ -220,6 +220,28 @@ def test_create_timeout_with_incomplete_list_remains_unknown() -> None:
         provider.create_pod(_request())
 
 
+def test_create_pod_declares_the_comfy_http_port() -> None:
+    """T031 prep (2026-11-04): Runpod only serves https://<pod>-8188.proxy.runpod.net
+    when the create request declares the HTTP port at creation - ports cannot be added
+    to a running pod. Without ports=["8188/http"] the canary can never reach its own
+    Comfy endpoint and runs to the deadline. The fixture _pod() fabricates the runtime
+    port either way, so only the create body proves the declaration."""
+    bodies: list[dict[str, Any]] = []
+
+    def handler(method: str, url: str, body: bytes | None) -> Response:
+        if method == "POST":
+            bodies.append(json.loads(body or b"{}"))
+            return _json(200, _pod())
+        if method == "GET" and url.endswith("/pods/pod-123"):
+            return _json(200, _pod())
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(ScriptedTransport(handler))
+    provider.create_pod(_request())
+    assert bodies, "create_pod must POST once"
+    assert bodies[0].get("ports") == ["8188/http"]
+
+
 def test_same_name_collision_with_different_image_fails_closed() -> None:
     collision = _pod(image="registry.example/other@sha256:" + "c" * 64)
 

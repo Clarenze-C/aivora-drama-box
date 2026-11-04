@@ -1633,6 +1633,36 @@ def _main_env(monkeypatch: pytest.MonkeyPatch, db: Database, tmp_path: Path) -> 
     monkeypatch.setattr(canary_module, "Database", lambda _dsn: db)
 
 
+def test_main_opens_and_uses_its_own_database_pool(
+    db: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """T031 prep (2026-11-04): main() constructed Database() without open(), so the
+    real CLI died with PoolClosed before printing anything. Every prior main(argv)
+    test masked it by monkeypatching Database to the already-open fixture. Here the
+    patch is deliberately absent: main() must open its own pool from the env DSN and
+    preflight must run every gate through it (no object-store root set either -
+    preflight must not need one)."""
+    from microdrama.pipeline import canary as canary_module
+
+    _seed_everything(db)
+    monkeypatch.setenv("MICRODRAMA_DATABASE_URL", db.dsn)
+    monkeypatch.setenv("MICRODRAMA_EXECUTION_MODE", "PAID_BENCHMARK")
+    monkeypatch.setenv("MICRODRAMA_PAID_REQUESTS_ENABLED", "true")
+    monkeypatch.setenv("MICRODRAMA_CLOUD_RESOURCES_ENABLED", "true")
+    authorization = _write_authorization(tmp_path)
+    rc = canary_module.main(
+        ["preflight", "--authorization", str(authorization)],
+        _injection={"clock": FakeClock(T0)},
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "canary preflight OK" in out
+    assert "authorization_sha256=" in out
+
+
 def test_the_full_composed_flow_runs_through_main_argv(
     db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

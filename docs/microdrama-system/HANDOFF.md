@@ -86,13 +86,24 @@ The full record (reviews, rulings, briefs, reports) is
 1. ~~Push the T045 commits~~ **DONE 2026-11-04**: the operator approved and the
    branch is pushed (`f7f135b..d8604ea` → aivora-drama-box
    `feat/microdrama-m0-m4`). Remote and local are level.
-2. **T031 authorization, when ready.** The canary packet
-   ([T031-authorization-packet.md](T031-authorization-packet.md)) is final in
-   shape: preconditions in §1 (key rotation first, rights route, pins, quote,
-   spend cap), the exact runner commands in §5. It is NOT a draft anymore, but
-   it is also not executable until the operator fills §8's sign-off. **Do not
-   run T031.** The RunPod key must be rotated first (the old one was printed
-   into a GLM session on 2026-11-02), and the operator sets the spend cap.
+2. **T031 authorization — preparation DONE 2026-11-04, spend cap $5 set by the
+   operator; still not runnable.** Key rotation verified via the RunPod audit
+   log (old key deleted 2026-11-03T01:19:40Z, "aivora-ovh-sg" created 01:22Z).
+   Every locally-derivable precondition is ready — see
+   [T031-preparation.md](../../microdrama/evidence/T031-preparation.md): canary
+   DB up, credrefs registered, authorization + prompts drafts pass every
+   preflight gate, one shipped T045 defect fixed (the canary CLI never opened
+   its DB pool — real runs died with PoolClosed). Remaining blockers, in order:
+   (a) **the canary container image does not exist** — the mock workflow needs a
+   stub ComfyUI image exposing FakeVideoModelSampler/VHS (a stock image fails
+   the /object_info gate by design); build, push, pin its digest. (b) The
+   operator moves the rotated key out of `~/.claude/.env` into
+   `/root/.secrets/drama-box/runpod-canary.key` (0600) — the packet forbids
+   `.env` and the runner resolves FILE credrefs only. (c) Refresh the quote
+   window/hard stop and sign §8 (quote validity is 2 h). (d) Re-check GPU stock
+   — at 19:25Z the whole allowlist read NONE (L40S secure $1.09/h also breaches
+   the $0.86 cap). (e) §5 commands run from the operator's own shell, never an
+   agent session.
 
 ## What remains, in order
 

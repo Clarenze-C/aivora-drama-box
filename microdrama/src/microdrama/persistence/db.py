@@ -156,6 +156,7 @@ class Database:
         self, dsn: str, *, min_size: int = 1, max_size: int = 10, timeout_s: float = 30.0
     ) -> None:
         self.dsn = dsn
+        self._opened = False
         self._pool = ConnectionPool(
             dsn,
             min_size=min_size,
@@ -166,11 +167,17 @@ class Database:
         )
 
     def open(self) -> Database:
-        self._pool.open(wait=True)
+        # Idempotent (T031 prep 2026-11-04): opening an already-open Database is a
+        # no-op, so a caller that owns an open pool (the CLI's test seam) never
+        # trips psycopg's "pool is already opened".
+        if not self._opened:
+            self._pool.open(wait=True)
+            self._opened = True
         return self
 
     def close(self) -> None:
         self._pool.close()
+        self._opened = False
 
     def __enter__(self) -> Database:
         return self.open()
