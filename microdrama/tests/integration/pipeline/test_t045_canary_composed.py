@@ -1111,6 +1111,14 @@ def test_the_dsn_guard_checks_pghostaddr_and_pgservice_even_with_a_named_host(
         refuse_non_loopback_dsn("postgresql://user@localhost/db")
     monkeypatch.delenv("PGSERVICE")
 
+    # T045-FIX CR-6: PGSERVICE set to ANY value - including the empty string -
+    # refuses ("set (any value) -> refuse, always"); an empty service name is
+    # still a set variable the operator must unset explicitly.
+    monkeypatch.setenv("PGSERVICE", "")
+    with pytest.raises(EffectDenied, match="service"):
+        refuse_non_loopback_dsn("postgresql://user@localhost/db")
+    monkeypatch.delenv("PGSERVICE")
+
     # A loopback PGHOSTADDR with a named host passes, and a DSN-pinned hostaddr
     # makes the environment value inert.
     monkeypatch.setenv("PGHOSTADDR", "127.0.0.1")

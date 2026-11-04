@@ -452,10 +452,12 @@ def refuse_non_loopback_dsn(dsn: str) -> None:
             "loopback host explicitly",
             service=str(params["service"]),
         )
-    # T045-FIX F-5: PGSERVICE is refused whenever it is set - a service file can
-    # name any host and inject any parameter, so "the DSN already names a host"
-    # is no defence against it.
-    if os.environ.get("PGSERVICE"):
+    # T045-FIX F-5 + CR-6: PGSERVICE is refused whenever it is set - ANY value,
+    # including the empty string (the binding rule exempts nothing: a set
+    # variable is the operator's to unset) - because a service file can name any
+    # host and inject any parameter, so "the DSN already names a host" is no
+    # defence against it.
+    if "PGSERVICE" in os.environ:
         raise EffectDenied(
             "PGSERVICE is set; a service file can name any host - unset it and name "
             "the loopback host explicitly",
