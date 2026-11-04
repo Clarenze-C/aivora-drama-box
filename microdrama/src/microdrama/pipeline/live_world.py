@@ -406,7 +406,7 @@ def build_live_benchmark_world(
         raise PolicyDenied("lease provider account differs from the attested account label")
     if pod_config.container_image != attestation.pinned_image:
         raise PolicyDenied("lease container image differs from attested digest")
-    if not pod_config.allowed_gpu_types or not pod_config.allowed_gpu_types.issubset(
+    if not pod_config.allowed_gpu_types or not set(pod_config.allowed_gpu_types).issubset(
         attestation.allowed_gpu_types
     ):
         raise PolicyDenied("lease GPU allowlist differs from attested hardware")

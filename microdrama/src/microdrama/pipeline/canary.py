@@ -315,7 +315,12 @@ def _gpu_second_price(authorization: CanaryAuthorization) -> PriceQuote:
 def canary_pod_config(authorization: CanaryAuthorization) -> PodLeaseConfig:
     return PodLeaseConfig(
         owned_tag=f"microdrama-owned:{authorization.namespace}",
-        allowed_gpu_types=frozenset(authorization.quote.allowed_gpu_types),
+        # ORDERED (T031 run4): the create request sends element [0] verbatim as
+        # the Runpod GPU id, so the authorization's first entry (the catalog id,
+        # e.g. "NVIDIA A40") must survive; a frozenset here made it a coin flip
+        # between the catalog id and the registry alias ("A40"), and RunPod
+        # rejected the alias with HTTP 422 "Unknown GPU type: A40".
+        allowed_gpu_types=tuple(authorization.quote.allowed_gpu_types),
         min_host_ram_gb=min(authorization.quote.host_ram_gb_by_gpu.values()),
         container_image=authorization.pins.image_ref,
         max_hourly_price_micro_usd=authorization.quote.compute_micro_usd_per_hour,

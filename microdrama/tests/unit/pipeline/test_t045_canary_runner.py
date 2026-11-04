@@ -12,6 +12,7 @@ real PostgreSQL) lives in ``tests/integration/pipeline/test_t045_canary_composed
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -212,6 +213,28 @@ def test_invalid_authorizations_are_refused(
     path = _write(tmp_path, _authorization_document(**override))
     with pytest.raises(SchemaInvalid, match=match):
         load_canary_authorization(path)
+
+
+def test_pod_config_preserves_the_gpu_allowlist_order() -> None:
+    """T031 run4 (2026-11-04): the create request sends gpu allowlist element
+    [0] verbatim, and the catalog id ("NVIDIA A40") must come first while the
+    seeded preset gate also needs the bare alias ("A40") present. The config
+    used to collapse the ordered auth list into a frozenset, so which element
+    [0] was had become a per-process coin flip - RunPod answered
+    "Unknown GPU type: A40" (HTTP 422) whenever the alias won."""
+    from microdrama.pipeline.canary import canary_pod_config
+
+    authorization = _authorization_document(
+        quote={
+            **_authorization_document()["quote"],
+            "allowed_gpu_types": ["NVIDIA A40", "A40"],
+            "host_ram_gb_by_gpu": {"NVIDIA A40": 64, "A40": 64},
+        }
+    )
+    path = _write(Path(tempfile.mkdtemp()), authorization)
+    parsed, _ = load_canary_authorization(path)
+    config = canary_pod_config(parsed)
+    assert tuple(config.allowed_gpu_types) == ("NVIDIA A40", "A40")
 
 
 def test_a_missing_field_is_refused(tmp_path: Path) -> None:

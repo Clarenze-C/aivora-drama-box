@@ -117,10 +117,13 @@ class PodLeaseConfig:
     registry records; ``container_image`` is the pinned image reference.
     ``provider_account_ref`` (T045 R10) is the non-secret account label from the operator
     attestation, recorded on every lease claim so billing buckets attribute to it.
+    ``allowed_gpu_types`` is an ORDERED tuple (T031 run4): the provider create request
+    sends element [0] verbatim as the GPU id, so the operator's catalog id must stay
+    first; later entries may carry gate aliases the registries match against.
     """
 
     owned_tag: str
-    allowed_gpu_types: frozenset[str]
+    allowed_gpu_types: tuple[str, ...]
     min_host_ram_gb: int
     container_image: str
     max_hourly_price_micro_usd: int
@@ -142,7 +145,7 @@ class PodLeaseConfig:
         """
         return cls(
             owned_tag="microdrama-owned:mock",
-            allowed_gpu_types=frozenset({"FAKE-GPU-24GB"}),
+            allowed_gpu_types=("FAKE-GPU-24GB",),
             min_host_ram_gb=32,
             container_image="registry.invalid/render@sha256:" + "b" * 64,
             max_hourly_price_micro_usd=900_000,
