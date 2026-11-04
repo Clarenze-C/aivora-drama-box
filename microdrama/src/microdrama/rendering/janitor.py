@@ -640,11 +640,15 @@ class Janitor:
             )
             if live:
                 continue
-            unverified = self._db_query(
-                "SELECT id FROM pod_leases WHERE provider = %s AND pod_id = %s "
-                "AND lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
-                "AND terminate_verified_at IS NULL",
-                (self._manager.provider_id, pod.pod_id),
+            unverified = (
+                self._db_query(
+                    "SELECT id FROM pod_leases WHERE provider = %s AND pod_id = %s "
+                    "AND lease_state IN ('RELEASED', 'EXPIRED', 'ORPHANED') "
+                    "AND terminate_verified_at IS NULL",
+                    (self._manager.provider_id, pod.pod_id),
+                )
+                if self._manager.is_runpod()
+                else []
             )
             if unverified:
                 # T045-FIX F-1: an owned Pod held by a terminal lease whose terminate
@@ -653,7 +657,10 @@ class Janitor:
                 # orphan stop, which would leave terminate_verified_at NULL, storage
                 # ownership open and the volume cost accruing forever. This covers
                 # every terminal lease, not only adopted ones; a failure is recorded
-                # per Pod and the next sweep retries the tail.
+                # per Pod and the next sweep retries the tail. Runpod only: the tail
+                # writes terminate_verified_at just there, so on any other provider
+                # the retry could never complete and would re-stop every sweep (the
+                # plain orphan path - stop RUNNING pods only - keeps idempotency).
                 lease_id = unverified[0]["id"]
                 state = self._stop_terminate_and_verify(
                     pod, lease_id, now, report, action="terminate_terminal_pod"
