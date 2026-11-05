@@ -9,12 +9,26 @@
 | run3 23:43Z | refused (masked) | same as run1 | $0 |
 | run4 23:58Z | refused, error detail now visible (HTTP 422 Unknown GPU type: A40) | `gpu_type_allowlist` order loss fixed first (real, lesser bug); actual source: the render request carries the preset record's gpu_type verbatim | $0 |
 | run5 00:05Z | **pod CREATED** (image pulled, port exposed ✓) then emergency-stopped; stop raced startup and failed; sweep's guard refused (no durable lease row for the pod id); pod `x1ghheymcrt0ry` terminated manually 00:10Z via RunPod API, verified 404 | runtime price check demanded EXACT equality with the quote; quote must be whole µUSD/GPU-second → no real rate can ever match | **~$0.05** (5 min × $0.59/h) |
+| run6 00:14Z | refused (pilot rule: one live lease per episode) | five dead leases from runs 1-5 counted live | $0 |
+| run7 00:25Z | pod CREATED; killed the run at T+1s ("pod exposes no endpoint"); pod terminated via API, verified gone | verify() treated a RUNNING pod without a runtime port mapping as a permanent conflict; the machine was still downloading the image | ~$0.04 |
+| run8 00:49Z | pod CREATED; image downloaded (server up 00:54:36Z, proxy 200 ✓, stub nodes loaded ✓); runner stuck polling RunPod's lagging `runtime.ports` until Ctrl-C at ~01:47Z; **SIGINT cleanup did NOT stop the pod** — operator stopped+terminated it manually in the console ~01:55Z | endpoint derived only from runtime.ports, which lagged/never populated while the proxy served; and the crash-before-pod_id-persisted gap again left cleanup with nothing durable to act on | **~$0.62** (66 min) |
+
+**Total night spend: ~$0.71 of the $5.00 cap.**
 
 Fixes this night, each tests-first red→green: provider error detail carried in
 rejections (`092c0f7`), GPU allowlist order preserved (`91d12ac`), seed preset
-recorded with the catalog GPU id at version 2 (`014bca8`), price check treats
-the quote as a ceiling (`ce23b83`). Five leases remain
-PENDING_PROVIDER_FINALITY pending invoice evidence (normal).
+recorded with the catalog GPU id (`014bca8`), price check treats the quote as a
+ceiling (`ce23b83`), warmup-without-endpoint is transient + the canary polls
+ensure_pod to the deadline (`9ff7fe9`), and the declared `8188/http` port
+exposes the endpoint without waiting for runtime lag (`0c79363`).
+
+**Open defect #7 (observed twice, not yet fixed): the runner only records the
+provider pod id on the lease at ACTIVATE — every failure/interrupt between
+create and activate leaves the pod invisible to its own cleanup (run5's
+emergency stop, run8's SIGINT). The sweep's guard then correctly refuses to
+touch an unrecorded owned-name pod. Fix direction: persist the pod id on the
+lease row immediately after create, before verify/activate, so any later
+failure can stop what it created.**
 
 ---
 
