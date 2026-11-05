@@ -58,7 +58,7 @@
   "namespace": "canaryx",
   "provider_account_ref": "acct:runpod-canary-fixture",
   "prompt_sha256": [
-    "4c80f52b9a2723ae19306e3f4d67d935bc3cc6dd05c7ac22146563a52aea8f03",
+    "397c08c2db834b15c1935c63c86c8440d26ad4fbd8d35e24ec24736aa8239b7e",
     "9f093c603c2cd3818048806806e37fa8c59b91e32354f4ee9da398220bff2701"
   ],
   "reference_sha256": []

@@ -1,11 +1,11 @@
 [
   {
-    "text": "FIXTURE PROMPT — canary smoke: a single wide shot of a night market stall in Bangkok, warm tungten light, static camera.",
+    "text": "FIXTURE PROMPT \u2014 canary smoke: a single wide shot of a night market stall in Bangkok, warm tungten light, static camera.",
     "seed": 20261102,
-    "negative": "blur, watermark"
+    "negative": ""
   },
   {
-    "text": "FIXTURE PROMPT — canary smoke: close-up of hands folding a paper lantern, shallow depth of field.",
+    "text": "FIXTURE PROMPT \u2014 canary smoke: close-up of hands folding a paper lantern, shallow depth of field.",
     "seed": 20261103,
     "negative": ""
   }
