@@ -50,6 +50,7 @@ from microdrama.contracts.errors import (
     NotFound,
     PolicyDenied,
     SchemaInvalid,
+    TransientProviderError,
 )
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.contracts.infra import Clock, ObjectStore
@@ -948,7 +949,24 @@ def run_execute(
         record["reservation_ids"].append(str(handle.lease.reservation_id))
         record["client_tokens"].append(handle.lease.client_token)
         step("reserve", {"lease_id": str(lease_id)})
-        handle = world.leases.ensure_pod(lease_id)
+        # T031 run7 (2026-11-05): a real Runpod pod reports its runtime port only
+        # after the container starts - a cold multi-GB image pull takes minutes,
+        # during which verify() says warmup (TransientProviderError). Poll
+        # ensure_pod until the endpoint is exposed or the run deadline; the
+        # lease's create-request proof and deterministic pod name make each
+        # retry reconcile the same Pod instead of creating another.
+        while True:
+            try:
+                handle = world.leases.ensure_pod(lease_id)
+                break
+            except TransientProviderError:
+                if clock.now() >= deadline:
+                    record["deadline_hit"] = True
+                    raise Conflict(
+                        "the created Pod exposed no Comfy endpoint before the deadline",
+                        lease_id=str(lease_id),
+                    ) from None
+                poll_sleep()
         record["pod_id"] = handle.lease.pod_id
         step("create_pod", {"pod_id": record["pod_id"]})
         # T045-FIX B-B2 + RR-N5: the Comfy base URL is late-bound from the created

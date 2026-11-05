@@ -232,7 +232,11 @@ def test_verify_rejects_foreign_tag_price_hardware_and_state() -> None:
         manager.verify(unknown, _spec(), settings=settings)
 
     no_endpoint = pod.model_copy(update={"endpoint_url": None})
-    with pytest.raises(Conflict):
+    # T031 run7 (2026-11-05): a RUNNING pod whose runtime port mapping is not
+    # reported yet is WARMUP (a real Runpod pod pulls its image for minutes
+    # before the container starts and runtime.ports appears), not a hard
+    # conflict — the canary polls until the endpoint or the run deadline.
+    with pytest.raises(TransientProviderError):
         manager.verify(no_endpoint, _spec(), settings=settings)
 
 

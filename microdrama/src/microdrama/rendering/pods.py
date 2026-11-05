@@ -228,7 +228,14 @@ class PodManager:
                 cap_micro_usd=spec.max_hourly_price_micro_usd,
             )
         if not pod.endpoint_url:
-            raise Conflict("pod exposes no endpoint", pod_id=pod.pod_id)
+            # T031 run7 (2026-11-05): a RUNNING pod reports its runtime port
+            # mapping only once the container has started - a cold 7.6 GB image
+            # pull takes minutes, during which the pod legitimately has no
+            # endpoint yet. This is warmup, not a conflict; the canary polls
+            # ensure_pod until the endpoint or its run deadline (canary.py).
+            raise TransientProviderError(
+                "pod endpoint not exposed yet (image pull/warmup)", pod_id=pod.pod_id
+            )
         if settings.is_offline_mock and pod.provenance is not Provenance.FAKE_SYNTHETIC:
             raise PolicyDenied(
                 "OFFLINE_MOCK may only use fake-synthetic pods",
