@@ -279,6 +279,28 @@ def test_same_name_collision_with_different_image_fails_closed() -> None:
         provider.create_pod(_request())
 
 
+def test_reported_price_at_or_below_the_quote_ceiling_is_accepted() -> None:
+    """T031 run5 (2026-11-05): the runtime price check demanded EXACT equality with
+    the attested quote, but the quote must be a whole number of micro-USD per
+    GPU-second (the ledger price rule), so a real $0.59/h rate (590,000) can never
+    equal the smallest admissible ceiling above it (590,400). The quote is the
+    operator's ceiling: a pod reporting at or below it must run; only exceeding it
+    stops the pod."""
+    pod = _pod(cost="0.590000")
+
+    def handler(method: str, url: str, body: bytes | None) -> Response:
+        if method == "POST":
+            return _json(200, pod)
+        if method == "GET" and url.endswith("/pods/pod-123"):
+            return _json(200, pod)
+        if method == "POST" and url.endswith("/pods/pod-123/action"):
+            raise AssertionError("a pod at/below the ceiling must not be stopped")
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(ScriptedTransport(handler))
+    provider.create_pod(_request())
+
+
 def test_reported_price_change_stops_owned_pod_and_does_not_adopt() -> None:
     changed = _pod(cost="1.100000")
     status = "RUNNING"
@@ -298,7 +320,7 @@ def test_reported_price_change_stops_owned_pod_and_does_not_adopt() -> None:
         raise AssertionError((method, url))
 
     provider = _provider(ScriptedTransport(handler))
-    with pytest.raises(PolicyDenied, match="differs from the operator quote"):
+    with pytest.raises(PolicyDenied, match="exceeds the operator quote"):
         provider.create_pod(_request())
     assert any("/action" in call for call in calls)
 

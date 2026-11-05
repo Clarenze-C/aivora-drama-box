@@ -379,7 +379,13 @@ class RunpodRestProvider:
             raise Conflict("Runpod name collision has mismatched pinned image")
 
     def _verify_attested_price(self, pod: PodInfo) -> None:
-        if pod.hourly_price_micro_usd != self._attestation.quote_micro_usd_per_hour:
+        # T031 run5 (2026-11-05): the quote is the operator's CEILING, not an
+        # exact rate - the ledger's whole-micro-USD-per-GPU-second rule means a
+        # real hourly rate (e.g. 590,000 for $0.59/h) can never EQUAL the smallest
+        # admissible quote above it (590,400), so exact equality rejected every
+        # real price. At or below the ceiling the pod runs; only exceeding it is a
+        # provider rate change: stop only this verified owned Pod.
+        if pod.hourly_price_micro_usd > self._attestation.quote_micro_usd_per_hour:
             # Provider actual rate changed after quote: stop only this verified owned Pod.
             if pod.owned_tag == self._owned_tag:
                 try:
@@ -389,7 +395,7 @@ class RunpodRestProvider:
                         "Runpod price changed and immediate shutdown failed",
                         pod_id=pod.pod_id,
                     ) from exc
-            raise PolicyDenied("Runpod reported compute rate differs from the operator quote")
+            raise PolicyDenied("Runpod reported compute rate exceeds the operator quote")
 
     def get_pod(self, pod_id: str) -> PodInfo | None:
         encoded = quote(pod_id, safe="")
