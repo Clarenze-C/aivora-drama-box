@@ -184,7 +184,11 @@ def _seed(dsn: str) -> None:
             return
         preset_registry = PresetRegistry(db, settings)
         preset = next(p for p in mock_catalog_presets() if p.preset_id == "fake-quality-8step")
-        preset = preset.model_copy(update={"gpu_type": "A40", "host_ram_gb": 64})
+        # CANARY_GPU_TYPE must be the Runpod CATALOG id: the render request carries
+        # the preset record's gpu_type verbatim (canary.py gpu_type=preset_record.
+        # gpu_type) and the pod create sends it as the GPU id — the bare alias
+        # "A40" is rejected with HTTP 422 "Unknown GPU type" (T031 run4, 2026-11-04).
+        preset = preset.model_copy(update={"gpu_type": "NVIDIA A40", "host_ram_gb": 64})
         preset_registry.record(preset, source_provenance=Provenance.FAKE_SYNTHETIC)
         rights_registry = RightsRegistry(db, SystemClock(), settings)
         now = datetime.now(UTC)
