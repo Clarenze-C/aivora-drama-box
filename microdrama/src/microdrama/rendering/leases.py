@@ -902,9 +902,40 @@ class LeaseService:
             pod = self._manager.acquire_or_reconcile(
                 spec, name=self._pod_name(row), client_token=row["client_token"]
             )
+            # T031 defect 7 (2026-11-05, observed twice live): bind the created pod
+            # to the lease BEFORE anything can fail - verification warmup
+            # transients, price alarms, a SIGINT - so the shutdown path, the sweep
+            # and the janitor always have a durable pod to stop. Persisted only at
+            # ACTIVATE before, any failure in between orphaned the pod to manual
+            # cleanup while it kept billing.
+            self._record_pod_id(lease_id, pod.pod_id)
             self._manager.verify(pod, spec, settings=self._settings)
             self._activate(lease_id, pod)
         return LeaseHandle(self._contract(self._load(lease_id)))
+
+    def _record_pod_id(self, lease_id: UUID, pod_id: str) -> None:
+        """Bind the provider pod id to the lease immediately after create (T031
+        defect 7). Idempotent; refuses a binding to a different pod."""
+        with self._db.transaction() as tx:
+            row = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
+            if row is None:
+                raise NotFound("pod lease not found", lease_id=str(lease_id))
+            if row["pod_id"] == pod_id:
+                return
+            if row["pod_id"] is not None:
+                raise Conflict(
+                    "lease is bound to a different pod",
+                    lease_id=str(lease_id),
+                    pod_id=row["pod_id"],
+                )
+            update_with_revision(
+                tx,
+                "pod_leases",
+                lease_id,
+                row["revision"],
+                {"pod_id": pod_id},
+                now=self._now(),
+            )
 
     def _record_create_request(self, lease_id: UUID) -> datetime:
         """Commit the create-request instant (and the root's window start) before create."""

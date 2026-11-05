@@ -31,6 +31,31 @@ def _intervals_by_basis(world: RenderWorld, pod_id: str) -> dict[str, list[tuple
     return out
 
 
+def test_pod_id_is_durable_before_verification_can_fail(
+    world: RenderWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T031 defect 7 (2026-11-05, observed twice live): the created pod's id was
+    persisted only at ACTIVATE, so any failure or interrupt between create and
+    activate (warmup transients, price alarms, SIGINT) left the cleanup path and
+    the janitor with no durable pod to act on - the pod burned until killed by
+    hand. The pod id must be on the lease row the moment the pod exists."""
+    ep = world.episode()
+    job = world.job("render-defect-7")
+    claimed = world.claim(ep, KEY + ":defect7", job=job)
+    lease_id = claimed.lease.lease_id
+
+    def warmup_refusal(pod, spec, *, settings):
+        raise TransientProviderError("pod endpoint not exposed yet (image pull/warmup)")
+
+    monkeypatch.setattr(world.manager, "verify", warmup_refusal)
+    with pytest.raises(TransientProviderError):
+        world.leases.ensure_pod(lease_id)
+
+    row = world.lease_row(lease_id)
+    assert row["pod_id"] is not None, "created pod id must be durable before verify"
+    assert row["lease_state"] == "CLAIMED"
+
+
 def test_ensure_pod_acquires_verifies_and_activates(world: RenderWorld) -> None:
     ep = world.episode()
     job = world.job("render-job-1")
