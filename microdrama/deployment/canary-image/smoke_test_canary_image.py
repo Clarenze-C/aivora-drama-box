@@ -28,11 +28,11 @@ from pathlib import Path
 sys.path.insert(0, "src")
 
 from microdrama.contracts.cost import RenderRequest  # noqa: E402
+from microdrama.rendering.workflows.binding import bind_workflow  # noqa: E402
 from microdrama.rendering.workflows.templates import (  # noqa: E402
     PRESET_TEMPLATES,
     template_sha256,
 )
-from microdrama.rendering.workflows.binding import bind_workflow  # noqa: E402
 
 MAPPED_CLASSES = {
     "LoadImage",
