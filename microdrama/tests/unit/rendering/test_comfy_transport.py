@@ -272,3 +272,26 @@ def test_history_maps_the_vhs_gifs_key_to_video_media_kind() -> None:
         entry = client.history("prompt-1")
     assert entry.outputs and entry.outputs[0].media_kind == "video"
     assert entry.outputs[0].filename == "a1_1.mp4"
+
+
+def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T031 run13 (2026-11-05): the first live prompt submit died in 0.58s as a
+    connection-level URLError and the runner stopped for a human - correctly -
+    but the recorded reason carried no cause, leaving the operator blind (the
+    third transport-masking bug of the night). The uncertainty message must
+    name the underlying error."""
+    from microdrama.contracts.errors import NeedsReconciliation
+    from microdrama.rendering import comfy_transport as ct
+
+    def resets(request: Any, timeout: int) -> Any:
+        raise OSError("connection reset by peer")
+
+    class Wrapper(ct.URLError):
+        pass
+
+    def resets_wrapped(request: Any, timeout: int) -> Any:
+        raise ct.URLError(OSError("connection reset by peer"))
+
+    monkeypatch.setattr(ct, "urlopen", resets_wrapped)
+    with pytest.raises(NeedsReconciliation, match="URLError.*connection reset"):
+        ct.UrllibTransport().request("POST", "https://comfy.invalid/prompt", headers={})

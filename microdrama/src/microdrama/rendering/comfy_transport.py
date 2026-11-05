@@ -80,8 +80,12 @@ class UrllibTransport:
                 status=exc.code,
             ) from exc
         except (TimeoutError, URLError) as exc:
+            # T031 run13 (2026-11-05): name the cause - a sub-second
+            # connection-level failure stopped the run for a human and the
+            # recorded reason carried nothing diagnosable.
             raise NeedsReconciliation(
-                "ComfyUI transport outcome is uncertain; reconcile by durable prompt ID"
+                "ComfyUI transport outcome is uncertain; reconcile by durable "
+                f"prompt ID (cause: {type(exc).__name__}: {exc})"
             ) from exc
 
 
