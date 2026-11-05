@@ -220,3 +220,23 @@ def test_http_error_carries_status_and_body_excerpt(
     monkeypatch.setattr(ct, "urlopen", refuses)
     with pytest.raises(ProviderError, match="502.*origin melted"):
         ct.UrllibTransport().request("GET", "https://comfy.invalid/x", headers={})
+
+
+def test_requests_identify_themselves_not_as_stock_python_urllib() -> None:
+    """T031 run11 (2026-11-05): the Runpod proxy front-ends pods with Cloudflare,
+    whose Browser Integrity Check bans the stock Python-urllib signature with
+    Error 1010 (observed live: browser_signature_banned on the runner's first
+    /object_info, while curl passed). The client must send its own User-Agent."""
+    fixture = FixtureTransport([b"{}"])
+    client = _client(
+        Settings(execution_mode=ExecutionMode.PAID_BENCHMARK, paid_requests_enabled=True),
+        fixture,
+        lambda _authorization: None,
+    )
+    with client.authorization_scope(
+        reservation_id=uuid4(), episode_id=uuid4(), job_id=uuid4(), operation_id=uuid4()
+    ):
+        client.object_info()
+    _method, _url, headers, _raw = fixture.calls[0]
+    assert "User-Agent" in headers
+    assert not headers["User-Agent"].startswith("Python-urllib")

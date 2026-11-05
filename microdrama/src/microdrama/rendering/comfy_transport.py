@@ -172,7 +172,15 @@ class ComfyHttpClient:
         secret = self._credential_resolver(self._credential_ref)
         if not secret:
             raise EffectDenied("ComfyUI credential reference did not resolve")
-        return {"Authorization": f"Bearer {secret}", "Accept": "application/json"}
+        # T031 run11 (2026-11-05): the Runpod pod proxy front-ends pods with
+        # Cloudflare, whose Browser Integrity Check bans the stock Python-urllib
+        # signature outright (live: Error 1010 browser_signature_banned on the
+        # first /object_info, while curl passed). Identify as ourselves.
+        return {
+            "Authorization": f"Bearer {secret}",
+            "Accept": "application/json",
+            "User-Agent": "microdrama-canary/2.15",
+        }
 
     def _request(
         self,
