@@ -198,3 +198,25 @@ def test_the_comfy_client_binds_only_its_own_pods_proxy_url() -> None:
     client.bind_pod_endpoint("pod-1", "https://pod-1-8188.proxy.runpod.net")
     with pytest.raises(EffectDenied, match="another leased Pod"):
         client.bind_pod_endpoint("pod-2", "https://pod-2-8188.proxy.runpod.net")
+
+
+def test_http_error_carries_status_and_body_excerpt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T031 run9 (2026-11-05): the first live ComfyUI call failed and the runner
+    reported a bare "ComfyUI returned an HTTP error" - status and body were
+    dropped, same masking class as the Runpod transport (T031 run3). Both belong
+    in the message so the operator's record states what the endpoint said."""
+    import io
+
+    from microdrama.contracts.errors import ProviderError
+    from microdrama.rendering import comfy_transport as ct
+
+    def refuses(request: Any, timeout: int) -> Any:
+        raise ct.HTTPError(
+            request.full_url, 502, "Bad Gateway", {}, io.BytesIO(b'{"detail":"origin melted"}')
+        )
+
+    monkeypatch.setattr(ct, "urlopen", refuses)
+    with pytest.raises(ProviderError, match="502.*origin melted"):
+        ct.UrllibTransport().request("GET", "https://comfy.invalid/x", headers={})

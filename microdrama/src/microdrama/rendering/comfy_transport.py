@@ -66,7 +66,19 @@ class UrllibTransport:
             with urlopen(request, timeout=30) as response:  # noqa: S310 - configured endpoint
                 return response.read()
         except HTTPError as exc:
-            raise ProviderError("ComfyUI returned an HTTP error", status=exc.code) from exc
+            # T031 run9 (2026-11-05): the first live ComfyUI call failed with a
+            # bare message - carry the status and a bounded body excerpt (the
+            # endpoint's own error text is diagnostics, not a secret), same as
+            # the Runpod transport does since T031 run3.
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", "replace").strip()[:500]
+            except Exception:  # noqa: BLE001 - the excerpt is best-effort
+                detail = ""
+            raise ProviderError(
+                f"ComfyUI returned an HTTP error: {exc.code} {detail}".strip(),
+                status=exc.code,
+            ) from exc
         except (TimeoutError, URLError) as exc:
             raise NeedsReconciliation(
                 "ComfyUI transport outcome is uncertain; reconcile by durable prompt ID"
