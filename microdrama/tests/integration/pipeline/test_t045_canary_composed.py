@@ -204,6 +204,7 @@ class ComfyCanaryTransport:
         pending_polls: int = 0,
         fail_first_submit: bool = False,
         reconcile_on_submit: bool = False,
+        booting_object_info: int = 0,
     ) -> None:
         self.drop_node = drop_node
         self.never_completes = never_completes
@@ -212,6 +213,11 @@ class ComfyCanaryTransport:
         self.pending_polls = pending_polls
         #: T045-FIX B-S10: attempt 1 FAILS, attempt 2 succeeds.
         self.fail_first_submit = fail_first_submit
+        #: T031 run10 (2026-11-05): the first N /object_info reads hit the Runpod
+        #: proxy while the container is still starting - documented as 502/404
+        #: "service behind it is still starting", not fatal.
+        self.booting_object_info = booting_object_info
+        self.object_info_calls = 0
         self.submit_calls = 0
         #: T045-FIX B-S10: the first submit's outcome is unknown (NeedsReconciliation).
         self.reconcile_on_submit = reconcile_on_submit
@@ -238,6 +244,13 @@ class ComfyCanaryTransport:
 
         self.calls.append((method, url))
         if method == "GET" and url.endswith("/object_info"):
+            self.object_info_calls += 1
+            if self.object_info_calls <= self.booting_object_info:
+                from microdrama.contracts.errors import ProviderError
+
+                raise ProviderError(
+                    "ComfyUI returned an HTTP error: 502 starting", status=502
+                )
             return json.dumps(self._object_info()).encode()
         if method == "POST" and url.endswith("/prompt"):
             self.submit_calls += 1
@@ -1661,6 +1674,48 @@ def test_main_opens_and_uses_its_own_database_pool(
     out = capsys.readouterr().out
     assert "canary preflight OK" in out
     assert "authorization_sha256=" in out
+
+
+def test_the_run_survives_the_comfy_boot_window_through_main_argv(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T031 run10 (2026-11-05): with the endpoint bound from the declared port,
+    the first /object_info lands while the container is still starting and the
+    Runpod proxy answers 502/404 - documented as "still starting", not fatal.
+    The canary must retry the gate through the boot window instead of stopping
+    the run (run9 died exactly here)."""
+    from microdrama.pipeline import canary as canary_module
+    from microdrama.pipeline.canary_authorization import load_canary_authorization
+
+    _seed_everything(db)
+    _main_env(monkeypatch, db, tmp_path)
+    clock = FakeClock(T0)
+    comfy_transport = ComfyCanaryTransport(booting_object_info=2)
+    authorization = _write_authorization(tmp_path)
+    _, digest = load_canary_authorization(authorization)
+    injection = {
+        "runpod_transport": RunpodCanaryTransport(),
+        "comfy_transport": comfy_transport,
+        "clock": clock,
+        "ids": SequentialIds("boot-window"),
+        "credential_resolver": lambda _ref: "fixture-dummy-value",
+        "evidence_dir": tmp_path / "records",
+        "sleep": lambda seconds: clock.advance(ms=int(seconds * 1000)),
+    }
+    rc = canary_module.main(
+        [
+            "execute",
+            "--authorization",
+            str(authorization),
+            "--authorization-sha256",
+            digest,
+            "--prompts",
+            str(_write_prompts(tmp_path)),
+        ],
+        _injection=injection,
+    )
+    assert rc == 0
+    assert comfy_transport.object_info_calls >= 3
 
 
 def test_the_full_composed_flow_runs_through_main_argv(

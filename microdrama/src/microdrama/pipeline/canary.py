@@ -49,6 +49,7 @@ from microdrama.contracts.errors import (
     NeedsReconciliation,
     NotFound,
     PolicyDenied,
+    ProviderError,
     SchemaInvalid,
     TransientProviderError,
 )
@@ -995,13 +996,27 @@ def run_execute(
         # The first prompt's hold and durable job exist before any ComfyUI request.
         first_request = request_for(0, prompts[0], attempt_number=1)
         first_job_id = ensure_job(first_request)
-        with world.comfy_client.authorization_scope(
-            reservation_id=first_request.reservation_id,
-            episode_id=episode_id,
-            job_id=first_job_id,
-            operation_id=None,
-        ):
-            catalog = world.comfy_client.object_info()
+        # T031 run10 (2026-11-05): with the endpoint bound from the declared port,
+        # this first call can land while the container is still starting - the
+        # Runpod proxy answers 502/404 ("service behind it is still starting",
+        # documented platform behavior). Retry the gate through that boot window
+        # at the poll floor until the run deadline; any other error still fails.
+        while True:
+            try:
+                with world.comfy_client.authorization_scope(
+                    reservation_id=first_request.reservation_id,
+                    episode_id=episode_id,
+                    job_id=first_job_id,
+                    operation_id=None,
+                ):
+                    catalog = world.comfy_client.object_info()
+                break
+            except ProviderError as exc:
+                status = exc.details.get("status")
+                if status in (404, 502, 503, 524) and clock.now() < deadline:
+                    poll_sleep()
+                    continue
+                raise
         missing_classes = [node for node in sorted(template.node_classes) if node not in catalog]
         mapped_digest = node_schema_digest(template)
         if missing_classes or mapped_digest != authorization.pins.node_schema_sha256:
