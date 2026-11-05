@@ -42,9 +42,13 @@ catalog GPU id, `ce23b83` price ceiling, `9ff7fe9` warmup transient + poll,
 `3866faa` Comfy boot-window retry, `27a8bc2` User-Agent, `a1f8456` example
 prompts, `af09523` gifs→video media kind, `c703f7b` uncertainty causes.
 
-**Remaining for T031:** run `sweep` once (billing ingest), verify the period
-invoice when RunPod bills it (operator console → `invoice` command with §5's
-shape), then this canary record is the qualification evidence. The FULL T031
+**Remaining for T031:** ~~sweep~~ ~~invoice~~ **DONE 2026-11-05 15:45Z** —
+bucket ingested and allocated to the microcent (GPU 35,174 µ + disk 579 µ =
+35,753 µ), period invoice **MATCHED** (console evidence, sha `a6f1dea3…`),
+final sweep **settled the lease BILLED at 35,174 µ**. Two more shipped defects
+fell on the way (billing floats round to the micro-USD atom, `c65089a`;
+invoice coverage accepts the provider-resolved window, `9b133f1`). The run-14
+record plus this ledger are T031's canary qualification evidence. The FULL
 benchmark (8 shots × 3 repeats, Thai voice/quality) needs its own authorization
 per the packet — nothing here clears it.
 

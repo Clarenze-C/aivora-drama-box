@@ -86,7 +86,8 @@ The full record (reviews, rulings, briefs, reports) is
 1. ~~Push the T045 commits~~ **DONE 2026-11-04**: the operator approved and the
    branch is pushed (`f7f135b..d8604ea` → aivora-drama-box
    `feat/microdrama-m0-m4`). Remote and local are level.
-2. **T031 canary — FLOWN 2026-11-05 05:21Z (run 14 of 14).** Full live
+2. **T031 canary — FLOWN and BILLED 2026-11-05 (run 14; invoice MATCHED,
+   lease settled BILLED at 35,174 µ at 15:45Z).** Full live
    lifecycle COMPLETE: rent → image pull → endpoint → `/object_info` MATCH →
    two test videos rendered, fetched, checksummed and durably stored (sha256s
    in [T031-preparation.md](../../microdrama/evidence/T031-preparation.md)) →
