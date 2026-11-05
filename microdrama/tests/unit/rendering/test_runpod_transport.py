@@ -582,3 +582,21 @@ def test_expired_quote_blocks_before_external_effect() -> None:
     with pytest.raises(PolicyDenied):
         provider.create_pod(_request())
     assert not transport.calls
+
+
+def test_billing_amounts_round_to_the_microcent_atom() -> None:
+    """T031 (2026-11-05, post-run sweep): Runpod's live billing floats carry
+    sub-microcent precision (pod xykul8kobl1e6s: gpuAmount
+    0.03517432510852814, disk 0.0005787037080153823) and the parser demanded
+    exact whole micro-USD, rejecting the real response as malformed and
+    blocking the canary's settlement. The micro-USD is the ledger's atom:
+    amounts round half-up to it (<=0.5 micro error per field, well under the
+    invoice-verification tolerance)."""
+    from microdrama.rendering.runpod_transport import _amount_micro
+
+    assert _amount_micro(0.03517432510852814) == 35_174
+    assert _amount_micro(0.0005787037080153823) == 579
+    assert _amount_micro(0) == 0
+    assert _amount_micro("1.25") == 1_250_000
+    with pytest.raises(ValueError):
+        _amount_micro(-0.01)

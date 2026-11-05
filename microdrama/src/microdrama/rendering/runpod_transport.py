@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from hashlib import sha256
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -594,10 +594,15 @@ def _parse_time(value: Any) -> datetime:
 
 
 def _amount_micro(value: Any) -> int:
+    # T031 (2026-11-05, post-run sweep): Runpod's live billing floats carry
+    # sub-microcent precision (observed: gpuAmount 0.03517432510852814); the
+    # micro-USD is the ledger's atom, so amounts round half-up to it instead of
+    # rejecting the provider's real response as malformed. Negative amounts are
+    # still refused here; credits arrive as separate bucket revisions.
     scaled = Decimal(str(value)) * Decimal(1_000_000)
-    if scaled != scaled.to_integral_value() or scaled < 0:
-        raise ValueError("provider amount is not non-negative micro-USD precision")
-    return int(scaled)
+    if scaled < 0:
+        raise ValueError("provider amount is negative")
+    return int(scaled.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _billing_record(value: Any) -> RunpodBillingRecord:
