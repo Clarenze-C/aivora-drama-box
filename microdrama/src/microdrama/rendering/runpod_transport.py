@@ -279,7 +279,7 @@ class RunpodRestProvider:
         owned = bool(
             re.fullmatch(rf"md-{re.escape(self._attestation.namespace)}-[0-9a-f]{{32}}", name)
         )
-        endpoint = _comfy_endpoint(pod_id, data.get("runtime"))
+        endpoint = _comfy_endpoint(pod_id, data)
         # Runpod's returned `gpu.memory` is GPU memory, not host RAM. Host RAM is checked
         # against the attested GPU profile before create; do not conflate the two.
         if gpu_memory_gb <= 0:
@@ -553,15 +553,22 @@ class RunpodRestProvider:
             raise PolicyDenied("refusing Runpod action on a Pod outside the owned namespace")
 
 
-def _comfy_endpoint(pod_id: str, runtime: Any) -> str | None:
+def _comfy_endpoint(pod_id: str, payload: Any) -> str | None:
+    # T031 run8 (2026-11-05): the proxy route exists from creation, but the pod
+    # API's runtime.ports mapping lagged 8+ minutes live (proxy answered 200 the
+    # whole time), leaving the runner polling warmup until its deadline. The
+    # top-level declared "8188/http" (the create contract) exposes the same
+    # deterministic proxy URL without waiting for runtime to populate.
+    if not isinstance(payload, Mapping):
+        return None
+    runtime = payload.get("runtime")
     ports = runtime.get("ports", []) if isinstance(runtime, Mapping) else []
-    port = next((p for p in ports if isinstance(p, Mapping) and p.get("private") == 8188), None)
-    if port is None:
-        return None
-    public = port.get("public")
-    if not isinstance(public, int) or public <= 0:
-        return None
-    return f"https://{pod_id}-8188.proxy.runpod.net"
+    if any(isinstance(p, Mapping) and p.get("private") == 8188 for p in ports):
+        return f"https://{pod_id}-8188.proxy.runpod.net"
+    declared = payload.get("ports")
+    if isinstance(declared, list) and any(p == "8188/http" for p in declared if isinstance(p, str)):
+        return f"https://{pod_id}-8188.proxy.runpod.net"
+    return None
 
 
 def _terminated_placeholder(pod_id: str, owned_tag: str) -> PodInfo:

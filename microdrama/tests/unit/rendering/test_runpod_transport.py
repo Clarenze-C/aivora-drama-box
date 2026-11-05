@@ -279,6 +279,29 @@ def test_same_name_collision_with_different_image_fails_closed() -> None:
         provider.create_pod(_request())
 
 
+def test_declared_http_port_exposes_the_endpoint_before_runtime_lags() -> None:
+    """T031 run8 (2026-11-05): the proxy route exists from creation, but the
+    pod API's runtime.ports mapping lagged by 8+ minutes (observed live while
+    the proxy already answered 200) - the runner sat in warmup polling until
+    its deadline. The declared create-time port ("8188/http", top-level on the
+    v2 pod payload) is the contract the pod was created with: it must expose
+    the deterministic proxy endpoint without waiting for runtime."""
+    declared_only = _pod()
+    declared_only["runtime"] = None
+    declared_only["ports"] = ["8188/http"]
+
+    def handler(method: str, url: str, _body: bytes | None) -> Response:
+        if method == "POST":
+            return _json(200, declared_only)
+        if method == "GET" and url.endswith("/pods/pod-123"):
+            return _json(200, declared_only)
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(ScriptedTransport(handler))
+    pod = provider.create_pod(_request())
+    assert pod.endpoint_url == "https://pod-123-8188.proxy.runpod.net"
+
+
 def test_reported_price_at_or_below_the_quote_ceiling_is_accepted() -> None:
     """T031 run5 (2026-11-05): the runtime price check demanded EXACT equality with
     the attested quote, but the quote must be a whole number of micro-USD per
