@@ -304,6 +304,32 @@ def test_period_with_skipped_open_buckets_is_refused(world: World, db: Database)
         )
 
 
+def test_mid_bucket_request_with_resolved_coverage_still_verifies(
+    world: World, db: Database
+) -> None:
+    """T031 invoice step (2026-11-05, live): the janitor's billing queries request
+    from the lease's window start - mid-bucket - while the invoice period must sit
+    on bucket boundaries. Requested-window coverage alone can then never hold, yet
+    the provider's RESOLVED window (stored on every query, and what the provider
+    actually answered for) covers the bucket. Coverage accepts either window."""
+    repository = _paid(world)
+    _seed_episode_with_lease(world, db, pod_id="pod-period")
+    query, bucket = closed_bucket(
+        pod_id="pod-period", start=T0, end=T0 + HOUR, gpu=600_000, cpu=0, disk=0
+    )
+    mid_bucket = T0 + timedelta(minutes=17, seconds=57, microseconds=658305)
+    query = query.model_copy(
+        update={
+            "requested_window_start": mid_bucket,
+            "provider_resolved_window_start": T0,
+            "provider_resolved_window_end": T0 + HOUR,
+            "bucket_observation_ids": [bucket.observation_id],
+        }
+    )
+    repository.ingest(query, [bucket])
+    assert _verify(repository).outcome == "MATCHED"
+
+
 def test_no_completed_query_after_the_lag_is_refused(world: World, db: Database) -> None:
     repository = _paid(world)
     _seed_episode_with_lease(world, db, pod_id="pod-period")

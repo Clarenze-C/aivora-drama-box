@@ -551,8 +551,16 @@ class BillingRepository:
                 # no pod field), so it stays valid coverage for the billed-zero route.
                 "SELECT * FROM runpod_billing_queries q WHERE q.provider_account_ref=%s "
                 "AND q.result_state IN ('BUCKETS','EMPTY') "
-                "AND (q.payload->>'requested_window_start')::timestamptz <= %s "
-                "AND (q.payload->>'requested_window_end')::timestamptz >= %s "
+                # T031 invoice step (2026-11-05, live): the janitor requests from
+                # the lease's window start - mid-bucket - while invoice periods
+                # must sit on bucket boundaries, so requested-window coverage
+                # alone can never hold. The provider's RESOLVED window (what it
+                # actually answered for, stored on every query) covers the
+                # bucket; either window suffices.
+                "AND (((q.payload->>'requested_window_start')::timestamptz <= %s "
+                "AND (q.payload->>'requested_window_end')::timestamptz >= %s) "
+                "OR ((q.payload->>'provider_resolved_window_start')::timestamptz <= %s "
+                "AND (q.payload->>'provider_resolved_window_end')::timestamptz >= %s)) "
                 "AND q.observed_at >= %s "
                 "AND (q.result_state = 'EMPTY' OR ("
                 "EXISTS (SELECT 1 FROM runpod_billing_buckets b "
@@ -562,6 +570,8 @@ class BillingRepository:
                 "ORDER BY q.observed_at DESC LIMIT 1",
                 (
                     provider_account_ref,
+                    period_start,
+                    period_end,
                     period_start,
                     period_end,
                     period_end + self.settle_lag,
