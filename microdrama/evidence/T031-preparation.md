@@ -1,5 +1,23 @@
 # T031 canary preparation — 2026-11-04 (no paid run performed)
 
+## Live attempt log (night of 2026-11-04/05)
+
+| Run | Outcome | Root cause | Spend |
+|-----|---------|-----------|-------|
+| run1 23:36Z | refused (PROVIDER_ERROR, masked) | preset GPU alias "A40" sent on create (unknown GPU type) | $0 |
+| run2 23:41Z | refused (CONFLICT lease not live) | re-ran the same authorization → collided with run1's dead lease | $0 |
+| run3 23:43Z | refused (masked) | same as run1 | $0 |
+| run4 23:58Z | refused, error detail now visible (HTTP 422 Unknown GPU type: A40) | `gpu_type_allowlist` order loss fixed first (real, lesser bug); actual source: the render request carries the preset record's gpu_type verbatim | $0 |
+| run5 00:05Z | **pod CREATED** (image pulled, port exposed ✓) then emergency-stopped; stop raced startup and failed; sweep's guard refused (no durable lease row for the pod id); pod `x1ghheymcrt0ry` terminated manually 00:10Z via RunPod API, verified 404 | runtime price check demanded EXACT equality with the quote; quote must be whole µUSD/GPU-second → no real rate can ever match | **~$0.05** (5 min × $0.59/h) |
+
+Fixes this night, each tests-first red→green: provider error detail carried in
+rejections (`092c0f7`), GPU allowlist order preserved (`91d12ac`), seed preset
+recorded with the catalog GPU id at version 2 (`014bca8`), price check treats
+the quote as a ceiling (`ce23b83`). Five leases remain
+PENDING_PROVIDER_FINALITY pending invoice evidence (normal).
+
+---
+
 Operator instruction this session: "Execute T031 RunPod run. Spend cap $5."
 Status at end of session: **every locally-derivable precondition is READY; one
 artifact (the canary container image) does not exist yet and no paid provider
