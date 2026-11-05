@@ -98,8 +98,12 @@ The full record (reviews, rulings, briefs, reports) is
    the period-invoice verification when RunPod bills (operator console → §5
    `invoice` command) to settle the lease BILLED, then this record is T031's
    canary evidence. The FULL benchmark (8 shots × 3, Thai quality) needs its
-   own authorization per the packet. Commits `3e16485..c703f7b` are local,
-   unpushed, and gated on one final clean `make check`.
+   own authorization per the packet. Commits `3e16485..c65089a` are local,
+   unpushed, and **gate-clean**: final `make check` on the frozen tree passed
+   everything (unit / contract 462 / integration 270, EXIT=0, 2026-11-05
+   ~13:30Z). Known follow-up, not a blocker: the repair-media-chain test is
+   order-flaky under the full suite (failed in two batch runs, passes alone)
+   — pre-existing, queued for its own investigation.
 
 ## What remains, in order
 
