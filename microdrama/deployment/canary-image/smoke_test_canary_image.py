@@ -34,8 +34,12 @@ from microdrama.rendering.workflows.templates import (  # noqa: E402
 )
 from microdrama.rendering.workflows.binding import bind_workflow  # noqa: E402
 
-MAPPED_CLASSES = {"LoadImage", "CheckpointLoaderSimple", "FakeVideoModelSampler",
-                  "VHS_VideoCombine"}
+MAPPED_CLASSES = {
+    "LoadImage",
+    "CheckpointLoaderSimple",
+    "FakeVideoModelSampler",
+    "VHS_VideoCombine",
+}
 PROMPT_TEXT = (
     "FIXTURE PROMPT — canary smoke: a single wide shot of a night market stall "
     "in Bangkok, warm tungten light, static camera."
@@ -152,8 +156,7 @@ def main() -> int:
     out_path = Path("out/canary-smoke-output").resolve()
     out_path.mkdir(parents=True, exist_ok=True)
     (out_path / item["filename"]).write_bytes(payload)
-    print(f"OK: output fetched via {key} from node {node_id}: "
-          f"{len(payload)} bytes sha256={digest}")
+    print(f"OK: output fetched via {key} from node {node_id}: {len(payload)} bytes sha256={digest}")
     print("SMOKE TEST PASSED")
     return 0
 

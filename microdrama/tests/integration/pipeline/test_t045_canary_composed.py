@@ -248,9 +248,7 @@ class ComfyCanaryTransport:
             if self.object_info_calls <= self.booting_object_info:
                 from microdrama.contracts.errors import ProviderError
 
-                raise ProviderError(
-                    "ComfyUI returned an HTTP error: 502 starting", status=502
-                )
+                raise ProviderError("ComfyUI returned an HTTP error: 502 starting", status=502)
             return json.dumps(self._object_info()).encode()
         if method == "POST" and url.endswith("/prompt"):
             self.submit_calls += 1
