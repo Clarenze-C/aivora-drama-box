@@ -240,3 +240,35 @@ def test_requests_identify_themselves_not_as_stock_python_urllib() -> None:
     _method, _url, headers, _raw = fixture.calls[0]
     assert "User-Agent" in headers
     assert not headers["User-Agent"].startswith("Python-urllib")
+
+
+def test_history_maps_the_vhs_gifs_key_to_video_media_kind() -> None:
+    """T031 run12 (2026-11-05): real ComfyUI video nodes (VideoHelperSuite, and
+    the canary's stub mirroring it) report mp4 files under the legacy "gifs"
+    UI key; the job layer requires the pipeline kind "video" and classified
+    every live render MISSING_REQUIRED_OUTPUT. The transport normalizes the
+    legacy key to the media kind it actually carries."""
+    payload = {
+        "prompt-1": {
+            "status": {"status_str": "success", "completed": True},
+            "outputs": {
+                "combine": {
+                    "gifs": [
+                        {"filename": "a1_1.mp4", "subfolder": "md/ep1/canary-0", "type": "output"}
+                    ]
+                }
+            },
+        }
+    }
+    fixture = FixtureTransport([json.dumps(payload).encode()])
+    client = _client(
+        Settings(execution_mode=ExecutionMode.PAID_BENCHMARK, paid_requests_enabled=True),
+        fixture,
+        lambda _authorization: None,
+    )
+    with client.authorization_scope(
+        reservation_id=uuid4(), episode_id=uuid4(), job_id=uuid4(), operation_id=uuid4()
+    ):
+        entry = client.history("prompt-1")
+    assert entry.outputs and entry.outputs[0].media_kind == "video"
+    assert entry.outputs[0].filename == "a1_1.mp4"

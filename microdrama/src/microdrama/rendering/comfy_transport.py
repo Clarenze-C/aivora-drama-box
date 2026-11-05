@@ -279,7 +279,13 @@ class ComfyHttpClient:
                             filename=file["filename"],
                             subfolder=file.get("subfolder", ""),
                             folder_type=file.get("type", "output"),
-                            media_kind=kind,
+                            # T031 run12 (2026-11-05): real ComfyUI video nodes
+                            # (VideoHelperSuite and the canary stub mirroring it)
+                            # report mp4/webm files under the legacy "gifs" UI
+                            # key; the pipeline's media kind for those is "video"
+                            # (the job layer requires it and classified every
+                            # live render MISSING_REQUIRED_OUTPUT otherwise).
+                            media_kind="video" if kind == "gifs" else kind,
                         )
                     )
         return ComfyHistoryEntry(
