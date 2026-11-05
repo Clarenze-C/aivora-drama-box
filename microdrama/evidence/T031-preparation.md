@@ -13,7 +13,40 @@
 | run7 00:25Z | pod CREATED; killed the run at T+1s ("pod exposes no endpoint"); pod terminated via API, verified gone | verify() treated a RUNNING pod without a runtime port mapping as a permanent conflict; the machine was still downloading the image | ~$0.04 |
 | run8 00:49Z | pod CREATED; image downloaded (server up 00:54:36Z, proxy 200 ✓, stub nodes loaded ✓); runner stuck polling RunPod's lagging `runtime.ports` until Ctrl-C at ~01:47Z; **SIGINT cleanup did NOT stop the pod** — operator stopped+terminated it manually in the console ~01:55Z | endpoint derived only from runtime.ports, which lagged/never populated while the proxy served; and the crash-before-pod_id-persisted gap again left cleanup with nothing durable to act on | **~$0.62** (66 min) |
 
-**Total night spend: ~$0.71 of the $5.00 cap.**
+| run9 02:30Z | pod created, endpoint bound, first ComfyUI call → bare "HTTP error"; pod auto-terminated ✓ | ComfyUI errors masked status/body; AND the endpoint now binds at create (declared port), so the first call lands during container boot (proxy 502/404 = "still starting") | ~$0.02 |
+| run10 02:48Z | first /object_info → Cloudflare **Error 1010 browser_signature_banned**; pod auto-terminated ✓ | RunPod's pod proxy (Cloudflare Browser Integrity Check) bans the stock `Python-urllib` User-Agent; curl passed all along | ~$0.02 |
+| run11 03:00Z | object_info **MATCH** (first live); prompt composition refused | shipped example prompts carried a negative the mock workflow cannot bind (UnsupportedControl — correct refusal) | ~$0.02 |
+| run12 03:12Z | **full lifecycle COMPLETE** but all renders MISSING_REQUIRED_OUTPUT (3 attempts) | real ComfyUI reports videos under the legacy "gifs" UI key; the job layer requires media kind "video" | ~$0.04 |
+| run13 05:12Z | first submit died in 0.58s, connection-level; runner stopped for a human (correct, no blind retry); cause masked | transport uncertainty messages carried no cause | ~$0.01 |
+| **run14 05:21Z** | **CANARY COMPLETE** | — | ~$0.05 |
+
+## Run 14 — the canary record (2026-11-05T052140Z-canary.json)
+
+- reserve → create (`xykul8kobl1e6s`) → endpoint bound → `/object_info` **MATCH** →
+  prompt 0 **succeeded** (attempt 1) → prompt 1 **succeeded** (attempt 1) →
+  shutdown; `outcome: COMPLETE`, attempts 2/3, prompts 2/2, deadline not hit.
+- Outputs durably stored and checksum-verified on this host:
+  - `renders/…/canary-0/a1/combine.mp4` — 38,171,044 B, sha256 `a79c8e0bdb9d485c0e232f25b5260df2cf8feafa978e9e64da12da9f6675e774`
+  - `renders/…/canary-1/a1/combine.mp4` — 36,759,237 B, sha256 `2bf81cc11ba42031d6fea5530f899a0a3b380bb2432bfa7b3204ea4b9d008934`
+- `billing_state: PENDING_PROVIDER_FINALITY` — honest by design; the lease
+  settles BILLED only after the operator's period-invoice verification (step 4).
+- Zero pods remain; every failed run's pod was auto-terminated from run 9 onward
+  (defect 7's fix, verified live four times).
+
+**Total night spend: ~$0.9 of the $5.00 cap (final figure lands with the invoice).**
+
+**Eight defects found and fixed this night, each tests-first red→green:**
+`092c0f7` provider error detail, `91d12ac` GPU allowlist order, `014bca8` seed
+catalog GPU id, `ce23b83` price ceiling, `9ff7fe9` warmup transient + poll,
+`0c79363` declared-port endpoint, `989bf12` pod id durable before verify,
+`3866faa` Comfy boot-window retry, `27a8bc2` User-Agent, `a1f8456` example
+prompts, `af09523` gifs→video media kind, `c703f7b` uncertainty causes.
+
+**Remaining for T031:** run `sweep` once (billing ingest), verify the period
+invoice when RunPod bills it (operator console → `invoice` command with §5's
+shape), then this canary record is the qualification evidence. The FULL T031
+benchmark (8 shots × 3 repeats, Thai voice/quality) needs its own authorization
+per the packet — nothing here clears it.
 
 Fixes this night, each tests-first red→green: provider error detail carried in
 rejections (`092c0f7`), GPU allowlist order preserved (`91d12ac`), seed preset

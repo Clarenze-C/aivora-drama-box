@@ -86,23 +86,20 @@ The full record (reviews, rulings, briefs, reports) is
 1. ~~Push the T045 commits~~ **DONE 2026-11-04**: the operator approved and the
    branch is pushed (`f7f135b..d8604ea` → aivora-drama-box
    `feat/microdrama-m0-m4`). Remote and local are level.
-2. **T031 authorization — SIGNED 2026-11-04, run-ready pending one browser
-   click.** Key rotation verified via the RunPod audit log; the rotated key is
-   placed at `/root/.secrets/drama-box/runpod-canary.key` (0600) with the comfy
-   token beside it; both FILE credrefs registered; canary DB up; two shipped
-   T045 defects fixed tests-first (CLI never opened its DB pool; pod create
-   never declared the 8188 HTTP port — see
-   [T031-preparation.md](../../microdrama/evidence/T031-preparation.md)); the
-   canary image is built, smoke-tested locally (98-frame mp4) and pushed to
-   `ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f…cab869`; the authorization
-   (`T031-canary-20261104-run1`, sha `b09bf5fa…82202`) passes every preflight
-   gate; §8 is signed (spend cap $5, wall 90 min, 2 prompts / 3 attempts — the
-   packet §4 "5 attempts" line is superseded by the contract's ≤3).
-   **Remaining before execute:** make the GHCR package PUBLIC (browser-only,
-   GitHub → Packages → drama-canary → Package settings → Change visibility),
-   re-check A40 stock (LOW at EU-SE-1 at 23:22Z), and run §5 from the
-   operator's shell. The quote window/hard stop (expires 2026-11-05T01:22:10Z)
-   must be re-captured for any later run.
+2. **T031 canary — FLOWN 2026-11-05 05:21Z (run 14 of 14).** Full live
+   lifecycle COMPLETE: rent → image pull → endpoint → `/object_info` MATCH →
+   two test videos rendered, fetched, checksummed and durably stored (sha256s
+   in [T031-preparation.md](../../microdrama/evidence/T031-preparation.md)) →
+   automatic verified shutdown, zero pods left. Spend ~$0.9 of the $5 cap.
+   The night found **eight shipped defects in the T045 live path**, each fixed
+   tests-first and committed (error masking ×3, GPU alias, price equality,
+   warmup-as-conflict, endpoint-from-declared-port, pod-id durability) — see
+   the evidence file's run log. **Remaining:** one `sweep` (billing ingest),
+   the period-invoice verification when RunPod bills (operator console → §5
+   `invoice` command) to settle the lease BILLED, then this record is T031's
+   canary evidence. The FULL benchmark (8 shots × 3, Thai quality) needs its
+   own authorization per the packet. Commits `3e16485..c703f7b` are local,
+   unpushed, and gated on one final clean `make check`.
 
 ## What remains, in order
 
