@@ -76,7 +76,7 @@ def test_migration_0025_upgrades_and_reads_back(pg_server_dsn: str) -> None:
                 }
                 & lease_columns
             )
-        assert migrate(dsn) == ["0025"]
+        assert migrate(dsn) == ["0025", "0026"]
         with psycopg.connect(dsn) as conn:
             assert {
                 "create_requested_at",
@@ -303,7 +303,7 @@ def test_migration_0025_backfills_verification_identity_and_drops_the_default(
                 "VALUES (%s, %s, %s, %s, 'MATCHED', '{}')",
                 (uuid.uuid4(), observation_id, "e" * 64, T0),
             )
-        assert migrate(dsn) == ["0025"]
+        assert migrate(dsn) == ["0025", "0026"]
         with psycopg.connect(dsn) as conn:
             stored = conn.execute(
                 "SELECT bucket_identity_sha256 FROM runpod_billing_invoice_verifications"
