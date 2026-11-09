@@ -104,7 +104,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:2.15.0:PropSheet",
+  "$id": "urn:microdrama:contracts:2.16.0:PropSheet",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

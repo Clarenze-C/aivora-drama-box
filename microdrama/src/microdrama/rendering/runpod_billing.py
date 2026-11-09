@@ -42,17 +42,23 @@ class MappedBillingIngest:
 
 def _record_hash(record: object) -> str:
     """Content hash of one provider record: deterministic across runs and revisions."""
-    return canonical_hash(
-        {
-            "pod_id": record.pod_id,
-            "interval_start": record.interval_start,
-            "interval_end": record.interval_end,
-            "total_micro_usd": record.total_micro_usd,
-            "gpu_micro_usd": record.gpu_micro_usd,
-            "cpu_micro_usd": record.cpu_micro_usd,
-            "disk_micro_usd": record.disk_micro_usd,
-        }
-    )
+    evidence = {
+        "pod_id": record.pod_id,
+        "interval_start": record.interval_start,
+        "interval_end": record.interval_end,
+        "total_micro_usd": record.total_micro_usd,
+        "gpu_micro_usd": record.gpu_micro_usd,
+        "cpu_micro_usd": record.cpu_micro_usd,
+        "disk_micro_usd": record.disk_micro_usd,
+    }
+    # Legacy internal fixtures/observations keep their original content hash.
+    if record.raw_amounts is not None:
+        evidence.update(
+            raw_amounts=list(record.raw_amounts),
+            raw_discrepancy_usd=record.raw_discrepancy_usd,
+            normalization_policy=record.normalization_policy,
+        )
+    return canonical_hash(evidence)
 
 
 def durable_pod_ownership_probe(
@@ -190,7 +196,7 @@ def map_billing_history(
         if prior is not None and prior["raw_response_sha256"] == record_hash:
             replayed += 1
             continue  # exact replay of the stored latest revision: adds nothing
-        components_match = record.total_micro_usd == (
+        components_match = record.raw_components_match and record.total_micro_usd == (
             record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
         )
         buckets.append(

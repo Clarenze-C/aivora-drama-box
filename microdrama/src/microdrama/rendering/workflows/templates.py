@@ -31,6 +31,7 @@ class WorkflowTemplate:
     supported_controls: frozenset[ControlKind]
     produced_media_kinds: tuple[str, ...]
     node_classes: frozenset[str]
+    configuration_sha256: str | None = None
     sampler_class: str = MOCK_SAMPLER_CLASS
     model_checkpoint: str = MOCK_CHECKPOINT
     binds_negative_prompt: bool = False
@@ -38,6 +39,11 @@ class WorkflowTemplate:
     control_ports: Mapping[str, str] = MappingProxyType({})
 
     def __post_init__(self) -> None:
+        if self.configuration_sha256 is not None:
+            import re
+
+            if not re.fullmatch(r"[0-9a-f]{64}", self.configuration_sha256):
+                raise ValueError("configuration_sha256 must be a lowercase SHA256")
         for field_name in ("semantic_role_ports", "control_ports"):
             values = dict(getattr(self, field_name))
             if any(not key or not value for key, value in values.items()):
@@ -88,10 +94,62 @@ MOCK_VIDEO_TEMPLATE = WorkflowTemplate(
     ),
 )
 
+PIKA_TEMPLATE = WorkflowTemplate(
+    template_id="pika-h3-flex-ref2va-benchmark-v1",
+    version=1,
+    family="pika_h3_flex_ref2va",
+    supported_controls=frozenset(
+        {
+            ControlKind.TEXT_PROMPT,
+            ControlKind.SEED,
+            ControlKind.CHARACTER_REFERENCE,
+            ControlKind.WARDROBE_REFERENCE,
+            ControlKind.LOCATION_REFERENCE,
+            ControlKind.STYLE_REFERENCE,
+        }
+    ),
+    produced_media_kinds=("video",),
+    node_classes=frozenset(
+        {
+            "UNETLoader",
+            "CLIPLoader",
+            "VAELoader",
+            "LoraLoaderModelOnly",
+            "MiniMaxH3ReferenceToVideo",
+            "RandomNoise",
+            "BasicGuider",
+            "KSamplerSelect",
+            "ManualSigmas",
+            "SamplerCustomAdvanced",
+            "VAEDecode",
+            "VAEDecodeAudio",
+            "CreateVideo",
+            "SaveVideo",
+            "LoadImage",
+            "LoadAudio",
+        }
+    ),
+    semantic_role_ports=MappingProxyType(
+        {
+            "character_identity": "ref_images",
+            "outfit": "ref_images",
+            "location": "ref_images",
+            "style": "ref_images",
+            "prop": "ref_images",
+            "voice": "ref_audios",
+        }
+    ),
+    control_ports=MappingProxyType({"TEXT_PROMPT": "reference.prompt", "SEED": "noise.noise_seed"}),
+    configuration_sha256="40cd3aa752517d3b0dc19d65d4ec123e1381c3932072aa384b0c32c66f599b84",
+    sampler_class="SamplerCustomAdvanced",
+    model_checkpoint="minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+)
+
 #: Preset-id → template mapping for the offline mock pipeline (T014 replaces/extends
 #: this with its registry once preset records exist; real presets need T031 evidence).
 PRESET_TEMPLATES: Mapping[str, WorkflowTemplate] = MappingProxyType(
     {
+        "pika-h3-flex-ref2va-benchmark-v1": PIKA_TEMPLATE,
         "fake-quality-8step": MOCK_VIDEO_TEMPLATE,
         "fake-fast-4step": MOCK_VIDEO_TEMPLATE,
     }
@@ -107,6 +165,11 @@ def template_sha256(template: WorkflowTemplate) -> str:
     return sha256_hex(
         canonical_json(
             {
+                **(
+                    {"configuration_sha256": template.configuration_sha256}
+                    if template.configuration_sha256 is not None
+                    else {}
+                ),
                 "template_id": template.template_id,
                 "version": template.version,
                 "family": template.family,

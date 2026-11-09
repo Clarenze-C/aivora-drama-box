@@ -227,6 +227,11 @@
     "expect": "valid",
     "model": "PromptManifest"
   },
+  "examples/v2/valid/PromptManifest__voice.json": {
+    "canonical_sha256": "84ce89953fd3f191d5d5488fc3994f3154ee5cc11d243ab872dc66a4a995639c",
+    "expect": "valid",
+    "model": "PromptManifest"
+  },
   "examples/v2/valid/PropSheet.json": {
     "canonical_sha256": "4c684659a6e07ffb3d0302bd8dea40b04b6a503f887a21af638aff5e33b78e97",
     "expect": "valid",
@@ -254,6 +259,11 @@
   },
   "examples/v2/valid/ShotReferenceBinding.json": {
     "canonical_sha256": "d4a96f33ee90ba29461d085936950cadfabfd1ef1349029f87320568a89c1703",
+    "expect": "valid",
+    "model": "ShotReferenceBinding"
+  },
+  "examples/v2/valid/ShotReferenceBinding__voice.json": {
+    "canonical_sha256": "e957341c0b9042f1cbbe6cd7b434972955522539b001838e6aff11ff78cec5c9",
     "expect": "valid",
     "model": "ShotReferenceBinding"
   },

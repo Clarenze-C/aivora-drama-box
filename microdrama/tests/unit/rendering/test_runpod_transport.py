@@ -600,3 +600,196 @@ def test_billing_amounts_round_to_the_microcent_atom() -> None:
     assert _amount_micro("1.25") == 1_250_000
     with pytest.raises(ValueError):
         _amount_micro(-0.01)
+
+
+@pytest.mark.parametrize(
+    "total,gpu,cpu,disk,expected",
+    [
+        ("0.0357532", "0.0351746", "0", "0.0005786", (35175, 0, 578)),
+        ("0.0000008", "0.0000004", "0", "0.0000004", (1, 0, 0)),
+        ("0.0000015", "0.0000005", "0.0000005", "0.0000005", (1, 1, 0)),
+        ("0.0000012", "0.0000004", "0.0000004", "0.0000004", (1, 0, 0)),
+        ("0", "0", "0", "0", (0, 0, 0)),
+        (
+            "0.03575302881654352",
+            "0.03517432510852814",
+            "0",
+            "0.0005787037080153823",
+            (35174, 0, 579),
+        ),
+        ("0.000001000001", "0.000001", "0", "0", (1, 0, 0)),
+        ("0.000000999999", "0.000001", "0", "0", (1, 0, 0)),
+    ],
+)
+def test_billing_allocation_conserves_total_and_raw_evidence(
+    total: str,
+    gpu: str,
+    cpu: str,
+    disk: str,
+    expected: tuple[int, int, int],
+) -> None:
+    from microdrama.rendering.runpod_transport import _amount_micro, _billing_record
+
+    record = _billing_record(
+        {
+            "podId": "pod-123",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": total,
+            "gpuAmount": gpu,
+            "cpuAmount": cpu,
+            "diskAmount": disk,
+        }
+    )
+    atoms = (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd)
+    assert atoms == expected
+    assert sum(atoms) == record.total_micro_usd == _amount_micro(total)
+    assert record.raw_amounts == (total, gpu, cpu, disk)
+    assert record.raw_components_match
+    assert "tolerance-usd=1e-12" in record.normalization_policy
+
+
+@pytest.mark.parametrize("bad", ["NaN", "sNaN", "Infinity", "-Infinity", "-0.1", "bad"])
+def test_billing_invalid_money_is_refused(bad: str) -> None:
+    from decimal import InvalidOperation
+
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    for field in ("totalAmount", "gpuAmount", "cpuAmount", "diskAmount"):
+        row = {
+            "podId": "p",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": "0",
+            "gpuAmount": "0",
+            "cpuAmount": "0",
+            "diskAmount": "0",
+        }
+        row[field] = bad
+        with pytest.raises((ValueError, InvalidOperation)):
+            _billing_record(row)
+
+
+@pytest.mark.parametrize("total", ["0.0000010000011", "0.0000009999989", "0.1"])
+def test_billing_real_mismatch_is_not_normalized(total: str) -> None:
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    record = _billing_record(
+        {
+            "podId": "p",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": total,
+            "gpuAmount": "0.000001",
+            "cpuAmount": "0",
+            "diskAmount": "0",
+        }
+    )
+    assert not record.raw_components_match
+    assert record.gpu_micro_usd == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"GPU A40 unavailable; reflected fixture-secret",
+        b'{"aUtHoRiZaTiOn": "bEaReR synthetic-other-secret", "detail": "GPU unavailable"}',
+        b"X-Api-Key: synthetic-other-secret\nGPU unavailable",
+    ],
+)
+def test_runpod_error_redacts_credentials_preserves_gpu(body: bytes) -> None:
+    provider = _provider(ScriptedTransport(lambda *_: Response(401, body)))
+    with pytest.raises(ProviderError) as caught:
+        provider._call("GET", "/pods")
+    message = str(caught.value)
+    assert "fixture-secret" not in message
+    assert "synthetic-other-secret" not in message
+    assert "GPU" in message
+    assert len(message) < 600
+
+
+def test_runpod_error_body_read_and_uncertain_cause_are_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.rendering import runpod_transport as rt
+    from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT
+
+    class BoundedBody(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            assert size == DIAGNOSTIC_READ_LIMIT
+            return super().read(size)
+
+    def refuses(*args: Any, **kwargs: Any) -> Any:
+        raise rt.HTTPError(
+            "https://runpod.invalid",
+            401,
+            "no",
+            {},
+            BoundedBody(b"GPU unavailable\nAuthorization: Bearer hidden-token\n" + b"x" * 10000),
+        )
+
+    monkeypatch.setattr(rt, "urlopen", refuses)
+    response = rt.UrllibRunpodTransport().request("GET", "https://runpod.invalid", headers={})
+    assert len(response.body) <= 500
+    assert b"hidden-token" not in response.body
+    assert b"GPU unavailable" in response.body
+
+    def uncertain(*args: Any, **kwargs: Any) -> Any:
+        raise rt.URLError("fixture-secret connection reset; Authorization: Bearer hidden-token")
+
+    monkeypatch.setattr(rt, "urlopen", uncertain)
+    headers = {"Authorization": "Bearer fixture-secret"}
+    with pytest.raises(NeedsReconciliation) as caught:
+        rt.UrllibRunpodTransport().request("POST", "https://runpod.invalid", headers=headers)
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "fixture-secret" not in rendered and "hidden-token" not in rendered
+    assert "connection reset" in rendered
+
+
+@pytest.mark.parametrize(
+    "sensitive",
+    [
+        "Cookie: theme=dark; sessionid=synthetic-session-secret",
+        "Authorization: Bearer\n synthetic-continuation-secret",
+        '"Authorization": "Bearer synthetic-prefix,synthetic-secret-tail"',
+        '"Authorization": "Bearer synthetic-prefix;synthetic-secret-tail"',
+    ],
+)
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_complete_unknown_sensitive_values_are_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: str,
+    uncertain: bool,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.rendering import runpod_transport as transport_module
+
+    # No reflected value is present in request headers or the credential resolver.
+    body = ("GPU unavailable\n" + sensitive + '\n{"detail":"schema mismatch"}').encode()
+
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        if uncertain:
+            raise transport_module.URLError(body.decode())
+        raise transport_module.HTTPError(
+            "https://provider.invalid", 401, "no", {}, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(transport_module, "urlopen", fails)
+    expected = NeedsReconciliation if uncertain else ProviderError
+    with pytest.raises(expected) as caught:
+        _provider(transport_module.UrllibRunpodTransport())._call("POST", "/pods")
+    rendered = "".join(traceback.format_exception(caught.value))
+    for marker in (
+        "synthetic-session-secret",
+        "synthetic-continuation-secret",
+        "synthetic-prefix",
+        "synthetic-secret-tail",
+    ):
+        assert marker not in rendered
+    assert "GPU unavailable" in str(caught.value)
+    assert "schema mismatch" in str(caught.value)

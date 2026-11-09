@@ -2021,7 +2021,22 @@ VALID_BUILDERS: dict[str, Callable[[], BaseModel]] = {
     "DomainEvent": domain_event,
 }
 
+
+def v2_voice_binding_example() -> ShotReferenceBinding:
+    return v2_reference_binding(ReferenceRole.VOICE, "fon", "fon-voice", "fon-voice-wav")
+
+
+def v2_voice_prompt_example() -> PromptManifest:
+    fields = v2_prompt_manifest().model_dump(mode="python", exclude={"content_sha256"})
+    voice = v2_voice_binding_example()
+    fields["bindings"] = [*v2_prompt_manifest().bindings, voice]
+    fields["source_hashes"] = [*fields["source_hashes"], voice.content_sha256, voice.asset_sha256]
+    return PromptManifest.seal(**fields)
+
+
 EXTRA_VALID: dict[str, Callable[[], BaseModel]] = {
+    "ShotReferenceBinding__voice": v2_voice_binding_example,
+    "PromptManifest__voice": v2_voice_prompt_example,
     "ApprovalCommand__gate2_revise": approval_gate2_revise,
     "RightsRecord": rights_record,
     "PresetRecord": preset_record,

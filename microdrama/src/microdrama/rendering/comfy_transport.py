@@ -29,6 +29,7 @@ from microdrama.contracts.providers import (
     ComfyOutputFile,
     ComfyProgressEvent,
 )
+from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT, safe_diagnostic
 
 
 class HttpTransport(Protocol):
@@ -51,7 +52,7 @@ class ComfyRequestAuthorization:
 
 
 class UrllibTransport:
-    """Small stdlib transport; no retries and no response bodies in raised errors."""
+    """Small stdlib transport; no retries, bounded sanitized diagnostics."""
 
     def request(
         self,
@@ -66,27 +67,20 @@ class UrllibTransport:
             with urlopen(request, timeout=30) as response:  # noqa: S310 - configured endpoint
                 return response.read()
         except HTTPError as exc:
-            # T031 run9 (2026-11-05): the first live ComfyUI call failed with a
-            # bare message - carry the status and a bounded body excerpt (the
-            # endpoint's own error text is diagnostics, not a secret), same as
-            # the Runpod transport does since T031 run3.
-            detail = ""
             try:
-                detail = exc.read().decode("utf-8", "replace").strip()[:500]
-            except Exception:  # noqa: BLE001 - the excerpt is best-effort
+                detail = safe_diagnostic(exc.read(DIAGNOSTIC_READ_LIMIT), headers)
+            except Exception:  # noqa: BLE001 - diagnostics are best-effort
                 detail = ""
             raise ProviderError(
                 f"ComfyUI returned an HTTP error: {exc.code} {detail}".strip(),
                 status=exc.code,
-            ) from exc
+            ) from None
         except (TimeoutError, URLError) as exc:
-            # T031 run13 (2026-11-05): name the cause - a sub-second
-            # connection-level failure stopped the run for a human and the
-            # recorded reason carried nothing diagnosable.
+            detail = safe_diagnostic(str(exc), headers)
             raise NeedsReconciliation(
                 "ComfyUI transport outcome is uncertain; reconcile by durable "
-                f"prompt ID (cause: {type(exc).__name__}: {exc})"
-            ) from exc
+                f"prompt ID (cause: {type(exc).__name__}: {detail})"
+            ) from None
 
 
 class ComfyHttpClient:

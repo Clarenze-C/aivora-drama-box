@@ -1,0 +1,423 @@
+"""Durable T031 coordination. No provider calls or secondary money ledger live here."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+from microdrama.budget.ledger import episode_account_id, lock_account, lock_categories
+from microdrama.budget.service import BudgetService
+from microdrama.contracts.cost import BudgetReservationRequest
+from microdrama.contracts.errors import BudgetExhausted, Conflict, NotFound
+from microdrama.contracts.hashing import canonical_hash
+from microdrama.persistence.db import Database, Tx, jsonb
+
+SCREEN_IDS = ("S01-R1", "S03-R1", "S07-R1")
+TERMINAL_SAMPLES = {"SUCCEEDED", "FAILED"}
+
+
+def document(value: Any) -> dict[str, Any]:
+    return value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)
+
+
+def decode_seal(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    result = dict(row)
+    payload = result["manifest"]
+    if set(payload) == {"canonical_document_json"}:
+        payload = json.loads(payload["canonical_document_json"])
+    from microdrama.pipeline.benchmark_authorization import document_sha256
+
+    if document_sha256(payload) != result["sealed_sha256"]:
+        raise Conflict("durable seal document failed hash verification")
+    result["manifest"] = payload
+    return result
+
+
+def experiment_row(tx: Tx, experiment_id: UUID, *, lock: bool = False) -> dict[str, Any]:
+    row = tx.fetchone(
+        "SELECT * FROM benchmark_experiments WHERE experiment_id=%s"
+        + (" FOR UPDATE" if lock else ""),
+        (experiment_id,),
+    )
+    if row is None:
+        raise NotFound("benchmark experiment not found")
+    return row
+
+
+def exposure(tx: Tx, experiment_id: UUID) -> dict[str, int]:
+    """Canonical counters, each linked reservation once. CREDIT never replenishes."""
+    row = tx.fetchone(
+        "SELECT COALESCE(SUM(r.accrued_micro_usd),0)::bigint accrued, "
+        "COALESCE(SUM(r.settled_micro_usd),0)::bigint settled, "
+        "COALESCE(SUM(CASE WHEN r.state='ACTIVE' THEN "
+        "GREATEST(r.reserved_micro_usd-r.accrued_micro_usd,0) ELSE 0 END),0)::bigint holds "
+        "FROM benchmark_reservation_links l JOIN reservations r ON r.id=l.reservation_id "
+        "WHERE l.experiment_id=%s",
+        (experiment_id,),
+    )
+    assert row is not None
+    # Disk/CPU allocations may be posted without a reservation. Attribute only a
+    # canonical charge identity observed on this experiment's actual owned pods.
+    unreserved = tx.fetchval(
+        "SELECT COALESCE(SUM(c.amount_micro_usd),0)::bigint FROM charges c "
+        "WHERE c.reservation_id IS NULL AND c.kind<>'CREDIT' AND c.id IN ("
+        "SELECT p.charge_id FROM runpod_billing_budget_postings p "
+        "JOIN runpod_billing_allocations a USING(allocation_id) "
+        "JOIN runpod_billing_buckets b ON b.observation_id=a.bucket_observation_id "
+        "JOIN pod_leases pl ON pl.pod_id=b.pod_id "
+        "JOIN benchmark_acquisitions ba ON ba.lease_id=pl.id "
+        "WHERE ba.experiment_id=%s)",
+        (experiment_id,),
+    )
+    row["unreserved_settled"] = int(unreserved)
+    row["total"] = sum(int(row[k]) for k in ("accrued", "settled", "holds", "unreserved_settled"))
+    return {k: int(v) for k, v in row.items()}
+
+
+def gpu_ms(tx: Tx, experiment_id: UUID, now: datetime) -> int:
+    return int(
+        tx.fetchval(
+            "SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM "
+            "(COALESCE(compute_window_end,%s)-create_intent_at))*1000)),0)::bigint "
+            "FROM benchmark_acquisitions WHERE experiment_id=%s AND state<>'NO_CREATE_PROVEN'",
+            (now, experiment_id),
+        )
+    )
+
+
+class ExperimentBudgetService(BudgetService):
+    """Canonical reserve plus experiment sub-limit in the same account transaction."""
+
+    def __init__(
+        self,
+        *args: Any,
+        experiment_id: UUID,
+        cleanup_floor_micro_usd: int = 0,
+        authorization_cap_micro_usd: int | None = None,
+        authorization_gpu_ms: int | None = None,
+        authorization_deadline: datetime | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(*args, **kwargs)
+        self.experiment_id = experiment_id
+        self.cleanup_floor_micro_usd = cleanup_floor_micro_usd
+        self.authorization_cap_micro_usd = authorization_cap_micro_usd
+        self.authorization_gpu_ms = authorization_gpu_ms
+        self.authorization_deadline = authorization_deadline
+
+    def reserve(self, request: BudgetReservationRequest):
+        with self._db.transaction() as tx:
+            return self.reserve_linked(tx, request)
+
+    def reserve_linked(
+        self,
+        tx: Tx,
+        request: BudgetReservationRequest,
+        *,
+        acquisition_id: UUID | None = None,
+        sample_id: str | None = None,
+        purpose: str | None = None,
+    ):
+        account_id = episode_account_id(tx, request.episode_id)
+        acct = lock_account(tx, account_id)
+        lock_categories(tx, account_id)
+        exp = experiment_row(tx, self.experiment_id, lock=True)
+        if exp["account_id"] != acct.id or exp["episode_id"] != request.episode_id:
+            raise Conflict("experiment reservation account differs")
+        acquisitions = tx.fetchall(
+            "SELECT * FROM benchmark_acquisitions WHERE experiment_id=%s AND state NOT IN ('CLOSED','NO_CREATE_PROVEN') ORDER BY acquisition_id FOR UPDATE",
+            (self.experiment_id,),
+        )
+        tx.fetchone(
+            "SELECT * FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+            (self.experiment_id,),
+        )
+        if sample_id is not None:
+            tx.fetchone(
+                "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id=%s FOR UPDATE",
+                (self.experiment_id, sample_id),
+            )
+        tx.fetchall(
+            "SELECT r.id FROM reservations r JOIN benchmark_reservation_links l ON l.reservation_id=r.id WHERE l.experiment_id=%s ORDER BY r.id FOR UPDATE OF r",
+            (self.experiment_id,),
+        )
+        cleanup = request.is_shutdown_or_cleanup
+        if not cleanup:
+            if exp["execution_outcome"] is not None or exp["execution_state"] in (
+                "NEEDS_RECONCILIATION",
+                "SCREEN_REVIEW",
+            ):
+                raise BudgetExhausted(
+                    f"experiment does not admit new work ({exp['execution_state']}, {exp['execution_outcome']})"
+                )
+            if exp["hard_stop"] is None or self._now() >= min(
+                exp["hard_stop"], self.authorization_deadline or exp["hard_stop"]
+            ):
+                raise BudgetExhausted("experiment deadline reached or unsealed")
+            if gpu_ms(tx, self.experiment_id, self._now()) >= min(
+                exp["gpu_limit_ms"], self.authorization_gpu_ms or exp["gpu_limit_ms"]
+            ):
+                raise BudgetExhausted("aggregate experiment GPU time exhausted")
+            if any(a["state"] == "UNKNOWN" for a in acquisitions):
+                raise BudgetExhausted("unresolved provider liability blocks experiment work")
+        result = super().reserve_in_transaction(tx, request)
+        if purpose is None:
+            purpose = (
+                "CLEANUP"
+                if cleanup
+                else ("COMPUTE" if request.operation_kind == "pod.lease" else "PROMPT")
+            )
+        if acquisition_id is None and acquisitions:
+            acquisition_id = acquisitions[0]["acquisition_id"]
+        existing = tx.fetchone(
+            "SELECT * FROM benchmark_reservation_links WHERE reservation_id=%s", (result.id,)
+        )
+        if existing is not None:
+            if (
+                existing["experiment_id"] != self.experiment_id
+                or existing["purpose"] != purpose
+                or (sample_id is not None and existing["sample_id"] != sample_id)
+            ):
+                raise Conflict("reservation already linked to another experiment intent")
+        else:
+            tx.execute(
+                "INSERT INTO benchmark_reservation_links(reservation_id,experiment_id,acquisition_id,sample_id,purpose) VALUES(%s,%s,%s,%s,%s)",
+                (result.id, self.experiment_id, acquisition_id, sample_id, purpose),
+            )
+        # Candidate is already in canonical projection. Never add worst_case again.
+        floor = 0 if cleanup else max(acct.shutdown_reserve, self.cleanup_floor_micro_usd)
+        if not cleanup and exposure(tx, self.experiment_id)["total"] + floor > min(
+            exp["cap_micro_usd"], self.authorization_cap_micro_usd or exp["cap_micro_usd"]
+        ):
+            raise BudgetExhausted("experiment shared sub-limit exhausted")
+        if not cleanup:
+            current = tx.fetchone(
+                "SELECT reserved_outstanding_micro_usd+accrued_micro_usd+settled_micro_usd committed FROM budget_accounts WHERE id=%s",
+                (acct.id,),
+            )
+            if current["committed"] + floor > acct.cap:
+                raise BudgetExhausted("episode allowance must retain cleanup floor")
+        return result
+
+
+class BenchmarkRepository:
+    def __init__(self, db: Database, clock: Any):
+        self.db, self.clock = db, clock
+
+    def prepare(self, plan: Any) -> dict[str, Any]:
+        from microdrama.pipeline.benchmark_authorization import BenchmarkPlan
+
+        plan = BenchmarkPlan.model_validate(document(plan))
+        data = document(plan)
+        experiment_id, episode_id = UUID(str(data["experiment_id"])), UUID(str(data["episode_id"]))
+        identity = dict(data)
+        identity.pop("experiment_id", None)
+        digest = canonical_hash(identity)
+        with self.db.transaction() as tx:
+            account_id = episode_account_id(tx, episode_id)
+            lock_account(tx, account_id)
+            existing = tx.fetchone(
+                "SELECT * FROM benchmark_experiments WHERE experiment_id=%s", (experiment_id,)
+            )
+            if existing:
+                if existing["plan_sha256"] != digest:
+                    raise Conflict("experiment UUID reused with changed canonical plan")
+                return existing
+            alias = tx.fetchone(
+                "SELECT * FROM benchmark_experiments WHERE episode_id=%s AND plan_sha256=%s",
+                (episode_id, digest),
+            )
+            if alias:
+                return alias
+            samples = data["samples"]
+            if len(samples) != 24 or set(data["screen_sample_ids"]) != set(SCREEN_IDS):
+                raise Conflict("benchmark requires exact 24 samples and three frozen screening IDs")
+            tx.execute(
+                "INSERT INTO benchmark_experiments(experiment_id,episode_id,account_id,plan_sha256,plan,cap_micro_usd,gpu_limit_ms) VALUES(%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    experiment_id,
+                    episode_id,
+                    account_id,
+                    digest,
+                    jsonb(data),
+                    data["max_new_exposure_micro_usd"],
+                    data["max_gpu_ms"],
+                ),
+            )
+            shots = {s["shot_id"]: s for s in data["shots"]}
+            for sample in samples:
+                frozen = {"sample": sample, "shot": shots[sample["shot_id"]]}
+                tx.execute(
+                    "INSERT INTO benchmark_samples(experiment_id,sample_id,shot_id,repeat,seed,input,input_sha256) VALUES(%s,%s,%s,%s,%s,%s,%s)",
+                    (
+                        experiment_id,
+                        sample["sample_id"],
+                        sample["shot_id"],
+                        sample["repeat"],
+                        sample["seed"],
+                        jsonb(frozen),
+                        canonical_hash(frozen),
+                    ),
+                )
+            tx.execute(
+                "INSERT INTO benchmark_dispatch_slots(experiment_id) VALUES(%s)", (experiment_id,)
+            )
+            return experiment_row(tx, experiment_id)
+
+    def seal(self, experiment_id: UUID, manifest: Any) -> dict[str, Any]:
+        from microdrama.pipeline.benchmark_authorization import BenchmarkSeal
+
+        manifest = BenchmarkSeal.model_validate(document(manifest))
+        data = document(manifest)
+        from microdrama.pipeline.benchmark_authorization import (
+            canonical_document_bytes,
+            document_sha256,
+        )
+
+        digest = document_sha256(data)
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id, lock=True)
+            if (
+                str(data["experiment_id"]) != str(experiment_id)
+                or data["plan_sha256"] != exp["plan_sha256"]
+            ):
+                raise Conflict("seal plan hash differs")
+            existing = tx.fetchone(
+                "SELECT * FROM benchmark_seals WHERE experiment_id=%s", (experiment_id,)
+            )
+            if existing:
+                if existing["sealed_sha256"] != digest:
+                    raise Conflict("execution seal is immutable")
+                return decode_seal(existing)
+            tx.execute(
+                "INSERT INTO benchmark_seals(experiment_id,manifest,sealed_sha256) VALUES(%s,%s,%s)",
+                (
+                    experiment_id,
+                    jsonb(
+                        {"canonical_document_json": canonical_document_bytes(data).decode("utf-8")}
+                    ),
+                    digest,
+                ),
+            )
+            tx.execute(
+                "UPDATE benchmark_experiments SET sealed_sha256=%s,hard_stop=%s,revision=revision+1,updated_at=%s WHERE experiment_id=%s",
+                (digest, data["hard_stop_utc"], self.clock.now(), experiment_id),
+            )
+            return {"experiment_id": experiment_id, "sealed_sha256": digest, "manifest": data}
+
+    def status(self, experiment_id: UUID) -> dict[str, Any]:
+        with self.db.transaction(readonly=True) as tx:
+            exp = experiment_row(tx, experiment_id)
+            exp["samples"] = tx.fetchall(
+                "SELECT * FROM benchmark_samples WHERE experiment_id=%s ORDER BY sample_id",
+                (experiment_id,),
+            )
+            exp["acquisitions"] = tx.fetchall(
+                "SELECT * FROM benchmark_acquisitions WHERE experiment_id=%s ORDER BY generation",
+                (experiment_id,),
+            )
+            exp["exposure"] = exposure(tx, experiment_id)
+            exp["gpu_ms"] = gpu_ms(tx, experiment_id, self.clock.now())
+            exp["seal"] = decode_seal(
+                tx.fetchone(
+                    "SELECT * FROM benchmark_seals WHERE experiment_id=%s", (experiment_id,)
+                )
+            )
+            return exp
+
+    def outcome(self, experiment_id: UUID, outcome: str) -> None:
+        with self.db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_experiments SET execution_outcome=COALESCE(execution_outcome,%s),execution_state=%s,revision=revision+1,updated_at=%s WHERE experiment_id=%s",
+                (outcome, outcome, self.clock.now(), experiment_id),
+            )
+
+    def screening(self, experiment_id: UUID, decision: Any) -> dict[str, Any]:
+        data = document(decision)
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id, lock=True)
+            if exp["execution_state"] != "SCREEN_REVIEW" or exp["cleanup_state"] != "VERIFIED":
+                raise Conflict("screening requires verified GPU shutdown before human wait")
+            if data.get("sealed_sha256") != exp["sealed_sha256"] or not data.get("actor_ref"):
+                raise Conflict("screening must bind seal and actor")
+            rows = tx.fetchall(
+                "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id=ANY(%s) ORDER BY sample_id",
+                (experiment_id, list(SCREEN_IDS)),
+            )
+            hashes = {r["sample_id"]: (r["output"] or {}).get("sha256") for r in rows}
+            if (
+                len(rows) != 3
+                or any(r["state"] != "SUCCEEDED" or not hashes[r["sample_id"]] for r in rows)
+                or data.get("output_hashes") != hashes
+            ):
+                raise Conflict("screening must bind all three current durable output hashes")
+            if data.get("decision") not in ("PASS", "FAIL") or not data.get("rubric_version"):
+                raise Conflict("screening needs PASS/FAIL and rubric")
+            if data["decision"] == "PASS" and (
+                not data.get("coverage") or any(v != "PASS" for v in data["coverage"].values())
+            ):
+                raise Conflict("unknown or failed critical screening coverage blocks continuation")
+            digest = canonical_hash(data)
+            tx.execute(
+                "INSERT INTO benchmark_screenings(experiment_id,decision_sha256,decision,sealed_sha256,actor_ref,observed_at) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (
+                    experiment_id,
+                    digest,
+                    jsonb(data),
+                    exp["sealed_sha256"],
+                    data["actor_ref"],
+                    self.clock.now(),
+                ),
+            )
+            if data["decision"] == "FAIL":
+                tx.execute(
+                    "UPDATE benchmark_experiments SET execution_outcome=COALESCE(execution_outcome,'FAILED'),execution_state='FAILED' WHERE experiment_id=%s",
+                    (experiment_id,),
+                )
+            return {"decision_sha256": digest, **data}
+
+    def record_billing_evidence(
+        self, experiment_id: UUID, acquisition_id: UUID, evidence: dict[str, Any]
+    ) -> str:
+        # Whitelist fields: never store arbitrary body/headers/provider credentials.
+        allowed = {
+            "observation_identity",
+            "amounts",
+            "pod_id",
+            "interval_start",
+            "interval_end",
+            "normalization_policy",
+            "discrepancy",
+        }
+        if set(evidence) != allowed or not all(
+            isinstance(v, str) for v in evidence["amounts"].values()
+        ):
+            raise Conflict("raw billing evidence requires exact nonsecret amount strings")
+        digest = canonical_hash(evidence)
+        with self.db.transaction() as tx:
+            owned = tx.fetchval(
+                "SELECT 1 FROM benchmark_acquisitions a JOIN pod_leases p ON p.id=a.lease_id WHERE a.experiment_id=%s AND a.acquisition_id=%s AND p.pod_id=%s",
+                (experiment_id, acquisition_id, evidence["pod_id"]),
+            )
+            if not owned:
+                raise Conflict("billing evidence does not belong to experiment acquisition")
+            tx.execute(
+                "INSERT INTO benchmark_billing_evidence(experiment_id,acquisition_id,observation_identity,raw_commit_sha256,amounts,pod_id,interval_start,interval_end,normalization_policy,discrepancy) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (
+                    experiment_id,
+                    acquisition_id,
+                    evidence["observation_identity"],
+                    digest,
+                    jsonb(evidence["amounts"]),
+                    evidence["pod_id"],
+                    evidence["interval_start"],
+                    evidence["interval_end"],
+                    evidence["normalization_policy"],
+                    evidence["discrepancy"],
+                ),
+            )
+        return digest

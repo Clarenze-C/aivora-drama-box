@@ -1,0 +1,56 @@
+{
+  "source_revision": "63e5bf594339f676b4b15e072529873e3448409e",
+  "status": "CODE_FILE_INVENTORY_NOT_WEIGHT_LOAD_PROOF",
+  "files": [
+    {
+      "path": "comfy/text_encoders/qwen25_tokenizer/merges.txt",
+      "size": 1671853,
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+    },
+    {
+      "path": "comfy/text_encoders/qwen25_tokenizer/tokenizer_config.json",
+      "size": 8018,
+      "sha256": "49292bd4a58a43382bf01311bc3ed7a151a7f16fe07d155e900ea1af281555db"
+    },
+    {
+      "path": "comfy/text_encoders/qwen25_tokenizer/vocab.json",
+      "size": 2776833,
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+    },
+    {
+      "path": "comfy/text_encoders/qwen3vl.py",
+      "size": 11632,
+      "sha256": "ebcfec245796c83f6ce83512841c2c57619081973d7588c792d2673984fb3e7c"
+    },
+    {
+      "path": "comfy_extras/nodes_minimax_h3.py",
+      "size": 37078,
+      "sha256": "75514fe9093c589da231938287ef0ceeb2dcf31179143a1de9a269fb2f7bb626"
+    },
+    {
+      "path": "comfy_api/latest/_io.py",
+      "size": 106208,
+      "sha256": "c2a5aded4895a1adf1acb2df6c011fdfb74e15b0d4fd331ec00ea7562d91d91d"
+    },
+    {
+      "path": "comfy/text_encoders/minimax.py",
+      "size": 13496,
+      "sha256": "b95eb29bde115f77c941555758f3e68460fd79423a854152fb44f0e3bf03c055"
+    },
+    {
+      "path": "comfy/sd.py",
+      "size": 155272,
+      "sha256": "b61a23763053f2d8547c7b3ea7207191c54cb4b9b11931c3aedc18b62c15516c"
+    },
+    {
+      "path": "comfy/ldm/minimax/audio_vae.py",
+      "size": 15950,
+      "sha256": "470f7f07be8c38634b85e719bbf5d0f04ce12d2a2c9253791db61930d15e8121"
+    },
+    {
+      "path": "comfy/ldm/minimax/vae.py",
+      "size": 48395,
+      "sha256": "cf8254ca37cef66e99863fa0c8ba45f9883911fb44d42be3060b65d731f786d9"
+    }
+  ]
+}

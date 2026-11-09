@@ -295,3 +295,92 @@ def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(ct, "urlopen", resets_wrapped)
     with pytest.raises(NeedsReconciliation, match="URLError.*connection reset"):
         ct.UrllibTransport().request("POST", "https://comfy.invalid/prompt", headers={})
+
+
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_diagnostic_redaction_before_exception_or_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    uncertain: bool,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.contracts.errors import ProviderError
+    from microdrama.rendering import comfy_transport as ct
+    from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT
+
+    class BoundedBody(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            assert size == DIAGNOSTIC_READ_LIMIT
+            return super().read(size)
+
+    detail = (
+        b"GPU schema invalid; reflected synthetic-key\n"
+        b'{"aUtHoRiZaTiOn": "bEaReR synthetic-unknown"}\n' + b"x" * 10000
+    )
+
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        if uncertain:
+            raise ct.URLError(detail.decode())
+        raise ct.HTTPError("https://comfy.invalid", 401, "no", {}, BoundedBody(detail))
+
+    monkeypatch.setattr(ct, "urlopen", fails)
+    expected = NeedsReconciliation if uncertain else ProviderError
+    headers = {"Authorization": "Bearer synthetic-key"}
+    with pytest.raises(expected) as caught:
+        ct.UrllibTransport().request(
+            "POST",
+            "https://comfy.invalid/prompt",
+            headers=headers,
+        )
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "synthetic-key" not in rendered and "synthetic-unknown" not in rendered
+    assert "GPU schema invalid" in str(caught.value)
+    assert len(str(caught.value)) < 700
+
+
+@pytest.mark.parametrize(
+    "sensitive",
+    [
+        "Cookie: theme=dark; sessionid=synthetic-session-secret",
+        "Authorization: Bearer\n synthetic-continuation-secret",
+        '"Authorization": "Bearer synthetic-prefix,synthetic-secret-tail"',
+        '"Authorization": "Bearer synthetic-prefix;synthetic-secret-tail"',
+    ],
+)
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_complete_unknown_sensitive_values_are_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: str,
+    uncertain: bool,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.contracts.errors import ProviderError
+    from microdrama.rendering import comfy_transport as transport_module
+
+    # No reflected value is present in request headers or the credential resolver.
+    body = ("GPU unavailable\n" + sensitive + '\n{"detail":"schema mismatch"}').encode()
+
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        if uncertain:
+            raise transport_module.URLError(body.decode())
+        raise transport_module.HTTPError(
+            "https://provider.invalid", 401, "no", {}, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(transport_module, "urlopen", fails)
+    expected = NeedsReconciliation if uncertain else ProviderError
+    with pytest.raises(expected) as caught:
+        transport_module.UrllibTransport().request("POST", "https://provider.invalid", headers={})
+    rendered = "".join(traceback.format_exception(caught.value))
+    for marker in (
+        "synthetic-session-secret",
+        "synthetic-continuation-secret",
+        "synthetic-prefix",
+        "synthetic-secret-tail",
+    ):
+        assert marker not in rendered
+    assert "GPU unavailable" in str(caught.value)
+    assert "schema mismatch" in str(caught.value)

@@ -39,7 +39,7 @@ def test_committed_contracts_match_source() -> None:
 
 def test_version_file() -> None:
     assert (
-        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "2.15.0"
+        (MODULE_ROOT / "contracts" / "VERSION").read_text().strip() == CONTRACT_VERSION == "2.16.0"
     )
 
 

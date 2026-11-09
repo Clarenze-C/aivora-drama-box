@@ -741,6 +741,7 @@ class LocationLayout(V2Record):
 
 
 class ReferenceRole(StrEnum):
+    VOICE = "voice"
     CHARACTER_IDENTITY = "character_identity"
     OUTFIT = "outfit"
     LOCATION = "location"
@@ -786,6 +787,8 @@ class PromptManifest(V2Record):
         for binding in self.bindings:
             key = (binding.role, binding.subject_id)
             old = roles.get(key)
+            if binding.role is ReferenceRole.VOICE and old is not None:
+                raise ValueError("one voice anchor per speaker is required")
             if old is not None and (old.asset_id, old.asset_version, old.asset_sha256) != (
                 binding.asset_id,
                 binding.asset_version,

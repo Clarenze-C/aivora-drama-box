@@ -715,6 +715,71 @@ class LeaseService:
                     pass
             raise
 
+    def claim_pre_reserved(
+        self, request: PodLeaseClaimRequest, reservation_id: UUID
+    ) -> LeaseHandle:
+        """Recover a benchmark intent's existing hold before any provider effect.
+
+        This never reserves, renews expiry or creates a Pod. Ordinary claim defaults
+        and the one-live-lease rule remain enforced by the same insertion path.
+        """
+        spec = PodSpec(
+            gpu_type_allowlist=(request.gpu_type,),
+            max_hourly_price_micro_usd=self._config.max_hourly_price_micro_usd,
+            min_host_ram_gb=request.host_ram_gb,
+            container_image=self._config.container_image,
+        )
+        check_acquisition_filters(
+            spec,
+            allowed_gpu_types=self._config.allowed_gpu_types,
+            min_host_ram_gb=self._config.min_host_ram_gb,
+            price=self._config.price,
+        )
+        ttl = request.lease_ttl_ms or self._config.lease_ttl_ms
+        assert self._config.price is not None
+        worst = self._config.price.unit_price_micro_usd * _ceil_div(
+            ttl + self._config.shutdown_margin_ms, 1000
+        )
+        token = client_token_for(request.semantic_key)
+        with self._db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT r.*, a.episode_id account_episode_id FROM reservations r JOIN budget_accounts a ON a.id=r.account_id WHERE r.id=%s",
+                (reservation_id,),
+            )
+            bound = tx.fetchone(
+                "SELECT * FROM pod_leases WHERE reservation_id=%s", (reservation_id,)
+            )
+        if row is None or any(
+            (
+                row["semantic_key"] != request.semantic_key,
+                row["episode_id"] != request.episode_id,
+                row["account_episode_id"] != request.episode_id,
+                row["provider"] != self._manager.provider_id,
+                row["operation_kind"] != LEASE_OPERATION_KIND,
+                row["reserved_micro_usd"] != worst,
+                row["job_id"] != request.job_id,
+            )
+        ):
+            raise Conflict("pre-reserved hold does not belong to this lease intent")
+        if bound is not None:
+            if bound["client_token"] != token or bound["owner_job_id"] != request.job_id:
+                raise Conflict("pre-reserved hold is already owned by another lease")
+            return LeaseHandle(self._contract(bound), replayed=True)
+        if row["state"] != "ACTIVE" or row["expires_at"] <= self._now():
+            raise Conflict("pre-reserved lease hold is inactive or expired")
+        reservation = Reservation(
+            id=row["id"],
+            account_id=row["account_id"],
+            category=BudgetCategory(row["category"]),
+            semantic_key=row["semantic_key"],
+            state=ReservationState(row["state"]),
+            reserved_micro_usd=row["reserved_micro_usd"],
+            accrued_micro_usd=row["accrued_micro_usd"],
+            settled_micro_usd=row["settled_micro_usd"],
+            replayed=True,
+        )
+        return self._insert_claim(request, reservation, token, ttl)
+
     def _find_by_token(self, token: str) -> dict[str, Any] | None:
         with self._db.transaction(readonly=True) as tx:
             return tx.fetchone(

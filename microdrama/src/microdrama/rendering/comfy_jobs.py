@@ -425,6 +425,52 @@ class ComfyRenderService:
 
     # --- submission ----------------------------------------------------------------------
 
+    def adopt_reserved_attempt(self, request: RenderRequest, reservation_id: UUID) -> Reservation:
+        """Adopt the exact durable benchmark hold without making a second reservation."""
+        if request.reservation_id != reservation_id or request.attempt_number != 1:
+            raise Conflict("benchmark adoption requires its fixed first-attempt reservation")
+        self._verify_reservation(request)
+        with self._db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT r.*, a.episode_id account_episode_id FROM reservations r JOIN budget_accounts a ON a.id=r.account_id WHERE r.id=%s",
+                (reservation_id,),
+            )
+            owned = tx.fetchone(
+                "SELECT s.job_id FROM benchmark_samples s JOIN benchmark_reservation_links l ON l.reservation_id=s.reservation_id WHERE s.reservation_id=%s AND l.sample_id=s.sample_id AND l.experiment_id=s.experiment_id AND l.purpose='PROMPT'",
+                (reservation_id,),
+            )
+        expected = self._reservation_request(
+            episode_id=request.episode_id, semantic_key=request.semantic_key
+        )
+        if (
+            row is None
+            or owned is None
+            or owned["job_id"] is None
+            or any(
+                (
+                    row["account_episode_id"] != request.episode_id,
+                    row["reserved_micro_usd"] != expected.worst_case_micro_usd,
+                    row["expires_at"] <= self._now(),
+                    row["job_id"] is not None and row["job_id"] != owned["job_id"],
+                )
+            )
+        ):
+            raise Conflict(
+                "pre-reserved prompt hold size, account, expiry or sample ownership differs"
+            )
+        self._verify_job(owned["job_id"], request)
+        return Reservation(
+            id=row["id"],
+            account_id=row["account_id"],
+            category=BudgetCategory(row["category"]),
+            semantic_key=row["semantic_key"],
+            state=ReservationState(row["state"]),
+            reserved_micro_usd=row["reserved_micro_usd"],
+            accrued_micro_usd=row["accrued_micro_usd"],
+            settled_micro_usd=row["settled_micro_usd"],
+            replayed=True,
+        )
+
     def _template_for(self, request: RenderRequest) -> WorkflowTemplate:
         template = PRESET_TEMPLATES.get(request.preset_id)
         if template is None:
@@ -1018,7 +1064,11 @@ class ComfyRenderService:
                     provider=row["provider"],
                     provider_receipt_id=f"comfy-settle:{row['id']}",
                     kind=ReceiptKind.SETTLEMENT,
-                    cost_basis=CostBasis.BILLED,
+                    cost_basis=(
+                        CostBasis.SYNTHETIC_FAKE
+                        if self.provenance is Provenance.FAKE_SYNTHETIC
+                        else CostBasis.BILLED
+                    ),
                     reservation_id=row["reservation_id"],
                     episode_id=row["episode_id"],
                     season_id=None,

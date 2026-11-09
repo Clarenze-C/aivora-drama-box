@@ -65,6 +65,7 @@ def resolve_shot_reference_expectations(
     location_layouts: Sequence[LocationLayout],
     state_events=(),
     explicit_frames: Sequence[ShotReferenceBinding] = (),
+    voice_subject_ids: Sequence[str] = (),
     required_frame_roles: frozenset[ReferenceRole] = frozenset(),
     style_subject_id: str,
     assert_current: CurrentRecordCheck | None = None,
@@ -137,6 +138,19 @@ def resolve_shot_reference_expectations(
             max(identity.valid_from, identity.validity_from),
             min(filter(None, [identity.valid_until, identity.validity_until]), default=None),
             (identity.content_sha256, identity.asset_sha256),
+        )
+    if len(set(voice_subject_ids)) != len(voice_subject_ids):
+        raise SchemaInvalid("one voice anchor per speaker is required")
+    for speaker in voice_subject_ids:
+        voice = one_sheet("voice", speaker)
+        expected[(ReferenceRole.VOICE, speaker)] = ExpectedReference(
+            voice.asset_id,
+            voice.asset_version,
+            voice.asset_sha256,
+            voice.rights,
+            max(voice.valid_from, voice.validity_from),
+            min(filter(None, [voice.valid_until, voice.validity_until]), default=None),
+            (voice.content_sha256, voice.asset_sha256),
         )
     assignments = [
         item

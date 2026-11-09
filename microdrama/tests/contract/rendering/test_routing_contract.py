@@ -36,7 +36,11 @@ from microdrama.rendering.workflows import (
 
 #: The consumed mapping: routing may only dispatch presets T013 mapped. Adding an
 #: entry is a conscious T013 change (handoff proposal), never a local one.
-PINNED_PRESET_TEMPLATE_KEYS = ("fake-fast-4step", "fake-quality-8step")
+PINNED_PRESET_TEMPLATE_KEYS = (
+    "fake-fast-4step",
+    "fake-quality-8step",
+    "pika-h3-flex-ref2va-benchmark-v1",
+)
 
 pytestmark = [pytest.mark.db, pytest.mark.ffmpeg]
 

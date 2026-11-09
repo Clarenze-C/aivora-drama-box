@@ -60,7 +60,7 @@
       "type": "object"
     }
   },
-  "$id": "urn:microdrama:contracts:2.15.0:SeasonStoryLedger",
+  "$id": "urn:microdrama:contracts:2.16.0:SeasonStoryLedger",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

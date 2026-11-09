@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -33,6 +33,7 @@ from microdrama.contracts.errors import (
     TransientProviderError,
 )
 from microdrama.contracts.providers import PodCreateRequest, PodInfo
+from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT, safe_diagnostic
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,7 @@ class RunpodQuoteAttestation:
 
 @dataclass(frozen=True)
 class RunpodBillingRecord:
-    """Unmodified provider billing bucket, not a per-second lease receipt."""
+    """Provider bucket with raw evidence and atom projection, not a lease receipt."""
 
     pod_id: str
     interval_start: datetime
@@ -109,6 +110,11 @@ class RunpodBillingRecord:
     gpu_micro_usd: int
     cpu_micro_usd: int
     disk_micro_usd: int
+    # Exact provider decimal strings and policy accompany the rounded projection.
+    raw_amounts: tuple[str, str, str, str] | None = None  # total, GPU, CPU, disk
+    raw_discrepancy_usd: str | None = None
+    normalization_policy: str | None = None
+    raw_components_match: bool = True
 
 
 @dataclass(frozen=True)
@@ -157,9 +163,16 @@ class UrllibRunpodTransport:
             with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed Runpod origin
                 return _Response(response.status, response.read())
         except HTTPError as exc:
-            return _Response(exc.code, exc.read())
+            try:
+                detail = safe_diagnostic(exc.read(DIAGNOSTIC_READ_LIMIT), headers)
+            except Exception:  # noqa: BLE001 - diagnostics are best-effort
+                detail = ""
+            return _Response(exc.code, detail.encode())
         except (TimeoutError, URLError) as exc:
-            raise NeedsReconciliation("Runpod request timed out; Pod outcome is unknown") from exc
+            detail = safe_diagnostic(str(exc), headers)
+            raise NeedsReconciliation(
+                f"Runpod request timed out; Pod outcome is unknown (cause: {detail})"
+            ) from None
 
 
 def pod_name(namespace: str, client_token: str) -> str:
@@ -242,13 +255,7 @@ class RunpodRestProvider:
                 "Runpod API temporarily unavailable", status=response.status
             )
         if response.status < 200 or response.status >= 300:
-            # T031 run3 (2026-11-04): three consecutive create refusals were
-            # diagnosed blind because the provider's error body and status never
-            # reached the operator. Carry both in the message (bounded excerpt;
-            # provider error bodies are diagnostics, not secrets).
-            detail = ""
-            if response.body:
-                detail = response.body.decode("utf-8", "replace").strip()[:500]
+            detail = safe_diagnostic(response.body[:DIAGNOSTIC_READ_LIMIT], headers)
             raise ProviderError(
                 f"Runpod rejected request: HTTP {response.status} {detail}".strip(),
                 status=response.status,
@@ -257,8 +264,8 @@ class RunpodRestProvider:
             return {}
         try:
             return json.loads(response.body, parse_float=Decimal)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProviderError("Runpod returned invalid JSON", status=response.status) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ProviderError("Runpod returned invalid JSON", status=response.status) from None
 
     def _to_info(self, data: Mapping[str, Any]) -> PodInfo:
         try:
@@ -593,33 +600,73 @@ def _parse_time(value: Any) -> datetime:
     return parsed
 
 
+# Policy: tolerate at most one millionth of a micro-USD of representation noise.
+_BILLING_TOLERANCE_USD = Decimal("0.000000000001")
+_BILLING_POLICY = "decimal-largest-remainder-gpu-cpu-disk-v1;tolerance-usd=1e-12"
+
+
+def _amount_decimal(value: Any) -> Decimal:
+    amount = Decimal(str(value))
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("provider amount must be finite and nonnegative")
+    return amount
+
+
 def _amount_micro(value: Any) -> int:
-    # T031 (2026-11-05, post-run sweep): Runpod's live billing floats carry
-    # sub-microcent precision (observed: gpuAmount 0.03517432510852814); the
-    # micro-USD is the ledger's atom, so amounts round half-up to it instead of
-    # rejecting the provider's real response as malformed. Negative amounts are
-    # still refused here; credits arrive as separate bucket revisions.
-    scaled = Decimal(str(value)) * Decimal(1_000_000)
-    if scaled < 0:
-        raise ValueError("provider amount is negative")
-    return int(scaled.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    amount = _amount_decimal(value)
+    with localcontext() as ctx:
+        ctx.prec = max(28, len(amount.as_tuple().digits) + abs(amount.adjusted()) + 10)
+        return int((amount * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
 
 
 def _billing_record(value: Any) -> RunpodBillingRecord:
     if not isinstance(value, Mapping):
         raise ValueError("billing row is not an object")
+    fields = ("totalAmount", "gpuAmount", "cpuAmount", "diskAmount")
+    amounts = tuple(_amount_decimal(value[field]) for field in fields)
+    # Use enough precision for the exact input coefficients, exponents and sum.
+    with localcontext() as ctx:
+        ctx.prec = max(
+            28,
+            max(a.adjusted() for a in amounts) - min(a.as_tuple().exponent for a in amounts) + 20,
+        )
+        total, *components = amounts
+        discrepancy = total - sum(components, Decimal(0))
+        matches = abs(discrepancy) <= _BILLING_TOLERANCE_USD
+        total_micro = _amount_micro(total)
+        if matches:
+            scaled = [a * 1_000_000 for a in components]
+            atoms = [int(a.to_integral_value(rounding=ROUND_FLOOR)) for a in scaled]
+            residual = total_micro - sum(atoms)
+            # Floors need up to three atoms. Tiny tolerated negative noise at an
+            # integer boundary can instead require removing one atom.
+            if residual >= 0:
+                order = sorted(range(3), key=lambda i: (-(scaled[i] - atoms[i]), i))
+                for i in order[:residual]:
+                    atoms[i] += 1
+            else:
+                order = sorted(
+                    (i for i in range(3) if atoms[i]), key=lambda i: (scaled[i] - atoms[i], i)
+                )
+                for i in order[:-residual]:
+                    atoms[i] -= 1
+            assert sum(atoms) == total_micro
+        else:
+            # Preserve the mismatching projection; the mapper records DISPUTED.
+            atoms = [_amount_micro(a) for a in components]
     record = RunpodBillingRecord(
         pod_id=str(value["podId"]),
         interval_start=_parse_time(value["startTime"]),
         interval_end=_parse_time(value["endTime"]),
-        total_micro_usd=_amount_micro(value["totalAmount"]),
-        gpu_micro_usd=_amount_micro(value["gpuAmount"]),
-        cpu_micro_usd=_amount_micro(value["cpuAmount"]),
-        disk_micro_usd=_amount_micro(value["diskAmount"]),
+        total_micro_usd=total_micro,
+        gpu_micro_usd=atoms[0],
+        cpu_micro_usd=atoms[1],
+        disk_micro_usd=atoms[2],
+        raw_amounts=tuple(str(value[field]) for field in fields),
+        raw_discrepancy_usd=str(discrepancy),
+        normalization_policy=_BILLING_POLICY,
+        raw_components_match=matches,
     )
-    # T045 R4/R9: a total that does not equal its components is carried through and
-    # stored as a DISPUTED bucket by the janitor's mapping — refusing here would
-    # hide the provider's malformed evidence instead of recording it.
     if record.interval_end <= record.interval_start:
         raise ValueError("provider billing bucket has an empty or reversed interval")
     return record

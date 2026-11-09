@@ -424,7 +424,21 @@ fails the new attempt closed. Legacy V1 requests with all three locator/hash
 fields absent remain valid. Package version advances to 2.15.0; V1 schema IDs
 advance to 1.15.0, with V1/V2 schema versions still 1.0/2.0.
 
+## Contract 2.16.0 — additive speaker voice reference
+
+`ReferenceRole.VOICE = "voice"` identifies one voice anchor per speaker subject.
+`PromptManifest` rejects multiple VOICE bindings for the same speaker, including
+repeated identical bindings. Existing identity, outfit and location requirements
+remain mandatory. Existing payloads retain schema versions 1.0/2.0;
+`RenderRequest` and the V1 schema set 1.15.0 remain unchanged. Existing example
+payloads and hashes remain byte-identical. New examples demonstrate a voice
+binding and a manifest with an explicit speaker anchor. This additive proposal
+received independent contract guardian ACCEPT before implementation.
+
 ## Change log
+
+- **2.16.0** (2026-11-06, guardian): additive VOICE reference; one anchor per speaker.
+
 
 - **2.15.0 / V1 schema set 1.15.0** (2026-10-31, guardian): manifest-bound V2
   render requests also pin the semantic workflow/template mapping hash.
