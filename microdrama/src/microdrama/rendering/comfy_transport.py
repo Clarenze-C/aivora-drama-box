@@ -29,7 +29,11 @@ from microdrama.contracts.providers import (
     ComfyOutputFile,
     ComfyProgressEvent,
 )
-from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT, safe_diagnostic
+from microdrama.rendering.diagnostics import (
+    DIAGNOSTIC_READ_LIMIT,
+    safe_diagnostic,
+    uncertainty_cause,
+)
 
 
 class HttpTransport(Protocol):
@@ -76,10 +80,12 @@ class UrllibTransport:
                 status=exc.code,
             ) from None
         except (TimeoutError, URLError) as exc:
-            detail = safe_diagnostic(str(exc), headers)
+            # CN-3 (2026-11-09, canary-night review): the cause is the exception
+            # type plus a sanitised category; the raw exception text never
+            # reaches the message.
             raise NeedsReconciliation(
                 "ComfyUI transport outcome is uncertain; reconcile by durable "
-                f"prompt ID (cause: {type(exc).__name__}: {detail})"
+                f"prompt ID (cause: {uncertainty_cause(exc)})"
             ) from None
 
 

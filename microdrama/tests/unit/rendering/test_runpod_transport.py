@@ -809,7 +809,11 @@ def test_runpod_error_body_read_and_uncertain_cause_are_safe(
         rt.UrllibRunpodTransport().request("POST", "https://runpod.invalid", headers=headers)
     rendered = "".join(traceback.format_exception(caught.value))
     assert "fixture-secret" not in rendered and "hidden-token" not in rendered
-    assert "connection reset" in rendered
+    # CN-3 (2026-11-09): the cause is the exception type plus a sanitised
+    # category; the raw exception text never reaches the message or traceback.
+    assert "URLError/transport-error" in str(caught.value)
+    assert "connection reset" not in str(caught.value)
+    assert "connection reset" not in rendered
 
 
 @pytest.mark.parametrize(
@@ -854,5 +858,10 @@ def test_complete_unknown_sensitive_values_are_redacted(
         "synthetic-secret-tail",
     ):
         assert marker not in rendered
-    assert "GPU unavailable" in str(caught.value)
-    assert "schema mismatch" in str(caught.value)
+    if uncertain:
+        # CN-3 (2026-11-09): an uncertainty cause is the exception type plus a
+        # sanitised category only - never sanitized-but-raw body text.
+        assert "URLError/transport-error" in str(caught.value)
+    else:
+        assert "GPU unavailable" in str(caught.value)
+        assert "schema mismatch" in str(caught.value)

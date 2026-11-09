@@ -279,22 +279,25 @@ def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) 
     connection-level URLError and the runner stopped for a human - correctly -
     but the recorded reason carried no cause, leaving the operator blind (the
     third transport-masking bug of the night). The uncertainty message must
-    name the underlying error."""
+    name the underlying error.
+
+    CN-3 (2026-11-09, canary-night review): the cause is the exception type plus
+    a sanitised category - the raw exception text (which can quote credentials,
+    signed URLs or reflected bodies) never reaches the message."""
     from microdrama.contracts.errors import NeedsReconciliation
     from microdrama.rendering import comfy_transport as ct
 
-    def resets(request: Any, timeout: int) -> Any:
-        raise OSError("connection reset by peer")
-
-    class Wrapper(ct.URLError):
-        pass
-
     def resets_wrapped(request: Any, timeout: int) -> Any:
-        raise ct.URLError(OSError("connection reset by peer"))
+        raise ct.URLError(
+            OSError("connection reset by peer; token=synthetic-cause-secret")
+        )
 
     monkeypatch.setattr(ct, "urlopen", resets_wrapped)
-    with pytest.raises(NeedsReconciliation, match="URLError.*connection reset"):
+    with pytest.raises(NeedsReconciliation, match="URLError/socket-error") as caught:
         ct.UrllibTransport().request("POST", "https://comfy.invalid/prompt", headers={})
+    message = str(caught.value)
+    assert "connection reset by peer" not in message
+    assert "synthetic-cause-secret" not in message
 
 
 @pytest.mark.parametrize("uncertain", [False, True])
@@ -335,7 +338,13 @@ def test_diagnostic_redaction_before_exception_or_traceback(
         )
     rendered = "".join(traceback.format_exception(caught.value))
     assert "synthetic-key" not in rendered and "synthetic-unknown" not in rendered
-    assert "GPU schema invalid" in str(caught.value)
+    if uncertain:
+        # CN-3 (2026-11-09): uncertainty carries the type and a sanitised
+        # category only; sanitized-but-raw text stays out of the message.
+        assert "URLError/transport-error" in str(caught.value)
+        assert "GPU schema invalid" not in str(caught.value)
+    else:
+        assert "GPU schema invalid" in str(caught.value)
     assert len(str(caught.value)) < 700
 
 
@@ -382,5 +391,10 @@ def test_complete_unknown_sensitive_values_are_redacted(
         "synthetic-secret-tail",
     ):
         assert marker not in rendered
-    assert "GPU unavailable" in str(caught.value)
-    assert "schema mismatch" in str(caught.value)
+    if uncertain:
+        # CN-3 (2026-11-09): an uncertainty cause is the exception type plus a
+        # sanitised category only - never sanitized-but-raw body text.
+        assert "URLError/transport-error" in str(caught.value)
+    else:
+        assert "GPU unavailable" in str(caught.value)
+        assert "schema mismatch" in str(caught.value)

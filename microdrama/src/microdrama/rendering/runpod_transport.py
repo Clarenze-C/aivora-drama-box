@@ -33,7 +33,11 @@ from microdrama.contracts.errors import (
     TransientProviderError,
 )
 from microdrama.contracts.providers import PodCreateRequest, PodInfo
-from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT, safe_diagnostic
+from microdrama.rendering.diagnostics import (
+    DIAGNOSTIC_READ_LIMIT,
+    safe_diagnostic,
+    uncertainty_cause,
+)
 
 
 @dataclass(frozen=True)
@@ -169,9 +173,11 @@ class UrllibRunpodTransport:
                 detail = ""
             return _Response(exc.code, detail.encode())
         except (TimeoutError, URLError) as exc:
-            detail = safe_diagnostic(str(exc), headers)
+            # CN-3 (2026-11-09): the cause is the exception type plus a sanitised
+            # category; the raw exception text never reaches the message.
             raise NeedsReconciliation(
-                f"Runpod request timed out; Pod outcome is unknown (cause: {detail})"
+                "Runpod request failed before any response; Pod outcome is unknown "
+                f"(cause: {uncertainty_cause(exc)})"
             ) from None
 
 

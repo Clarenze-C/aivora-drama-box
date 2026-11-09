@@ -820,6 +820,74 @@ def test_a_create_timeout_that_created_the_pod_reconciles_to_the_same_pod(
     assert [row["pod_id"] for row in leases] == [POD]
 
 
+def test_a_rejection_echoing_credentials_never_reaches_the_record_or_stderr(
+    db: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CN-3 (2026-11-09, canary-night review): an upstream rejection that echoes
+    the run's bearer token, an api_key field, URL userinfo and a signed URL must
+    be sanitized by the REAL transport before its message exists - and the
+    sanitized message is what the persisted run record and stderr can carry.
+    All secrets are synthetic; none is a real credential."""
+
+    class RealSanitizingComfyTransport:
+        """Delegates to the real UrllibTransport so the production redaction runs."""
+
+        def request(
+            self, method: str, url: str, *, headers: Any, body: bytes | None = None
+        ) -> bytes:
+            import io
+
+            from microdrama.rendering import comfy_transport as ct
+
+            def refuses(request: Any, timeout: int) -> Any:
+                raise ct.HTTPError(
+                    request.full_url,
+                    401,
+                    "Unauthorized",
+                    {},
+                    io.BytesIO(
+                        b'{"detail":"unauthorized","api_key":"synthetic-api-key-echo",'
+                        b'"token":"synthetic-token-echo","url":"https://u:synthetic-userinfo@cdn.invalid/f.mp4'
+                        b'?X-Goog-Signature=synthetic-signed-url-value"}' + b"y" * 9000
+                    ),
+                )
+
+            monkeypatch.setattr(ct, "urlopen", refuses)
+            return ct.UrllibTransport().request(method, url, headers=headers, body=body)
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    # Effects were sent (the Pod existed), so the failed run raises NOT CLEAN -
+    # after the record was written; the exception itself must also be clean.
+    with pytest.raises(CanaryRunNotClean) as caught:
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=RunpodCanaryTransport(),
+            comfy_transport=RealSanitizingComfyTransport(),
+        )
+    record_text = caught.value.record_path.read_text()
+    stderr = capsys.readouterr().err
+    rendered = str(caught.value)
+    for secret in (
+        "synthetic-api-key-echo",
+        "synthetic-token-echo",
+        "synthetic-userinfo",
+        "synthetic-signed-url-value",
+        "fixture-dummy-value",
+    ):
+        assert secret not in record_text, secret
+        assert secret not in stderr, secret
+        assert secret not in rendered, secret
+    # The sanitized diagnostic is still informative: status and non-secret detail.
+    assert "401" in record_text and "unauthorized" in record_text
+    assert "[REDACTED]" in rendered
+
+
 def test_a_worker_crash_mid_run_leaves_the_janitor_to_stop_and_terminate(
     db: Database, tmp_path: Path
 ) -> None:

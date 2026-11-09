@@ -1,6 +1,8 @@
 """Bounded, credential-safe diagnostics shared by live HTTP transports."""
 
+import errno
 import re
+import socket
 from collections.abc import Mapping
 
 DIAGNOSTIC_READ_LIMIT = 8192
@@ -23,6 +25,13 @@ _HEADER = re.compile(
     re.I,
 )
 _BEARER = re.compile(r"(?i)\b(?:bearer|basic)\s+[^\s\"']+")
+# CN-3 (2026-11-09, canary-night review): URL userinfo and signed-URL query
+# parameters are credential material when an upstream echoes a request URL.
+_URL_USERINFO = re.compile(r"(?i)\b((?:https?|ftps?|wss?)://)[^\s/@:\"']+:[^\s/@\"']+@")
+_SIGNED_QUERY = re.compile(
+    r"(?i)([?&][a-z0-9_.-]*(?:signature|sig|credential|token|secret|key|access)"
+    r"[a-z0-9_.-]*=)[^&\s\"'<>]*"
+)
 
 
 def safe_diagnostic(value: bytes | str, headers: Mapping[str, str]) -> str:
@@ -42,7 +51,37 @@ def safe_diagnostic(value: bytes | str, headers: Mapping[str, str]) -> str:
             if text.endswith(secret[:size]):
                 text = text[:-size] + "[REDACTED]"
                 break
+    text = _URL_USERINFO.sub(lambda match: match[1] + "[REDACTED]@", text)
+    text = _SIGNED_QUERY.sub(lambda match: match[1] + "[REDACTED]", text)
     text = _QUOTED_HEADER.sub(lambda match: match[1] + '"[REDACTED]"', text)
     text = _HEADER.sub(lambda match: match[1] + "[REDACTED]", text)
     text = _BEARER.sub("[REDACTED]", text)
     return text.strip()[:DIAGNOSTIC_TEXT_LIMIT]
+
+
+def uncertainty_cause(exc: BaseException) -> str:
+    """CN-3 (2026-11-09, canary-night review): the cause an uncertainty message
+    carries is the exception TYPE plus a sanitised category - never the raw
+    exception text, which can quote request URLs with credentials, signed query
+    strings, or reflected provider bodies.
+    """
+    reason = getattr(exc, "reason", None)
+    name = type(exc).__name__
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+        return f"{name}/timeout"
+    errno_value = getattr(reason, "errno", None)
+    if errno_value in (errno.ECONNRESET, errno.ECONNABORTED):
+        return f"{name}/connection-reset"
+    if errno_value == errno.ECONNREFUSED:
+        return f"{name}/connection-refused"
+    if isinstance(reason, ConnectionResetError | ConnectionAbortedError):
+        return f"{name}/connection-reset"
+    if isinstance(reason, ConnectionRefusedError):
+        return f"{name}/connection-refused"
+    if isinstance(reason, ConnectionError):
+        return f"{name}/connection-failed"
+    if isinstance(reason, socket.gaierror):
+        return f"{name}/dns-resolution"
+    if isinstance(reason, OSError):
+        return f"{name}/socket-error"
+    return f"{name}/transport-error"
