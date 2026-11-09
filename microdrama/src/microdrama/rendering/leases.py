@@ -23,7 +23,7 @@ Durability rules this module is built on:
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -59,6 +59,7 @@ from microdrama.contracts.errors import (
     IdempotencyConflict,
     InvalidTransition,
     MicrodramaError,
+    NeedsReconciliation,
     NotFound,
     PolicyDenied,
 )
@@ -189,6 +190,58 @@ class ShutdownResult:
 def client_token_for(semantic_key: str) -> str:
     """Deterministic create token: retries of one logical claim can never fork pods."""
     return f"md-pod-{sha256_hex(semantic_key.encode('utf-8'))[:24]}"
+
+
+def durable_created_pod_recorder(
+    db: Database, now: Callable[[], datetime]
+) -> Callable[[str, str], None]:
+    """CN-2 (2026-11-09, canary-night review): bind a freshly created pod to its
+    lease the moment the provider reports the create was accepted - before any
+    secondary verification GET can fail.
+
+    The provider knows the create's ``client_token``, not the lease id, so the
+    binding resolves the lease by token. Same contract as
+    ``LeaseService._record_pod_id``: idempotent per lease, refuses a binding to
+    a different pod, and an unknown token (no lease row) is a no-op so the
+    recorder can never block a provider call.
+    """
+
+    def record(client_token: str, pod_id: str) -> None:
+        with db.transaction() as tx:
+            row = tx.fetchone(
+                "SELECT id, revision, pod_id, create_requested_at, compute_window_start_at "
+                "FROM pod_leases WHERE client_token = %s ORDER BY id FOR UPDATE",
+                (client_token,),
+            )
+            if row is None:
+                return
+            updates: dict[str, Any] = {}
+            if row["pod_id"] != pod_id:
+                if row["pod_id"] is not None:
+                    raise Conflict(
+                        "lease is bound to a different pod",
+                        lease_id=str(row["id"]),
+                        pod_id=row["pod_id"],
+                    )
+                updates["pod_id"] = pod_id
+            if row["create_requested_at"] is None:
+                # A create the provider accepted IS a create request (CN-2): the
+                # crash window where only the recorder ran must leave the same
+                # durable proof ensure_pod's own recording would have.
+                updates["create_requested_at"] = now()
+                updates["compute_window_start_at"] = now()
+            if not updates:
+                return
+            update_with_revision(
+                tx,
+                "pod_leases",
+                row["id"],
+                row["revision"],
+                updates,
+                now=now(),
+            )
+
+    return record
 
 
 def _ceil_div(value: int, divisor: int) -> int:
@@ -963,10 +1016,23 @@ class LeaseService:
             # Durable create-request proof is committed in its own transaction BEFORE the
             # create call is sent (T045 R8/G13): with it, a later list miss can no longer
             # be read as "nothing was sent" and the hold cannot be quietly released.
-            self._record_create_request(lease_id)
-            pod = self._manager.acquire_or_reconcile(
-                spec, name=self._pod_name(row), client_token=row["client_token"]
-            )
+            # CN-2 (2026-11-09, canary-night review): once that proof exists, every
+            # later acquisition attempt is reconciliation-only - it never POSTs a
+            # second create under one reservation. A list miss stays
+            # NeedsReconciliation: absence is not proof the pod was not created.
+            _, first_create_request = self._record_create_request(lease_id)
+            if first_create_request:
+                pod = self._manager.acquire_or_reconcile(
+                    spec, name=self._pod_name(row), client_token=row["client_token"]
+                )
+            else:
+                pod = self._manager.reconcile_by_token(row["client_token"])
+                if pod is None:
+                    raise NeedsReconciliation(
+                        "pod create was already requested for this lease and no owned "
+                        "pod is currently visible; reconcile before any retry",
+                        client_token=row["client_token"],
+                    )
             # T031 defect 7 (2026-11-05, observed twice live): bind the created pod
             # to the lease BEFORE anything can fail - verification warmup
             # transients, price alarms, a SIGINT - so the shutdown path, the sweep
@@ -1002,8 +1068,13 @@ class LeaseService:
                 now=self._now(),
             )
 
-    def _record_create_request(self, lease_id: UUID) -> datetime:
-        """Commit the create-request instant (and the root's window start) before create."""
+    def _record_create_request(self, lease_id: UUID) -> tuple[datetime, bool]:
+        """Commit the create-request instant (and the root's window start) before create.
+
+        Returns ``(requested_at, first_request)`` - ``first_request`` is True only
+        for the call that durably recorded the request (CN-2): only that call may
+        send the create; every later attempt is reconciliation-only.
+        """
         now = self._now()
         with self._db.transaction() as tx:
             row = tx.fetchone(
@@ -1023,8 +1094,8 @@ class LeaseService:
                     {"create_requested_at": now, "compute_window_start_at": now},
                     now=now,
                 )
-                return now
-            return row["create_requested_at"]
+                return now, True
+            return row["create_requested_at"], False
 
     @staticmethod
     def _pod_name(row: Mapping[str, Any]) -> str:

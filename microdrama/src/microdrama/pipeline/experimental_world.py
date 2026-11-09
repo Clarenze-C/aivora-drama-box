@@ -721,6 +721,7 @@ def build_experiment_world(
     from microdrama.rendering.leases import PodLeaseConfig, build_lease_service
     from microdrama.rendering.pika_transport import PikaHttpClient
     from microdrama.rendering.pods import PodManager
+    from microdrama.rendering.leases import durable_created_pod_recorder
     from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
     from microdrama.rendering.runpod_transport import RunpodQuoteAttestation, RunpodRestProvider
 
@@ -872,6 +873,9 @@ def build_experiment_world(
         absent_pod_ownership_probe=durable_pod_ownership_probe(
             db, owned_tag=owned_tag, provider_account_ref=authorization.provider_account_ref
         ),
+        # CN-2 (2026-11-09): bind a created pod id to its lease before any
+        # secondary verification GET can fail.
+        created_pod_recorder=durable_created_pod_recorder(db, live_clock.now),
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, config)

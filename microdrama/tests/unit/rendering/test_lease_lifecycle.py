@@ -105,6 +105,60 @@ def test_ambiguous_create_timeout_that_did_not_create_stays_unknown(
     assert row["lease_state"] == "CLAIMED" and row["pod_state"] == "REQUESTED"
 
 
+def test_create_then_verify_502_then_list_miss_makes_exactly_one_pod(
+    world: RenderWorld,
+) -> None:
+    """CN-2 (2026-11-09, canary-night review): the create POST succeeds, the
+    secondary verification GET then fails 502, and the provider's ownership
+    list temporarily omits the new pod. The canary retry re-enters ensure_pod.
+    Exactly ONE create may reach the provider; the pod id must already be bound
+    on the lease, and the durable binding must let cleanup find and stop the
+    pod."""
+    ep = world.episode()
+    world.provider.queue_scenarios(PodCreateScenario.CREATE_VERIFY_502)
+    handle = world.claim(ep, KEY + ":cn2-composed")
+    with pytest.raises(TransientProviderError):
+        world.leases.ensure_pod(handle.lease.lease_id)
+    # The id from the successful POST is durable although verification failed.
+    row = world.lease_row(handle.lease.lease_id)
+    assert row["pod_id"] is not None
+    # The provider list temporarily misses the pod (eventual-consistency lag).
+    world.provider.list_lag = True
+    # The canary-style retry reconciles the same pod; it must not re-create.
+    active = world.leases.ensure_pod(handle.lease.lease_id)
+    assert active.lease.pod_id == row["pod_id"]
+    assert active.lease.lease_state.value == "ACTIVE"
+    creates = [c for c in world.provider.calls if c.method == "create_pod"]
+    assert len(creates) == 1
+    # Cleanup finds and stops the pod through the durable binding.
+    shutdown = world.leases.shutdown(handle.lease.lease_id, reason="CN-2 composed test")
+    assert shutdown.stop_verified_at is not None
+    assert world.provider.get_pod(row["pod_id"]).state is PodState.STOPPED
+
+
+def test_recorded_create_request_makes_retries_reconciliation_only(
+    world: RenderWorld,
+) -> None:
+    """CN-2 (2026-11-09, canary-night review): once a create request is durably
+    recorded for a lease, every later acquisition attempt is reconciliation-only.
+    A provider list miss is NeedsReconciliation - absence is not proof the pod
+    was not created, so no second create may ever be sent."""
+    ep = world.episode()
+    world.provider.queue_scenarios(PodCreateScenario.CREATE_TIMEOUT_NOT_CREATED)
+    handle = world.claim(ep, KEY + ":cn2-gate")
+    with pytest.raises(NeedsReconciliation):
+        world.leases.ensure_pod(handle.lease.lease_id)
+    row = world.lease_row(handle.lease.lease_id)
+    assert row["create_requested_at"] is not None and row["pod_id"] is None
+    # The list still shows nothing; the retry must not POST again.
+    world.provider.list_lag = True
+    with pytest.raises(NeedsReconciliation):
+        world.leases.ensure_pod(handle.lease.lease_id)
+    creates = [c for c in world.provider.calls if c.method == "create_pod"]
+    assert len(creates) == 1  # only the first attempt ever created
+    assert world.lease_row(handle.lease.lease_id)["pod_id"] is None
+
+
 def test_crash_after_create_is_recovered_from_durable_state(world: RenderWorld) -> None:
     """Worker died after the provider accepted the create but before any DB write."""
     from microdrama.rendering import PodSpec
@@ -147,10 +201,18 @@ def test_unavailable_gpu_is_transient_and_leaves_the_claim_releasable(
     row = world.lease_row(handle.lease.lease_id)
     assert row["lease_state"] == "CLAIMED" and row["pod_state"] == "REQUESTED"
     assert world.owned_pods() == []
-    # Capacity returned: the same claim acquires exactly one pod.
-    active = world.leases.ensure_pod(handle.lease.lease_id)
-    assert active.lease.pod_state.value == "RUNNING"
-    assert len(world.owned_pods()) == 1
+    # CN-2 (2026-11-09, canary-night review): the create request is durably
+    # recorded, so a retry is reconciliation-only. A provider list miss stays
+    # NeedsReconciliation - the worker can never POST a second create under one
+    # reservation; capacity returning is the janitor's reconciliation, then a
+    # fresh claim. The claim itself stays releasable.
+    with pytest.raises(NeedsReconciliation):
+        world.leases.ensure_pod(handle.lease.lease_id)
+    creates = [c for c in world.provider.calls if c.method == "create_pod"]
+    assert len(creates) == 1  # the refused attempt is the only create ever sent
+    assert world.owned_pods() == []
+    world.leases.shutdown(handle.lease.lease_id, reason="capacity never returned")
+    assert world.lease_row(handle.lease.lease_id)["lease_state"] == "RELEASED"
 
 
 def test_heartbeat_tracks_worker_life(world: RenderWorld) -> None:

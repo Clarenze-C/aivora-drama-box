@@ -34,6 +34,7 @@ from microdrama.rendering.janitor import Janitor, build_janitor
 from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
 from microdrama.rendering.pods import PodManager
 from microdrama.rendering.presets import PresetCatalog
+from microdrama.rendering.leases import durable_created_pod_recorder
 from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
 from microdrama.rendering.runpod_transport import (
     RunpodQuoteAttestation,
@@ -517,6 +518,9 @@ def build_live_benchmark_world(
         absent_pod_ownership_probe=durable_pod_ownership_probe(
             db, owned_tag=owned_tag, provider_account_ref=attestation.provider_account_ref
         ),
+        # CN-2 (2026-11-09): bind a created pod id to its lease before any
+        # secondary verification GET can fail.
+        created_pod_recorder=durable_created_pod_recorder(db, live_clock.now),
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, pod_config)

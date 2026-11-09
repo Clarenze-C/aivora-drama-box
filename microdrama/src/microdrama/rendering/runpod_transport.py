@@ -207,6 +207,7 @@ class RunpodRestProvider:
         reservation_guard: Callable[[PodCreateRequest, RunpodQuoteAttestation], None],
         cleanup_guard: Callable[[str, str], None],
         absent_pod_ownership_probe: Callable[[str], bool] | None = None,
+        created_pod_recorder: Callable[[str, str], None] | None = None,
         transport: RunpodTransport | None = None,
     ) -> None:
         self._settings = settings
@@ -219,6 +220,11 @@ class RunpodRestProvider:
         # T045 R9: durable DB ownership proof for billing reads once the Pod is gone
         # from the provider (a terminated Pod cannot be looked up there anymore).
         self._absent_pod_ownership_probe = absent_pod_ownership_probe
+        # CN-2 (2026-11-09, canary-night review): called with (client_token,
+        # pod_id) the moment a create POST is accepted, BEFORE any secondary
+        # verification GET can fail - so the lease binds the pod id durably even
+        # if that verification raises.
+        self._created_pod_recorder = created_pod_recorder
         self._transport = transport or UrllibRunpodTransport()
         self._owned_tag = f"microdrama-owned:{attestation.namespace}"
 
@@ -360,6 +366,8 @@ class RunpodRestProvider:
                     "Runpod create outcome is unknown and ownership scan failed"
                 ) from exc
             if len(matches) == 1:
+                if self._created_pod_recorder is not None:
+                    self._created_pod_recorder(request.client_token, matches[0].pod_id)
                 self._verify_existing_match(matches[0], request, name)
                 return matches[0]
             if len(matches) > 1:
@@ -372,6 +380,12 @@ class RunpodRestProvider:
         info = self._to_info(created)
         if info.name != name or info.owned_tag != self._owned_tag:
             raise Conflict("Runpod create returned a Pod outside the expected ownership name")
+        # CN-2 (2026-11-09, canary-night review): the POST succeeded - persist the
+        # pod id durably BEFORE the secondary verification GET below can fail
+        # with a 5xx and lose it. The ownership/name/GPU/image checks still run,
+        # only after the id is durable.
+        if self._created_pod_recorder is not None:
+            self._created_pod_recorder(request.client_token, info.pod_id)
         self._verify_existing_match(info, request, name)
         self._verify_attested_price(info)
         return info
