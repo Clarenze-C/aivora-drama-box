@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -602,7 +602,11 @@ def _parse_time(value: Any) -> datetime:
 
 # Policy: tolerate at most one millionth of a micro-USD of representation noise.
 _BILLING_TOLERANCE_USD = Decimal("0.000000000001")
-_BILLING_POLICY = "decimal-largest-remainder-gpu-cpu-disk-v1;tolerance-usd=1e-12"
+# CN-1 (2026-11-09, canary-night review): the total converts to integer micro-USD
+# with a conservative CEILING (never under-record cost); when the exact Decimals
+# are consistent the floored components are topped up to the ceiling total by
+# largest fractional remainder, ties resolved GPU > CPU > disk.
+_BILLING_POLICY = "decimal-total-ceiling-largest-remainder-gpu-cpu-disk-v2;tolerance-usd=1e-12"
 
 
 def _amount_decimal(value: Any) -> Decimal:
@@ -613,10 +617,16 @@ def _amount_decimal(value: Any) -> Decimal:
 
 
 def _amount_micro(value: Any) -> int:
+    """Convert a provider amount to integer micro-USD, rounding UP (CN-1).
+
+    Half-up rounded every fractional atom below 0.5 µUSD down, under-recording
+    each fractional bucket (0.0000014 USD became 1 µUSD instead of 1.4); the
+    house rule is conservative, so the atom conversion never rounds down.
+    """
     amount = _amount_decimal(value)
     with localcontext() as ctx:
         ctx.prec = max(28, len(amount.as_tuple().digits) + abs(amount.adjusted()) + 10)
-        return int((amount * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+        return int((amount * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
 
 
 def _billing_record(value: Any) -> RunpodBillingRecord:

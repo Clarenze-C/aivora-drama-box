@@ -584,40 +584,103 @@ def test_expired_quote_blocks_before_external_effect() -> None:
     assert not transport.calls
 
 
-def test_billing_amounts_round_to_the_microcent_atom() -> None:
+def test_billing_amounts_round_up_to_the_microcent_atom() -> None:
     """T031 (2026-11-05, post-run sweep): Runpod's live billing floats carry
     sub-microcent precision (pod xykul8kobl1e6s: gpuAmount
     0.03517432510852814, disk 0.0005787037080153823) and the parser demanded
     exact whole micro-USD, rejecting the real response as malformed and
-    blocking the canary's settlement. The micro-USD is the ledger's atom:
-    amounts round half-up to it (<=0.5 micro error per field, well under the
-    invoice-verification tolerance)."""
+    blocking the canary's settlement. The micro-USD is the ledger's atom.
+
+    CN-1 (2026-11-09, canary-night review): half-up rounded every fractional
+    atom below 0.5 µUSD DOWN, under-recording cost on each bucket. The house
+    rule is conservative - never under-record - so amounts now round UP
+    (ceiling); the run-14 observed gpuAmount 0.03517432510852814 USD is
+    35174.325… µUSD and converts to 35_175, not 35_174."""
     from microdrama.rendering.runpod_transport import _amount_micro
 
-    assert _amount_micro(0.03517432510852814) == 35_174
+    assert _amount_micro(0.03517432510852814) == 35_175  # CN-1: ceiling, was 35_174
     assert _amount_micro(0.0005787037080153823) == 579
+    assert _amount_micro(0.0000014) == 2  # CN-1: 1.4 µUSD must not become 1
     assert _amount_micro(0) == 0
     assert _amount_micro("1.25") == 1_250_000
     with pytest.raises(ValueError):
         _amount_micro(-0.01)
 
 
+def test_billing_fractional_buckets_accumulate_without_under_recording() -> None:
+    """CN-1 (2026-11-09, canary-night review): a 24-sample canary run of
+    fractional buckets must never under-record. With half-up totals each
+    0.0000014-USD bucket recorded 1 µUSD instead of 1.4, leaking 0.4 µUSD per
+    bucket (9.6 µUSD across the run) with no retained remainder."""
+    from decimal import Decimal
+
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    rows = [
+        {
+            "podId": "pod-123",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": "0.0000014",
+            "gpuAmount": "0.0000014",
+            "cpuAmount": "0",
+            "diskAmount": "0",
+        }
+        for _ in range(24)
+    ]
+    records = [_billing_record(row) for row in rows]
+    exact_micro = Decimal("0.0000014") * 1_000_000 * 24
+    # Every bucket records at least its exact amount, so the sum does too.
+    for record in records:
+        assert Decimal(record.total_micro_usd) >= Decimal("0.0000014") * 1_000_000
+    assert Decimal(sum(record.total_micro_usd for record in records)) >= exact_micro
+
+
+def test_billing_consistent_fractional_projection_is_not_disputed() -> None:
+    """CN-1 (2026-11-09, canary-night review): GPU 0.6 µUSD + disk 0.6 µUSD
+    with total 1.2 µUSD is consistent provider data. Independent per-field
+    rounding manufactured GPU=1, disk=1, total=1 and a DISPUTED bucket that
+    blocked invoice finalization; the consistency check must run on the exact
+    provider Decimals before any rounding."""
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    record = _billing_record(
+        {
+            "podId": "pod-123",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": "0.0000012",
+            "gpuAmount": "0.0000006",
+            "cpuAmount": "0",
+            "diskAmount": "0.0000006",
+        }
+    )
+    assert record.raw_components_match
+    atoms = (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd)
+    assert sum(atoms) == record.total_micro_usd
+
+
 @pytest.mark.parametrize(
     "total,gpu,cpu,disk,expected",
     [
-        ("0.0357532", "0.0351746", "0", "0.0005786", (35175, 0, 578)),
+        # CN-1 (2026-11-09): the total rounds UP (ceiling) and the floored
+        # components are topped up by largest fractional remainder, ties to GPU.
+        ("0.0357532", "0.0351746", "0", "0.0005786", (35175, 0, 579)),
         ("0.0000008", "0.0000004", "0", "0.0000004", (1, 0, 0)),
         ("0.0000015", "0.0000005", "0.0000005", "0.0000005", (1, 1, 0)),
-        ("0.0000012", "0.0000004", "0.0000004", "0.0000004", (1, 0, 0)),
+        ("0.0000012", "0.0000004", "0.0000004", "0.0000004", (1, 1, 0)),
         ("0", "0", "0", "0", (0, 0, 0)),
+        # CN-1 (2026-11-09): the run-14 observed amounts convert per the
+        # ceiling rule - gpu 35174.325 µUSD tops up to 35175, disk 578.704 µUSD
+        # to 579, totalling the ceiling of 35753.029 µUSD = 35754.
         (
             "0.03575302881654352",
             "0.03517432510852814",
             "0",
             "0.0005787037080153823",
-            (35174, 0, 579),
+            (35175, 0, 579),
         ),
-        ("0.000001000001", "0.000001", "0", "0", (1, 0, 0)),
+        ("0.000001000001", "0.000001", "0", "0", (2, 0, 0)),
         ("0.000000999999", "0.000001", "0", "0", (1, 0, 0)),
     ],
 )
