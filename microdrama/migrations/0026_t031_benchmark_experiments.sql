@@ -76,10 +76,19 @@ CREATE TABLE benchmark_billing_evidence (
 );
 CREATE TRIGGER benchmark_billing_append_only BEFORE UPDATE OR DELETE ON benchmark_billing_evidence FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 
--- Immutable financial/experimental evidence must not be mutable via TRUNCATE.
+-- Schema-catalog guarantees for every benchmark table: refuse row DELETE, refuse
+-- TRUNCATE, and refuse non-integer numbers (money is integer micro-USD, time is
+-- integer ms). The append-only tables above already refuse UPDATE and DELETE via
+-- md_forbid_mutation; the mutable ones refuse DELETE here.
+CREATE TRIGGER benchmark_experiments_no_delete BEFORE DELETE ON benchmark_experiments FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER benchmark_samples_no_delete BEFORE DELETE ON benchmark_samples FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER benchmark_acquisitions_no_delete BEFORE DELETE ON benchmark_acquisitions FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER benchmark_dispatch_slots_no_delete BEFORE DELETE ON benchmark_dispatch_slots FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER benchmark_uploads_no_delete BEFORE DELETE ON benchmark_uploads FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 DO $$ DECLARE table_name text; BEGIN
- FOREACH table_name IN ARRAY ARRAY['benchmark_seals','benchmark_authorizations','benchmark_screenings','benchmark_reservation_links','benchmark_billing_evidence'] LOOP
+ FOREACH table_name IN ARRAY ARRAY['benchmark_experiments','benchmark_samples','benchmark_seals','benchmark_authorizations','benchmark_acquisitions','benchmark_dispatch_slots','benchmark_reservation_links','benchmark_uploads','benchmark_screenings','benchmark_billing_evidence'] LOOP
   EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON %I FOR EACH STATEMENT EXECUTE FUNCTION md_forbid_mutation()',table_name||'_no_truncate',table_name);
+  EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION md_forbid_non_integer_numbers()',table_name||'_integer_numbers',table_name);
  END LOOP;
 END $$;
 CREATE FUNCTION md_benchmark_set_once() RETURNS trigger LANGUAGE plpgsql AS $$
