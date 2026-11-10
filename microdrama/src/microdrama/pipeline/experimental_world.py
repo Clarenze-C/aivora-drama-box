@@ -55,6 +55,11 @@ class CanonicalExperimentWorld:
     The latter two are the native binder/guarded uploader, not a renderer.
     """
 
+    # HB-11: the world's mode is part of its identity; EXECUTE is the default
+    # for directly constructed worlds (the builder overrides it for
+    # RECOVERY/CLEANUP, whose boundaries refuse create-path entry).
+    _mode = "EXECUTE"
+
     def __init__(
         self,
         *,
@@ -155,6 +160,19 @@ class CanonicalExperimentWorld:
         return handle.lease.lease_id
 
     def acquire(self, acquisition: dict) -> Any:
+        if self._mode != "EXECUTE":
+            # HB-11 (I5): a recovery/cleanup world may only ADOPT an
+            # already-bound pod. A podless lease must never ENTER the create
+            # path here - the canonical create-intent write would precede any
+            # guard refusal and manufacture U1 out of nothing.
+            with self.db.transaction(readonly=True) as tx:
+                bound_pod = tx.fetchval(
+                    "SELECT pod_id FROM pod_leases WHERE id=%s", (acquisition["lease_id"],)
+                )
+            if bound_pod is None:
+                raise EffectDenied(
+                    f"{self._mode.lower()} world cannot enter the pod-create path (I5)"
+                )
         handle = self.leases.ensure_pod(acquisition["lease_id"])
         # H-1 (2026-11-10, GLM harness review): the live client MUST bind - the
         # hasattr guard hid a signature drift (one-arg call vs the real

@@ -11,7 +11,7 @@ from uuid import UUID
 from microdrama.budget.ledger import episode_account_id, lock_account, lock_categories
 from microdrama.budget.service import BudgetService
 from microdrama.contracts.cost import BudgetReservationRequest
-from microdrama.contracts.errors import BudgetExhausted, Conflict, NotFound
+from microdrama.contracts.errors import BudgetExhausted, Conflict, EffectDenied, NotFound
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.persistence.db import Database, Tx, jsonb
 
@@ -470,6 +470,7 @@ class ExperimentBudgetService(BudgetService):
         authorization_cap_micro_usd: int | None = None,
         authorization_gpu_ms: int | None = None,
         authorization_deadline: datetime | None = None,
+        cleanup_grants_only: bool = False,
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
@@ -478,6 +479,10 @@ class ExperimentBudgetService(BudgetService):
         self.authorization_cap_micro_usd = authorization_cap_micro_usd
         self.authorization_gpu_ms = authorization_gpu_ms
         self.authorization_deadline = authorization_deadline
+        # HB-11 (I5): a RECOVERY/CLEANUP world's budget may take ONLY the
+        # canonical cleanup grant - every other reservation is refused at the
+        # service boundary, with otherwise valid ownership and scope.
+        self.cleanup_grants_only = cleanup_grants_only
 
     def reserve(self, request: BudgetReservationRequest):
         with self._db.transaction() as tx:
@@ -516,6 +521,13 @@ class ExperimentBudgetService(BudgetService):
             (self.experiment_id,),
         )
         cleanup = request.is_shutdown_or_cleanup
+        if self.cleanup_grants_only and not cleanup:
+            # HB-11 (I5): recovery and cleanup worlds never open new work
+            # holds - the canonical cleanup grant is the only reservation a
+            # mode-restricted budget may take.
+            raise EffectDenied(
+                f"recovery/cleanup world cannot reserve new work ({request.operation_kind})"
+            )
         if not cleanup:
             if exp["execution_outcome"] is not None or exp["execution_state"] in (
                 "NEEDS_RECONCILIATION",

@@ -237,6 +237,7 @@ class BenchmarkService:
             authorization_cap_micro_usd=getattr(authorization, "max_new_exposure_micro_usd", None),
             authorization_gpu_ms=getattr(authorization, "max_gpu_ms", None),
             authorization_deadline=getattr(authorization, "hard_stop_utc", None),
+            cleanup_grants_only=mode != "EXECUTE",
         )
         return self.world_factory(
             experiment_id=experiment_id,

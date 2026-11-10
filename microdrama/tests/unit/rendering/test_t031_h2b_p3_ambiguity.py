@@ -3099,3 +3099,121 @@ def test_hb8_stale_coordinator_never_writes_ambiguity_state(db: Database, tmp_pa
     finally:
         release.set()
         worker.join(timeout=60)
+
+
+# ---------------------------------------------------------------------------
+# HB-11 (Codex P1-P3 review): recovery/cleanup worlds never reserve new work
+# or enter the create path.
+# ---------------------------------------------------------------------------
+
+
+def test_hb11_recovery_world_budget_takes_only_cleanup_grants(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-11 (I5): the composed recovery world's budget refuses a NON-cleanup
+    reservation with an otherwise fully valid ownership and scope (the
+    unbound-client refusals of AT-4/AT-17e are a different layer); the
+    canonical cleanup grant stays permitted."""
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
+
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=False, prompt_timeouts=1)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+    world = harness.factory(
+        experiment_id=plan.experiment_id,
+        budget=ExperimentBudgetService(
+            db,
+            harness.clock,
+            harness.ids,
+            harness.settings,
+            experiment_id=plan.experiment_id,
+            cleanup_grants_only=True,
+        ),
+        authorization=None,
+        quote=None,
+        mode="RECOVERY",
+        acquisition_id=acquisition_id,
+    )
+    # A fully valid, ordinary PROMPT hold (the world's own builder): exactly
+    # the non-cleanup reservation a recovery world must refuse at the budget
+    # boundary with otherwise valid ownership and scope.
+    from microdrama.rendering.benchmark_experiments import experiment_row
+
+    with db.transaction(readonly=True) as tx:
+        exp = experiment_row(tx, plan.experiment_id)
+        sample = tx.fetchone(
+            "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id='S03-R1'",
+            (plan.experiment_id,),
+        )
+    request = world.prompt_reservation(exp, sample)
+    with db.transaction(readonly=True) as tx:
+        before = tx.fetchval("SELECT COUNT(*) FROM reservations")
+    with pytest.raises(EffectDenied, match="cannot reserve new work"):
+        world.budget.reserve(request)
+    with db.transaction(readonly=True) as tx:
+        after = tx.fetchval("SELECT COUNT(*) FROM reservations")
+    assert after == before  # no hold ever opened
+
+
+def test_hb11_recovery_world_never_enters_the_create_path(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-11 (I5): a recovery world with a PODLESS lease refuses acquire
+    BEFORE any canonical create-intent state is written - the refusal may not
+    manufacture U1 out of nothing (P1-6 rejected; deny before entering)."""
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
+
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=False, prompt_timeouts=1)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+    world = harness.factory(
+        experiment_id=plan.experiment_id,
+        budget=ExperimentBudgetService(
+            db,
+            harness.clock,
+            harness.ids,
+            harness.settings,
+            experiment_id=plan.experiment_id,
+            cleanup_grants_only=True,
+        ),
+        authorization=None,
+        quote=None,
+        mode="RECOVERY",
+        acquisition_id=acquisition_id,
+    )
+    with db.transaction(readonly=True) as tx:
+        lease_id = tx.fetchval(
+            "SELECT lease_id FROM benchmark_acquisitions WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    # The pod vanishes from the lease AND from the server (a crash-before-
+    # handler shape with nothing to adopt): the recovery world must refuse
+    # BEFORE entering the create path - its own gate, not the provider guard
+    # that only fires deep inside the canonical create flow after the intent
+    # bookkeeping (HEAD refused with the guard's "cannot create resources").
+    harness.runpod.pod = None
+    with db.transaction() as tx:
+        tx.execute("UPDATE pod_leases SET pod_id=NULL WHERE id=%s", (lease_id,))
+    acquisition = {"acquisition_id": acquisition_id, "lease_id": lease_id}
+    with pytest.raises(EffectDenied, match="create path"):
+        world.acquire(acquisition)
+    creates = sum(
+        1 for method, url in harness.runpod.calls if method == "POST" and url.endswith("/pods")
+    )
+    assert creates == 1  # only the original EXECUTE create; recovery sent none
