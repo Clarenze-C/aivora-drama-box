@@ -2985,3 +2985,117 @@ def test_hb7_expired_coordinator_lease_refuses_the_stale_control_write(
     finally:
         release.set()
         worker.join(timeout=60)
+
+
+def test_hb8_stale_coordinator_never_writes_ambiguity_state(db: Database, tmp_path: Path):
+    """HB-8: the ambiguity/grace control write applies the matching-token
+    predicate in its own transaction. A coordinator whose ownership lease
+    lapsed mid-dispatch (its values still match) discovers a submit
+    ambiguity on release - and is REFUSED: it never stamps ambiguity state;
+    its in-flight send's outcome stays with the tokenless takeover, which
+    converges it (UNKNOWN + grace) without a second POST."""
+
+    class _ParkThenAmbiguityClient(FakeComfyClient):
+        def __init__(self, state, gate, release):
+            super().__init__(state)
+            self.gate = gate
+            self.release = release
+
+        def queue_prompt(self, graph, *, client_id):
+            from microdrama.contracts.errors import NeedsReconciliation
+
+            super().queue_prompt(graph, client_id=client_id)
+            self.gate.set()
+            self.release.wait(timeout=30)
+            raise NeedsReconciliation("parked submit: the response was lost")
+
+    world, ep, plan, service, comfy, adapter, authorization, digest, raw = _base(db, tmp_path)
+    gate, release = threading.Event(), threading.Event()
+    comfy.service._client = _TimeoutOnNthClient(comfy.server, on={1})
+    first = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        first.execute(
+            plan.experiment_id,
+            phase="screen",
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            source_bytes=raw,
+        )
+    comfy.service._client = FakeComfyClient(comfy.server)
+    resumed = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        resumed.resume(
+            plan.experiment_id,
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            phase="screen",
+            source_bytes=raw,
+        )
+    comfy.service._client = _ParkThenAmbiguityClient(comfy.server, gate, release)
+    stalled = _execute_service(db, comfy, world.ids, adapter)
+    result: dict = {}
+
+    def _stalled_worker():
+        with _PatchedPolicy():
+            try:
+                result["status"] = stalled.resume(
+                    plan.experiment_id,
+                    authorization=authorization,
+                    quote=_screen_quote(world),
+                    expected_sha256=digest,
+                    phase="screen",
+                    source_bytes=raw,
+                )
+            except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
+                result["error"] = exc
+
+    worker = threading.Thread(target=_stalled_worker)
+    with _PatchedPolicy():
+        worker.start()
+        assert gate.wait(timeout=30)
+    try:
+        # The stalled coordinator's ownership lease lapses while parked.
+        with db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_dispatch_slots SET coordinator_lease_until="
+                "%s - interval '1 second' WHERE experiment_id=%s",
+                (comfy.clock.now(), plan.experiment_id),
+            )
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET coordinator_lease_until="
+                "%s - interval '1 second' WHERE experiment_id=%s",
+                (comfy.clock.now(), plan.experiment_id),
+            )
+        submissions_before = len(comfy.server.submissions)
+        release.set()
+        worker.join(timeout=60)
+        assert not worker.is_alive()
+        assert "error" not in result, repr(result.get("error"))
+        stalled_status = result["status"]
+        assert stalled_status["admission"]["permitted"] is False
+        assert any("R3 fence" in blocker for blocker in stalled_status["admission"]["blockers"])
+        assert len(comfy.server.submissions) == submissions_before
+
+        # The tokenless takeover converges the parked send's outcome: UNKNOWN
+        # under the lock + the durable grace (HB-5), never a second POST.
+        comfy.service._client = FakeComfyClient(comfy.server)
+        takeover = _execute_service(db, comfy, world.ids, adapter)
+        with _PatchedPolicy():
+            takeover.reconcile(plan.experiment_id, world=adapter)
+        with db.transaction(readonly=True) as tx:
+            parked_op = tx.fetchone(
+                "SELECT o.state FROM provider_operations o JOIN benchmark_samples s "
+                "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s "
+                "AND s.sample_id='S07-R1'",
+                (plan.experiment_id,),
+            )
+        # The parked send DID land server-side: the tokenless takeover ADOPTS
+        # its positively-known outcome (SUCCEEDED, never resubmitted) - the
+        # stale coordinator itself wrote nothing.
+        assert parked_op["state"] == "SUCCEEDED"
+        assert len(comfy.server.submissions) == submissions_before
+    finally:
+        release.set()
+        worker.join(timeout=60)

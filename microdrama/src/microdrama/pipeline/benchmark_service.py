@@ -765,7 +765,14 @@ class BenchmarkService:
         candidates.append(now + timedelta(milliseconds=max(remaining_gpu_ms - margin_ms, 0)))
         return min(candidates) if candidates else None
 
-    def _enter_grace(self, experiment_id: UUID, acquisition: dict, world: Any) -> None:
+    def _enter_grace(
+        self,
+        experiment_id: UUID,
+        acquisition: dict,
+        world: Any,
+        *,
+        coordinator_token: UUID | None = None,
+    ) -> None:
         """§5.4 (SC-5/R3): persist the durable recovery grace BEFORE recovery.
 
         ``recovery_deadline`` is the EARLIEST of the first ambiguity +
@@ -794,6 +801,15 @@ class BenchmarkService:
                 "SELECT acquisition_id FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
                 (acquisition["acquisition_id"],),
             )
+            if coordinator_token is not None:
+                # HB-8: the ambiguity/grace control write applies the
+                # matching-token predicate in its OWN transaction - a fenced
+                # or replaced coordinator never stamps ambiguity state over
+                # the current owner's (its in-flight send's outcome stays
+                # with reconciliation, which needs no token).
+                self._assert_coordination(
+                    tx, experiment_id, acquisition.get("acquisition_id"), coordinator_token
+                )
             tx.execute(
                 "UPDATE benchmark_acquisitions SET "
                 "recovery_started_at=COALESCE(recovery_started_at,%s),"
@@ -807,13 +823,20 @@ class BenchmarkService:
                 (experiment_id,),
             )
 
-    def _mark_submit_ambiguity(self, experiment_id: UUID, acquisition: dict, world: Any):
+    def _mark_submit_ambiguity(
+        self,
+        experiment_id: UUID,
+        acquisition: dict,
+        world: Any,
+        *,
+        coordinator_token: UUID | None = None,
+    ):
         """§5.1: a submit/poll ambiguity keeps the acquisition ACTIVE and enters
         the durable grace; the experiment moves to NEEDS_RECONCILIATION in the
         same transaction. The pod stays for recovery - no cleanup here, UNLESS
         the persisted deadline has already elapsed (SC2-2: a later ambiguity
         on the same acquisition reuses it and starts cleanup immediately)."""
-        self._enter_grace(experiment_id, acquisition, world)
+        self._enter_grace(experiment_id, acquisition, world, coordinator_token=coordinator_token)
         row = self._recovery_deadline(acquisition["acquisition_id"])
         if row is not None and row["recovery_deadline"] is not None:
             if self.clock.now() >= row["recovery_deadline"]:
@@ -888,20 +911,41 @@ class BenchmarkService:
         if self._needs_finalization(experiment_id, acquisition):
             return self.sweep(experiment_id, world=world)
         with self.db.transaction() as tx:
-            # R3: taking the acquisition coordination is itself a control
-            # write - it must not resurrect a token the deadline fence revoked.
+            # HB-8/§6.1 shared order: account -> categories -> E -> A -> D -
+            # the SAME order the R3 fence takes. The previous D-then-A could
+            # deadlock against the fence's A-then-D (a worker holding D and
+            # waiting for A while the sweep holds A and waits for D). Taking
+            # the coordination is itself a control write: it must not
+            # resurrect a token the deadline fence revoked, and the values
+            # must sit inside a LIVE ownership lease (HB-7).
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
             slot = tx.fetchone(
-                "SELECT coordinator_token FROM benchmark_dispatch_slots "
-                "WHERE experiment_id=%s FOR UPDATE",
+                "SELECT coordinator_token, coordinator_lease_until "
+                "FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
                 (experiment_id,),
             )
-            if slot is None or slot["coordinator_token"] != token:
+            now = self.clock.now()
+            # Taking coordination: the slot token must still be this call's
+            # own AND inside a live lease (the fence must not have revoked it
+            # mid-flight; HB-7). The acquisition row is this transaction's own
+            # lease writer - sequential passes retake it (the per-call slot,
+            # cleared in _advance's finally, is what preemption protection
+            # hangs on).
+            if (
+                slot is None
+                or slot["coordinator_token"] != token
+                or slot["coordinator_lease_until"] is None
+                or slot["coordinator_lease_until"] <= now
+            ):
                 raise AdmissionBlocked(
                     ["R3 fence: the coordinator token was revoked at the recovery deadline"]
                 )
             tx.execute(
                 "UPDATE benchmark_acquisitions SET coordinator_token=%s,coordinator_lease_until=%s WHERE acquisition_id=%s",
-                (token, self.clock.now() + timedelta(hours=1), acquisition["acquisition_id"]),
+                (token, now + timedelta(hours=1), acquisition["acquisition_id"]),
             )
         try:
             if acquisition["lease_id"] is None:
@@ -935,12 +979,14 @@ class BenchmarkService:
                 # gets NO grace - the sweep's token reconciliation owns it.
                 return self._mark_create_ambiguity(experiment_id, acquisition, world)
             with self.db.transaction() as tx:
-                # R3: a fenced coordinator never writes acquisition control
-                # state (the write is predicated on its token surviving).
+                # R3/HB-8: a fenced or lease-lapsed coordinator never writes
+                # acquisition control state - the write is predicated on its
+                # token surviving inside a live ownership lease.
                 updated = tx.execute(
                     "UPDATE benchmark_acquisitions SET state='ACTIVE' "
-                    "WHERE acquisition_id=%s AND coordinator_token=%s",
-                    (acquisition["acquisition_id"], token),
+                    "WHERE acquisition_id=%s AND coordinator_token=%s "
+                    "AND coordinator_lease_until > %s",
+                    (acquisition["acquisition_id"], token, self.clock.now()),
                 )
                 if updated != 1:
                     raise AdmissionBlocked(
@@ -979,7 +1025,9 @@ class BenchmarkService:
                     try:
                         result = world.poll(sample)
                     except NeedsReconciliation:
-                        return self._mark_submit_ambiguity(experiment_id, acquisition, world)
+                        return self._mark_submit_ambiguity(
+                            experiment_id, acquisition, world, coordinator_token=token
+                        )
                 else:
                     # Dispatch gate before the prompt send (§4.2/U3).
                     self._gate(
@@ -994,7 +1042,9 @@ class BenchmarkService:
                     except NeedsReconciliation:
                         # §5.1/§5.4: the acquisition stays ACTIVE and the
                         # durable grace is persisted before any recovery.
-                        return self._mark_submit_ambiguity(experiment_id, acquisition, world)
+                        return self._mark_submit_ambiguity(
+                            experiment_id, acquisition, world, coordinator_token=token
+                        )
                 self._observe(experiment_id, sample, result, coordinator_token=token)
                 state = getattr(result.state, "value", result.state)
                 if state not in ("SUCCEEDED", "FAILED", "CANCELLED"):
