@@ -1824,20 +1824,23 @@ class BenchmarkService:
             )
         if owed:
             return self.sweep(experiment_id, world=world)
-        slot_stuck_after = self._slot_sample_unknown(experiment_id)
-        uploads_open_after = self._uploads_open(experiment_id)
         with self.db.transaction() as tx:
+            # HB-9: the NEEDS_RECONCILIATION -> running transition is
+            # predicated on ZERO canonical blocking items (every kind except
+            # U6's local materialization), evaluated through the common
+            # repository function UNDER the full §6.1 gate locks - the
+            # separate label/slot/upload conditions missed, e.g., a U5 that
+            # survives a late adoption while all three are clear.
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
             exp = experiment_row(tx, experiment_id, lock=True)
-            still_unknown = tx.fetchval(
-                "SELECT COUNT(*) FROM benchmark_acquisitions WHERE experiment_id=%s AND state='UNKNOWN'",
-                (experiment_id,),
-            )
-            if (
-                exp["execution_state"] == "NEEDS_RECONCILIATION"
-                and not still_unknown
-                and not slot_stuck_after
-                and not uploads_open_after
-            ):
+            self._lock_gate_rows(tx, experiment_id)
+            items = unresolved_items(tx, experiment_id, now=self.clock.now())
+            canonical_blockers = [
+                item for item in items if item.kind in ("U1", "U2", "U3", "U3p", "U3u", "U4", "U5")
+            ]
+            if exp["execution_state"] == "NEEDS_RECONCILIATION" and not canonical_blockers:
                 # The phase to resume is derived from durable screening evidence,
                 # never from memory: a recorded PASS admits FULL, else SCREEN.
                 if exp["execution_outcome"] is None:

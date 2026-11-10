@@ -732,3 +732,119 @@ def test_at21_gate_serialises_with_absent_rows_r5(db: Database, tmp_path: Path):
             "SELECT state FROM benchmark_uploads WHERE acquisition_id=%s", (acquisition_id,)
         )
     assert [row["state"] for row in uploads] == ["INTENT"]
+
+
+def test_hb9_reconcile_never_restores_running_over_canonical_blockers(
+    db: Database, tmp_path: Path
+):
+    """HB-9: the NEEDS_RECONCILIATION -> running transition is predicated on
+    ZERO canonical blocking items (the common repository function, under the
+    gate locks) - not on separate label/slot/upload conditions. A U5 that
+    survives a late adoption while all three of those are clear must keep
+    the experiment in NEEDS_RECONCILIATION; only finalization lets reconcile
+    restore running."""
+    from datetime import timedelta
+
+    from microdrama.testing.fakes.common import fake_https
+    from microdrama.testing.fakes.pods import _Pod
+
+    fixed = _at6_context(db, tmp_path)
+    plan = fixed["plan"]
+    world, comfy = fixed["world"], fixed["comfy"]
+
+    _service(fixed).resolve_create(
+        plan.experiment_id,
+        acquisition_id=fixed["acquisition_id"],
+        actor_ref="operator-console",
+        reason="provider console shows no pod",
+        evidence_sha256="a" * 64,
+    )
+    _service(fixed).sweep(plan.experiment_id)
+    with _PatchedPolicy():
+        for _ in range(12):
+            state = _service(fixed).resume(
+                plan.experiment_id,
+                authorization=fixed["authorization"],
+                quote=_screen_quote(world),
+                expected_sha256=fixed["digest"],
+                phase="screen",
+                source_bytes=fixed["raw"],
+            )
+            comfy.clock.advance(seconds=1)
+            if any(a["generation"] == 2 for a in state["acquisitions"]):
+                break
+    assert any(a["generation"] == 2 for a in state["acquisitions"])
+
+    with db.transaction(readonly=True) as tx:
+        token = tx.fetchval("SELECT client_token FROM pod_leases WHERE id=%s", (fixed["lease_id"],))
+    world.provider._pods["late-pod-0002"] = _Pod(
+        pod_id="late-pod-0002",
+        name="recovered-late-pod-0002",
+        owned_tag=world.config.owned_tag,
+        client_token=token,
+        gpu_type="FAKE-GPU-24GB",
+        hourly_price_micro_usd=900_000,
+        created_at=comfy.clock.now(),
+        endpoint_url=fake_https("late-pod-0002.pods.fake", ""),
+        pipeline_owned=True,
+    )
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET lease_expires_at=%s WHERE id=%s",
+            (comfy.clock.now() - timedelta(seconds=1), fixed["lease_id"]),
+        )
+    original_stop = world.provider.stop_pod
+    calls = {"n": 0}
+
+    def dying_stop(pod_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("janitor died mid-adoption (injected)")
+        return original_stop(pod_id)
+
+    world.provider.stop_pod = dying_stop
+    with pytest.raises(TimeoutError):
+        world.janitor().sweep()
+    world.provider.stop_pod = original_stop
+    assert "U5" in _item_kinds(db, plan.experiment_id, comfy.clock)
+
+    # The separate conditions the old transition checked are ALL clear: no
+    # UNKNOWN acquisition label, no stuck slot, no open upload - only the
+    # canonical U5 remains. Reconcile must NOT restore running.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' "
+            "WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    blocked = _service(fixed).reconcile(plan.experiment_id)
+    assert blocked["execution_state"] == "NEEDS_RECONCILIATION"
+
+    # Finalization clears U5; reconcile may then restore running.
+    from dataclasses import replace as _replace
+
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET provider_account_ref='acct:fixture' "
+            "WHERE id=%s OR pod_id='late-pod-0002'",
+            (fixed["lease_id"],),
+        )
+    world.janitor(config=_replace(world.config, provider_account_ref="acct:fixture")).sweep()
+    _service(fixed).sweep(plan.experiment_id)
+    assert "U5" not in _item_kinds(db, plan.experiment_id, comfy.clock)
+    with _PatchedPolicy():
+        for _ in range(8):
+            cleared = _service(fixed).reconcile(plan.experiment_id)
+            if cleared["execution_state"] != "NEEDS_RECONCILIATION":
+                break
+            comfy.clock.advance(seconds=1)
+            with _PatchedPolicy():
+                _service(fixed).resume(
+                    plan.experiment_id,
+                    authorization=fixed["authorization"],
+                    quote=_screen_quote(world),
+                    expected_sha256=fixed["digest"],
+                    phase="screen",
+                    source_bytes=fixed["raw"],
+                )
+    assert cleared["execution_state"] != "NEEDS_RECONCILIATION"
