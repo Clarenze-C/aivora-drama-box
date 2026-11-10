@@ -1130,6 +1130,11 @@ class ComfyRenderService:
         ``observed_at`` and the interval end both come from the operation row's own
         ``updated_at`` (fixed once terminal), so a crash between the terminal transition
         and this settlement replays byte-identically.
+
+        HB-1: an EXPIRED reservation settles through the SAME canonical
+        calculation as an ACTIVE one - never a blanket zero write-off. Only a
+        lease-covered attempt (the pod lease's invoice bucket is the only GPU
+        cost) and a positively-unused hold settle at zero.
         """
         with self._db.transaction(readonly=True) as tx:
             reservation = tx.fetchone(
@@ -1140,54 +1145,29 @@ class ComfyRenderService:
                 "render attempt reservation not found",
                 reservation_id=str(row["reservation_id"]),
             )
-        if reservation["state"] == ReservationState.EXPIRED.value:
-            # §3.3 (spec v3): an EXPIRED reservation retains its exposure until a
-            # settlement reconciles it (canonical expired-accrual policy). Terminal
-            # finalization settles that liability through the canonical path -
-            # never reactivates the hold, never releases it, never counts twice.
-            # The deterministic receipt id keeps a replay byte-identical.
-            observed_at = row["updated_at"]
-            interval_start = row["submitted_at"]
-            interval_end = observed_at if interval_start is not None else None
-            receipt = UsageReceipt(
-                receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
-                provider=row["provider"],
-                provider_receipt_id=f"comfy-settle:{row['id']}",
-                kind=ReceiptKind.SETTLEMENT,
-                cost_basis=(
-                    CostBasis.SYNTHETIC_FAKE
-                    if self.provenance is Provenance.FAKE_SYNTHETIC
-                    else CostBasis.BILLED
-                ),
-                reservation_id=row["reservation_id"],
-                episode_id=row["episode_id"],
-                season_id=None,
-                job_id=row["job_id"],
-                category=BudgetCategory.GPU_GENERATION,
-                amount_micro_usd=0,
-                currency="USD",
-                units=0,
-                unit=PriceUnit.GPU_SECOND,
-                interval_start=interval_start,
-                interval_end=interval_end,
-                observed_at=observed_at,
-                provenance=self.provenance,
-            )
-            policy.check_receipt_admissible(receipt, self._settings)
-            self._budget.record_usage(receipt)
+        state = reservation["state"]
+        if state not in (ReservationState.ACTIVE.value, ReservationState.EXPIRED.value):
             return self._settled_amount(row["reservation_id"])
-        if reservation["state"] != ReservationState.ACTIVE.value:
-            return self._settled_amount(row["reservation_id"])
+        # §3.3 (spec v3): an EXPIRED reservation retains its exposure until a
+        # settlement reconciles it (canonical expired-accrual policy). Terminal
+        # finalization settles that liability through the canonical path below -
+        # never reactivates the hold, never releases it, never counts twice.
         if row["submitted_at"] is None:
-            # Never dispatched (validation refusal): release the unused hold.
-            try:
-                self._budget.release(
-                    row["reservation_id"],
-                    reason=f"comfy attempt {row['id']} never dispatched",
-                )
-            except Conflict:
-                pass
-            return 0
+            # Never dispatched (validation refusal): the hold is positively
+            # unused. An ACTIVE hold is released; an EXPIRED one is past
+            # release, so its retained exposure closes through the canonical
+            # zero settlement instead.
+            if state == ReservationState.ACTIVE.value:
+                try:
+                    self._budget.release(
+                        row["reservation_id"],
+                        reason=f"comfy attempt {row['id']} never dispatched",
+                    )
+                except Conflict:
+                    pass
+                return 0
+            self._record_zero_settlement(row)
+            return self._settled_amount(row["reservation_id"])
         if self._config.lease_covered:
             # T045-FIX B-S10 + F-4: a FAILED lease-covered attempt must NOT settle
             # the prompt's shared hold while a retry can still reuse it - a settled
@@ -1197,45 +1177,24 @@ class ComfyRenderService:
             # hold, so its FAILED lease-covered attempts settle here at once, as
             # before the hold-reuse change. The failed attempt's GPU cost is not
             # forgiven either way: the Pod lease's invoice bucket carries every
-            # attempt's execution seconds.
+            # attempt's execution seconds. An EXPIRED hold can never dispatch
+            # again, so the deferral does not apply to it (HB-1).
             if (
-                row["state"] == ProviderOperationState.FAILED.value
+                state == ReservationState.ACTIVE.value
+                and row["state"] == ProviderOperationState.FAILED.value
                 and self._config.retry_reuses_hold
             ):
                 return 0
             # T045-FIX B-B1: a render on a leased Runpod Pod is paid once — by the
             # Pod lease's BILLED settlement (the provider invoice bucket). The
-            # attempt's hold settles at zero charge: same deterministic receipt key,
-            # zero amount, so the lease's invoice stays the only GPU cost and a
-            # replay is still byte-identical.
-            interval_end = row["updated_at"]
-            self._budget.record_usage(
-                UsageReceipt(
-                    receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
-                    provider=row["provider"],
-                    provider_receipt_id=f"comfy-settle:{row['id']}",
-                    kind=ReceiptKind.SETTLEMENT,
-                    cost_basis=(
-                        CostBasis.SYNTHETIC_FAKE
-                        if self.provenance is Provenance.FAKE_SYNTHETIC
-                        else CostBasis.BILLED
-                    ),
-                    reservation_id=row["reservation_id"],
-                    episode_id=row["episode_id"],
-                    season_id=None,
-                    job_id=row["job_id"],
-                    category=BudgetCategory.GPU_GENERATION,
-                    amount_micro_usd=0,
-                    currency="USD",
-                    units=0,
-                    unit=PriceUnit.GPU_SECOND,
-                    interval_start=row["submitted_at"],
-                    interval_end=interval_end,
-                    observed_at=interval_end,
-                    provenance=self.provenance,
-                )
-            )
+            # attempt's hold settles at zero charge on ACTIVE and EXPIRED alike:
+            # same deterministic receipt key, zero amount, so the lease's invoice
+            # stays the only GPU cost and a replay is still byte-identical.
+            self._record_zero_settlement(row)
             return self._settled_amount(row["reservation_id"])
+        # HB-1: an independently charged execution settles at the measured
+        # seconds and the configured price, whether the hold is still ACTIVE or
+        # already EXPIRED-with-exposure (SETTLED_AFTER_EXPIRY closes it).
         price = self._config.price
         if price is None:
             raise UnknownPrice(
@@ -1270,6 +1229,41 @@ class ComfyRenderService:
         )
         self._budget.record_usage(receipt)
         return self._settled_amount(row["reservation_id"])
+
+    def _record_zero_settlement(self, row: Mapping[str, Any]) -> None:
+        """HB-1: the canonical zero-charge SETTLEMENT — for a lease-covered
+        attempt (the pod lease's invoice bucket is the only GPU cost) and for a
+        positively-unused EXPIRED hold (nothing executed; the hold is past
+        release). Deterministic receipt id: a replay is byte-identical and the
+        hold closes exactly once, whatever boundary a later crash hit."""
+        interval_start = row["submitted_at"]
+        observed_at = row["updated_at"]
+        receipt = UsageReceipt(
+            receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
+            provider=row["provider"],
+            provider_receipt_id=f"comfy-settle:{row['id']}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=(
+                CostBasis.SYNTHETIC_FAKE
+                if self.provenance is Provenance.FAKE_SYNTHETIC
+                else CostBasis.BILLED
+            ),
+            reservation_id=row["reservation_id"],
+            episode_id=row["episode_id"],
+            season_id=None,
+            job_id=row["job_id"],
+            category=BudgetCategory.GPU_GENERATION,
+            amount_micro_usd=0,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            interval_start=interval_start,
+            interval_end=observed_at if interval_start is not None else None,
+            observed_at=observed_at,
+            provenance=self.provenance,
+        )
+        policy.check_receipt_admissible(receipt, self._settings)
+        self._budget.record_usage(receipt)
 
     def settle_open_prompt_hold(
         self, reservation_id: UUID, *, reason: str, now: datetime | None = None

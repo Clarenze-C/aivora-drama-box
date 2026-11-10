@@ -258,6 +258,47 @@ def test_settlement_replays_after_a_crash_between_success_and_settle(
     assert settlements[0]["amount_micro_usd"] == EXECUTION_MICRO
 
 
+# --- HB-1 (Codex P1-P3 review): EXPIRED settlements -------------------------------------
+
+
+def test_hb1_an_expired_non_lease_covered_render_settles_at_its_measured_cost(
+    db: Database, tmp_path: Path
+) -> None:
+    """HB-1: a render that finishes after its hold expired settles through the
+    SAME canonical calculation as an ACTIVE one - the measured seconds at the
+    configured price. No pod lease carries this cost, so a zero settlement
+    silently forgives it (the review's probe settled a 60 GPU-second
+    non-lease-covered attempt at amount 0 and units 0).
+    """
+    world = ComfyWorld(db, tmp_path / "store")  # non-lease-covered, mock price
+    ep = world.episode()
+    attempt = world.attempt(ep)
+    status = world.service.submit(attempt.request, job_id=attempt.job_id)
+
+    # The hold expires while the prompt runs; expire_stale keeps its exposure.
+    world.clock.advance(seconds=601)
+    assert world.budget.expire_stale() == 1
+    assert world.reservation_row(attempt.request.reservation_id)["state"] == "EXPIRED"
+
+    world.clock.advance(ms=EXECUTION_MS)
+    done = _poll(world, status)
+    assert done.state is ProviderOperationState.SUCCEEDED
+
+    row = world.reservation_row(attempt.request.reservation_id)
+    assert row["state"] == "SETTLED"
+    assert row["closed_reason"] == "settled after expiry"
+    # submitted at T0, terminal at T0+601 s+3 s: 604 billed GPU-seconds at the
+    # mock 250 micro-USD price - the canonical calculation, not a write-off.
+    assert row["settled_micro_usd"] == 604 * GPU_SECOND_MICRO
+    assert done.settled_micro_usd == 604 * GPU_SECOND_MICRO
+    (settlement,) = [
+        c for c in world.charges(attempt.request.reservation_id) if c["kind"] == "SETTLEMENT"
+    ]
+    assert settlement["units"] == 604
+    assert settlement["amount_micro_usd"] == 604 * GPU_SECOND_MICRO
+    assert world.counters(ep.account_id)["settled"] == 604 * GPU_SECOND_MICRO
+
+
 def test_asset_save_boundary_recovery_registers_exactly_one_asset(submitted) -> None:
     world, ep, attempt, status = submitted
     world.clock.advance(ms=EXECUTION_MS)

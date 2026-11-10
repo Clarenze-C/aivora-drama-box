@@ -1684,7 +1684,10 @@ def _at17_compose(
             "schema_evidence": "LIVE_PROVIDER",
             "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
             "territories": ["TH"],
-            "eligible_until": (t0 + timedelta(hours=6)).isoformat(),
+            # The pika preflight binds at max(world clock, real now)
+            # (pika_h3_flex.py: `at=max(context.at, datetime.now(UTC))`), so a
+            # short seal window time-bombs the test against wall-clock time.
+            "eligible_until": (t0 + timedelta(days=365)).isoformat(),
             "hard_stop_utc": (t0 + timedelta(hours=4)).isoformat(),
         }
     )
