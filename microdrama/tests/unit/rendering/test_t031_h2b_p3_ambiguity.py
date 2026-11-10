@@ -1553,6 +1553,11 @@ class _At17PodComfyTransport:
         import re as _re
         from urllib.parse import parse_qs, urlparse
 
+        from microdrama.rendering.diagnostics import bound_request_timeout
+
+        # Production fidelity (HB-4): the real UrllibTransport bounds every
+        # request by the recovery deadline context and REFUSES once it passed.
+        bound_request_timeout(30)
         server = self.server
         if method == "GET" and url.endswith("/object_info"):
             return server.schema_bytes
@@ -2549,3 +2554,75 @@ def test_hb3_recovery_provenance_is_acquisition_owned(
             quote=None,
             mode="RECOVERY",
         )
+
+
+def test_hb4_historical_grace_deadline_never_bounds_healthy_work(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-4/SC2-2: a successfully recovered episode's HISTORICAL deadline
+    never bounds later healthy work. After the deadline passes, a healthy
+    SUBMITTED poll through a fresh resume must proceed (the scripted
+    transport honors the production request-deadline context and refuses
+    past-deadline requests, like UrllibTransport); before the fix the refused
+    poll was swallowed, U3p stayed in flight forever and admission was
+    blocked with no deadline cleanup owed."""
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=False, prompt_timeouts=1)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+
+    # Recover the first episode INSIDE its grace; the same resume continues
+    # the run and dispatches the next sample (healthy SUBMITTED).
+    fresh = type(harness.service)(
+        db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
+    )
+    recovered = fresh.resume(
+        plan.experiment_id,
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+        phase="screen",
+    )
+    states = {s["sample_id"]: s["state"] for s in recovered["samples"]}
+    assert states["S01-R1"] == "SUCCEEDED"  # the episode recovered in grace
+    with db.transaction(readonly=True) as tx:
+        deadline = tx.fetchval(
+            "SELECT recovery_deadline FROM benchmark_acquisitions WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+        in_flight = tx.fetchone(
+            "SELECT o.state FROM provider_operations o JOIN benchmark_samples s "
+            "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s "
+            "AND s.sample_id='S03-R1'",
+            (plan.experiment_id,),
+        )
+    assert deadline is not None  # the episode's deadline persists (SC2-2 keeps it)
+    assert in_flight["state"] == "SUBMITTED"  # healthy later work exists
+
+    # The historical deadline passes; fresh resumes keep polling S03.
+    harness.clock.advance(seconds=(deadline - harness.clock.now()).total_seconds() + 60)
+    final = None
+    for _ in range(4):
+        final = fresh.resume(
+            plan.experiment_id,
+            authorization=harness.authorization,
+            quote=harness.quote,
+            expected_sha256=harness.authorization.authorization_sha256,
+            phase="screen",
+        )
+        harness.clock.advance(seconds=1)
+        with db.transaction(readonly=True) as tx:
+            s03 = tx.fetchone(
+                "SELECT state FROM benchmark_samples WHERE experiment_id=%s AND sample_id='S03-R1'",
+                (plan.experiment_id,),
+            )
+        if s03["state"] == "SUCCEEDED":
+            break
+    assert s03["state"] == "SUCCEEDED"  # the historical deadline never stalled it
+    assert final["execution_state"] in ("SCREEN_RUNNING", "SCREEN_REVIEW")

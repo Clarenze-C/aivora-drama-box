@@ -1885,8 +1885,16 @@ class BenchmarkService:
                 binding = "INDETERMINATE"
             if binding != "BOUND":
                 return
-        if sample.get("acquisition_id") is not None:
-            # §5.4 during grace: heartbeat the owned lease (never extending
+        # §5.4/SC2-2 (HB-4): the grace heartbeat and request bound apply
+        # ONLY while an ambiguity on this acquisition is unresolved (the
+        # operation is UNKNOWN - including a PENDING_SUBMIT just taken over).
+        # A healthy SUBMITTED/RUNNING poll after an earlier episode recovered
+        # successfully is NOT bounded by the historical deadline: its ordinary
+        # execution limits (hold, lease and hard-stop windows) still apply
+        # independently. The persisted timestamp itself is kept for a later
+        # ambiguity (SC2-2 reuse), which may only shorten it.
+        if sample.get("acquisition_id") is not None and operation["state"] == "UNKNOWN":
+            # during grace: heartbeat the owned lease (never extending
             # anything) and bound every nested recovery HTTP request by the
             # time left before the persisted recovery_deadline.
             self._heartbeat_grace(experiment_id, world, sample["acquisition_id"])
