@@ -893,3 +893,141 @@ def test_at4_cli_recovery_after_deadlines_returns_status_and_blocker(db: Databas
     assert payload["admission"]["permitted"] is False
     assert payload["admission"]["blockers"]
     assert len(comfy.server.submissions) == submissions_before  # zero sends
+
+
+# ---------------------------------------------------------------------------
+# HB-10 (Codex P1-P3 review): CLI resume is fully recovery-first.
+# ---------------------------------------------------------------------------
+
+
+def test_hb10_expired_quote_returns_recovered_status_with_blocker(db: Database, tmp_path: Path):
+    """HB-10: a well-formed but EXPIRED quote passes the presence-level
+    admission check, and the execute step then refuses on eligibility (the
+    EXECUTE world composition refuses the expired quote - modeled at the
+    exact boundary the production policy raises it, since the harness's
+    patched preset policy bypasses quote freshness). Resume must return the
+    RECOVERED durable status with an admission blocker - not raise past the
+    CLI as an error."""
+    from datetime import datetime as _dt
+
+    from test_t031_h2b_p3_ambiguity import (
+        _base,
+        _execute_service,
+        _PatchedPolicy,
+        _TimeoutOnNthClient,
+    )
+
+    from microdrama.contracts.errors import EffectDenied
+
+    base = _base(db, tmp_path)
+    world, ep, plan, service, comfy, adapter, authorization, digest, raw = base
+    comfy.service._client = _TimeoutOnNthClient(comfy.server, on={1})
+    first = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        first.execute(
+            plan.experiment_id,
+            phase="screen",
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            source_bytes=raw,
+        )
+
+    # The quote expires AFTER the ambiguity: recovery works from durable
+    # records; the EXECUTE composition for new work refuses it.
+    expired = dict(_screen_quote(world))
+    expired["expires_at"] = (comfy.clock.now() - timedelta(seconds=1)).isoformat()
+
+    def factory(**kwargs):
+        quote_arg = kwargs.get("quote")
+        if kwargs.get("mode", "EXECUTE") == "EXECUTE" and isinstance(quote_arg, dict):
+            expires = quote_arg.get("expires_at")
+            if expires is not None and _dt.fromisoformat(expires) <= comfy.clock.now():
+                raise EffectDenied("the acquisition quote is expired")
+        return adapter
+
+    fresh = BenchmarkService(
+        db,
+        _paid_settings(),
+        clock=comfy.clock,
+        ids=world.ids,
+        world_factory=factory,
+    )
+    with _PatchedPolicy():
+        resumed = fresh.resume(
+            plan.experiment_id,
+            authorization=authorization,
+            quote=expired,
+            expected_sha256=digest,
+            phase="screen",
+            source_bytes=raw,
+        )
+    assert resumed["admission"]["permitted"] is False
+    assert any("admission refused" in blocker for blocker in resumed["admission"]["blockers"])
+
+
+def test_hb10_cleanup_only_resume_ignores_broken_generation_documents(db: Database, tmp_path: Path):
+    """HB-10: --cleanup-only resume owes no generation inputs: an invalid,
+    irrelevant authorization file (and a missing quote file) must not prevent
+    the sweep; the command still exits 0 with the swept status."""
+    import contextlib
+    import io
+
+    from test_t031_h2b_p3_ambiguity import (
+        _base,
+        _execute_service,
+        _PatchedPolicy,
+        _TimeoutOnNthClient,
+    )
+
+    from microdrama.pipeline.benchmark import main
+
+    base = _base(db, tmp_path)
+    world, ep, plan, service, comfy, adapter, authorization, digest, raw = base
+    comfy.service._client = _TimeoutOnNthClient(comfy.server, on={1})
+    first = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        first.execute(
+            plan.experiment_id,
+            phase="screen",
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            source_bytes=raw,
+        )
+    broken = tmp_path / "broken-authorization.json"
+    broken.write_text("{ not json at all", encoding="utf-8")
+    settings = _offline_settings(tmp_path / "hb10-store", db)
+
+    def offline_service_factory(broken_db, broken_settings, store, injection):
+        return BenchmarkService(
+            broken_db,
+            broken_settings,
+            store=store,
+            clock=comfy.clock,
+            ids=world.ids,
+            world_factory=lambda **_kwargs: adapter,
+        )
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = main(
+            [
+                "resume",
+                "--experiment-id",
+                str(plan.experiment_id),
+                "--cleanup-only",
+                "--authorization",
+                str(broken),
+                "--quote",
+                str(tmp_path / "missing-quote.json"),
+            ],
+            _injection={
+                "db": db,
+                "settings": settings,
+                "service_factory": offline_service_factory,
+            },
+        )
+    assert code == 0
+    payload = json.loads(buffer.getvalue())
+    assert payload["execution_state"]  # the swept durable status, not an error

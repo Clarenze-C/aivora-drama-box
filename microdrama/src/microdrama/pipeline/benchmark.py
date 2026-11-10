@@ -127,7 +127,17 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
         digest = None
         authorization_bytes = None
         argument_blockers: list[str] = []
+        # HB-10: a cleanup-only resume owes no generation inputs at all - an
+        # invalid or missing authorization/quote document is irrelevant to the
+        # sweep and must never prevent it. Plain resume loads them softly:
+        # unusable documents become admission blockers reported WITH the
+        # recovered status (recovery itself never needs them).
+        cleanup_only_resume = args.command == "resume" and args.cleanup_only
         soft_validation = args.command == "resume" and not args.cleanup_only
+        if cleanup_only_resume:
+            args.authorization = None
+            args.authorization_sha256 = None
+            args.quote = None
         # §4.2 CLI resume order: recovery from durable records runs BEFORE any
         # new-generation argument is validated. For `resume` an unusable
         # authorization/quote file becomes an admission blocker reported with
@@ -142,6 +152,10 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 if not soft_validation:
                     raise
                 argument_blockers.append(f"authorization file refused ({exc.code})")
+            except OSError as exc:
+                if not soft_validation:
+                    raise
+                argument_blockers.append(f"authorization file unreadable ({exc.errno})")
         if (
             args.authorization
             and args.authorization_sha256
@@ -170,6 +184,11 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
             if not soft_validation:
                 raise
             argument_blockers.append(f"quote file refused ({exc.code})")
+            quote = None
+        except OSError as exc:
+            if not soft_validation:
+                raise
+            argument_blockers.append(f"quote file unreadable ({exc.errno})")
             quote = None
 
         # H-2: the audited operator resolution validates its attestation shape

@@ -85,6 +85,7 @@ from microdrama.contracts.errors import (
     MicrodramaError,
     NeedsReconciliation,
     NotFound,
+    PolicyDenied,
 )
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.core.clock import SystemClock, UuidIds
@@ -1301,6 +1302,18 @@ class BenchmarkService:
             # gate (raced writer). Nothing was written; converge idempotently.
             status = dict(self.status(experiment_id))
             status["admission"] = {"permitted": False, "blockers": refused.blockers}
+            return status
+        except (EffectDenied, PolicyDenied) as refused:
+            # HB-10: current authorization/quote/rights eligibility refused the
+            # NEW work after recovery completed (e.g. a well-formed but expired
+            # quote). The recovered durable status is returned together with
+            # the admission blocker - recovery happened; the CLI must not turn
+            # this into an error exit.
+            status = dict(self.status(experiment_id))
+            status["admission"] = {
+                "permitted": False,
+                "blockers": [f"admission refused ({refused.code})"],
+            }
             return status
         if isinstance(result, dict):
             result.setdefault("admission", {"permitted": True, "blockers": []})
