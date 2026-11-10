@@ -315,6 +315,13 @@ class Janitor:
             pod_id = stray.pod_id
         else:
             pod_id = row["pod_id"]
+            # CN2-3 (2026-11-10, re-review round 2): heal any missing ownership
+            # BEFORE termination and accounting - a pod bound by the POST-accept
+            # recorder whose ownership open was lost (pre-fix durable state)
+            # must not have its disk interval vanish when the verified terminate
+            # closes a missing row; positive disk charges would fall to the
+            # recovery pool. Idempotent, mirroring LeaseService.shutdown's heal.
+            open_storage_ownership(self._db, lease_id, pod_id)
         self._accrue(lease_id, now)
         self._mark_release_started(lease_id, now)
         pod_state = self._manager.stop(pod_id)

@@ -230,16 +230,22 @@ def durable_created_pod_recorder(
                 # durable proof ensure_pod's own recording would have.
                 updates["create_requested_at"] = now()
                 updates["compute_window_start_at"] = now()
-            if not updates:
-                return
-            update_with_revision(
-                tx,
-                "pod_leases",
-                row["id"],
-                row["revision"],
-                updates,
-                now=now(),
-            )
+            if updates:
+                update_with_revision(
+                    tx,
+                    "pod_leases",
+                    row["id"],
+                    row["revision"],
+                    updates,
+                    now=now(),
+                )
+            # CN2-3 (2026-11-10, re-review round 2): open storage ownership
+            # ATOMICALLY with the binding. A worker that dies immediately after
+            # the create POST never runs another ensure, activation or its
+            # shutdown handler - without this row the pod's disk interval is
+            # unowned and its positive disk charges fall to the recovery pool.
+            # Idempotent: a replay against an already-owned pod opens nothing.
+            open_storage_ownership_in_tx(tx, row["id"], pod_id)
 
     return record
 
@@ -469,37 +475,46 @@ def open_storage_ownership(db: Database, lease_id: UUID, pod_id: str) -> None:
     creating lease. A warm transfer never touches it; only the verified terminate closes.
     """
     with db.transaction() as tx:
-        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s", (lease_id,))
-        if lease is None:
-            raise NotFound("pod lease not found", lease_id=str(lease_id))
-        root = tx.fetchone(
-            "SELECT id, owner_episode_id, create_requested_at FROM pod_leases "
-            "WHERE provider = %s AND pod_id = %s AND transferred_from IS NULL "
-            "ORDER BY created_at LIMIT 1",
-            (lease["provider"], pod_id),
+        open_storage_ownership_in_tx(tx, lease_id, pod_id)
+
+
+def open_storage_ownership_in_tx(tx: Tx, lease_id: UUID, pod_id: str) -> None:
+    """The ownership open inside a caller-owned transaction (CN2-3).
+
+    The POST-accept recorder opens storage ownership ATOMICALLY with its pod
+    binding, so a worker that dies immediately after the create POST - before
+    any verification, activation or shutdown handler - still leaves the disk
+    interval attributed to the lease.
+    """
+    lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s", (lease_id,))
+    if lease is None:
+        raise NotFound("pod lease not found", lease_id=str(lease_id))
+    root = tx.fetchone(
+        "SELECT id, owner_episode_id, create_requested_at FROM pod_leases "
+        "WHERE provider = %s AND pod_id = %s AND transferred_from IS NULL "
+        "ORDER BY created_at LIMIT 1",
+        (lease["provider"], pod_id),
+    )
+    owner = root if root is not None else lease
+    valid_from = owner["create_requested_at"] or lease["create_requested_at"] or owner["created_at"]
+    existing = tx.fetchval(
+        "SELECT 1 FROM pod_storage_ownership WHERE provider = %s AND pod_id = %s "
+        "AND creating_lease_id = %s",
+        (lease["provider"], pod_id, owner["id"]),
+    )
+    if existing is None:
+        tx.execute(
+            "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
+            "valid_from, creating_lease_id) VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                uuid5(RENDERING_NAMESPACE, f"storage-ownership:{owner['id']}"),
+                lease["provider"],
+                pod_id,
+                owner["owner_episode_id"],
+                valid_from,
+                owner["id"],
+            ),
         )
-        owner = root if root is not None else lease
-        valid_from = (
-            owner["create_requested_at"] or lease["create_requested_at"] or owner["created_at"]
-        )
-        existing = tx.fetchval(
-            "SELECT 1 FROM pod_storage_ownership WHERE provider = %s AND pod_id = %s "
-            "AND creating_lease_id = %s",
-            (lease["provider"], pod_id, owner["id"]),
-        )
-        if existing is None:
-            tx.execute(
-                "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
-                "valid_from, creating_lease_id) VALUES (%s, %s, %s, %s, %s, %s)",
-                (
-                    uuid5(RENDERING_NAMESPACE, f"storage-ownership:{owner['id']}"),
-                    lease["provider"],
-                    pod_id,
-                    owner["owner_episode_id"],
-                    valid_from,
-                    owner["id"],
-                ),
-            )
 
 
 def close_storage_ownership(db: Database, provider: str, pod_id: str, instant: datetime) -> None:

@@ -4,9 +4,9 @@ import errno
 import re
 import socket
 from collections.abc import Callable, Collection, Mapping
-from typing import Any
 from contextvars import ContextVar, Token
 from datetime import datetime
+from typing import Any
 
 from microdrama.contracts.errors import EffectDenied
 

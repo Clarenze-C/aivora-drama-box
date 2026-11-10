@@ -348,6 +348,7 @@ def test_transport_refuses_requests_that_start_after_the_deadline(
     every timeout at the actual positive remainder and refuse to start any
     request once the deadline has passed."""
     import io
+
     from microdrama.rendering import runpod_transport as rt
     from microdrama.rendering.diagnostics import (
         reset_request_deadline,
@@ -357,7 +358,7 @@ def test_transport_refuses_requests_that_start_after_the_deadline(
     class FakeResponse(io.BytesIO):
         status = 200
 
-        def __enter__(self) -> "FakeResponse":
+        def __enter__(self) -> FakeResponse:
             return self
 
         def __exit__(self, *exc: object) -> bool:
@@ -933,7 +934,7 @@ def test_billing_residual_allocation_conserves_the_ceiling_for_every_case() -> N
     """CN2-1: property-style conservation. For every tolerated combination the
     component atoms sum to exactly the ceiling total - never more (a fake
     dispute), never less (an under-recorded leak)."""
-    from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+    from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
     from microdrama.rendering.runpod_transport import _BILLING_TOLERANCE_USD, _billing_record
 
@@ -973,7 +974,9 @@ def test_billing_residual_allocation_conserves_the_ceiling_for_every_case() -> N
                 )
                 # Never under-record a component relative to its exact amount.
                 for amount, atom in zip(
-                    fields[1:], (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd)
+                    fields[1:],
+                    (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd),
+                    strict=True,
                 ):
                     exact_atom = (amount * Decimal(1_000_000)).to_integral_value(
                         rounding=ROUND_FLOOR
