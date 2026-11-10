@@ -798,6 +798,119 @@ def test_billing_real_mismatch_is_not_normalized(total: str) -> None:
     assert record.gpu_micro_usd == 1
 
 
+def test_billing_tolerance_crossing_an_integer_boundary_conserves_the_ceiling() -> None:
+    """CN2-1 (2026-11-10, re-review round 2): the discrepancy 4e-13 USD is inside
+    the declared 1e-12 tolerance, but the ceiling total is 4 micro-USD while all
+    three component floors are zero. The old single-pass top-up visited each
+    component once, produced a sum of 3 and raised AssertionError - aborting
+    billing ingestion instead of reaching settlement. The whole residual must be
+    allocated deterministically (cycling largest-fractional-remainder order, ties
+    GPU > CPU > disk), with no assert backing the money path."""
+    from microdrama.rendering.runpod_transport import _amount_micro, _billing_record
+
+    row = {
+        "podId": "p",
+        "startTime": NOW.isoformat(),
+        "endTime": (NOW + timedelta(hours=1)).isoformat(),
+        "totalAmount": "0.0000030000001",
+        "gpuAmount": "0.0000009999999",
+        "cpuAmount": "0.0000009999999",
+        "diskAmount": "0.0000009999999",
+    }
+    record = _billing_record(row)
+    assert _amount_micro("0.0000030000001") == 4
+    assert record.raw_components_match
+    assert (
+        record.gpu_micro_usd,
+        record.cpu_micro_usd,
+        record.disk_micro_usd,
+    ) == (2, 1, 1)
+    assert (
+        record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
+        == record.total_micro_usd
+        == 4
+    )
+
+
+def test_billing_residual_allocation_conserves_the_ceiling_for_every_case() -> None:
+    """CN2-1: property-style conservation. For every tolerated combination the
+    component atoms sum to exactly the ceiling total - never more (a fake
+    dispute), never less (an under-recorded leak)."""
+    from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+
+    from microdrama.rendering.runpod_transport import _BILLING_TOLERANCE_USD, _billing_record
+
+    tolerance = _BILLING_TOLERANCE_USD
+    grid = [Decimal("0.00000") + Decimal(i) * Decimal("0.0000004") for i in range(0, 13)]
+    checked = 0
+    for total in grid:
+        for gpu in grid:
+            for cpu in grid:
+                disk_exact = total - gpu - cpu
+                if disk_exact < 0:
+                    continue
+                # Split tolerated noise across the fields so the exact Decimals
+                # stay consistent within the declared tolerance.
+                noise = tolerance / Decimal(4)
+                fields = (total + noise, gpu - noise / 2, cpu - noise / 4, disk_exact - noise / 4)
+                if any(value < 0 for value in fields):
+                    continue
+                row = {
+                    "podId": "p",
+                    "startTime": NOW.isoformat(),
+                    "endTime": (NOW + timedelta(hours=1)).isoformat(),
+                    "totalAmount": str(fields[0]),
+                    "gpuAmount": str(fields[1]),
+                    "cpuAmount": str(fields[2]),
+                    "diskAmount": str(fields[3]),
+                }
+                record = _billing_record(row)
+                assert record.raw_components_match
+                expected_total = int(
+                    (fields[0] * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING)
+                )
+                assert record.total_micro_usd == expected_total
+                assert (
+                    record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
+                    == record.total_micro_usd
+                )
+                # Never under-record a component relative to its exact amount.
+                for amount, atom in zip(
+                    fields[1:], (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd)
+                ):
+                    exact_atom = (amount * Decimal(1_000_000)).to_integral_value(
+                        rounding=ROUND_FLOOR
+                    )
+                    assert atom >= exact_atom
+                checked += 1
+    assert checked > 200  # a genuine grid, not a handful of hand-picked cases
+
+
+def test_billing_boundary_noise_needs_a_negative_residual_and_still_conserves() -> None:
+    """CN2-1: tolerated noise the other side of the boundary - components whose
+    floors already exceed the ceiling total - must remove atoms deterministically
+    and still conserve, again without an assert on the money path."""
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    row = {
+        "podId": "p",
+        "startTime": NOW.isoformat(),
+        "endTime": (NOW + timedelta(hours=1)).isoformat(),
+        # total 2.9999999999996 micro-USD -> ceiling 3; components floor to 1 each.
+        "totalAmount": "0.0000029999999999996",
+        "gpuAmount": "0.0000010000000000001",
+        "cpuAmount": "0.0000010000000000001",
+        "diskAmount": "0.0000009999999999996",
+    }
+    record = _billing_record(row)
+    assert record.raw_components_match
+    assert record.total_micro_usd == 3
+    assert (
+        record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
+        == record.total_micro_usd
+    )
+
+
 @pytest.mark.parametrize(
     "body",
     [

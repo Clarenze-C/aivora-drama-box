@@ -689,19 +689,39 @@ def _billing_record(value: Any) -> RunpodBillingRecord:
             scaled = [a * 1_000_000 for a in components]
             atoms = [int(a.to_integral_value(rounding=ROUND_FLOOR)) for a in scaled]
             residual = total_micro - sum(atoms)
-            # Floors need up to three atoms. Tiny tolerated negative noise at an
-            # integer boundary can instead require removing one atom.
-            if residual >= 0:
+            # CN2-1 (2026-11-10, re-review round 2): tolerated representation noise
+            # can cross an integer boundary, so the residual is NOT bounded by the
+            # three components (Codex case: ceiling total 4 with three zero floors).
+            # Allocate the WHOLE residual deterministically by cycling the largest
+            # fractional remainder first, ties GPU > CPU > disk; tolerance noise on
+            # the other side of a boundary instead removes atoms by cycling the
+            # smallest fractional remainder first. Cycling conserves the ceiling
+            # total by construction; no assert backs the money path.
+            if residual > 0:
                 order = sorted(range(3), key=lambda i: (-(scaled[i] - atoms[i]), i))
-                for i in order[:residual]:
-                    atoms[i] += 1
-            else:
-                order = sorted(
+                while residual > 0:
+                    for i in order:
+                        atoms[i] += 1
+                        residual -= 1
+                        if residual == 0:
+                            break
+            elif residual < 0:
+                removal = sorted(
                     (i for i in range(3) if atoms[i]), key=lambda i: (scaled[i] - atoms[i], i)
                 )
-                for i in order[:-residual]:
-                    atoms[i] -= 1
-            assert sum(atoms) == total_micro
+                while residual < 0:
+                    progressed = False
+                    for i in removal:
+                        if atoms[i] > 0:
+                            atoms[i] -= 1
+                            residual += 1
+                            progressed = True
+                            if residual == 0:
+                                break
+                    if not progressed:
+                        raise ProviderError(
+                            "billing residual cannot be conserved without negative components"
+                        )
         else:
             # Preserve the mismatching projection; the mapper records DISPUTED.
             atoms = [_amount_micro(a) for a in components]
