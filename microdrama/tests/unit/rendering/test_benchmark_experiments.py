@@ -481,8 +481,18 @@ class _LaggingCreatePods(RunpodIdFakePods):
         return found
 
 
-def _composed_world(world: RenderWorld, tmp_path, *, episode_number: int = 1, **kwargs):
-    """The composed screen harness from the 24-sample test, parameterized."""
+def _composed_world(
+    world: RenderWorld,
+    tmp_path,
+    *,
+    episode_number: int = 1,
+    plan_changes: dict | None = None,
+    **kwargs,
+):
+    """The composed screen harness from the 24-sample test, parameterized.
+
+    ``plan_changes`` override plan-document fields (e.g. max_gpu_ms) so a
+    limit can be made decisively tight for a test."""
     from dataclasses import replace
 
     from comfy_support import ComfyWorld, _workflow_sha_for
@@ -492,7 +502,9 @@ def _composed_world(world: RenderWorld, tmp_path, *, episode_number: int = 1, **
     from microdrama.pipeline.experimental_world import CanonicalExperimentWorld
     from microdrama.rendering.comfy_jobs import ComfyRenderConfig, render_id_for
 
-    ep, plan, service, budget, row = prepare(world, episode_number=episode_number)
+    ep, plan, service, budget, row = prepare(
+        world, episode_number=episode_number, **(plan_changes or {})
+    )
     comfy = ComfyWorld(
         world.db,
         tmp_path / "composed-h2-output",

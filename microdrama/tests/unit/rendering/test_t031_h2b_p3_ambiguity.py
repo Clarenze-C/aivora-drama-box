@@ -2744,3 +2744,156 @@ def test_hb5_takeover_discovered_ambiguity_persists_grace_and_cleanup_starts(
     assert final_op["state"] == "UNKNOWN"  # exposure retained, never resolved by cleanup
     assert fenced["execution_state"] == "NEEDS_RECONCILIATION"
     assert harness.comfy.prompt_posts == 0  # nothing re-POSTed through it all
+
+
+# ---------------------------------------------------------------------------
+# HB-6 (Codex P1-P3 review): the R3 effective deadline reserves shutdown time
+# and the accepted authorization's tighter limits.
+# ---------------------------------------------------------------------------
+
+
+def test_hb6_authorization_hard_stop_is_decisive(db: Database, tmp_path: Path):
+    """HB-6: the acquisition's ACCEPTED AUTHORIZATION bounds the episode when
+    it is tighter than the plan row. An authorization hard stop 120 s ahead
+    (under the 60 s shutdown reserve) makes the effective deadline exactly
+    hard_stop - 60 s, far earlier than the plan row's own candidates. (The
+    plan-row GPU route cannot isolate the shutdown reserve in this harness:
+    admission only happens while the funded window - which subsumes the plan
+    limit - still fits; the authorization route is where the tighter limit
+    actually bites.)"""
+    import hashlib as _hashlib
+    import json as _json
+    from datetime import timedelta as _td
+
+    from microdrama.persistence.db import jsonb as _jsonb
+    from microdrama.pipeline.benchmark_authorization import canonical_document_bytes
+
+    world, ep, plan, service, comfy, adapter, authorization, digest, raw = _base(db, tmp_path)
+    # A second authorization with an EARLIER hard stop, recorded as this
+    # acquisition's own provenance.
+    document = _json.loads(raw.decode("utf-8"))
+    document["change_ref"] = "hb6-early-stop"
+    document["hard_stop_utc"] = (world.clock.now() + _td(seconds=120)).isoformat()
+    tight_raw = canonical_document_bytes(document)
+    tight_sha = _hashlib.sha256(tight_raw).hexdigest()
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,"
+            "payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s)",
+            (
+                plan.experiment_id,
+                tight_sha,
+                _jsonb(_json.loads(tight_raw.decode("utf-8"))),
+                tight_raw,
+                world.clock.now(),
+            ),
+        )
+    comfy.service._client = _NeverAcceptedTimeoutClient(comfy.server)
+    first = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        first.execute(
+            plan.experiment_id,
+            phase="screen",
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            source_bytes=raw,
+        )
+    acquisition = _acquisition_row(db, plan.experiment_id)
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_acquisitions SET authorization_sha256=%s WHERE acquisition_id=%s",
+            (tight_sha, acquisition["acquisition_id"]),
+        )
+    # The takeover discovery (HB-5) enters grace under the tighter limits.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_dispatch_slots SET coordinator_lease_until=%s - interval '1 second' "
+            "WHERE experiment_id=%s",
+            (comfy.clock.now(), plan.experiment_id),
+        )
+    takeover = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        takeover.reconcile(plan.experiment_id, world=adapter)
+    grace = _grace_row(db, acquisition["acquisition_id"])
+    margin_ms = adapter.leases._config.shutdown_margin_ms
+    expected = world.clock.now() + _td(seconds=120) - _td(milliseconds=margin_ms)
+    # The authorization's hard stop minus the shutdown reserve IS the deadline
+    # - earlier than every plan-row candidate (at HEAD it was ignored and the
+    # deadline sat ~9 minutes out).
+    assert grace["recovery_deadline"] == expected.replace(microsecond=0) or (
+        abs((grace["recovery_deadline"] - expected).total_seconds()) < 1.0
+    )
+
+
+def test_hb6_authorization_gpu_limit_is_decisive(db: Database, tmp_path: Path):
+    """HB-6: the acquisition's ACCEPTED AUTHORIZATION bounds the episode when
+    it is tighter than the plan row: a 50 s authorization GPU allowance under
+    the 60 s shutdown reserve is immediate exhaustion too, whatever the plan
+    row allows."""
+    import hashlib as _hashlib
+    import json as _json
+
+    from microdrama.persistence.db import jsonb as _jsonb
+    from microdrama.pipeline.benchmark_authorization import (
+        canonical_document_bytes,
+    )
+
+    world, ep, plan, service, comfy, adapter, authorization, digest, raw = _base(db, tmp_path)
+    # A second authorization, tighter on GPU than the plan row, recorded as
+    # the acquisition's own provenance BEFORE admission (nothing used yet).
+    document = _json.loads(raw.decode("utf-8"))
+    document["change_ref"] = "hb6-tight-gpu"
+    document["max_gpu_ms"] = 50_000
+    tight_raw = canonical_document_bytes(document)
+    tight_sha = _hashlib.sha256(tight_raw).hexdigest()
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,"
+            "payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s)",
+            (
+                plan.experiment_id,
+                tight_sha,
+                _jsonb(_json.loads(tight_raw.decode("utf-8"))),
+                tight_raw,
+                world.clock.now(),
+            ),
+        )
+    comfy.service._client = _NeverAcceptedTimeoutClient(comfy.server)
+    first = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        admitted = first.execute(
+            plan.experiment_id,
+            phase="screen",
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            source_bytes=raw,
+        )
+    assert admitted["execution_state"] == "NEEDS_RECONCILIATION"
+    acquisition = _acquisition_row(db, plan.experiment_id)
+    # Point the acquisition's provenance at the tighter authorization and
+    # trigger the grace through the takeover discovery path (HB-5).
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_acquisitions SET authorization_sha256=%s WHERE acquisition_id=%s",
+            (tight_sha, acquisition["acquisition_id"]),
+        )
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_dispatch_slots SET coordinator_lease_until=%s - interval '1 second' "
+            "WHERE experiment_id=%s",
+            (comfy.clock.now(), plan.experiment_id),
+        )
+    takeover = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        takeover.reconcile(plan.experiment_id, world=adapter)
+    grace = _grace_row(db, acquisition["acquisition_id"])
+    assert grace["recovery_deadline"] is not None
+    assert grace["recovery_deadline"] <= comfy.clock.now()
+    with db.transaction(readonly=True) as tx:
+        lease = tx.fetchone(
+            "SELECT stop_verified_at, terminate_verified_at FROM pod_leases WHERE id=%s",
+            (acquisition["lease_id"],),
+        )
+    assert lease["stop_verified_at"] is not None or lease["terminate_verified_at"] is not None

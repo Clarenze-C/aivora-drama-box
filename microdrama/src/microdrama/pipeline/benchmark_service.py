@@ -683,36 +683,99 @@ class BenchmarkService:
         self.repo.outcome(experiment_id, "FAILED")
         return self.sweep(experiment_id, world=world)
 
-    def _enter_grace(self, experiment_id: UUID, acquisition: dict, world: Any) -> None:
-        """§5.4 (SC-5/R3): persist the durable recovery grace BEFORE recovery.
+    def _shutdown_margin_ms(self, world: Any = None) -> int:
+        config = getattr(getattr(world, "leases", None), "_config", None)
+        return int(getattr(config, "shutdown_margin_ms", 60_000))
 
-        ``recovery_deadline`` is the EARLIEST of four absolute timestamps
-        (first ambiguity + RECOVERY_GRACE_MAX_S, hard stop minus the shutdown
-        margin, the acquisition's funded-work deadline with its shutdown
-        allowance already excluded, and the aggregate GPU deadline). A restart
-        or takeover never re-grants: ``recovery_started_at`` keeps its first
-        value and the deadline may only be shortened (SC2-2 keeps it for a
-        later ambiguity on the same acquisition).
-        """
+    def _effective_recovery_deadline(
+        self,
+        experiment_id: UUID,
+        acquisition_id: UUID,
+        *,
+        tx=None,
+        margin_ms: int | None = None,
+    ):
+        """HB-6 (R3): the earliest absolute recovery deadline, from the
+        EFFECTIVE limits - the tighter of the plan row and the acquisition's
+        ACCEPTED AUTHORIZATION for both the hard stop and the aggregate GPU
+        limit - with the funded-work window's shutdown allowance excluded and
+        the aggregate GPU deadline RESERVING the shutdown GPU time (all
+        durable acquisition windows, including reopened ones, are inside
+        ``gpu_ms``). Returns None when nothing durable bounds the episode
+        beyond the clock (the caller still applies the 600 s maximum)."""
+        from microdrama.pipeline.experimental_world import load_recovery_authorization
+
         now = self.clock.now()
-        margin_ms = getattr(world.leases._config, "shutdown_margin_ms", 60_000)
+        try:
+            authorization = load_recovery_authorization(self.db, acquisition_id)
+        except Exception:  # noqa: BLE001 - a missing record falls back to plan limits
+            authorization = None
+        auth_gpu = getattr(authorization, "max_gpu_ms", None)
+        auth_deadline = getattr(authorization, "hard_stop_utc", None)
+        if margin_ms is None:
+            margin_ms = 60_000
         margin = timedelta(milliseconds=margin_ms)
-        with self.db.transaction(readonly=True) as tx:
+        if tx is not None:
             exp = experiment_row(tx, experiment_id)
             compute_expires = tx.fetchval(
                 "SELECT r.expires_at FROM benchmark_reservation_links l "
                 "JOIN reservations r ON r.id=l.reservation_id "
                 "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE'",
-                (acquisition["acquisition_id"],),
+                (acquisition_id,),
             )
-        candidates = [now + timedelta(seconds=RECOVERY_GRACE_MAX_S)]
-        if exp["hard_stop"] is not None:
-            candidates.append(exp["hard_stop"] - margin)
+            used_gpu_ms = gpu_ms(tx, experiment_id, now)
+        else:
+            with self.db.transaction(readonly=True) as readonly:
+                exp = experiment_row(readonly, experiment_id)
+                compute_expires = readonly.fetchval(
+                    "SELECT r.expires_at FROM benchmark_reservation_links l "
+                    "JOIN reservations r ON r.id=l.reservation_id "
+                    "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE'",
+                    (acquisition_id,),
+                )
+                used_gpu_ms = gpu_ms(readonly, experiment_id, now)
+        effective_gpu_limit = exp["gpu_limit_ms"]
+        if auth_gpu is not None:
+            effective_gpu_limit = min(effective_gpu_limit, auth_gpu)
+        effective_hard_stop = exp["hard_stop"]
+        if auth_deadline is not None:
+            effective_hard_stop = (
+                min(effective_hard_stop, auth_deadline)
+                if effective_hard_stop is not None
+                else auth_deadline
+            )
+        candidates: list = []
+        if effective_hard_stop is not None:
+            candidates.append(effective_hard_stop - margin)
         if compute_expires is not None:
             candidates.append(compute_expires - margin)  # shutdown allowance excluded
-        with self.db.transaction(readonly=True) as tx:
-            remaining_gpu_ms = exp["gpu_limit_ms"] - gpu_ms(tx, experiment_id, now)
-        candidates.append(now + timedelta(milliseconds=max(remaining_gpu_ms, 0)))
+        # The aggregate GPU deadline reserves the shutdown GPU time: the
+        # funded window must still leave room to stop the pod inside the
+        # effective limit (HB-6: 50 s of allowance under a 60 s shutdown
+        # reserve is immediate exhaustion, not another 50 s of grace).
+        remaining_gpu_ms = effective_gpu_limit - used_gpu_ms
+        candidates.append(now + timedelta(milliseconds=max(remaining_gpu_ms - margin_ms, 0)))
+        return min(candidates) if candidates else None
+
+    def _enter_grace(self, experiment_id: UUID, acquisition: dict, world: Any) -> None:
+        """§5.4 (SC-5/R3): persist the durable recovery grace BEFORE recovery.
+
+        ``recovery_deadline`` is the EARLIEST of the first ambiguity +
+        RECOVERY_GRACE_MAX_S and the HB-6 effective bound (the tighter of the
+        plan row and the acquisition's ACCEPTED AUTHORIZATION for the hard
+        stop and the aggregate GPU limit, with the shutdown GPU time
+        reserved). A restart or takeover never re-grants:
+        ``recovery_started_at`` keeps its first value and the deadline may
+        only be shortened (SC2-2 keeps it for a later ambiguity).
+        """
+        now = self.clock.now()
+        margin_ms = self._shutdown_margin_ms(world)
+        effective = self._effective_recovery_deadline(
+            experiment_id, acquisition["acquisition_id"], margin_ms=margin_ms
+        )
+        candidates = [now + timedelta(seconds=RECOVERY_GRACE_MAX_S)]
+        if effective is not None:
+            candidates.append(effective)
         deadline = min(candidates)
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id)
@@ -1250,11 +1313,21 @@ class BenchmarkService:
                 "WHERE acquisition_id=%s FOR UPDATE",
                 (acquisition_id,),
             )
-            if (
-                acquisition is None
-                or acquisition["recovery_deadline"] is None
-                or self.clock.now() < acquisition["recovery_deadline"]
-            ):
+            if acquisition is None or acquisition["recovery_deadline"] is None:
+                return False
+            # HB-6: re-evaluate the effective bound UNDER the fence's locks -
+            # liability discovered since persistence (a late adoption, a
+            # reopened window) may have exhausted the allowance. The persisted
+            # deadline only ever SHORTENS.
+            recomputed = self._effective_recovery_deadline(experiment_id, acquisition_id, tx=tx)
+            if recomputed is not None and recomputed < acquisition["recovery_deadline"]:
+                tx.execute(
+                    "UPDATE benchmark_acquisitions SET recovery_deadline=%s "
+                    "WHERE acquisition_id=%s",
+                    (recomputed, acquisition_id),
+                )
+                acquisition = {**acquisition, "recovery_deadline": recomputed}
+            if self.clock.now() < acquisition["recovery_deadline"]:
                 return False
             self._lock_gate_rows(tx, experiment_id)
             items = unresolved_items(tx, experiment_id, now=self.clock.now())
