@@ -312,6 +312,31 @@ class ComfyHttpClient:
             for item in data.get(group, [])
         )
 
+    def find_prompt_id_by_client(self, client_id: str) -> str | None:
+        """H-2 (2026-11-10, GLM harness review): reconcile a submit whose outcome
+        is UNKNOWN by its DETERMINISTIC client id. A POST that timed out may
+        still have been accepted server-side; the queue and history entries
+        carry the client id in their extra_data, so a read-only scan adopts the
+        durable prompt id - this NEVER resubmits and never invents an id."""
+        queue = json.loads(self._request("GET", "/queue", authorization_key=client_id))
+        for group in ("queue_running", "queue_pending"):
+            for item in queue.get(group, []) if isinstance(queue, dict) else []:
+                if not isinstance(item, list) or len(item) < 4:
+                    continue
+                extra = item[3]
+                if isinstance(extra, dict) and str(extra.get("client_id")) == client_id:
+                    return str(item[1])
+        history = json.loads(self._request("GET", "/history", authorization_key=client_id))
+        if isinstance(history, dict):
+            for _prompt_id, entry in history.items():
+                prompt = entry.get("prompt") if isinstance(entry, dict) else None
+                if not isinstance(prompt, list) or len(prompt) < 4:
+                    continue
+                extra = prompt[3]
+                if isinstance(extra, dict) and str(extra.get("client_id")) == client_id:
+                    return str(prompt[1])
+        return None
+
     def progress_events(self, prompt_id: str) -> list[ComfyProgressEvent]:
         # HTTP API has no durable progress history route; the service polls queue/history.
         return []

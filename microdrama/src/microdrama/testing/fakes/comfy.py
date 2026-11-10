@@ -142,6 +142,7 @@ class _Prompt:
     first_node: str
     sampler_node: str | None
     outputs: list[ComfyOutputFile] = field(default_factory=list)
+    client_id: str = ""
 
 
 class FakeComfyServerState:
@@ -199,6 +200,15 @@ class FakeComfyClient(FakeBase):
     def bind_pod_endpoint(self, pod_id: str, endpoint_url: str | None) -> None:
         self.bound_pod_endpoint = (pod_id, endpoint_url)
 
+    def find_prompt_id_by_client(self, client_id: str) -> str | None:
+        """H-2: the fake server remembers the deterministic client id per prompt
+        (queue and history alike), mirroring the live /queue + /history scan."""
+        self._note("find_prompt_id_by_client", key=client_id)
+        for prompt_id, prompt in self.state.prompts.items():
+            if prompt.client_id == client_id:
+                return prompt_id
+        return None
+
     def object_info(self) -> dict[str, ComfyNodeInfo]:
         self._note("object_info")
         return dict(FAKE_NODE_CLASSES)
@@ -217,6 +227,7 @@ class FakeComfyClient(FakeBase):
             scenario=step,
             first_node=str(next(iter(graph))),
             sampler_node=sampler,
+            client_id=client_id,
         )
         for node_id, node in graph.items():
             if node["class_type"] not in OUTPUT_CLASSES:

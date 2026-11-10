@@ -228,6 +228,52 @@ def test_cli_denies_generation_in_default_mode_before_db_or_provider(capsys):
     assert "PAID_BENCHMARK" in capsys.readouterr().err
 
 
+def test_cli_resolve_requires_an_audited_attestation_and_one_target(capsys):
+    """H-2: the operator resolution CLI refuses before any DB/provider work
+    unless it names exactly one target and the full audited attestation."""
+    called = []
+    injection = {"settings": Settings(), "service_factory": lambda *args: called.append(args)}
+    base = ["resolve", "--experiment-id", str(UUID(int=101))]
+    for argv in (
+        base + ["--acquisition-id", str(UUID(int=9001))],
+        base
+        + [
+            "--acquisition-id",
+            str(UUID(int=9001)),
+            "--actor-ref",
+            "operator",
+            "--reason",
+            "console evidence",
+        ],
+        base
+        + [
+            "--acquisition-id",
+            str(UUID(int=9001)),
+            "--sample-id",
+            "S01-R1",
+            "--actor-ref",
+            "operator",
+            "--reason",
+            "console evidence",
+            "--evidence-sha256",
+            "a" * 64,
+        ],
+        base
+        + [
+            "--actor-ref",
+            "operator",
+            "--reason",
+            "console evidence",
+            "--evidence-sha256",
+            "a" * 64,
+        ],
+    ):
+        result = main(argv, _injection=injection)
+        assert result == 2, argv
+        assert not called, argv
+        assert "resolve" in capsys.readouterr().err
+
+
 def test_missing_model_rights_never_queries_registry():
     from types import SimpleNamespace
 

@@ -16,7 +16,7 @@ from microdrama.budget.ledger import lock_account, lock_categories
 from microdrama.config import Settings
 from microdrama.contracts.cost import BudgetReservationRequest
 from microdrama.contracts.enums import EffectKind, ExecutionMode
-from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation
+from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation, NotFound
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.core.clock import SystemClock, UuidIds
 from microdrama.persistence.db import jsonb
@@ -288,6 +288,12 @@ class BenchmarkService:
 
     def _advance_owned(self, experiment_id: UUID, world: Any, phase: str, quote: Any, token: UUID):
         status = self.status(experiment_id)
+        if status["execution_state"] == "NEEDS_RECONCILIATION":
+            # H-2: resolve every UNKNOWN provider effect before any new dispatch;
+            # a still-ambiguous state refuses here instead of looping forever.
+            status = self.reconcile(experiment_id, world=world)
+            if status["execution_state"] == "NEEDS_RECONCILIATION":
+                return status
         eligible = (
             set(SCREEN_IDS) if phase == "screen" else {s["sample_id"] for s in status["samples"]}
         )
@@ -517,6 +523,20 @@ class BenchmarkService:
             receipt = world.cleanup(acquisition)
             verified = verified and receipt["verified"]
             billed = billed and receipt["billing_state"] == "BILLED"
+            # H-2 (2026-11-10, GLM harness review): an UNKNOWN create whose Pod was
+            # positively found during cleanup (the shutdown reconciled it by token,
+            # or the janitor late-adopted it) is RESOLVED - it closes like any
+            # cleaned acquisition. Only a create that stayed PODLESS keeps the
+            # UNKNOWN marker and its partial-index slot: the reconciler adopts a
+            # Pod that appears later, and only positive proof (the audited operator
+            # CLI, or the durable no-create record) may set NO_CREATE_PROVEN.
+            with self.db.transaction(readonly=True) as tx:
+                lease_pod = tx.fetchval(
+                    "SELECT pod_id FROM pod_leases WHERE id=%s", (acquisition["lease_id"],)
+                )
+            unresolved = acquisition["state"] == "UNKNOWN" and lease_pod is None
+            if unresolved:
+                verified = False
             with self.db.transaction() as tx:
                 exp = experiment_row(tx, experiment_id)
                 lock_account(tx, exp["account_id"])
@@ -526,7 +546,7 @@ class BenchmarkService:
                     "SELECT acquisition_id FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
                     (acquisition["acquisition_id"],),
                 )
-                if receipt["verified"] and receipt["storage_final"]:
+                if receipt["verified"] and receipt["storage_final"] and not unresolved:
                     ids = tx.fetchall(
                         "SELECT r.id,r.state FROM benchmark_reservation_links l JOIN reservations r ON r.id=l.reservation_id WHERE l.acquisition_id=%s AND l.purpose='STORAGE' ORDER BY r.id FOR UPDATE OF r",
                         (acquisition["acquisition_id"],),
@@ -542,9 +562,13 @@ class BenchmarkService:
                     "UPDATE benchmark_acquisitions SET compute_window_end=COALESCE(compute_window_end,%s),state=%s WHERE acquisition_id=%s",
                     (
                         receipt["compute_window_end"],
-                        "CLOSED"
-                        if receipt["verified"] and receipt["storage_final"]
-                        else "CLEANUP_PENDING",
+                        "UNKNOWN"
+                        if unresolved
+                        else (
+                            "CLOSED"
+                            if receipt["verified"] and receipt["storage_final"]
+                            else "CLEANUP_PENDING"
+                        ),
                         acquisition["acquisition_id"],
                     ),
                 )
@@ -557,6 +581,291 @@ class BenchmarkService:
                     experiment_id,
                 ),
             )
+        return self.status(experiment_id)
+
+    def reconcile(
+        self,
+        experiment_id: UUID,
+        *,
+        world: Any = None,
+        authorization: Any = None,
+        quote: Any = None,
+    ):
+        """H-2 (2026-11-10, GLM harness review): the §E provider-operation reconciler.
+
+        Resolves every UNKNOWN provider effect an earlier run left behind, never
+        creating a second effect: an UNKNOWN pod create is re-sought by its
+        durable client token (positive find adopts, binds and opens storage
+        ownership); an UNKNOWN prompt is re-polled by durable prompt id, or its
+        id is adopted through the deterministic client id's queue/history scan.
+        When every UNKNOWN is resolved the experiment leaves
+        NEEDS_RECONCILIATION and execution resumes; otherwise the status is
+        returned with the unresolved acquisitions still UNKNOWN (the operator
+        CLI records the audited resolution). Holds stay retained throughout.
+        """
+        status = self.status(experiment_id)
+        unknown = [a for a in status["acquisitions"] if a["state"] == "UNKNOWN"]
+        slot_stuck = self._slot_sample_unknown(experiment_id)
+        unresolved: list[str] = []
+        if unknown or slot_stuck:
+            world = world or self._world(experiment_id, authorization, quote, cleanup_only=False)
+        for acquisition in unknown:
+            if not self._reconcile_acquisition(experiment_id, world, acquisition):
+                unresolved.append(str(acquisition["acquisition_id"]))
+        if not unresolved and slot_stuck:
+            self._reconcile_slot_sample(experiment_id, world)
+        slot_stuck_after = self._slot_sample_unknown(experiment_id)
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id, lock=True)
+            still_unknown = tx.fetchval(
+                "SELECT COUNT(*) FROM benchmark_acquisitions WHERE experiment_id=%s AND state='UNKNOWN'",
+                (experiment_id,),
+            )
+            if (
+                exp["execution_state"] == "NEEDS_RECONCILIATION"
+                and not still_unknown
+                and not slot_stuck_after
+            ):
+                # The phase to resume is derived from durable screening evidence,
+                # never from memory: a recorded PASS admits FULL, else SCREEN.
+                if exp["execution_outcome"] is None:
+                    has_pass = tx.fetchval(
+                        "SELECT COUNT(*) FROM benchmark_screenings WHERE experiment_id=%s "
+                        "AND decision->>'decision'='PASS'",
+                        (experiment_id,),
+                    )
+                    tx.execute(
+                        "UPDATE benchmark_experiments SET execution_state=%s WHERE experiment_id=%s",
+                        ("FULL_RUNNING" if has_pass else "SCREEN_RUNNING", experiment_id),
+                    )
+        return self.status(experiment_id)
+
+    def _reconcile_acquisition(self, experiment_id: UUID, world: Any, acquisition: dict) -> bool:
+        """Adopt a positively-found pod for an UNKNOWN create; False keeps UNKNOWN.
+
+        Only the LIVE-lease case resumes here: the durable client token resolves
+        to an owned Pod, which is bound and ownership-opened before the normal
+        acquire verifies/activates it. A terminal lease is not the reconciler's
+        to resurrect: a Pod that appears after a podless close belongs to the
+        janitor's late-pod adoption, and absence is never proof - both keep the
+        UNKNOWN marker for the audited operator CLI."""
+        from microdrama.contracts.errors import Conflict
+        from microdrama.rendering.leases import LIVE_LEASE_STATES, open_storage_ownership
+
+        with self.db.transaction(readonly=True) as tx:
+            lease = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (acquisition["lease_id"],))
+        if lease is None or lease["lease_state"] not in LIVE_LEASE_STATES:
+            return False
+        if lease["pod_id"] is None:
+            pod = world.leases._manager.reconcile_by_token(lease["client_token"])
+            if pod is None:
+                return False
+            world.leases._record_pod_id(lease["id"], pod.pod_id)
+            open_storage_ownership(self.db, lease["id"], pod.pod_id)
+        try:
+            world.acquire(acquisition)
+        except (NeedsReconciliation, Conflict):
+            return False
+        with self.db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET state='ACTIVE' WHERE acquisition_id=%s",
+                (acquisition["acquisition_id"],),
+            )
+        return True
+
+    def _slot_sample_unknown(self, experiment_id: UUID) -> bool:
+        """Whether the dispatch slot holds a sample whose operation is UNKNOWN.
+
+        The sample's own ``operation_id`` link is written by ``_observe`` - a
+        submit that raised NEVER got there - so the operation is resolved through
+        the sample's fixed PROMPT reservation (attempts_per_sample is 1)."""
+        with self.db.transaction(readonly=True) as tx:
+            operation = tx.fetchval(
+                "SELECT o.state FROM benchmark_dispatch_slots d "
+                "JOIN benchmark_samples s ON s.experiment_id=d.experiment_id "
+                "AND s.sample_id=d.sample_id "
+                "LEFT JOIN provider_operations o ON o.reservation_id=s.reservation_id "
+                "WHERE d.experiment_id=%s",
+                (experiment_id,),
+            )
+        return operation == "UNKNOWN"
+
+    def _reconcile_slot_sample(self, experiment_id: UUID, world: Any) -> None:
+        """Re-poll the dispatched sample's UNKNOWN operation by durable identity."""
+        with self.db.transaction(readonly=True) as tx:
+            sample = tx.fetchone(
+                "SELECT s.* FROM benchmark_dispatch_slots d JOIN benchmark_samples s "
+                "ON s.experiment_id=d.experiment_id AND s.sample_id=d.sample_id "
+                "WHERE d.experiment_id=%s",
+                (experiment_id,),
+            )
+            operation = (
+                tx.fetchone(
+                    "SELECT id, state FROM provider_operations WHERE reservation_id=%s",
+                    (sample["reservation_id"],),
+                )
+                if sample
+                else None
+            )
+        if sample is None or operation is None or operation["state"] != "UNKNOWN":
+            return
+        try:
+            result = world.comfy.reconcile_unknown(operation["id"])
+        except NeedsReconciliation:
+            return
+        self._observe(experiment_id, sample, result)
+
+    def resolve_create(
+        self,
+        experiment_id: UUID,
+        *,
+        acquisition_id: UUID,
+        actor_ref: str,
+        reason: str,
+        evidence_sha256: str,
+    ):
+        """H-2: the audited OPERATOR resolution for an UNKNOWN pod create (§E).
+
+        Mirrors the canary's resolve_podless_create: the operator attests, with
+        a sha256 evidence hash, that the provider console shows no Pod and no
+        charge for the owned name and period. NO_CREATE_PROVEN is set ONLY on
+        that positive proof (or the durable proof that no create was ever sent),
+        freeing the partial-index slot so a new acquisition may be admitted.
+        """
+        from microdrama.budget import BudgetService
+        from microdrama.budget.billing import BillingRepository
+        from microdrama.contracts.errors import SchemaInvalid
+
+        for value in (actor_ref, reason):
+            if not str(value or "").strip():
+                raise SchemaInvalid("a podless-create resolution requires an actor and reason")
+        if not (
+            isinstance(evidence_sha256, str)
+            and len(evidence_sha256) == 64
+            and all(c in "0123456789abcdef" for c in evidence_sha256)
+        ):
+            raise SchemaInvalid("a podless-create resolution requires a sha256 evidence hash")
+        with self.db.transaction() as tx:
+            experiment_row(tx, experiment_id, lock=True)
+            acquisition = tx.fetchone(
+                "SELECT * FROM benchmark_acquisitions WHERE experiment_id=%s "
+                "AND acquisition_id=%s FOR UPDATE",
+                (experiment_id, acquisition_id),
+            )
+            if acquisition is None:
+                raise NotFound("benchmark acquisition not found")
+            if acquisition["state"] == "NO_CREATE_PROVEN":
+                return self.status(experiment_id)
+            if acquisition["state"] != "UNKNOWN":
+                raise Conflict(
+                    "only an UNKNOWN create can be resolved as podless",
+                    acquisition_state=acquisition["state"],
+                )
+            lease = tx.fetchone(
+                "SELECT * FROM pod_leases WHERE id=%s FOR UPDATE", (acquisition["lease_id"],)
+            )
+            if lease is not None and lease["pod_id"] is not None:
+                raise Conflict(
+                    "the acquisition's lease has a Pod attached; reconcile adopts it",
+                    pod_id=lease["pod_id"],
+                )
+            create_requested = lease["create_requested_at"] if lease is not None else None
+        if create_requested is not None:
+            # The audited attestation posts the deterministic BILLED 0 settlement
+            # (freeing the compute hold's remainder) and bounds the window.
+            repository = BillingRepository(
+                self.db, budget_service=BudgetService(self.db, self.clock, self.ids, self.settings)
+            )
+            repository.resolve_podless_create(
+                acquisition["lease_id"],
+                actor_ref=actor_ref,
+                reason=reason,
+                evidence_sha256=evidence_sha256,
+                now=self.clock.now(),
+            )
+        with self.db.transaction() as tx:
+            experiment_row(tx, experiment_id, lock=True)
+            tx.fetchone(
+                "SELECT acquisition_id FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition_id,),
+            )
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET state='NO_CREATE_PROVEN',"
+                "compute_window_end=COALESCE(compute_window_end,create_intent_at) "
+                "WHERE acquisition_id=%s",
+                (acquisition_id,),
+            )
+            # No Pod ever existed for this acquisition: its protective storage
+            # hold has nothing to guard. Release it in the same resolution.
+            storage = tx.fetchall(
+                "SELECT r.id FROM benchmark_reservation_links l JOIN reservations r "
+                "ON r.id=l.reservation_id WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
+                "AND r.state='ACTIVE' ORDER BY r.id FOR UPDATE OF r",
+                (acquisition_id,),
+            )
+            for row in storage:
+                ExperimentBudgetService(
+                    self.db,
+                    self.clock,
+                    self.ids,
+                    self.settings,
+                    experiment_id=experiment_id,
+                ).release_in_transaction(
+                    tx, row["id"], reason="benchmark storage hold released at proven no-create"
+                )
+            if not tx.fetchval(
+                "SELECT COUNT(*) FROM benchmark_acquisitions WHERE experiment_id=%s "
+                "AND state='UNKNOWN'",
+                (experiment_id,),
+            ):
+                tx.execute(
+                    "UPDATE benchmark_experiments SET execution_state="
+                    "'SCREEN_RUNNING' WHERE experiment_id=%s AND execution_state="
+                    "'NEEDS_RECONCILIATION'",
+                    (experiment_id,),
+                )
+        return self.status(experiment_id)
+
+    def resolve_sample(
+        self,
+        experiment_id: UUID,
+        *,
+        sample_id: str,
+        actor_ref: str,
+        reason: str,
+        evidence_sha256: str,
+        world: Any = None,
+    ):
+        """H-2: the audited OPERATOR resolution for a sample's UNKNOWN operation.
+
+        Records the terminal FAILED outcome (no output is adopted), settles the
+        attempt exactly like a provider-reported failure, and frees the dispatch
+        slot so the experiment can continue with the next sample. Runs in a
+        cleanup-only world: an operator resolution is recovery, never new work.
+        """
+        with self.db.transaction(readonly=True) as tx:
+            sample = tx.fetchone(
+                "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id=%s",
+                (experiment_id, sample_id),
+            )
+            if sample is None:
+                raise NotFound("benchmark sample not found")
+            # The operation link is written by _observe; a submit that raised
+            # never got there, so resolve through the fixed PROMPT reservation.
+            operation_id = sample["operation_id"] or tx.fetchval(
+                "SELECT id FROM provider_operations WHERE reservation_id=%s",
+                (sample["reservation_id"],),
+            )
+            if operation_id is None:
+                raise Conflict("the sample has no provider operation to resolve")
+        world = world or self._world(experiment_id, cleanup_only=True)
+        status = world.comfy.resolve_unknown_operation(
+            operation_id,
+            actor_ref=actor_ref,
+            reason=reason,
+            evidence_sha256=evidence_sha256,
+        )
+        self._observe(experiment_id, sample, status)
         return self.status(experiment_id)
 
     def export(self, experiment_id: UUID):

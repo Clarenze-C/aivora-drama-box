@@ -37,6 +37,8 @@ def _parser() -> argparse.ArgumentParser:
             "status",
             "execute",
             "resume",
+            "reconcile",
+            "resolve",
             "record-screening",
             "sweep",
             "export",
@@ -51,6 +53,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--phase", choices=("screen", "full"), default="screen")
     parser.add_argument("--cleanup-only", action="store_true")
     parser.add_argument("--decision")
+    parser.add_argument("--acquisition-id", type=UUID)
+    parser.add_argument("--sample-id")
+    parser.add_argument("--actor-ref")
+    parser.add_argument("--reason")
+    parser.add_argument("--evidence-sha256")
     parser.add_argument("--output")
     return parser
 
@@ -135,6 +142,14 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
             raise PolicyDenied("benchmark authorization file SHA-256 mismatch")
         quote = load_document(args.quote, AcquisitionQuote) if args.quote else None
 
+        # H-2: the audited operator resolution validates its attestation shape
+        # before any DB or provider work (same rule as the work-command gates).
+        if args.command == "resolve":
+            if not args.actor_ref or not args.reason or not args.evidence_sha256:
+                raise SchemaInvalid("resolve requires --actor-ref, --reason and --evidence-sha256")
+            if bool(args.acquisition_id) == bool(args.sample_id):
+                raise SchemaInvalid("resolve requires exactly one of --acquisition-id/--sample-id")
+
         # The DSN is never a flag or output; retain every canary loopback guard.
         database_url = settings.database_url
         if not database_url:
@@ -189,6 +204,27 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 phase=args.phase,
                 cleanup_only=args.cleanup_only,
             )
+        elif args.command == "reconcile":
+            result = service.reconcile(exp, authorization=authorization, quote=quote)
+        elif args.command == "resolve":
+            # H-2: the audited operator resolution for an UNKNOWN create (§E).
+            # No new work is admitted; the command records positive proof only.
+            if args.acquisition_id:
+                result = service.resolve_create(
+                    exp,
+                    acquisition_id=args.acquisition_id,
+                    actor_ref=args.actor_ref,
+                    reason=args.reason,
+                    evidence_sha256=args.evidence_sha256,
+                )
+            else:
+                result = service.resolve_sample(
+                    exp,
+                    sample_id=args.sample_id,
+                    actor_ref=args.actor_ref,
+                    reason=args.reason,
+                    evidence_sha256=args.evidence_sha256,
+                )
         elif args.command == "record-screening":
             if not args.decision:
                 raise SchemaInvalid("record-screening requires --decision")

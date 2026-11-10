@@ -9,7 +9,7 @@ import pytest
 from comfy_support import GPU_SECOND_MICRO, ComfyWorld, checksum
 
 from microdrama.contracts.enums import AssetKind, Provenance, ProviderOperationState
-from microdrama.contracts.errors import NeedsReconciliation
+from microdrama.contracts.errors import NeedsReconciliation, SchemaInvalid
 from microdrama.persistence import Database
 from microdrama.rendering.comfy_jobs import (
     RENDER_OPERATION_KIND,
@@ -337,3 +337,152 @@ def test_a_failed_lease_covered_production_attempt_settles_its_own_hold(
     reservation = world.reservation_row(attempt.request.reservation_id)
     assert reservation["state"] == "SETTLED"  # F-4: production settles FAILED at once
     assert world.counters(ep.account_id)["reserved"] == 0  # nothing stays reserved
+
+
+def _unknown_submit_without_prompt_id(world: ComfyWorld, ep, key: str):
+    """H-2 fixture: the POST timed out after the server accepted the prompt, so
+    the operation is UNKNOWN with no durable prompt id (the deterministic client
+    id is the only recovery handle)."""
+    from microdrama.core.provider_ops import begin
+    from microdrama.rendering.workflows import MOCK_VIDEO_TEMPLATE
+
+    reservation = world.service.reserve_attempt(episode_id=ep.episode_id, semantic_key=key)
+    attempt = world.attempt(ep, key=key, reservation_id=reservation.id)
+    bound = bind_workflow(MOCK_VIDEO_TEMPLATE, attempt.request)
+    with world.db.transaction() as tx:
+        operation = begin(
+            tx,
+            provider=world.client.provider_id,
+            operation_kind=RENDER_OPERATION_KIND,
+            client_token=render_client_token(key),
+            request_hash=bound.request_hash,
+            deadline_at=world.clock.now() + timedelta(milliseconds=600_000),
+            job_id=attempt.job_id,
+            now=world.clock.now(),
+            reservation_id=reservation.id,
+            episode_id=ep.episode_id,
+        )
+    # The server accepted the prompt (registered under the deterministic client
+    # id); the response was lost to the timeout. The id is never persisted.
+    world.client.queue_prompt(bound.graph, client_id=render_client_id(key))
+    world.clock.advance(ms=700_000)  # past the attempt deadline
+    with pytest.raises(NeedsReconciliation):
+        world.service.poll(operation.operation_id)
+    (op,) = [row for row in world.op_rows() if row["id"] == operation.operation_id]
+    assert op["state"] == "UNKNOWN" and op["external_id"] is None
+    return attempt, operation, reservation
+
+
+def test_reconcile_unknown_adopts_the_prompt_by_deterministic_client_id(
+    db: Database, tmp_path: Path
+) -> None:
+    """H-2 (2026-11-10, GLM harness review): a prompt POST that timed out may
+    still have been accepted server-side. The reconciler scans queue/history by
+    the DETERMINISTIC client id, adopts the durable prompt id, and recovers the
+    outcome through the guarded poll - it NEVER resubmits."""
+    world = ComfyWorld(db, tmp_path / "store")
+    ep = world.episode()
+    key = "render.shot:ep1:sh10:attempt1"
+    attempt, operation, reservation = _unknown_submit_without_prompt_id(world, ep, key)
+    assert len(world.server.submissions) == 1
+    # Reconciliation adopts the prompt id and completes from history.
+    world.clock.advance(ms=EXECUTION_MS)
+    status = world.service.reconcile_unknown(operation.operation_id)
+    assert status.state is ProviderOperationState.SUCCEEDED
+    (op,) = [row for row in world.op_rows() if row["id"] == operation.operation_id]
+    assert op["state"] == "SUCCEEDED" and op["external_id"] is not None
+    # No second POST ever left the client - exactly one submission.
+    assert len(world.server.submissions) == 1
+
+
+def test_reconcile_unknown_stays_ambiguous_when_nothing_is_visible(
+    db: Database, tmp_path: Path
+) -> None:
+    """H-2: absence on the queue AND in history is not proof the prompt never
+    ran - the operation stays UNKNOWN + NeedsReconciliation for the operator."""
+    world = ComfyWorld(db, tmp_path / "store")
+    ep = world.episode()
+    key = "render.shot:ep1:sh11:attempt1"
+    attempt, operation, reservation = _unknown_submit_without_prompt_id(world, ep, key)
+    # The server never actually received it (nothing registered): evict the prompt.
+    lost = world.server.submissions.pop()
+    world.server.prompts.pop(lost)
+    with pytest.raises(NeedsReconciliation):
+        world.service.reconcile_unknown(operation.operation_id)
+    (op,) = [row for row in world.op_rows() if row["id"] == operation.operation_id]
+    assert op["state"] == "UNKNOWN"
+
+
+def test_poll_unknown_with_durable_prompt_id_recovers_from_history(
+    db: Database, tmp_path: Path
+) -> None:
+    """H-2: an UNKNOWN row that already carries its prompt id re-polls through
+    the guarded history path instead of raising forever - the prompt completed
+    server-side while the outcome was marked unknown."""
+    world = ComfyWorld(
+        db,
+        tmp_path / "store",
+        config=ComfyRenderConfig(price=ComfyRenderConfig.for_mock().price, timeout_ms=2_000),
+        execution_ms=10_000,
+    )
+    ep = world.episode()
+    attempt = world.attempt(ep)
+    status = world.service.submit(attempt.request, job_id=attempt.job_id)
+    world.clock.advance(ms=2_500)  # past the deadline while still executing
+    with pytest.raises(NeedsReconciliation):
+        world.service.poll(status.operation_id)
+    (op,) = world.op_rows()
+    assert op["state"] == "UNKNOWN" and op["external_id"] == status.prompt_id
+    world.clock.advance(ms=10_000)  # the prompt completes server-side
+    done = world.service.poll(status.operation_id)
+    assert done.state is ProviderOperationState.SUCCEEDED
+    assert len(world.server.submissions) == 1
+
+
+def test_operator_resolution_records_terminal_failure_and_settles(
+    db: Database, tmp_path: Path
+) -> None:
+    """H-2: the audited operator resolution (actor, reason, sha256 evidence)
+    records the terminal FAILED outcome for an unresolvable UNKNOWN prompt,
+    settles the attempt like a provider-reported failure, and appends the
+    resolution evidence event."""
+    from microdrama.contracts.errors import Conflict
+
+    world = ComfyWorld(db, tmp_path / "store")
+    ep = world.episode()
+    key = "render.shot:ep1:sh12:attempt1"
+    attempt, operation, reservation = _unknown_submit_without_prompt_id(world, ep, key)
+    lost = world.server.submissions.pop()
+    world.server.prompts.pop(lost)
+    with pytest.raises(NeedsReconciliation):
+        world.service.reconcile_unknown(operation.operation_id)
+    done = world.service.resolve_unknown_operation(
+        operation.operation_id,
+        actor_ref="operator-console",
+        reason="provider console shows no prompt and no charge for this attempt",
+        evidence_sha256="a" * 64,
+    )
+    assert done.state is ProviderOperationState.FAILED
+    with world.db.transaction(readonly=True) as tx:
+        events = tx.fetchall(
+            "SELECT payload FROM domain_events WHERE event_type="
+            "'provider_operation.operator_resolved'"
+        )
+    assert len(events) == 1
+    assert events[0]["payload"]["actor_ref"] == "operator-console"
+    # A second resolution of the same operation is refused.
+    with pytest.raises(Conflict):
+        world.service.resolve_unknown_operation(
+            operation.operation_id,
+            actor_ref="operator-console",
+            reason="again",
+            evidence_sha256="b" * 64,
+        )
+    # Malformed attestations are refused without any durable write.
+    with pytest.raises(SchemaInvalid):
+        world.service.resolve_unknown_operation(
+            operation.operation_id,
+            actor_ref="",
+            reason="x",
+            evidence_sha256="c" * 64,
+        )

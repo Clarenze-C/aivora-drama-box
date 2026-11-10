@@ -846,7 +846,13 @@ class ComfyRenderService:
         if state in _TERMINAL:
             self._settle_if_needed(row)
             return self._status(self._load_row(operation_id), replayed=True)
-        if state is ProviderOperationState.UNKNOWN:
+        if state is ProviderOperationState.UNKNOWN and row["external_id"] is None:
+            # H-2 (2026-11-10, GLM harness review): an UNKNOWN submit without a
+            # durable prompt id has nothing to re-poll yet - the reconciler
+            # adopts the id by deterministic client id first (reconcile_unknown).
+            # An UNKNOWN row WITH its prompt id falls through to the guarded
+            # history/queue recovery below: it re-polls by durable prompt id and
+            # never resubmits blindly.
             raise NeedsReconciliation(
                 "attempt outcome is unknown; reconcile before any resubmission",
                 operation_id=str(operation_id),
@@ -956,6 +962,105 @@ class ComfyRenderService:
             )
         self._settle_if_needed(self._load_row(operation_id))
         return self._status(self._load_row(operation_id))
+
+    def reconcile_unknown(self, operation_id: UUID) -> ComfyAttemptStatus:
+        """H-2 (2026-11-10, GLM harness review): the §E provider-operation reconciler.
+
+        An UNKNOWN submit whose prompt id never became durable is reconciled by
+        its DETERMINISTIC client id: a read-only queue/history scan adopts the
+        prompt id the server did receive, then the normal guarded poll recovers
+        the outcome. Never resubmits: no POST leaves this path. Returns the
+        status when the operation reaches a state poll can report; raises
+        NeedsReconciliation while the outcome stays genuinely ambiguous.
+        """
+        row = self._load_row(operation_id)
+        state = ProviderOperationState(row["state"])
+        if state in _TERMINAL:
+            return self.poll(operation_id)
+        if state is not ProviderOperationState.UNKNOWN:
+            return self.poll(operation_id)
+        if row["external_id"] is None:
+            finder = getattr(self._client, "find_prompt_id_by_client", None)
+            if finder is None:
+                raise NeedsReconciliation(
+                    "the Comfy client cannot reconcile by client id",
+                    operation_id=str(operation_id),
+                )
+            request = self._request_for_row(row)
+            with self._provider_authorization(
+                request, job_id=row["job_id"], operation_id=operation_id
+            ):
+                prompt_id = finder(render_client_id(request.semantic_key))
+            if not prompt_id:
+                raise NeedsReconciliation(
+                    "submit outcome is unknown and no prompt by the deterministic "
+                    "client id is visible on the queue or in history",
+                    operation_id=str(operation_id),
+                )
+            with self._db.transaction() as tx:
+                record_result(
+                    tx,
+                    operation_id,
+                    self._result(
+                        operation_id, ProviderOperationState.SUBMITTED, external_id=prompt_id
+                    ),
+                    now=self._now(),
+                )
+        return self.poll(operation_id)
+
+    def resolve_unknown_operation(
+        self,
+        operation_id: UUID,
+        *,
+        actor_ref: str,
+        reason: str,
+        evidence_sha256: str,
+    ) -> ComfyAttemptStatus:
+        """H-2: the audited OPERATOR resolution for an UNKNOWN render operation.
+
+        Mirrors the canary's resolve_podless_create validation (nonempty actor and
+        reason, a sha256 evidence hash): the operator attests the provider console
+        evidence that fixes the prompt's terminal outcome. Records FAILED (the
+        conservative outcome: no output is adopted), appends the append-only
+        resolution event, and settles the attempt exactly like a provider-reported
+        failure. The sample then leaves the dispatch slot.
+        """
+        if not str(actor_ref or "").strip():
+            raise SchemaInvalid("an UNKNOWN-operation resolution requires an actor")
+        if not str(reason or "").strip():
+            raise SchemaInvalid("an UNKNOWN-operation resolution requires a reason")
+        if not (
+            isinstance(evidence_sha256, str)
+            and len(evidence_sha256) == 64
+            and all(c in "0123456789abcdef" for c in evidence_sha256)
+        ):
+            raise SchemaInvalid("an UNKNOWN-operation resolution requires a sha256 evidence hash")
+        row = self._load_row(operation_id)
+        if ProviderOperationState(row["state"]) is not ProviderOperationState.UNKNOWN:
+            raise Conflict(
+                "only an UNKNOWN operation can be operator-resolved",
+                operation_id=str(operation_id),
+                state=row["state"],
+            )
+        with self._db.transaction() as tx:
+            append_event(
+                tx,
+                aggregate_type="provider_operation",
+                aggregate_id=operation_id,
+                event_type="provider_operation.operator_resolved",
+                payload={
+                    "actor_ref": actor_ref.strip(),
+                    "reason": reason.strip(),
+                    "evidence_sha256": evidence_sha256,
+                },
+                correlation_id=row["reservation_id"],
+                occurred_at=self._now(),
+            )
+        return self._finish_failure(
+            row,
+            error_code="OPERATOR_RESOLVED_UNKNOWN",
+            detail=reason.strip(),
+        )
 
     def _collect_outputs(
         self, row: Mapping[str, Any], outputs: list[ComfyOutputFile]

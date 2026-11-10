@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from rendering_support import RenderWorld
+from test_t045_timing import RunpodIdFakePods
 
 from microdrama.contracts.cost import BudgetReservationRequest, ExposureCeilings
 from microdrama.contracts.enums import BudgetCategory, BudgetScopeKind, QueueName
@@ -15,7 +16,11 @@ from microdrama.contracts.errors import BudgetExhausted, Conflict, EffectDenied
 from microdrama.pipeline.benchmark_authorization import BenchmarkPlan
 from microdrama.pipeline.benchmark_service import BenchmarkService
 from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
-from microdrama.rendering.leases import PodLeaseClaimRequest, mock_pod_price
+from microdrama.rendering.leases import (
+    PodLeaseClaimRequest,
+    durable_created_pod_recorder,
+    mock_pod_price,
+)
 
 pytestmark = pytest.mark.db
 
@@ -248,18 +253,19 @@ class _OfflineFinalityWorld:
     """
 
     def cleanup(self, acquisition):
-        result = self.leases.shutdown(
-            acquisition["lease_id"], reason="offline benchmark phase boundary"
-        )
-        assert result.compute_stopped
+        # Mirrors CanonicalExperimentWorld.cleanup: verified only at a verified
+        # terminate; a podless close (H-2's unknown create) stays unverified and
+        # billing-pending exactly like production until an audited resolution.
+        self.leases.shutdown(acquisition["lease_id"], reason="offline benchmark phase boundary")
         with self.db.transaction(readonly=True) as tx:
             row = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (acquisition["lease_id"],))
-        assert row["stop_verified_at"] is not None
+        # The fake provider stops without terminating; production Runpod terminates.
+        verified = row["stop_verified_at"] is not None or row["terminate_verified_at"] is not None
         return {
-            "verified": True,
+            "verified": verified,
             "compute_window_end": row["compute_window_end_at"],
-            "billing_state": "BILLED",
-            "storage_final": True,
+            "billing_state": "BILLED" if verified else "PENDING_PROVIDER_FINALITY",
+            "storage_final": verified,
         }
 
 
@@ -415,3 +421,329 @@ def test_composed_24_samples_use_actual_jobs_holds_leases_and_comfy_recovery(
             tx.fetchval("SELECT COUNT(*) FROM reservations WHERE semantic_key LIKE '%:sample:%'")
             == 24
         )
+
+
+class _LaggingCreatePods(RunpodIdFakePods):
+    """H-2 fixture: the timed-out create POST actually landed at the provider,
+    but the pod listing lags - the pod only becomes visible on the THIRD
+    reconciliation pass (create-time, the manager's immediate retry, then the
+    sweep's shutdown reconciliation)."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.last_request = None
+        self.find_calls = 0
+
+    def create_pod(self, request):
+        self.last_request = request
+        return super().create_pod(request)
+
+    def find_pods(self, *, owned_tag=None, client_token=None):
+        self.find_calls += 1
+        found = super().find_pods(owned_tag=owned_tag, client_token=client_token)
+        if (
+            not found
+            and client_token is not None
+            and self.find_calls >= 3
+            and self.last_request is not None
+            and self.last_request.client_token == client_token
+        ):
+            # the list lag resolved: the pod from the timed-out POST is visible now
+            return [self.create_pod(self.last_request)]
+        return found
+
+
+def _composed_world(world: RenderWorld, tmp_path, **kwargs):
+    """The composed screen harness from the 24-sample test, parameterized."""
+    from dataclasses import replace
+
+    from comfy_support import ComfyWorld, _workflow_sha_for
+
+    from microdrama.contracts.cost import RenderRequest
+    from microdrama.contracts.enums import ControlKind, RenderTier
+    from microdrama.pipeline.experimental_world import CanonicalExperimentWorld
+    from microdrama.rendering.comfy_jobs import ComfyRenderConfig, render_id_for
+
+    ep, plan, service, budget, row = prepare(world)
+    comfy = ComfyWorld(
+        world.db,
+        tmp_path / "composed-h2-output",
+        config=replace(ComfyRenderConfig.for_mock(), lease_covered=True),
+        execution_ms=0,
+        **kwargs,
+    )
+    comfy.clock.set(world.clock.now())
+    world.clock = comfy.clock
+    world.leases._clock = comfy.clock
+    world.provider.clock = comfy.clock
+    world.manager._clock = comfy.clock
+    service.clock = comfy.clock
+    service.repo.clock = comfy.clock
+    budget._clock = comfy.clock
+    world.leases._budget = budget
+    comfy.service._budget = budget
+    reference = uuid4()
+    comfy._seed_reference_assets([reference])
+
+    def request_factory(sample, acquisition, reservation_id):
+        key = f"benchmark:{plan.experiment_id}:sample:{sample['sample_id']}:a1"
+        return RenderRequest(
+            render_id=render_id_for(key),
+            semantic_key=key,
+            episode_id=ep.episode_id,
+            episode_number=1,
+            shot_id=f"bench-{sample['sample_id'].lower()}",
+            manifest_version=1,
+            attempt_number=1,
+            preset_id="fake-quality-8step",
+            tier=RenderTier.QUALITY_EIGHT_STEP,
+            required_controls=[ControlKind.CHARACTER_REFERENCE],
+            reference_asset_ids=[reference],
+            workflow_sha256=_workflow_sha_for("fake-quality-8step"),
+            seed=sample["seed"],
+            width=720,
+            height=1280,
+            fps=24,
+            duration_ms=4000,
+            reservation_id=reservation_id,
+            prompt_text="Offline synthetic fixture.",
+        )
+
+    class OfflineWorld(_OfflineFinalityWorld, CanonicalExperimentWorld):
+        pass
+
+    adapter = OfflineWorld(
+        db=world.db,
+        jobs=comfy.jobs,
+        leases=world.leases,
+        comfy=comfy.service,
+        budget=budget,
+        request_factory=request_factory,
+    )
+    return ep, plan, service, budget, comfy, adapter
+
+
+def _screen_quote(world: RenderWorld) -> dict:
+    return {
+        "maximum_runtime_ms": 1800000,
+        "gpu_type": world.config.allowed_gpu_types[0],
+        "host_ram_gb": world.config.min_host_ram_gb,
+        "max_storage_exposure_micro_usd": 1000,
+    }
+
+
+def test_unknown_create_with_late_pod_is_found_and_the_experiment_resumes(
+    world: RenderWorld, tmp_path
+) -> None:
+    """H-2: an ambiguous create whose Pod appears later (list lag) is FOUND - the
+    sweep's shutdown reconciliation adopts it, the acquisition closes (never
+    UNKNOWN-forever), and reconcile + a restarted coordinator resume the screen."""
+    from test_t045_timing import T0 as TIMING_T0
+
+    from microdrama.testing.fakes import FakeClock, SequentialIds
+    from microdrama.testing.fakes.pods import PodCreateScenario
+
+    world.provider = _LaggingCreatePods(
+        clock=FakeClock(TIMING_T0), ids=SequentialIds("t031-h2-lag")
+    )
+    world.provider.queue_scenarios(PodCreateScenario.CREATE_TIMEOUT_NOT_CREATED)
+    world.provider.created_pod_recorder = durable_created_pod_recorder(world.db, world.clock.now)
+    world.manager._provider = world.provider
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    state = service._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+    # The create timed out: the experiment enters NEEDS_RECONCILIATION...
+    assert state["execution_state"] == "NEEDS_RECONCILIATION"
+    acquisition = state["acquisitions"][0]
+    # ...but the sweep's shutdown reconciliation FOUND the late pod: the lease is
+    # bound and released with it, and the acquisition is NOT stuck UNKNOWN.
+    assert acquisition["state"] != "UNKNOWN"
+    with world.db.transaction(readonly=True) as tx:
+        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (acquisition["lease_id"],))
+    assert lease["pod_id"] is not None
+    assert lease["terminate_verified_at"] is not None
+    # Reconcile (a fresh coordinator over the same durable state) resumes.
+    fresh = BenchmarkService(world.db, world.settings, clock=comfy.clock, ids=world.ids)
+    resumed = fresh.reconcile(plan.experiment_id, world=adapter)
+    assert resumed["execution_state"] == "SCREEN_RUNNING"
+    for _ in range(8):
+        state = fresh._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+        if state["execution_state"] == "SCREEN_REVIEW":
+            break
+        comfy.clock.advance(seconds=1)
+    assert state["execution_state"] == "SCREEN_REVIEW"
+    assert len(comfy.server.submissions) == 3
+    # Exactly one pod was ever created for the whole screen: no second create.
+    assert world.provider.find_calls >= 3
+    with world.db.transaction(readonly=True) as tx:
+        owns = tx.fetchall("SELECT * FROM pod_storage_ownership")
+    assert owns and all(row["valid_until"] is not None for row in owns)
+
+
+def test_unknown_create_without_pod_is_operator_resolved_and_resumes(
+    world: RenderWorld, tmp_path
+) -> None:
+    """H-2: a create that stays podless keeps its UNKNOWN marker and slot; the
+    audited operator CLI (resolve --acquisition-id) posts the podless resolution,
+    sets NO_CREATE_PROVEN, frees the partial-index slot, and the experiment
+    resumes on a NEW acquisition generation."""
+    from test_t045_timing import T0 as TIMING_T0
+
+    from microdrama.testing.fakes import FakeClock, SequentialIds
+    from microdrama.testing.fakes.pods import PodCreateScenario
+
+    world.provider = RunpodIdFakePods(
+        clock=FakeClock(TIMING_T0), ids=SequentialIds("t031-h2-podless")
+    )
+    world.provider.queue_scenarios(PodCreateScenario.CREATE_TIMEOUT_NOT_CREATED)
+    world.provider.created_pod_recorder = durable_created_pod_recorder(world.db, world.clock.now)
+    world.manager._provider = world.provider
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    state = service._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+    assert state["execution_state"] == "NEEDS_RECONCILIATION"
+    acquisition = state["acquisitions"][0]
+    assert acquisition["state"] == "UNKNOWN"
+    # Automatic reconcile cannot resolve absence - it stays UNKNOWN.
+    still = service.reconcile(plan.experiment_id, world=adapter)
+    assert still["execution_state"] == "NEEDS_RECONCILIATION"
+    assert still["acquisitions"][0]["state"] == "UNKNOWN"
+    # The audited operator resolution (actor, reason, sha256 evidence) closes it.
+    resolved = service.resolve_create(
+        plan.experiment_id,
+        acquisition_id=acquisition["acquisition_id"],
+        actor_ref="operator-console",
+        reason="provider console shows no Pod and no charge for the owned name",
+        evidence_sha256="d" * 64,
+    )
+    first = [a for a in resolved["acquisitions"] if a["generation"] == 1][0]
+    assert first["state"] == "NO_CREATE_PROVEN"
+    assert resolved["execution_state"] == "SCREEN_RUNNING"
+    with world.db.transaction(readonly=True) as tx:
+        resolutions = tx.fetchall("SELECT * FROM runpod_podless_create_resolutions")
+        assert len(resolutions) == 1
+        assert resolutions[0]["actor_ref"] == "operator-console"
+    # A restarted coordinator admits a NEW acquisition generation and finishes.
+    fresh = BenchmarkService(world.db, world.settings, clock=comfy.clock, ids=world.ids)
+    for _ in range(8):
+        state = fresh._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+        if state["execution_state"] == "SCREEN_REVIEW":
+            break
+        comfy.clock.advance(seconds=1)
+    assert state["execution_state"] == "SCREEN_REVIEW"
+    generations = {a["generation"]: a["state"] for a in state["acquisitions"]}
+    assert generations[1] == "NO_CREATE_PROVEN"
+    assert len(comfy.server.submissions) == 3
+
+
+def test_prompt_submit_timeout_is_reconciled_by_client_id_without_resubmit(
+    world: RenderWorld, tmp_path
+) -> None:
+    """H-2: a prompt POST that times out after acceptance leaves the sample's
+    operation UNKNOWN with the dispatch slot occupied; the sweep keeps the
+    acquisition UNKNOWN only while podless, and reconcile adopts the prompt by
+    deterministic client id - the sample completes from history, the slot frees,
+    and a restarted coordinator resumes without a second POST."""
+    from microdrama.contracts.errors import NeedsReconciliation
+    from microdrama.testing.fakes.comfy import FakeComfyClient
+
+    class TimeoutOnceClient(FakeComfyClient):
+        """The server accepts the first prompt; its response is lost to a timeout."""
+
+        def __init__(self, state) -> None:
+            super().__init__(state)
+            self.timed_out = False
+
+        def queue_prompt(self, graph, *, client_id):
+            prompt_id = super().queue_prompt(graph, client_id=client_id)
+            if not self.timed_out:
+                self.timed_out = True
+                raise NeedsReconciliation("synthetic submit timeout after acceptance")
+            return prompt_id
+
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    comfy.service._client = TimeoutOnceClient(comfy.server)
+    state = service._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+    assert state["execution_state"] == "NEEDS_RECONCILIATION"
+    with world.db.transaction(readonly=True) as tx:
+        slot = tx.fetchone(
+            "SELECT sample_id FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+        operation = tx.fetchone(
+            "SELECT o.state FROM benchmark_samples s JOIN provider_operations o "
+            "ON o.reservation_id=s.reservation_id WHERE s.experiment_id=%s AND s.sample_id=%s",
+            (plan.experiment_id, slot["sample_id"]),
+        )
+    assert slot["sample_id"] is not None  # the slot is held while UNKNOWN
+    assert operation["state"] == "UNKNOWN"
+    # Reconcile adopts the prompt id by deterministic client id and completes it.
+    comfy.clock.advance(seconds=1)
+    resumed = service.reconcile(plan.experiment_id, world=adapter)
+    assert resumed["execution_state"] == "SCREEN_RUNNING"
+    assert {s["sample_id"]: s["state"] for s in resumed["samples"]}[slot["sample_id"]] == (
+        "SUCCEEDED"
+    )
+    # A restarted coordinator finishes the screen with no second submission.
+    fresh = BenchmarkService(world.db, world.settings, clock=comfy.clock, ids=world.ids)
+    for _ in range(8):
+        state = fresh._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+        if state["execution_state"] == "SCREEN_REVIEW":
+            break
+        comfy.clock.advance(seconds=1)
+    assert state["execution_state"] == "SCREEN_REVIEW"
+    assert len(comfy.server.submissions) == 3  # exactly one POST per screen sample
+
+
+def test_operator_resolves_an_unfindable_prompt_and_frees_the_slot(
+    world: RenderWorld, tmp_path
+) -> None:
+    """H-2: a prompt the reconciler cannot find stays UNKNOWN - never resubmitted -
+    until the audited operator resolution records its terminal outcome and frees
+    the dispatch slot."""
+    from microdrama.contracts.errors import NeedsReconciliation
+    from microdrama.testing.fakes.comfy import FakeComfyClient
+
+    class TimeoutOnceClient(FakeComfyClient):
+        def __init__(self, state) -> None:
+            super().__init__(state)
+            self.timed_out = False
+
+        def queue_prompt(self, graph, *, client_id):
+            prompt_id = super().queue_prompt(graph, client_id=client_id)
+            if not self.timed_out:
+                self.timed_out = True
+                # The server never actually queued it: evict so no scan can find it.
+                self.state.prompts.pop(prompt_id)
+                self.state.submissions.pop()
+                raise NeedsReconciliation("synthetic submit timeout, never accepted")
+            return prompt_id
+
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    comfy.service._client = TimeoutOnceClient(comfy.server)
+    state = service._advance(plan.experiment_id, adapter, "screen", _screen_quote(world))
+    assert state["execution_state"] == "NEEDS_RECONCILIATION"
+    still = service.reconcile(plan.experiment_id, world=adapter)
+    assert still["execution_state"] == "NEEDS_RECONCILIATION"
+    with world.db.transaction(readonly=True) as tx:
+        slot = tx.fetchone(
+            "SELECT sample_id FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    assert slot["sample_id"] is not None
+    resolved = service.resolve_sample(
+        plan.experiment_id,
+        sample_id=slot["sample_id"],
+        actor_ref="operator-console",
+        reason="provider console shows no prompt and no charge for this attempt",
+        evidence_sha256="e" * 64,
+        world=adapter,
+    )
+    sample = {s["sample_id"]: s["state"] for s in resolved["samples"]}[slot["sample_id"]]
+    assert sample == "FAILED"
+    with world.db.transaction(readonly=True) as tx:
+        freed = tx.fetchone(
+            "SELECT sample_id FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    assert freed["sample_id"] is None  # the slot no longer held forever
+    resumed = service.reconcile(plan.experiment_id, world=adapter)
+    assert resumed["execution_state"] == "SCREEN_RUNNING"
