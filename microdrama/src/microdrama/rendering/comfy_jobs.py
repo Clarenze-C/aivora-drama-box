@@ -185,6 +185,31 @@ def render_client_token(semantic_key: str) -> str:
     return f"md-comfy-{sha256_hex(semantic_key.encode('utf-8'))[:24]}"
 
 
+FIRST_SEND_CLAIMED_EVENT = "provider_operation.first_send_claimed"
+
+
+def _claim_first_send(tx: Tx, operation_id: UUID, *, now: datetime, correlation_id: UUID) -> bool:
+    """HB-7 (SC2-1): atomically consume the operation's exclusive first-send
+    right. Returns True for the caller that appended the claim; False when a
+    claim already exists (a paused original, a takeover, any replay). Called
+    under the operation row lock inside the begin transaction."""
+    from microdrama.core.events import list_events
+
+    for event in list_events(tx, operation_id):
+        if event.event_type == FIRST_SEND_CLAIMED_EVENT:
+            return False
+    append_event(
+        tx,
+        aggregate_type="provider_operation",
+        aggregate_id=operation_id,
+        event_type=FIRST_SEND_CLAIMED_EVENT,
+        payload={"claimed_at": now.isoformat()},
+        correlation_id=correlation_id,
+        occurred_at=now,
+    )
+    return True
+
+
 def render_client_id(semantic_key: str) -> str:
     """Deterministic websocket client id, so reconnects are recognisable server-side."""
     return f"md-render-{sha256_hex(semantic_key.encode('utf-8'))[:12]}"
@@ -651,7 +676,19 @@ class ComfyRenderService:
         job_id: UUID,
         token: str,
     ) -> ComfyAttemptStatus:
-        """Begin operation, queue the supplied graph and persist its external prompt ID."""
+        """Begin operation, queue the supplied graph and persist its external prompt ID.
+
+        HB-7 (SC2-1): the exclusive first-send right is consumed ATOMICALLY.
+        ``begin`` is idempotent on the client token, so an original caller
+        paused between begin and POST, a takeover, or any replay re-entering
+        the same intent would each find the same PENDING_SUBMIT row and each
+        treat it as dispatchable. The claim below - one append-only
+        ``first_send_claimed`` event under the operation lock, in the SAME
+        transaction as begin - distinguishes CREATION of the intent from
+        replay of it: only the caller that appends the claim may POST; every
+        later caller finds the claim consumed and raises NeedsReconciliation
+        (the send's outcome is uncertain - reconciliation owns it, and no
+        second POST ever leaves, I1)."""
         now = self._now()
         deadline = now + timedelta(milliseconds=self._config.timeout_ms)
         with self._db.transaction() as tx:
@@ -667,6 +704,14 @@ class ComfyRenderService:
                 reservation_id=request.reservation_id,
                 episode_id=request.episode_id,
             )
+            if operation.state in _DISPATCHABLE and not _claim_first_send(
+                tx, operation.operation_id, now=now, correlation_id=request.reservation_id
+            ):
+                raise NeedsReconciliation(
+                    "the prompt's first-send right was already consumed; the "
+                    "send's outcome is owned by reconciliation (never a second POST)",
+                    operation_id=str(operation.operation_id),
+                )
         if operation.state not in _DISPATCHABLE:
             return self.poll(operation.operation_id)
         try:

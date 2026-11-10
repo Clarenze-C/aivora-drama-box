@@ -2897,3 +2897,91 @@ def test_hb6_authorization_gpu_limit_is_decisive(db: Database, tmp_path: Path):
             (acquisition["lease_id"],),
         )
     assert lease["stop_verified_at"] is not None or lease["terminate_verified_at"] is not None
+
+
+def test_hb7_expired_coordinator_lease_refuses_the_stale_control_write(
+    db: Database, tmp_path: Path
+):
+    """HB-7: matching coordinator token VALUES with an expired ownership
+    lease are a stale coordinator - its control write (observing its own
+    result) and any further dispatch are refused; the sample is never
+    projected by it. (Before the fix the values alone authorized the write.)"""
+    world, ep, plan, service, comfy, adapter, authorization, digest, raw = _base(db, tmp_path)
+    gate, release = threading.Event(), threading.Event()
+    parked = _ParkAfterAcceptClient(comfy.server, gate, release)
+    comfy.service._client = _TimeoutOnNthClient(comfy.server, on={1})
+    first = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        first.execute(
+            plan.experiment_id,
+            phase="screen",
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            source_bytes=raw,
+        )
+    # Recover the first episode (as AT-1) so the run continues to sample 2,
+    # whose worker parks INSIDE the submit after server acceptance.
+    comfy.service._client = FakeComfyClient(comfy.server)
+    resumed = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        resumed.resume(
+            plan.experiment_id,
+            authorization=authorization,
+            quote=_screen_quote(world),
+            expected_sha256=digest,
+            phase="screen",
+            source_bytes=raw,
+        )
+    comfy.service._client = parked
+    stalled = _execute_service(db, comfy, world.ids, adapter)
+    result: dict = {}
+
+    def _stalled_worker():
+        with _PatchedPolicy():
+            result["status"] = stalled.resume(
+                plan.experiment_id,
+                authorization=authorization,
+                quote=_screen_quote(world),
+                expected_sha256=digest,
+                phase="screen",
+                source_bytes=raw,
+            )
+
+    worker = threading.Thread(target=_stalled_worker)
+    with _PatchedPolicy():
+        worker.start()
+        assert gate.wait(timeout=30)
+    try:
+        # The parked worker's ownership lease lapses while it is parked (its
+        # tokens still MATCH - only the lease expired).
+        with db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_dispatch_slots SET coordinator_lease_until="
+                "%s - interval '1 second' WHERE experiment_id=%s",
+                (comfy.clock.now(), plan.experiment_id),
+            )
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET coordinator_lease_until="
+                "%s - interval '1 second' WHERE experiment_id=%s",
+                (comfy.clock.now(), plan.experiment_id),
+            )
+        submissions_before = len(comfy.server.submissions)
+        release.set()
+        worker.join(timeout=60)
+        assert not worker.is_alive()
+        stalled_status = result["status"]
+        assert stalled_status["admission"]["permitted"] is False
+        assert any("R3 fence" in blocker for blocker in stalled_status["admission"]["blockers"])
+        with db.transaction(readonly=True) as tx:
+            parked_sample = tx.fetchone(
+                "SELECT state, output FROM benchmark_samples WHERE experiment_id=%s "
+                "AND sample_id='S07-R1'",
+                (plan.experiment_id,),
+            )
+        assert parked_sample["output"] is None  # the stale coordinator never projected
+        assert parked_sample["state"] != "SUCCEEDED"
+        assert len(comfy.server.submissions) == submissions_before  # no further send
+    finally:
+        release.set()
+        worker.join(timeout=60)

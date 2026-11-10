@@ -527,3 +527,73 @@ def test_operator_resolution_records_terminal_failure_and_settles(
             reason="x",
             evidence_sha256="c" * 64,
         )
+
+
+def test_hb7_first_send_right_is_consumed_atomically(db: Database, tmp_path: Path) -> None:
+    """HB-7 (SC2-1): the exclusive first-send right is consumed ATOMICALLY
+    with the intent's creation. A caller paused between begin and POST holds
+    the right; a second caller replaying the same intent (a takeover, a
+    paused-original overlap, any replay) finds the claim consumed, NEVER
+    POSTs and raises NeedsReconciliation - the send's outcome belongs to
+    reconciliation. The original then completes the single POST."""
+    import threading
+
+    world = ComfyWorld(db, tmp_path / "store")
+    ep = world.episode()
+    attempt = world.attempt(ep)
+    entered, release = threading.Event(), threading.Event()
+
+    class _ParkBeforeSendClient(type(world.client)):
+        def queue_prompt(self, graph, *, client_id):
+            entered.set()
+            release.wait(timeout=30)
+            return super().queue_prompt(graph, client_id=client_id)
+
+    world.service._client = _ParkBeforeSendClient(world.server)
+
+    from microdrama.budget import BudgetService
+    from microdrama.contracts.errors import NeedsReconciliation
+    from microdrama.rendering.comfy_jobs import ComfyRenderService
+
+    outcome: dict = {}
+
+    def _original_caller():
+        outcome["status"] = world.service.submit(attempt.request, job_id=attempt.job_id)
+
+    worker = threading.Thread(target=_original_caller)
+    worker.start()
+    try:
+        assert entered.wait(timeout=30)
+        (op,) = world.op_rows()
+        assert op["state"] == "PENDING_SUBMIT"  # begin committed, POST not sent
+        assert len(world.server.submissions) == 0
+
+        # The overlapping caller: same intent, fresh service object. Its
+        # unlocked pre-check (_find_by_token) ran BEFORE the original's begin
+        # committed - the exact interleaving where both callers reach begin -
+        # so it models the pre-begin/pre-POST overlap the claim must arbitrate.
+        overlapping = ComfyRenderService(
+            world.db,
+            BudgetService(world.db, world.clock, world.ids, world.settings),
+            world.client,
+            world.clock,
+            world.ids,
+            world.settings,
+            world.config,
+            world.store,
+        )
+        overlapping._find_by_token = lambda token: None  # noqa: SLF001 - race model
+        with pytest.raises(NeedsReconciliation):
+            overlapping.submit(attempt.request, job_id=attempt.job_id)
+        assert len(world.server.submissions) == 0  # no second POST, ever
+
+        release.set()
+    finally:
+        release.set()
+        worker.join(timeout=30)
+        assert not worker.is_alive()
+
+    assert outcome["status"].state is ProviderOperationState.SUBMITTED
+    assert len(world.server.submissions) == 1  # exactly one POST for the intent
+    (op,) = world.op_rows()
+    assert op["state"] == "SUBMITTED" and op["external_id"] == outcome["status"].prompt_id

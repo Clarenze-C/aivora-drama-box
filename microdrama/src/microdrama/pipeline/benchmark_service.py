@@ -385,33 +385,41 @@ class BenchmarkService:
     def _assert_coordination(
         self, tx: Any, experiment_id: UUID, acquisition_id: UUID | None, token: UUID
     ) -> None:
-        """R3 deadline fence: a coordinator control write or first-send
-        authorisation is valid only while BOTH durable tokens - the dispatch
-        slot's and the acquisition's - still match the caller's token.
-
-        The fence committed at deadline exhaustion revokes exactly those two
-        tokens (``_deadline_fence``); revocation never proves an
+        """R3 deadline fence + HB-7 ownership validity: a coordinator control
+        write or first-send authorisation is valid only while BOTH durable
+        tokens - the dispatch slot's and the acquisition's - still match the
+        caller's token AND their ownership leases are still live. Matching
+        values with a NULL/expired lease are a stale coordinator (HB-7's
+        probe accepted them). The fence committed at deadline exhaustion
+        revokes exactly those two tokens; revocation never proves an
         already-authorised external send never happened (I2) - such effects
         stay with reconciliation - it only strips the right to control or
         dispatch further."""
         slot = tx.fetchone(
-            "SELECT coordinator_token FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+            "SELECT coordinator_token, coordinator_lease_until "
+            "FROM benchmark_dispatch_slots WHERE experiment_id=%s",
             (experiment_id,),
         )
         acquisition = (
             tx.fetchone(
-                "SELECT coordinator_token FROM benchmark_acquisitions WHERE acquisition_id=%s",
+                "SELECT coordinator_token, coordinator_lease_until "
+                "FROM benchmark_acquisitions WHERE acquisition_id=%s",
                 (acquisition_id,),
             )
             if acquisition_id is not None
             else None
         )
-        if (
-            slot is None
-            or acquisition is None
-            or slot["coordinator_token"] != token
-            or acquisition["coordinator_token"] != token
-        ):
+        now = self.clock.now()
+
+        def _owned(row) -> bool:
+            return (
+                row is not None
+                and row["coordinator_token"] == token
+                and row["coordinator_lease_until"] is not None
+                and row["coordinator_lease_until"] > now
+            )
+
+        if not _owned(slot) or not _owned(acquisition):
             raise AdmissionBlocked(
                 ["R3 fence: the coordinator token was revoked at the recovery deadline"]
             )
@@ -1125,19 +1133,20 @@ class BenchmarkService:
         with self.db.transaction() as tx:
             # §6.1: D before S - the dispatch slot is locked (and its token
             # re-checked) before any sample projection writes.
-            slot = tx.fetchone(
+            tx.fetchone(
                 "SELECT sample_id, coordinator_token FROM benchmark_dispatch_slots "
                 "WHERE experiment_id=%s FOR UPDATE",
                 (experiment_id,),
             )
             if coordinator_token is not None:
-                # R3: projection is a coordinator control write - predicated on
-                # the slot token the fence revokes (recovery observes without
-                # a token; it never held one).
-                if slot is None or slot["coordinator_token"] != coordinator_token:
-                    raise AdmissionBlocked(
-                        ["R3 fence: the coordinator token was revoked at the recovery deadline"]
-                    )
+                # R3 + HB-7: projection is a coordinator control write -
+                # predicated on BOTH durable tokens (values AND live ownership
+                # leases; matching values with a lapsed lease are a stale
+                # coordinator). Recovery observes without a token; it never
+                # held one.
+                self._assert_coordination(
+                    tx, experiment_id, sample.get("acquisition_id"), coordinator_token
+                )
             tx.execute(
                 "UPDATE benchmark_samples SET state=%s,operation_id=%s,output=COALESCE(%s,output),coverage=COALESCE(coverage,%s) WHERE experiment_id=%s AND sample_id=%s",
                 (
