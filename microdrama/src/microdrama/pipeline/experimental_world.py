@@ -25,7 +25,7 @@ from typing import Any
 from uuid import UUID, uuid5
 
 from microdrama.contracts.cost import BudgetReservationRequest, RenderRequest
-from microdrama.contracts.enums import EffectKind, ExecutionMode
+from microdrama.contracts.enums import EffectKind, ExecutionMode, PodState
 from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation, PolicyDenied
 from microdrama.contracts.v2 import (
     PromptManifest,
@@ -208,6 +208,11 @@ class CanonicalExperimentWorld:
                 # a verified termination makes that absence final.
                 if lease["terminate_verified_at"] is not None:
                     return "VERIFIED_SOURCE_GONE"
+                return "INDETERMINATE"
+            if pod.state is not PodState.RUNNING:
+                # §3.4 (HB-2): BOUND requires a RUNNING pod with an endpoint.
+                # A stopped/terminated/releasing pod without a verified
+                # termination proves nothing about its server - INDETERMINATE.
                 return "INDETERMINATE"
             if pod.endpoint_url:
                 try:

@@ -1833,15 +1833,20 @@ class BenchmarkService:
                 return
             world.comfy.mark_operation_unknown(operation["id"])
             operation = {**operation, "state": "UNKNOWN"}
-        if operation["state"] != "UNKNOWN" and hasattr(world, "bind_for_recovery"):
-            # A production RECOVERY world binds its fresh client to the
-            # durable pod before any authenticated poll (§3.4). Binding is
-            # best effort: a world whose poll cannot authenticate refuses
-            # inside the tolerant try below, leaving the item blocked.
+        # HB-2: bind the owning acquisition's durable pod BEFORE both the
+        # UNKNOWN client-id lookup and the known-id poll - a fresh recovery
+        # client is unbound and its first authenticated call would refuse
+        # (the effect was then silently swallowed and the accepted prompt
+        # stayed unrecovered). The §3.4 result is handled explicitly: only
+        # BOUND may reconcile; VERIFIED_SOURCE_GONE/INDETERMINATE leave the
+        # item blocked - nothing adopted, nothing re-sent.
+        if hasattr(world, "bind_for_recovery") and sample.get("acquisition_id") is not None:
             try:
-                world.bind_for_recovery(sample["acquisition_id"])
+                binding = world.bind_for_recovery(sample["acquisition_id"])
             except Exception:
-                pass
+                binding = "INDETERMINATE"
+            if binding != "BOUND":
+                return
         if sample.get("acquisition_id") is not None:
             # §5.4 during grace: heartbeat the owned lease (never extending
             # anything) and bound every nested recovery HTTP request by the

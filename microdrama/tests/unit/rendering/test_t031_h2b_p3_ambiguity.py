@@ -793,9 +793,13 @@ def test_at19_janitor_fences_still_valid_token_and_stale_worker_is_fenced(
 
     # A FRESH takeover no longer waits out the one-hour coordinator lease:
     # the fence, not token expiry, unblocked the dispatch slot. The parked
-    # sample's send was authorised BEFORE the fence, so its positively-known
-    # outcome is adopted by recovery (never resubmitted: exactly one prompt
-    # under its deterministic client id).
+    # sample's send was authorised BEFORE the fence - but the janitor's
+    # cleanup STOPPED the pod (verified stop; termination verify is the
+    # janitor's separate tail), so the §3.4 (HB-2) binding is INDETERMINATE:
+    # the takeover can neither read the stopped pod's history nor adopt the
+    # prompt, and never resubmits. The sample stays unprojected; exactly one
+    # prompt exists under its deterministic client id (I1/I6). Only an audited
+    # resolution (§7.3) or the janitor's terminal tail closes this.
     from microdrama.rendering.comfy_jobs import render_client_id
 
     parked_key = f"benchmark:{plan.experiment_id}:sample:S03-R1:a1"
@@ -817,9 +821,11 @@ def test_at19_janitor_fences_still_valid_token_and_stale_worker_is_fenced(
             phase="screen",
             source_bytes=raw,
         )
-    assert after["execution_state"] in ("SCREEN_RUNNING", "SCREEN_REVIEW", "NEEDS_RECONCILIATION")
+    # Inherited SCREEN_RUNNING (worker 2's resume had recovered S01 before
+    # the fence) is fine: the stuck slot silently blocks all progress.
+    assert after["execution_state"] in ("SCREEN_RUNNING", "NEEDS_RECONCILIATION")
     with db.transaction(readonly=True) as tx:
-        parked = tx.fetchone(
+        parked_sample = tx.fetchone(
             "SELECT state FROM benchmark_samples WHERE experiment_id=%s AND sample_id='S03-R1'",
             (plan.experiment_id,),
         )
@@ -829,8 +835,22 @@ def test_at19_janitor_fences_still_valid_token_and_stale_worker_is_fenced(
             "AND s.sample_id='S03-R1'",
             (plan.experiment_id,),
         )
-    assert parked["state"] == "SUCCEEDED"  # recovered by the fresh takeover
+        parked_op = tx.fetchval(
+            "SELECT o.state FROM provider_operations o JOIN benchmark_samples s "
+            "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s "
+            "AND s.sample_id='S03-R1'",
+            (plan.experiment_id,),
+        )
+    assert parked_sample["state"] == "CLAIMED"  # never projected; not adoptable
+    # The released worker's own SUBMITTED write committed (the comfy-level
+    # result write carries no coordinator token); whether a takeover saw
+    # PENDING_SUBMIT or SUBMITTED first is timing - either way the stopped
+    # pod leaves the outcome unadoptable and blocked.
+    assert parked_op in ("UNKNOWN", "SUBMITTED")
     assert still_one == 1  # one operation, one prompt - no duplicate anything (I1/I6)
+    # The fresh takeover dispatched nothing: no new prompt POST for the parked
+    # intent and no new sample send while the outcome stays uncertain.
+    assert len(comfy.server.submissions) == submissions_before
 
 
 # ---------------------------------------------------------------------------
@@ -1383,51 +1403,203 @@ class _At17RunpodTransport:
         raise AssertionError(f"unexpected Runpod call: {method} {url}")
 
 
-class _At17PodComfyTransport:
-    """Scripted pod-side ComfyUI.
+class _At17ComfyServer:
+    """The pod-side ComfyUI state that outlives any one client/transport.
 
-    Every input upload POST is ACCEPTED (the bytes are remembered so /view can
-    serve them) and the response is then LOST (TimeoutError) - §9.3's
-    external-effect-acceptance crash window, per port. /view serves the
-    accepted bytes (or corrupt bytes in the unverifiable variant), /prompt
-    answers one deterministic prompt id, /object_info serves the pinned schema.
-    """
+    Inputs, prompts, rendered outputs and the POST counters are SERVER state
+    (HB-2): a fresh recovery client - a new transport over the same server -
+    sees exactly what the killed worker's server held. The server also serves
+    the /queue and /history scans the deterministic client-id finder makes."""
 
-    def __init__(self, schema_bytes: bytes, *, corrupt_readback: bool = False):
+    def __init__(self, schema_bytes: bytes):
         self.schema_bytes = schema_bytes
-        self.corrupt_readback = corrupt_readback
         self.inputs: dict[str, bytes] = {}
+        self.outputs: dict[str, bytes] = {}
+        self.prompts: dict[str, dict] = {}  # prompt_id -> {"client_id", "completed"}
         self.upload_posts = 0
         self.view_gets: list[str] = []
         self.prompt_posts = 0
+        self._clip: bytes | None = None
+
+    def output_bytes(self) -> bytes:
+        # The exact native SaveVideo shape (verify_native_output pins
+        # 480x832, 24 fps, ~5.17 s, 32 kHz stereo AAC): a real ffmpeg render.
+        if self._clip is None:
+            import subprocess
+            import tempfile
+            from pathlib import Path as _Path
+
+            with tempfile.TemporaryDirectory(prefix="at17-native-") as tmp:
+                path = _Path(tmp) / "native.mp4"
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-v",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "color=c=black:s=480x832:r=24:d=5.166667",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "sine=frequency=440:sample_rate=32000",
+                        "-ac",
+                        "2",
+                        "-c:a",
+                        "aac",
+                        "-t",
+                        "5.166667",
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "ultrafast",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-y",
+                        str(path),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    timeout=60,
+                )
+                self._clip = path.read_bytes()
+        return self._clip
+
+    def accept_prompt(self, client_id: str) -> str:
+        self.prompt_posts += 1
+        prompt_id = f"at17-prompt-{self.prompt_posts:04d}"
+        self.prompts[prompt_id] = {"client_id": client_id, "completed": True}
+        self.outputs[f"at17-out-{self.prompt_posts:04d}.mp4"] = self.output_bytes()
+        return prompt_id
+
+    def queue_document(self) -> bytes:
+        return json.dumps({"queue_running": [], "queue_pending": []}).encode()
+
+    def history_document(self) -> bytes:
+        return json.dumps(
+            {
+                prompt_id: {
+                    "prompt": [0, prompt_id, 0, {"client_id": entry["client_id"]}],
+                    "status": {"completed": entry["completed"], "status_str": "success"},
+                }
+                for prompt_id, entry in self.prompts.items()
+            }
+        ).encode()
+
+    def entry_document(self, prompt_id: str) -> bytes | None:
+        entry = self.prompts.get(prompt_id)
+        if entry is None:
+            return None
+        number = int(prompt_id.rsplit("-", 1)[1])
+        return json.dumps(
+            {
+                prompt_id: {
+                    "status": {"completed": entry["completed"], "status_str": "success"},
+                    "outputs": {
+                        "save_video": {
+                            "images": [
+                                {
+                                    "filename": f"at17-out-{number:04d}.mp4",
+                                    "subfolder": "",
+                                    "type": "output",
+                                }
+                            ]
+                        }
+                    },
+                }
+            }
+        ).encode()
+
+
+class _At17PodComfyTransport:
+    """Scripted pod-side ComfyUI over the SHARED server state.
+
+    Per-transport knobs model one worker session: ``upload_timeout`` accepts
+    every input upload POST then loses the response (§9.3's acceptance
+    window, per port); ``prompt_timeouts`` accepts that many prompt POSTs then
+    loses the response (AT-1's submit-acceptance window). Read routes
+    (/queue, /history, /view) always serve the shared server, so a FRESH
+    client sees the killed worker's server state (HB-2)."""
+
+    def __init__(
+        self,
+        server: _At17ComfyServer,
+        *,
+        upload_timeout: bool = False,
+        prompt_timeouts: int = 0,
+        corrupt_readback: bool = False,
+    ):
+        self.server = server
+        self.upload_timeout = upload_timeout
+        self.prompt_timeouts = prompt_timeouts
+        self.corrupt_readback = corrupt_readback
+
+    # The POST/GET counters are server state (a fresh client still must never
+    # re-POST); existing assertions read them off the transport.
+    @property
+    def upload_posts(self) -> int:
+        return self.server.upload_posts
+
+    @property
+    def prompt_posts(self) -> int:
+        return self.server.prompt_posts
+
+    @property
+    def view_gets(self) -> list[str]:
+        return self.server.view_gets
 
     def request(self, method, url, *, headers, body=None):
         import re as _re
         from urllib.parse import parse_qs, urlparse
 
+        server = self.server
         if method == "GET" and url.endswith("/object_info"):
-            return self.schema_bytes
+            return server.schema_bytes
         if method == "POST" and url.endswith("/upload/image"):
-            self.upload_posts += 1
+            server.upload_posts += 1
             match = _re.search(rb'filename="([^"]+)"\r\nContent-Type: [^\r]+\r\n\r\n', body)
             assert match is not None, "upload multipart lacks the image part"
             start = match.end()
             end = body.rfind(b"\r\n--t031_")
             assert end > start, "upload multipart lacks its closing boundary"
-            self.inputs[match.group(1).decode()] = body[start:end]
-            raise TimeoutError("pod accepted the upload; the response was lost")
+            filename = match.group(1).decode()
+            server.inputs[filename] = body[start:end]
+            if self.upload_timeout:
+                raise TimeoutError("pod accepted the upload; the response was lost")
+            subfolder = _re.search(rb'name="subfolder"\r\n\r\n([^\r]+)\r\n', body).group(1).decode()
+            return json.dumps({"name": filename, "subfolder": subfolder, "type": "input"}).encode()
         if method == "GET" and "/view" in url:
-            self.view_gets.append(url)
+            server.view_gets.append(url)
             query = parse_qs(urlparse(url).query)
             filename = query["filename"][0]
-            if filename not in self.inputs:
-                raise TimeoutError("input absent")
-            if self.corrupt_readback:
+            folder = query.get("type", ["input"])[0]
+            source = server.outputs if folder == "output" else server.inputs
+            if filename not in source:
+                raise TimeoutError("file absent")
+            if self.corrupt_readback and folder != "output":
                 return b"corrupt-readback-bytes"
-            return self.inputs[filename]
+            return source[filename]
+        if method == "GET" and url.endswith("/queue"):
+            return server.queue_document()
+        if method == "GET" and url.endswith("/history"):
+            return server.history_document()
+        if method == "GET" and "/history/" in url:
+            entry = server.entry_document(url.rsplit("/", 1)[1])
+            if entry is None:
+                return b"{}"
+            return entry
         if method == "POST" and url.endswith("/prompt"):
-            self.prompt_posts += 1
-            return json.dumps({"prompt_id": f"at17-prompt-{self.prompt_posts:04d}"}).encode()
+            from microdrama.contracts.errors import NeedsReconciliation
+
+            client_id = json.loads(body)["client_id"]
+            prompt_id = server.accept_prompt(client_id)
+            if self.prompt_timeouts > 0:
+                self.prompt_timeouts -= 1
+                # The real UrllibTransport converts the timeout to
+                # NeedsReconciliation before world.submit sees it.
+                raise NeedsReconciliation("pod accepted the prompt; the response was lost")
+            return json.dumps({"prompt_id": prompt_id}).encode()
         raise AssertionError(f"unexpected ComfyUI call: {method} {url}")
 
 
@@ -1441,6 +1613,8 @@ def _at17_compose(
     monkeypatch: pytest.MonkeyPatch,
     *,
     corrupt_readback: bool = False,
+    upload_timeout: bool = True,
+    prompt_timeouts: int = 0,
 ) -> _At17Harness:
     from datetime import UTC, datetime, timedelta
 
@@ -1730,7 +1904,13 @@ def _at17_compose(
                 (ref, str(path)),
             )
     runpod = _At17RunpodTransport(clock.now)
-    comfy = _At17PodComfyTransport(schema_bytes, corrupt_readback=corrupt_readback)
+    server = _At17ComfyServer(schema_bytes)
+    comfy = _At17PodComfyTransport(
+        server,
+        upload_timeout=upload_timeout,
+        prompt_timeouts=prompt_timeouts,
+        corrupt_readback=corrupt_readback,
+    )
 
     def factory(
         *,
@@ -1769,6 +1949,7 @@ def _at17_compose(
     harness.quote = _at4_quote(clock)
     harness.payloads = payloads
     harness.runpod = runpod
+    harness.server = server
     harness.comfy = comfy
     harness.factory = factory
     harness.service = BenchmarkService(db, settings, clock=clock, ids=ids, world_factory=factory)
@@ -2032,3 +2213,253 @@ def test_at17e_wrong_owner_and_wrong_mode_refusals(
             recovery_client.queue_prompt(_valid_fake_graph(), client_id="at17e")
     assert harness.comfy.upload_posts == posts_before
     assert harness.comfy.prompt_posts == 0
+
+
+# ---------------------------------------------------------------------------
+# HB-2 (Codex P1-P3 review): fresh UNKNOWN recovery binds its client first.
+# ---------------------------------------------------------------------------
+
+
+def test_hb2_at1_unknown_prompt_recovery_binds_the_fresh_client_first(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-2: a fresh recovery world's client is UNBOUND; the UNKNOWN lookup
+    ran before any binding, its first authenticated call refused with
+    EffectDenied and the tolerant handler swallowed it - the ACCEPTED prompt
+    stayed unrecovered forever. AT-1 through a real fresh client: recovery
+    binds the acquisition's durable pod (§3.4) BEFORE the client-id lookup,
+    adopts the accepted prompt, persists its output and continues the run -
+    with zero resubmits."""
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=False, prompt_timeouts=1)
+    plan = harness.plan
+
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    # The prompt POST was accepted then lost: submit ambiguity (§5.1), the
+    # acquisition stays ACTIVE, the operation is UNKNOWN with no external id.
+    assert first["execution_state"] == "NEEDS_RECONCILIATION"
+    assert first["acquisitions"][0]["state"] == "ACTIVE"
+    with db.transaction(readonly=True) as tx:
+        operation = tx.fetchone(
+            "SELECT o.id, o.state, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    assert operation is not None and operation["state"] == "UNKNOWN"
+    assert operation["external_id"] is None
+    assert harness.comfy.prompt_posts == 1  # the accepted-then-lost POST
+    assert harness.comfy.upload_posts == 4  # every port uploaded once
+
+    # A FRESH process recovers through a fresh client over the same server.
+    fresh = type(harness.service)(
+        db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
+    )
+    recovered = fresh.resume(
+        plan.experiment_id,
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+        phase="screen",
+    )
+    assert recovered["execution_state"] != "NEEDS_RECONCILIATION", recovered["execution_state"]
+    states = {s["sample_id"]: s["state"] for s in recovered["samples"]}
+    assert states["S01-R1"] == "SUCCEEDED"
+    with db.transaction(readonly=True) as tx:
+        after = tx.fetchone(
+            "SELECT o.state, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s AND s.sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+        sample = tx.fetchone(
+            "SELECT output FROM benchmark_samples WHERE experiment_id=%s AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert after["state"] == "SUCCEEDED"
+    assert after["external_id"] == "at17-prompt-0001"  # adopted by client id
+    assert sample["output"] and sample["output"]["sha256"]  # output persisted
+
+    # The same resume continued the run: the NEXT screen sample dispatched
+    # with a new prompt POST. Zero resubmit: S01's recovered operation is the
+    # server's FIRST prompt (adopted by client id, never re-POSTed) and the
+    # new POST belongs to a different sample's new operation.
+    assert harness.comfy.prompt_posts == 2
+    with db.transaction(readonly=True) as tx:
+        operations = tx.fetchall(
+            "SELECT s.sample_id, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s ORDER BY s.sample_id",
+            (plan.experiment_id,),
+        )
+    by_sample = {row["sample_id"]: row["external_id"] for row in operations}
+    assert by_sample["S01-R1"] == "at17-prompt-0001"
+    assert by_sample["S03-R1"] == "at17-prompt-0002"
+
+
+def _hb2_seed_pending_submit(harness, *, accepted: bool) -> None:
+    """The durable shape of a worker death between begin() and the prompt
+    POST's result commit, on the composed world: the first sample is claimed
+    with its job and hold, the dispatch slot holds it, and a PENDING_SUBMIT
+    operation row exists whose submit result was never observed. The compose
+    stops at the upload ambiguity (no operation row yet), so the seed inserts
+    the operation against the REAL job and reservation. ``accepted`` also
+    lands the POST server-side under the deterministic client id (§5.2 (b))."""
+    import uuid as _uuid
+    from datetime import timedelta
+
+    from microdrama.rendering.comfy_jobs import render_client_id, render_client_token
+
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    assert first["execution_state"] == "NEEDS_RECONCILIATION"  # upload ambiguity
+    with harness.db.transaction(readonly=True) as tx:
+        sample = tx.fetchone(
+            "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert sample["job_id"] is not None and sample["reservation_id"] is not None
+    key = f"benchmark:{plan.experiment_id}:sample:S01-R1:a1"
+    if accepted:
+        harness.server.accept_prompt(render_client_id(key))
+    with harness.db.transaction() as tx:
+        provider = tx.fetchval(
+            "SELECT provider FROM reservations WHERE id=%s", (sample["reservation_id"],)
+        )
+        tx.execute(
+            "INSERT INTO provider_operations(id,provider,operation_kind,client_token,"
+            "request_hash,job_id,reservation_id,state,external_id,deadline_at) "
+            "VALUES(%s,%s,'comfy.queue_prompt',%s,%s,%s,%s,'PENDING_SUBMIT',NULL,%s)",
+            (
+                _uuid.uuid4(),
+                provider,
+                render_client_token(key),
+                "3" * 64,
+                sample["job_id"],
+                sample["reservation_id"],
+                harness.clock.now() + timedelta(hours=1),
+            ),
+        )
+        tx.execute(
+            "UPDATE benchmark_samples SET operation_id=(SELECT id FROM provider_operations "
+            "WHERE reservation_id=%s) WHERE experiment_id=%s AND sample_id='S01-R1'",
+            (sample["reservation_id"], plan.experiment_id),
+        )
+
+
+def test_hb2_at15_pending_submit_takeover_through_a_fresh_real_client(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-2 + §5.2 (AT-15 b) through a real fresh client: the worker died
+    between begin() and the POST's result commit, and the POST DID land. The
+    takeover (coordinator token expired) moves PENDING_SUBMIT to UNKNOWN,
+    binds the fresh client to the durable pod FIRST (HB-2), adopts the prompt
+    by its deterministic client id and persists the output - never resubmits."""
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=True)
+    _hb2_seed_pending_submit(harness, accepted=True)
+    plan = harness.plan
+    posts_before = harness.comfy.prompt_posts
+    assert posts_before == 1  # the worker's accepted POST
+
+    # The coordinator token expired with the dead process: takeover.
+    harness.clock.advance(seconds=3601)
+    fresh = type(harness.service)(
+        db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
+    )
+    takeover = fresh.reconcile(plan.experiment_id)
+    with db.transaction(readonly=True) as tx:
+        after = tx.fetchone(
+            "SELECT o.state, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s AND s.sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert after["state"] == "SUCCEEDED"  # UNKNOWN -> adopted by client id
+    assert after["external_id"] == "at17-prompt-0001"
+    assert takeover["execution_state"] != "NEEDS_RECONCILIATION"
+    # Never resubmitted: the takeover sent nothing (HB-2's bound lookup only reads).
+    assert harness.comfy.prompt_posts == posts_before
+
+
+def test_hb2_at15a_invisible_prompt_stays_unknown_with_a_fresh_real_client(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-2 + §5.2 (AT-15 a): identical durable PENDING_SUBMIT takeover, but
+    the server holds NO prompt for the deterministic client id - the outcome
+    stays UNKNOWN (a miss never proves "not sent", I2) with its exposure,
+    blocking admission; nothing is adopted and nothing re-POSTed."""
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=True)
+    _hb2_seed_pending_submit(harness, accepted=False)
+    plan = harness.plan
+    posts_before = harness.comfy.prompt_posts
+    assert posts_before == 0  # the POST never left the dead worker
+
+    harness.clock.advance(seconds=3601)
+    fresh = type(harness.service)(
+        db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
+    )
+    status = fresh.reconcile(plan.experiment_id)
+    with db.transaction(readonly=True) as tx:
+        after = tx.fetchone(
+            "SELECT o.state FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s AND s.sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert after["state"] == "UNKNOWN"
+    assert status["execution_state"] == "NEEDS_RECONCILIATION"
+    assert harness.comfy.prompt_posts == posts_before  # nothing re-POSTed
+
+
+def test_hb2_bind_for_recovery_binds_only_a_running_pod(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-2 (§3.4 predicate): BOUND requires a RUNNING pod with an endpoint -
+    an endpoint-bearing pod that is no longer running is INDETERMINATE, not
+    BOUND (its server state is not reachable through it)."""
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=False)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+
+    from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
+
+    def world_budget():
+        return ExperimentBudgetService(
+            harness.db,
+            harness.clock,
+            harness.ids,
+            harness.settings,
+            experiment_id=plan.experiment_id,
+        )
+
+    world = harness.factory(
+        experiment_id=plan.experiment_id,
+        budget=world_budget(),
+        authorization=None,
+        quote=None,
+        mode="RECOVERY",
+        acquisition_id=acquisition_id,
+    )
+    assert world.bind_for_recovery(acquisition_id) == "BOUND"
+
+    # The pod stopped but keeps its recorded endpoint: never BOUND.
+    harness.runpod.pod["status"] = "STOPPED"
+    assert world.bind_for_recovery(acquisition_id) == "INDETERMINATE"
