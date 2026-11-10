@@ -151,7 +151,11 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
         for row in tx.fetchall(
             "SELECT l.acquisition_id, COUNT(*) AS open FROM benchmark_reservation_links l "
             "JOIN reservations r ON r.id=l.reservation_id "
-            "WHERE l.experiment_id=%s AND l.purpose='STORAGE' AND r.state='ACTIVE' "
+            "WHERE l.experiment_id=%s AND l.purpose='STORAGE' "
+            # HB-12/R1: an EXPIRED-but-unfinalized original STORAGE hold keeps
+            # its retained exposure and its debt exactly like an ACTIVE one -
+            # expiry never discharges liability (I4).
+            "AND r.state IN ('ACTIVE','EXPIRED') "
             "GROUP BY l.acquisition_id",
             (experiment_id,),
         )
@@ -201,7 +205,20 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
                 "SELECT 1 FROM pod_storage_ownership WHERE pod_id=%s AND valid_until IS NULL",
                 (resolution["contradicted_pod_id"],),
             )
-            if row["terminate_verified_at"] is None or ownership_open:
+            billing_final = False
+            if row["terminate_verified_at"] is not None and not ownership_open:
+                # HB-12/§4.1 U5: finalization is terminate-verified + ownership
+                # closed + BILLING FINAL - a billing-pending contradiction keeps
+                # the reopened liability blocking. The durable billing-final
+                # signal is the lease's own reservation being canonically
+                # closed (the deterministic BILLED settlement settles it); an
+                # open reservation means the final amount is not posted yet.
+                billing_final = tx.fetchval(
+                    "SELECT r.state FROM pod_leases l JOIN reservations r "
+                    "ON r.id=l.reservation_id WHERE l.id=%s",
+                    (row["lease_id"],),
+                ) in ("SETTLED", "RELEASED")
+            if row["terminate_verified_at"] is None or ownership_open or not billing_final:
                 # U5 - reopened liability: the no-create attestation was
                 # contradicted by a later pod binding and the discovered
                 # resource is not final yet (terminate verified, ownership
@@ -225,10 +242,16 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
     for sample in samples:
         ops = operations.get(sample["reservation_id"], [])
         if not ops:
-            if sample["state"] == "CLAIMED" and sample["job_id"] is None:
-                # U6 - a claim and hold committed without job or operation
-                # (§F ADMITTED_WITHOUT_JOB at sample level). Local-only: replay
-                # materializes and adopts; it never blocks other work.
+            if sample["state"] == "CLAIMED":
+                # U6 - a claim and hold committed without the job OR operation
+                # half of its materialization (§F ADMITTED_WITHOUT_JOB; HB-12:
+                # a job without an operation is equally incomplete). Local-only:
+                # replay materializes and adopts; it never blocks other work.
+                detail = (
+                    "sample claim+hold committed without job/operation"
+                    if sample["job_id"] is None
+                    else "sample claim+hold+job committed without an operation"
+                )
                 items.append(
                     UnresolvedItem(
                         kind="U6",
@@ -236,7 +259,7 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
                         acquisition_id=sample["acquisition_id"],
                         sample_id=sample["sample_id"],
                         reservation_id=sample["reservation_id"],
-                        detail="sample claim+hold committed without job/operation",
+                        detail=detail,
                     )
                 )
             continue

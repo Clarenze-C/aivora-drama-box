@@ -1689,6 +1689,79 @@ class BenchmarkService:
                                 row["id"],
                                 reason="benchmark storage deletion and invoice finality verified",
                             )
+                if receipt["verified"]:
+                    # HB-12/§5.3: the fenced failure path for unrecoverable
+                    # uploads. The verified cleanup removed the pod (and its
+                    # server with it): an upload intent still open can NEVER
+                    # verify by readback again. Its send right is durably
+                    # fenced here, the affected samples fail under §7.4 (the
+                    # outcome is set once; generation stops), and their
+                    # positively-unused prompt holds are released. Liability
+                    # was retained through the cleanup; U3u stops blocking
+                    # only NOW, with the episode finalized.
+                    open_intents = tx.fetchall(
+                        "SELECT asset_sha256 FROM benchmark_uploads "
+                        "WHERE acquisition_id=%s AND state IN ('INTENT','UNKNOWN')",
+                        (acquisition["acquisition_id"],),
+                    )
+                    if open_intents:
+                        tx.execute(
+                            "UPDATE benchmark_uploads SET state='FENCED' "
+                            "WHERE acquisition_id=%s AND state IN ('INTENT','UNKNOWN')",
+                            (acquisition["acquisition_id"],),
+                        )
+                        stuck = tx.fetchall(
+                            "SELECT sample_id, reservation_id FROM benchmark_samples "
+                            "WHERE acquisition_id=%s AND state NOT IN ('SUCCEEDED','FAILED') "
+                            "AND reservation_id IS NOT NULL",
+                            (acquisition["acquisition_id"],),
+                        )
+                        now = self.clock.now()
+                        for row in stuck:
+                            tx.execute(
+                                "UPDATE benchmark_samples SET state='FAILED',"
+                                "output=COALESCE(output,%s) WHERE experiment_id=%s "
+                                "AND sample_id=%s",
+                                (
+                                    jsonb({"error_code": "UPLOAD_UNRECOVERABLE"}),
+                                    experiment_id,
+                                    row["sample_id"],
+                                ),
+                            )
+                            tx.execute(
+                                "UPDATE benchmark_dispatch_slots SET sample_id=NULL,"
+                                "revision=revision+1 WHERE experiment_id=%s AND sample_id=%s",
+                                (experiment_id, row["sample_id"]),
+                            )
+                            tx.execute(
+                                "UPDATE benchmark_experiments SET "
+                                "execution_outcome=COALESCE(execution_outcome,'FAILED'),"
+                                "execution_state=CASE WHEN execution_outcome IS NULL "
+                                "THEN 'FAILED' ELSE execution_state END,"
+                                "revision=revision+1,updated_at=%s WHERE experiment_id=%s",
+                                (now, experiment_id),
+                            )
+                    # The fenced samples' prompt holds are positively unused
+                    # (no operation was ever dispatched for them): released IN
+                    # this transaction (a nested standalone release would
+                    # self-deadlock on the locks already held here).
+                    for row in tx.fetchall(
+                        "SELECT s.sample_id, s.reservation_id FROM benchmark_samples s "
+                        "WHERE s.acquisition_id=%s AND s.state='FAILED' "
+                        "AND s.output->>'error_code'='UPLOAD_UNRECOVERABLE'",
+                        (acquisition["acquisition_id"],),
+                    ):
+                        try:
+                            cleanup_world.budget.release_in_transaction(
+                                tx,
+                                row["reservation_id"],
+                                reason=(
+                                    "benchmark upload unrecoverable after verified "
+                                    f"cleanup (sample {row['sample_id']})"
+                                ),
+                            )
+                        except Conflict:
+                            pass  # already terminal - a replay converges
                 tx.execute(
                     "UPDATE benchmark_acquisitions SET compute_window_end=COALESCE(compute_window_end,%s),state=%s WHERE acquisition_id=%s",
                     (

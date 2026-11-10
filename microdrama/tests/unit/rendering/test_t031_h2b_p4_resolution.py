@@ -846,3 +846,157 @@ def test_hb9_reconcile_never_restores_running_over_canonical_blockers(db: Databa
                     source_bytes=fixed["raw"],
                 )
     assert cleared["execution_state"] != "NEEDS_RECONCILIATION"
+
+
+def test_hb12_u2_counts_expired_storage_debt(db: Database, tmp_path: Path):
+    """HB-12/R1: the no-create storage debt is detected while the hold is
+    EXPIRED-but-unfinalized too - expiry retains exposure and never
+    authorizes the next acquisition (I4)."""
+    from datetime import timedelta
+
+    from microdrama.budget import BudgetService
+    from microdrama.rendering.benchmark_experiments import unresolved_items
+
+    fixed = _at6_context(db, tmp_path)
+    plan = fixed["plan"]
+    _service(fixed).resolve_create(
+        plan.experiment_id,
+        acquisition_id=fixed["acquisition_id"],
+        actor_ref="operator-console",
+        reason="provider console shows no pod",
+        evidence_sha256="a" * 64,
+    )
+    # The original STORAGE hold expires unfinalized (the sweep has not run).
+    # Its window is days long, so the expiry is moved to just past the clock
+    # first (the column is the comparison input, not a protected identity).
+    world = fixed["world"]
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE reservations SET expires_at=%s WHERE id=("
+            "SELECT reservation_id FROM benchmark_reservation_links l "
+            "JOIN reservations r ON r.id=l.reservation_id "
+            "WHERE l.acquisition_id=%s AND l.purpose='STORAGE')",
+            (world.clock.now() - timedelta(seconds=1), fixed["acquisition_id"]),
+        )
+    BudgetService(db, world.clock, world.ids, world.settings).expire_stale()
+    with db.transaction(readonly=True) as tx:
+        expired = tx.fetchval(
+            "SELECT r.state FROM benchmark_reservation_links l JOIN reservations r "
+            "ON r.id=l.reservation_id WHERE l.acquisition_id=%s AND l.purpose='STORAGE'",
+            (fixed["acquisition_id"],),
+        )
+        items = unresolved_items(tx, plan.experiment_id, now=world.clock.now())
+    assert expired == "EXPIRED"
+    assert any(
+        item.kind == "U2" and "R1" in item.detail
+        for item in items
+        if item.acquisition_id == fixed["acquisition_id"]
+    ), [item.describe() for item in items]
+
+
+def test_hb12_u5_requires_complete_finality(db: Database, tmp_path: Path):
+    """HB-12/§4.1 U5: finalization requires ALL THREE durable signals - the
+    discovered pod's verified termination, its storage ownership closed, and
+    the lease's compute reservation canonically closed (the BILLED settlement
+    path; an ACTIVE/EXPIRED reservation after a verified termination keeps
+    the reopened liability blocking). The runpod invoice-level readiness is
+    the janitor's own finalization gate (§6.3) and is offline-unreachable -
+    recorded as the offline boundary of this predicate."""
+    from datetime import timedelta
+
+    from microdrama.rendering.benchmark_experiments import unresolved_items
+    from microdrama.testing.fakes.common import fake_https
+    from microdrama.testing.fakes.pods import _Pod
+
+    fixed = _at6_context(db, tmp_path)
+    plan = fixed["plan"]
+    world, comfy = fixed["world"], fixed["comfy"]
+    _service(fixed).resolve_create(
+        plan.experiment_id,
+        acquisition_id=fixed["acquisition_id"],
+        actor_ref="operator-console",
+        reason="provider console shows no pod",
+        evidence_sha256="a" * 64,
+    )
+    _service(fixed).sweep(plan.experiment_id)
+    with _PatchedPolicy():
+        for _ in range(12):
+            state = _service(fixed).resume(
+                plan.experiment_id,
+                authorization=fixed["authorization"],
+                quote=_screen_quote(world),
+                expected_sha256=fixed["digest"],
+                phase="screen",
+                source_bytes=fixed["raw"],
+            )
+            comfy.clock.advance(seconds=1)
+            if any(a["generation"] == 2 for a in state["acquisitions"]):
+                break
+    with db.transaction(readonly=True) as tx:
+        token = tx.fetchval("SELECT client_token FROM pod_leases WHERE id=%s", (fixed["lease_id"],))
+    world.provider._pods["late-pod-0004"] = _Pod(
+        pod_id="late-pod-0004",
+        name="recovered-late-pod-0004",
+        owned_tag=world.config.owned_tag,
+        client_token=token,
+        gpu_type="FAKE-GPU-24GB",
+        hourly_price_micro_usd=900_000,
+        created_at=comfy.clock.now(),
+        endpoint_url=fake_https("late-pod-0004.pods.fake", ""),
+        pipeline_owned=True,
+    )
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET lease_expires_at=%s WHERE id=%s",
+            (comfy.clock.now() - timedelta(seconds=1), fixed["lease_id"]),
+        )
+
+    def items_now():
+        with db.transaction(readonly=True) as tx:
+            return unresolved_items(tx, plan.experiment_id, now=comfy.clock.now())
+
+    # Signal 1 missing (termination unverified): U5 blocks.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET pod_id='late-pod-0004' WHERE id=%s",
+            (fixed["lease_id"],),
+        )
+        tx.execute(
+            "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s, "
+            "contradicted_pod_id='late-pod-0004' WHERE lease_id=%s",
+            (comfy.clock.now(), fixed["lease_id"]),
+        )
+    assert any(
+        item.kind == "U5" and item.acquisition_id == fixed["acquisition_id"] for item in items_now()
+    )
+
+    # Termination verified but the discovered pod's storage ownership is
+    # OPEN: U5 still blocks.
+    from uuid import uuid4 as _uuid4
+
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET terminate_verified_at=%s WHERE id=%s",
+            (comfy.clock.now(), fixed["lease_id"]),
+        )
+        tx.execute(
+            "INSERT INTO pod_storage_ownership(id,provider,pod_id,owner_episode_id,"
+            "valid_from,valid_until) VALUES(%s,'runpod','late-pod-0004',%s,%s,NULL) "
+            "ON CONFLICT DO NOTHING",
+            (_uuid4(), fixed["ep"].episode_id, comfy.clock.now()),
+        )
+    assert any(
+        item.kind == "U5" and item.acquisition_id == fixed["acquisition_id"] for item in items_now()
+    )
+
+    # Ownership closed and the reservation canonically settled: U5 clears -
+    # every durable finality signal is complete.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_storage_ownership SET valid_until=%s WHERE pod_id='late-pod-0004' "
+            "AND valid_until IS NULL",
+            (comfy.clock.now() + timedelta(seconds=1),),
+        )
+    assert not any(
+        item.kind == "U5" and item.acquisition_id == fixed["acquisition_id"] for item in items_now()
+    ), [item.describe() for item in items_now()]

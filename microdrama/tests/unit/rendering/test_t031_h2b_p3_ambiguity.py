@@ -3217,3 +3217,70 @@ def test_hb11_recovery_world_never_enters_the_create_path(
         1 for method, url in harness.runpod.calls if method == "POST" and url.endswith("/pods")
     )
     assert creates == 1  # only the original EXECUTE create; recovery sent none
+
+
+def test_hb12_unrecoverable_upload_fenced_at_cleanup(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-12/§5.3: the fenced failure path for an unrecoverable upload. The
+    readback can never verify (corrupt bytes) and the verified cleanup removes
+    the pod and its server: the sweep durably FENCES the open intents, fails
+    the affected sample under §7.4 (outcome FAILED once), releases its
+    positively-unused hold - and only then does U3u stop blocking. Liability
+    was retained through the cleanup (the storage hold finalizes with it)."""
+    from microdrama.rendering.benchmark_experiments import blocking, unresolved_items
+
+    harness = _at17_compose(db, tmp_path, monkeypatch, corrupt_readback=True)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+    assert first["execution_state"] == "NEEDS_RECONCILIATION"
+
+    # Repeated resumes cannot verify the readback; U3u keeps blocking.
+    for _ in range(2):
+        harness.service.resume(
+            plan.experiment_id,
+            authorization=harness.authorization,
+            quote=harness.quote,
+            expected_sha256=harness.authorization.authorization_sha256,
+            phase="screen",
+        )
+        harness.clock.advance(seconds=1)
+    with db.transaction(readonly=True) as tx:
+        items = unresolved_items(tx, plan.experiment_id, now=harness.clock.now())
+    assert any(item.kind == "U3u" for item in items)
+
+    # The janitor/sweep owns the end: verified cleanup fences the episode.
+    fresh = type(harness.service)(
+        db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
+    )
+    swept = fresh.sweep(plan.experiment_id)
+    with db.transaction(readonly=True) as tx:
+        uploads = tx.fetchall(
+            "SELECT state FROM benchmark_uploads WHERE acquisition_id=%s", (acquisition_id,)
+        )
+        sample = tx.fetchone(
+            "SELECT state, output FROM benchmark_samples WHERE experiment_id=%s "
+            "AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+        outcome = tx.fetchval(
+            "SELECT execution_outcome FROM benchmark_experiments WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+        items_after = unresolved_items(tx, plan.experiment_id, now=harness.clock.now())
+    assert uploads and all(row["state"] == "FENCED" for row in uploads)
+    assert sample["state"] == "FAILED"
+    assert sample["output"]["error_code"] == "UPLOAD_UNRECOVERABLE"
+    assert outcome == "FAILED"  # §7.4: set once, generation stops
+    assert not any(item.kind == "U3u" for item in items_after)  # the episode is final
+    assert not any(
+        item.kind == "U3u" for item in blocking(items_after, "admission")
+    )  # and it no longer blocks
+    assert swept["execution_outcome"] == "FAILED"

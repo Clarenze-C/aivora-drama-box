@@ -62,7 +62,7 @@ CREATE TABLE benchmark_uploads (
  acquisition_id uuid NOT NULL REFERENCES benchmark_acquisitions(acquisition_id), asset_sha256 text NOT NULL CHECK(asset_sha256 ~ '^[0-9a-f]{64}$'),
  media_kind text NOT NULL CHECK(media_kind IN ('image','audio')), role text NOT NULL, subject_id text NOT NULL,
  destination_slot text NOT NULL, upload_key text NOT NULL, locator jsonb,
- state text NOT NULL CHECK(state IN ('INTENT','UNKNOWN','VERIFIED')), verified_readback_sha256 text,
+ state text NOT NULL CHECK(state IN ('INTENT','UNKNOWN','VERIFIED','FENCED')), verified_readback_sha256 text,
  PRIMARY KEY(acquisition_id,asset_sha256,media_kind,role,subject_id),
  CHECK(state<>'VERIFIED' OR verified_readback_sha256=asset_sha256)
 );

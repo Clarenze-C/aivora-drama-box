@@ -1294,3 +1294,58 @@ def test_cleanup_fixture_requires_verified_termination_evidence(db: Database, tm
         adapter.cleanup(
             {"acquisition_id": uuid5_seed(plan.experiment_id, 2), "lease_id": handle.lease.lease_id}
         )
+
+
+def test_hb12_u6_covers_claimed_job_without_operation(db: Database, tmp_path: Path):
+    """HB-12/§4.1 U6: a claimed sample whose JOB exists but whose OPERATION
+    never materialized is materialization-incomplete too (the job-or-operation
+    definition) - a local-only item that replay closes."""
+    from microdrama.rendering.benchmark_experiments import unresolved_items
+
+    world = RenderWorld(db)
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    service.seal(plan.experiment_id, _bench_seal_for(plan))
+    # A claimed sample with its fixed hold, a job link, and NO operation.
+    hold = budget.reserve(_prompt_hold_request(world, ep.episode_id, plan, "S02-R1", world.clock))
+    from microdrama.contracts.cost import RenderRequest
+    from microdrama.rendering.comfy_jobs import render_id_for
+
+    key = f"benchmark:{plan.experiment_id}:sample:S02-R1:a1"
+    with db.transaction() as tx:
+        job = comfy.jobs.enqueue(
+            tx,
+            job_type="render.shot",
+            semantic_key=key,
+            payload=RenderRequest(
+                render_id=render_id_for(key),
+                semantic_key=key,
+                episode_id=plan.episode_id,
+                episode_number=1,
+                shot_id="bench-s02-r1",
+                manifest_version=1,
+                attempt_number=1,
+                preset_id="fake-quality-8step",
+                tier="quality_eight_step",
+                required_controls=["TEXT_PROMPT"],
+                reference_asset_ids=[],
+                workflow_sha256="9" * 64,
+                seed=1,
+                width=720,
+                height=1280,
+                fps=24,
+                duration_ms=4000,
+                reservation_id=hold.id,
+                prompt_text="Offline synthetic fixture.",
+            ),
+            max_attempts=1,
+        )
+        tx.execute(
+            "UPDATE benchmark_samples SET state='CLAIMED', job_id=%s, reservation_id=%s "
+            "WHERE experiment_id=%s AND sample_id='S02-R1'",
+            (job.job_id, hold.id, plan.experiment_id),
+        )
+        items = unresolved_items(tx, plan.experiment_id, now=world.clock.now())
+    assert any(
+        item.kind == "U6" and item.sample_id == "S02-R1" and "without an operation" in item.detail
+        for item in items
+    ), [item.describe() for item in items]
