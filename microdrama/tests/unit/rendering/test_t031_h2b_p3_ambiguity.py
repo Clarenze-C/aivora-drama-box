@@ -1371,10 +1371,11 @@ class _At17RunpodTransport:
     """In-memory Runpod API: echoes the create POST as a RUNNING pod with the
     declared 8188 proxy port (the endpoint the Pika client binds)."""
 
-    def __init__(self, now) -> None:
+    def __init__(self, now, server=None) -> None:
         self.now = now
         self.calls: list[tuple[str, str]] = []
         self.pod: dict | None = None
+        self.server = server
 
     def request(self, method, url, *, headers, body=None):
         self.calls.append((method, url))
@@ -1400,6 +1401,19 @@ class _At17RunpodTransport:
             return type("R", (), {"status": 200, "body": json.dumps(self.pod).encode()})()
         if method == "GET" and "/pods/pod-at17-1" in url:
             return type("R", (), {"status": 200, "body": json.dumps(self.pod).encode()})()
+        if method == "POST" and url.endswith("/action"):
+            assert self.pod is not None, "stop before create"
+            assert json.loads(body) == {"action": "stop"}
+            self.pod["status"] = "STOPPED"
+            if self.server is not None:
+                self.server.alive = False
+            return type("R", (), {"status": 200, "body": b'{"status": "in progress"}'})()
+        if method == "DELETE" and "/pods/pod-at17-1" in url:
+            assert self.pod is not None, "terminate before create"
+            self.pod["status"] = "TERMINATED"
+            if self.server is not None:
+                self.server.alive = False
+            return type("R", (), {"status": 200, "body": b'{"status": "terminated"}'})()
         raise AssertionError(f"unexpected Runpod call: {method} {url}")
 
 
@@ -1413,6 +1427,7 @@ class _At17ComfyServer:
 
     def __init__(self, schema_bytes: bytes):
         self.schema_bytes = schema_bytes
+        self.alive = True  # the pod-side server lives only as long as its pod
         self.inputs: dict[str, bytes] = {}
         self.outputs: dict[str, bytes] = {}
         self.prompts: dict[str, dict] = {}  # prompt_id -> {"client_id", "completed"}
@@ -1559,6 +1574,9 @@ class _At17PodComfyTransport:
         # request by the recovery deadline context and REFUSES once it passed.
         bound_request_timeout(30)
         server = self.server
+        if not server.alive:
+            # The pod stopped/terminated: its ComfyUI is unreachable.
+            raise TimeoutError("pod-side ComfyUI is gone with its pod")
         if method == "GET" and url.endswith("/object_info"):
             return server.schema_bytes
         if method == "POST" and url.endswith("/upload/image"):
@@ -1908,8 +1926,8 @@ def _at17_compose(
                 "VALUES(%s, 'fixture', 'runpod', 'FILE', %s)",
                 (ref, str(path)),
             )
-    runpod = _At17RunpodTransport(clock.now)
     server = _At17ComfyServer(schema_bytes)
+    runpod = _At17RunpodTransport(clock.now, server)
     comfy = _At17PodComfyTransport(
         server,
         upload_timeout=upload_timeout,
@@ -2377,8 +2395,14 @@ def test_hb2_at15_pending_submit_takeover_through_a_fresh_real_client(
     posts_before = harness.comfy.prompt_posts
     assert posts_before == 1  # the worker's accepted POST
 
-    # The coordinator token expired with the dead process: takeover.
-    harness.clock.advance(seconds=3601)
+    # The coordinator token expired with the dead process (its lease lapsed
+    # while the funded window still lives): takeover.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_dispatch_slots SET coordinator_lease_until=%s - interval '1 second' "
+            "WHERE experiment_id=%s",
+            (harness.clock.now(), plan.experiment_id),
+        )
     fresh = type(harness.service)(
         db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
     )
@@ -2410,7 +2434,12 @@ def test_hb2_at15a_invisible_prompt_stays_unknown_with_a_fresh_real_client(
     posts_before = harness.comfy.prompt_posts
     assert posts_before == 0  # the POST never left the dead worker
 
-    harness.clock.advance(seconds=3601)
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_dispatch_slots SET coordinator_lease_until=%s - interval '1 second' "
+            "WHERE experiment_id=%s",
+            (harness.clock.now(), plan.experiment_id),
+        )
     fresh = type(harness.service)(
         db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
     )
@@ -2626,3 +2655,92 @@ def test_hb4_historical_grace_deadline_never_bounds_healthy_work(
             break
     assert s03["state"] == "SUCCEEDED"  # the historical deadline never stalled it
     assert final["execution_state"] in ("SCREEN_RUNNING", "SCREEN_REVIEW")
+
+
+def test_hb5_takeover_discovered_ambiguity_persists_grace_and_cleanup_starts(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-5: a worker that died before its dispatch-time handler left a
+    PENDING_SUBMIT with NO deadline. The takeover must enter the SAME durable
+    classification and grace (§5.1/§5.4) before recovery proceeds, and once
+    the persisted deadline is exhausted with the ambiguity unresolved,
+    reconcile starts the R3 fence + cleanup despite every intermediate read
+    failing (the op keeps UNKNOWN with its exposure, I4)."""
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=True)
+    _hb2_seed_pending_submit(harness, accepted=False)
+    plan = harness.plan
+    acquisition_id = None
+    with db.transaction(readonly=True) as tx:
+        acquisition_id = tx.fetchval(
+            "SELECT acquisition_id FROM benchmark_acquisitions WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+        lease_id = tx.fetchval(
+            "SELECT lease_id FROM benchmark_acquisitions WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    assert harness.comfy.prompt_posts == 0  # the POST never left the dead worker
+
+    # The coordinator token expired (in-window: the funded window still
+    # lives); the takeover discovers the ambiguity.
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE benchmark_dispatch_slots SET coordinator_lease_until=%s - interval '1 second' "
+            "WHERE experiment_id=%s",
+            (harness.clock.now(), plan.experiment_id),
+        )
+    fresh = type(harness.service)(
+        db, harness.settings, clock=harness.clock, ids=harness.ids, world_factory=harness.factory
+    )
+    takeover = fresh.reconcile(plan.experiment_id)
+    with db.transaction(readonly=True) as tx:
+        after = tx.fetchone(
+            "SELECT o.state, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s AND s.sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+        grace = tx.fetchone(
+            "SELECT recovery_started_at, recovery_deadline FROM benchmark_acquisitions "
+            "WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    assert after["state"] == "UNKNOWN"
+    # HB-5 red line: the durable grace EXISTS from the takeover on - before
+    # the fix no deadline was ever persisted for a crash-before-handler.
+    assert grace["recovery_started_at"] is not None
+    assert grace["recovery_deadline"] is not None
+    assert takeover["execution_state"] == "NEEDS_RECONCILIATION"
+    assert harness.comfy.prompt_posts == 0  # still nothing re-POSTed
+
+    # The deadline is already exhausted at this clock (the compute hold's
+    # funded window passed while the worker was dead): reconcile routes the
+    # owed U2 to the sweep - the R3 fence revokes the tokens and cleanup
+    # starts despite the failed reads, while the operation keeps UNKNOWN with
+    # its exposure retained (I4 - only an audited resolution closes it).
+    deadline = grace["recovery_deadline"]
+    if harness.clock.now() < deadline:
+        harness.clock.advance(seconds=(deadline - harness.clock.now()).total_seconds() + 1)
+    fenced = fresh.reconcile(plan.experiment_id)
+    with db.transaction(readonly=True) as tx:
+        slot_token = tx.fetchval(
+            "SELECT coordinator_token FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+        lease = tx.fetchone(
+            "SELECT stop_verified_at, terminate_verified_at FROM pod_leases WHERE id=%s",
+            (lease_id,),
+        )
+        final_op = tx.fetchone(
+            "SELECT o.state FROM provider_operations o JOIN benchmark_samples s "
+            "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s "
+            "AND s.sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert slot_token is None  # the R3 fence revoked the coordinator token
+    assert (
+        lease["stop_verified_at"] is not None or lease["terminate_verified_at"] is not None
+    )  # cleanup STARTED at the deadline
+    assert final_op["state"] == "UNKNOWN"  # exposure retained, never resolved by cleanup
+    assert fenced["execution_state"] == "NEEDS_RECONCILIATION"
+    assert harness.comfy.prompt_posts == 0  # nothing re-POSTed through it all

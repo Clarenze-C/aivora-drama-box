@@ -820,7 +820,7 @@ class ComfyRenderService:
     def _mark_unknown(self, operation_id: UUID, *, now: datetime) -> None:
         with self._db.transaction() as tx:
             row = tx.fetchone(
-                "SELECT state FROM provider_operations WHERE id = %s FOR UPDATE",
+                "SELECT state, external_id FROM provider_operations WHERE id = %s FOR UPDATE",
                 (operation_id,),
             )
             if row is None:
@@ -830,10 +830,18 @@ class ComfyRenderService:
                 ProviderOperationState.SUBMITTED.value,
                 ProviderOperationState.RUNNING.value,
             ):
+                # HB-5: a poll-discovered ambiguity on a SUBMITTED/RUNNING
+                # operation keeps its durable prompt id - UNKNOWN-with-id stays
+                # recoverable by prompt-id poll (§5.1/§5.2); only the outcome
+                # becomes uncertain, never the send's positive linkage.
                 record_result(
                     tx,
                     operation_id,
-                    self._result(operation_id, ProviderOperationState.UNKNOWN),
+                    self._result(
+                        operation_id,
+                        ProviderOperationState.UNKNOWN,
+                        external_id=row["external_id"],
+                    ),
                     now=now,
                 )
 

@@ -1681,6 +1681,17 @@ class BenchmarkService:
                     acquisition_id=slot_acquisition,
                 )
             self._reconcile_slot_sample(experiment_id, per)
+        # HB-5 (§5.4): cleanup STARTS at the deadline even when intermediate
+        # recovery reads failed - an exhausted deadline with an unresolved
+        # ambiguity is an owed U2, and reconcile routes it through the sweep's
+        # R3 fence + cleanup exactly like the janitor would.
+        with self.db.transaction(readonly=True) as tx:
+            owed = any(
+                item.kind == "U2"
+                for item in unresolved_items(tx, experiment_id, now=self.clock.now())
+            )
+        if owed:
+            return self.sweep(experiment_id, world=world)
         slot_stuck_after = self._slot_sample_unknown(experiment_id)
         uploads_open_after = self._uploads_open(experiment_id)
         with self.db.transaction() as tx:
@@ -1871,6 +1882,26 @@ class BenchmarkService:
                 return
             world.comfy.mark_operation_unknown(operation["id"])
             operation = {**operation, "state": "UNKNOWN"}
+            # HB-5: the takeover DISCOVERED a submit ambiguity - it enters the
+            # same durable classification and grace the dispatch-time handler
+            # would have written (§5.1/§5.4), BEFORE recovery proceeds: a
+            # worker that died before its handler ran left no deadline, and
+            # without one the blocking operation would never bound its
+            # episode. Idempotent and shorten-only on later episodes.
+            if sample.get("acquisition_id") is not None:
+                self._enter_grace(
+                    experiment_id, {"acquisition_id": sample["acquisition_id"]}, world
+                )
+                row = self._recovery_deadline(sample["acquisition_id"])
+                if (
+                    row is not None
+                    and row["recovery_deadline"] is not None
+                    and self.clock.now() >= row["recovery_deadline"]
+                ):
+                    # SC2-2: the reused/persisted deadline has already elapsed -
+                    # cleanup starts immediately (reconcile's owed-U2 sweep runs
+                    # it); no doomed bounded lookup against a dead window.
+                    return
         # HB-2: bind the owning acquisition's durable pod BEFORE both the
         # UNKNOWN client-id lookup and the known-id poll - a fresh recovery
         # client is unbound and its first authenticated call would refuse
@@ -1919,6 +1950,24 @@ class BenchmarkService:
             # Stays ambiguous (or unbindable in this world): the item keeps
             # blocking; nothing is adopted and nothing re-sent. §5.2 rule 3
             # surfaces a multi-match conflict through the finder's Conflict.
+            # HB-5: a NeedsReconciliation raised while polling a positively
+            # in-flight operation is the §5.1 poll-ambiguity classification -
+            # the op moves to UNKNOWN under the lock (its prompt id kept) -
+            # and EVERY discovery exit persists the durable grace, so the
+            # bounded episode exists even when the original worker died
+            # before its handler wrote anything (idempotent, shorten-only).
+            if sample.get("acquisition_id") is not None:
+                if operation["state"] in ("SUBMITTED", "RUNNING"):
+                    try:
+                        world.comfy.mark_operation_unknown(operation["id"])
+                    except Exception:
+                        pass
+                try:
+                    self._enter_grace(
+                        experiment_id, {"acquisition_id": sample["acquisition_id"]}, world
+                    )
+                except Exception:
+                    pass
             return
         self._observe(experiment_id, sample, result)
 
