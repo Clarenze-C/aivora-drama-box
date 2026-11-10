@@ -41,6 +41,8 @@ from microdrama.rendering.benchmark_experiments import (
 )
 from microdrama.rendering.leases import LIVE_LEASE_STATES, RENDERING_NAMESPACE
 
+RECOVERY_GRACE_MAX_S = 600  # §5.4: the documented maximum recovery grace
+
 
 class AdmissionBlocked(MicrodramaError):
     """§4.2/I3: unresolved items block this admission, claim or dispatch.
@@ -542,6 +544,93 @@ class BenchmarkService:
         self.repo.outcome(experiment_id, "FAILED")
         return self.sweep(experiment_id, world=world)
 
+    def _enter_grace(self, experiment_id: UUID, acquisition: dict, world: Any) -> None:
+        """§5.4 (SC-5/R3): persist the durable recovery grace BEFORE recovery.
+
+        ``recovery_deadline`` is the EARLIEST of four absolute timestamps
+        (first ambiguity + RECOVERY_GRACE_MAX_S, hard stop minus the shutdown
+        margin, the acquisition's funded-work deadline with its shutdown
+        allowance already excluded, and the aggregate GPU deadline). A restart
+        or takeover never re-grants: ``recovery_started_at`` keeps its first
+        value and the deadline may only be shortened (SC2-2 keeps it for a
+        later ambiguity on the same acquisition).
+        """
+        now = self.clock.now()
+        margin_ms = getattr(world.leases._config, "shutdown_margin_ms", 60_000)
+        margin = timedelta(milliseconds=margin_ms)
+        with self.db.transaction(readonly=True) as tx:
+            exp = experiment_row(tx, experiment_id)
+            compute_expires = tx.fetchval(
+                "SELECT r.expires_at FROM benchmark_reservation_links l "
+                "JOIN reservations r ON r.id=l.reservation_id "
+                "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE'",
+                (acquisition["acquisition_id"],),
+            )
+        candidates = [now + timedelta(seconds=RECOVERY_GRACE_MAX_S)]
+        if exp["hard_stop"] is not None:
+            candidates.append(exp["hard_stop"] - margin)
+        if compute_expires is not None:
+            candidates.append(compute_expires - margin)  # shutdown allowance excluded
+        with self.db.transaction(readonly=True) as tx:
+            remaining_gpu_ms = exp["gpu_limit_ms"] - gpu_ms(tx, experiment_id, now)
+        candidates.append(now + timedelta(milliseconds=max(remaining_gpu_ms, 0)))
+        deadline = min(candidates)
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            tx.fetchone(
+                "SELECT acquisition_id FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition["acquisition_id"],),
+            )
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET "
+                "recovery_started_at=COALESCE(recovery_started_at,%s),"
+                "recovery_deadline=COALESCE(LEAST(COALESCE(recovery_deadline,%s),%s),%s) "
+                "WHERE acquisition_id=%s",
+                (now, deadline, deadline, deadline, acquisition["acquisition_id"]),
+            )
+            tx.execute(
+                "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' "
+                "WHERE experiment_id=%s",
+                (experiment_id,),
+            )
+
+    def _mark_submit_ambiguity(self, experiment_id: UUID, acquisition: dict, world: Any):
+        """§5.1: a submit/poll ambiguity keeps the acquisition ACTIVE and enters
+        the durable grace; the experiment moves to NEEDS_RECONCILIATION in the
+        same transaction. The pod stays for recovery - no cleanup here."""
+        self._enter_grace(experiment_id, acquisition, world)
+        return self.status(experiment_id)
+
+    def _mark_upload_ambiguity(self, experiment_id: UUID):
+        """§5.1: an upload ambiguity keeps the intent INTENT/UNKNOWN (U3u) and
+        the acquisition unlabelled; no prompt operation is invented. The pod
+        stays for the checksum readback."""
+        with self.db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' "
+                "WHERE experiment_id=%s",
+                (experiment_id,),
+            )
+        return self.status(experiment_id)
+
+    def _mark_create_ambiguity(self, experiment_id: UUID, acquisition: dict, world: Any):
+        """§5.1: a create ambiguity labels the acquisition UNKNOWN (no grace)
+        and sweeps - the reconciler owns the podless create from here."""
+        with self.db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET state='UNKNOWN' WHERE acquisition_id=%s",
+                (acquisition["acquisition_id"],),
+            )
+            tx.execute(
+                "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' "
+                "WHERE experiment_id=%s",
+                (experiment_id,),
+            )
+        return self.sweep(experiment_id, world=world)
+
     def _advance_owned(self, experiment_id: UUID, world: Any, phase: str, quote: Any, token: UUID):
         import os as _os
 
@@ -592,7 +681,12 @@ class BenchmarkService:
             # (U1), a reopened liability (U5) or cleanup owed on this acquisition
             # (U2) reconciles instead of dispatching.
             self._gate(experiment_id, "dispatch", acquisition_id=acquisition["acquisition_id"])
-            world.acquire(acquisition)
+            try:
+                world.acquire(acquisition)
+            except NeedsReconciliation:
+                # §5.1: a create ambiguity labels the acquisition UNKNOWN and
+                # gets NO grace - the sweep's token reconciliation owns it.
+                return self._mark_create_ambiguity(experiment_id, acquisition, world)
             with self.db.transaction() as tx:
                 tx.execute(
                     "UPDATE benchmark_acquisitions SET state='ACTIVE' WHERE acquisition_id=%s",
@@ -617,9 +711,18 @@ class BenchmarkService:
                         acquisition_id=acquisition["acquisition_id"],
                         sample_id=sample["sample_id"],
                     )
-                    world.stage_inputs(acquisition)
+                    try:
+                        world.stage_inputs(acquisition)
+                    except NeedsReconciliation:
+                        # §5.1: an upload ambiguity keeps the intent open (U3u)
+                        # and invents no prompt operation; the pod stays for the
+                        # checksum readback (§5.3).
+                        return self._mark_upload_ambiguity(experiment_id)
                 if sample["operation_id"]:
-                    result = world.poll(sample)
+                    try:
+                        result = world.poll(sample)
+                    except NeedsReconciliation:
+                        return self._mark_submit_ambiguity(experiment_id, acquisition, world)
                 else:
                     # Dispatch gate before the prompt send (§4.2/U3).
                     self._gate(
@@ -628,7 +731,12 @@ class BenchmarkService:
                         acquisition_id=acquisition["acquisition_id"],
                         sample_id=sample["sample_id"],
                     )
-                    result = world.submit(sample, acquisition)
+                    try:
+                        result = world.submit(sample, acquisition)
+                    except NeedsReconciliation:
+                        # §5.1/§5.4: the acquisition stays ACTIVE and the
+                        # durable grace is persisted before any recovery.
+                        return self._mark_submit_ambiguity(experiment_id, acquisition, world)
                 self._observe(experiment_id, sample, result)
                 state = getattr(result.state, "value", result.state)
                 if state not in ("SUCCEEDED", "FAILED", "CANCELLED"):
@@ -638,16 +746,10 @@ class BenchmarkService:
                     return self.sweep(experiment_id, world=world)
             return self.status(experiment_id)
         except NeedsReconciliation:
-            with self.db.transaction() as tx:
-                tx.execute(
-                    "UPDATE benchmark_acquisitions SET state='UNKNOWN' WHERE acquisition_id=%s",
-                    (acquisition["acquisition_id"],),
-                )
-                tx.execute(
-                    "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' WHERE experiment_id=%s",
-                    (experiment_id,),
-                )
-            return self.sweep(experiment_id, world=world)
+            # Any ambiguity the stage handlers above did not classify (a new
+            # call site) keeps the conservative create treatment: labelled
+            # UNKNOWN and swept for token reconciliation.
+            return self._mark_create_ambiguity(experiment_id, acquisition, world)
         except AdmissionBlocked as refused:
             # I3: the gate refused inside its locked transaction; nothing was
             # written and nothing dispatched. Return the reconciliation status
@@ -1246,7 +1348,7 @@ class BenchmarkService:
                 "WHERE d.experiment_id=%s",
                 (experiment_id,),
             )
-        return operation in ("UNKNOWN", "SUBMITTED", "RUNNING")
+        return operation in ("UNKNOWN", "SUBMITTED", "RUNNING", "PENDING_SUBMIT")
 
     def _reconcile_slot_sample(self, experiment_id: UUID, world: Any) -> None:
         """Reconcile the dispatched sample's operation by durable identity.
@@ -1274,24 +1376,48 @@ class BenchmarkService:
             )
         if sample is None or operation is None:
             return
-        if operation["state"] not in ("UNKNOWN", "SUBMITTED", "RUNNING"):
+        if operation["state"] not in ("UNKNOWN", "SUBMITTED", "RUNNING", "PENDING_SUBMIT"):
             return
-        if operation["state"] != "UNKNOWN" and hasattr(world, "bind_for_recovery"):
-            # A production RECOVERY world must bind its fresh client to the
-            # durable pod before any authenticated poll; offline adapters have
-            # no binding requirement.
-            try:
-                if world.bind_for_recovery(sample["acquisition_id"]) != "BOUND":
-                    return
-            except Exception:
+        if operation["state"] == "PENDING_SUBMIT":
+            # §5.2 (SC-4): only a TAKEOVER may convert it - the coordinator
+            # token must be gone or expired; a live coordinator is never
+            # preempted. PENDING_SUBMIT alone never proves the send did not
+            # happen (I2), so it becomes UNKNOWN with every hold retained.
+            with self.db.transaction(readonly=True) as tx:
+                slot = tx.fetchone(
+                    "SELECT coordinator_token, coordinator_lease_until "
+                    "FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+                    (experiment_id,),
+                )
+            live_coordinator = (
+                slot is not None
+                and slot["coordinator_token"] is not None
+                and slot["coordinator_lease_until"] is not None
+                and slot["coordinator_lease_until"] > self.clock.now()
+            )
+            if live_coordinator:
                 return
+            world.comfy.mark_operation_unknown(operation["id"])
+            operation = {**operation, "state": "UNKNOWN"}
+        if operation["state"] != "UNKNOWN" and hasattr(world, "bind_for_recovery"):
+            # A production RECOVERY world binds its fresh client to the
+            # durable pod before any authenticated poll (§3.4). Binding is
+            # best effort: a world whose poll cannot authenticate refuses
+            # inside the tolerant try below, leaving the item blocked.
+            try:
+                world.bind_for_recovery(sample["acquisition_id"])
+            except Exception:
+                pass
         try:
             result = (
                 world.comfy.reconcile_unknown(operation["id"])
                 if operation["state"] == "UNKNOWN"
                 else world.comfy.poll(operation["id"])
             )
-        except NeedsReconciliation:
+        except (NeedsReconciliation, EffectDenied, Conflict):
+            # Stays ambiguous (or unbindable in this world): the item keeps
+            # blocking; nothing is adopted and nothing re-sent. §5.2 rule 3
+            # surfaces a multi-match conflict through the finder's Conflict.
             return
         self._observe(experiment_id, sample, result)
 
@@ -1452,6 +1578,12 @@ class BenchmarkService:
             evidence_sha256=evidence_sha256,
         )
         self._observe(experiment_id, sample, status)
+        state = getattr(status.state, "value", status.state)
+        if state != "SUCCEEDED":
+            # §7.4 fail-fast: an eligible fixed sample finalised FAILED (an
+            # audited resolution is one of the ways the failure is observed)
+            # sets the experiment outcome once and stops new generation.
+            self.repo.outcome(experiment_id, "FAILED")
         return self.status(experiment_id)
 
     def export(self, experiment_id: UUID):

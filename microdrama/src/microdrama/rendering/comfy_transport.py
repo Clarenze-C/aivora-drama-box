@@ -22,7 +22,7 @@ from uuid import UUID
 
 from microdrama.config import Settings
 from microdrama.contracts.enums import EffectKind, Provenance
-from microdrama.contracts.errors import EffectDenied, NeedsReconciliation, ProviderError
+from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation, ProviderError
 from microdrama.contracts.providers import (
     ComfyHistoryEntry,
     ComfyNodeInfo,
@@ -318,6 +318,7 @@ class ComfyHttpClient:
         still have been accepted server-side; the queue and history entries
         carry the client id in their extra_data, so a read-only scan adopts the
         durable prompt id - this NEVER resubmits and never invents an id."""
+        matches: list[str] = []
         queue = json.loads(self._request("GET", "/queue", authorization_key=client_id))
         for group in ("queue_running", "queue_pending"):
             for item in queue.get(group, []) if isinstance(queue, dict) else []:
@@ -325,7 +326,7 @@ class ComfyHttpClient:
                     continue
                 extra = item[3]
                 if isinstance(extra, dict) and str(extra.get("client_id")) == client_id:
-                    return str(item[1])
+                    matches.append(str(item[1]))
         history = json.loads(self._request("GET", "/history", authorization_key=client_id))
         if isinstance(history, dict):
             for _prompt_id, entry in history.items():
@@ -334,8 +335,14 @@ class ComfyHttpClient:
                     continue
                 extra = prompt[3]
                 if isinstance(extra, dict) and str(extra.get("client_id")) == client_id:
-                    return str(prompt[1])
-        return None
+                    matches.append(str(prompt[1]))
+        if len(set(matches)) > 1:
+            # §5.2 rule 3: never adopt the first of several matches.
+            raise Conflict(
+                "the deterministic client id matches more than one prompt",
+                client_id=client_id,
+            )
+        return matches[0] if matches else None
 
     def progress_events(self, prompt_id: str) -> list[ComfyProgressEvent]:
         # HTTP API has no durable progress history route; the service polls queue/history.

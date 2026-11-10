@@ -779,5 +779,9 @@ def test_operator_resolves_an_unfindable_prompt_and_frees_the_slot(
             (plan.experiment_id,),
         )
     assert freed["sample_id"] is None  # the slot no longer held forever
+    # §7.4 fail-fast: the operator-observed sample failure sets the outcome
+    # once; reconcile completes financial finalization and cleanup, and no new
+    # generation starts (the experiment stays FAILED, never re-running).
     resumed = service.reconcile(plan.experiment_id, world=adapter)
-    assert resumed["execution_state"] == "SCREEN_RUNNING"
+    assert resumed["execution_outcome"] == "FAILED"
+    assert resumed["execution_state"] == "FAILED"

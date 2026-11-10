@@ -807,6 +807,16 @@ class ComfyRenderService:
         except Conflict:
             pass  # already closed by an earlier attempt of the same recovery
 
+    def mark_operation_unknown(self, operation_id: UUID) -> None:
+        """§5.2 (SC-4): takeover moves an unrefused PENDING_SUBMIT to UNKNOWN.
+
+        Only recovery takeover calls this, and only after proving the
+        coordinator token is gone: a live coordinator is never preempted. The
+        transition runs under the operation lock and keeps every hold (I2:
+        PENDING_SUBMIT alone never proves the send did not happen).
+        """
+        self._mark_unknown(operation_id, now=self._now())
+
     def _mark_unknown(self, operation_id: UUID, *, now: datetime) -> None:
         with self._db.transaction() as tx:
             row = tx.fetchone(

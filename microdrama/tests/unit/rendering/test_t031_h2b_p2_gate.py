@@ -179,10 +179,26 @@ def _prompt_hold_request(world: RenderWorld, episode_id: UUID, plan, sample_id: 
 
 
 def _seed_sample_operation(
-    db, plan, sample_id, state, clock, comfy=None, *, reservation_id=None, slot=False
+    db,
+    plan,
+    sample_id,
+    state,
+    clock,
+    comfy=None,
+    *,
+    reservation_id=None,
+    slot=False,
+    external_id=None,
 ):
     """A sample linked to a provider operation in ``state`` (via the reservation)."""
     operation_id = uuid4()
+    with db.transaction(readonly=True) as tx:
+        # The operation row must carry the same provider as the hold it settles
+        # against (the canonical receipt linkage checks the pair).
+        provider = (
+            tx.fetchval("SELECT provider FROM reservations WHERE id=%s", (reservation_id,))
+            or "fake-runpod"
+        )
     with db.transaction() as tx:
         from microdrama.contracts.cost import RenderRequest
         from microdrama.rendering.comfy_jobs import render_id_for
@@ -217,15 +233,17 @@ def _seed_sample_operation(
         )
         tx.execute(
             "INSERT INTO provider_operations(id,provider,operation_kind,client_token,request_hash,"
-            "job_id,reservation_id,state,deadline_at) "
-            "VALUES(%s,'fake-runpod','comfy.queue_prompt',%s,%s,%s,%s,%s,%s)",
+            "job_id,reservation_id,state,external_id,deadline_at) "
+            "VALUES(%s,%s,'comfy.queue_prompt',%s,%s,%s,%s,%s,%s,%s)",
             (
                 operation_id,
+                provider,
                 f"seed-{operation_id.hex[:12]}",
                 "3" * 64,
                 job.job_id,
                 reservation_id,
                 state,
+                external_id,
                 clock.now() + timedelta(hours=1),
             ),
         )

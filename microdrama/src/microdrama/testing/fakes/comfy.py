@@ -202,12 +202,23 @@ class FakeComfyClient(FakeBase):
 
     def find_prompt_id_by_client(self, client_id: str) -> str | None:
         """H-2: the fake server remembers the deterministic client id per prompt
-        (queue and history alike), mirroring the live /queue + /history scan."""
+        (queue and history alike), mirroring the live /queue + /history scan.
+        §5.2 rule 3: MORE THAN ONE match is a conflict - the caller keeps the
+        operation UNKNOWN and never adopts the first match."""
         self._note("find_prompt_id_by_client", key=client_id)
-        for prompt_id, prompt in self.state.prompts.items():
-            if prompt.client_id == client_id:
-                return prompt_id
-        return None
+        matches = [
+            prompt_id
+            for prompt_id, prompt in self.state.prompts.items()
+            if prompt.client_id == client_id
+        ]
+        if len(matches) > 1:
+            from microdrama.contracts.errors import Conflict
+
+            raise Conflict(
+                "the deterministic client id matches more than one prompt",
+                client_id=client_id,
+            )
+        return matches[0] if matches else None
 
     def object_info(self) -> dict[str, ComfyNodeInfo]:
         self._note("object_info")

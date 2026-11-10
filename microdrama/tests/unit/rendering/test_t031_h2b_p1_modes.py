@@ -562,6 +562,9 @@ def test_at20_expired_liability_retained_readable_and_settled(db: Database, tmp_
         world.db, plan.experiment_id, "RECOVERY", "/history", None, foreign_job
     )
 
+    # §5.1 keeps the pod alive through the submit ambiguity, so the cleanup the
+    # resolution still owes runs through the sweep (§7.4: financial finalization
+    # and cleanup continue to billing closure).
     # Terminal finalization settles the EXPIRED liability canonically, exactly once.
     resolved = service.resolve_sample(
         plan.experiment_id,
@@ -574,40 +577,27 @@ def test_at20_expired_liability_retained_readable_and_settled(db: Database, tmp_
     assert {s["sample_id"]: s["state"] for s in resolved["samples"]}[slot["sample_id"]] == (
         "FAILED"
     )
+    service.sweep(plan.experiment_id, world=adapter)
     with world.db.transaction(readonly=True) as tx:
         settled = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (slot["reservation_id"],))
     assert settled["state"] == "SETTLED"
     final = service.status(plan.experiment_id)["exposure"]
+    # §5.1 keeps the pod alive through the ambiguity, so its real compute usage
+    # accrues until the post-resolution sweep. The expired prompt hold's
+    # retained exposure closed exactly once at ZERO (lease-covered attempts
+    # settle at zero: the pod lease's invoice is the only GPU cost) and nothing
+    # stays open - the total is exactly the pod's accrued+settled compute.
     with world.db.transaction(readonly=True) as tx:
-        rows = tx.fetchall(
-            "SELECT r.id, r.semantic_key, r.state, r.reserved_micro_usd, r.accrued_micro_usd, "
-            "r.settled_micro_usd FROM reservations r JOIN benchmark_reservation_links l "
-            "ON l.reservation_id=r.id WHERE l.experiment_id=%s",
+        prompt = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (slot["reservation_id"],))
+        compute = tx.fetchone(
+            "SELECT r.accrued_micro_usd, r.settled_micro_usd FROM benchmark_reservation_links l "
+            "JOIN reservations r ON r.id=l.reservation_id WHERE l.experiment_id=%s "
+            "AND l.purpose='COMPUTE'",
             (plan.experiment_id,),
         )
-    import sys as _sys
-
-    with world.db.transaction(readonly=True) as tx:
-        events = (
-            tx.fetchall(
-                "SELECT event_type, payload FROM domain_events WHERE aggregate_id IN "
-                "(SELECT id FROM pod_leases) ORDER BY occurred_at",
-            )
-            if True
-            else []
-        )
-        charges = tx.fetchall(
-            "SELECT c.amount_micro_usd, c.kind FROM charges c JOIN reservations r "
-            "ON r.id=c.reservation_id WHERE r.semantic_key LIKE %s",
-            ("%",),
-        )
-    print("DBG reservations:", [dict(r) for r in rows], file=_sys.stderr)
-    print("DBG events:", [dict(e) for e in events][-6:], file=_sys.stderr)
-    print("DBG charges:", [dict(c) for c in charges][:8], file=_sys.stderr)
-    # The expired hold's retained exposure closed exactly once through the
-    # canonical settlement (lease-covered attempts settle at zero: the pod
-    # lease's invoice is the only GPU cost), never double-counted.
-    assert final["total"] == before["total"] - before["holds"]
+    assert final["holds"] == 0
+    assert prompt["state"] == "SETTLED" and prompt["settled_micro_usd"] == 0
+    assert final["total"] == compute["accrued_micro_usd"] + compute["settled_micro_usd"]
 
 
 # ---------------------------------------------------------------------------
