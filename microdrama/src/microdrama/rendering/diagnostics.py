@@ -3,7 +3,9 @@
 import errno
 import re
 import socket
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextvars import ContextVar, Token
+from datetime import datetime
 
 DIAGNOSTIC_READ_LIMIT = 8192
 DIAGNOSTIC_TEXT_LIMIT = 500
@@ -85,3 +87,36 @@ def uncertainty_cause(exc: BaseException) -> str:
     if isinstance(reason, OSError):
         return f"{name}/socket-error"
     return f"{name}/transport-error"
+
+
+# CN-6 (2026-11-09, canary-night review): while a run deadline is set, every live
+# transport's request timeout is bounded by the time remaining to it, so no
+# provider request outlives the authorized wall limit by a fixed 30-second
+# timeout. The pair carries the deadline and the run's clock (fake in tests).
+_REQUEST_DEADLINE: ContextVar[tuple[datetime, Callable[[], datetime]] | None] = ContextVar(
+    "microdrama_request_deadline", default=None
+)
+
+
+def set_request_deadline(deadline: datetime, now: Callable[[], datetime]) -> Token:
+    """Bind all transport timeouts made in this context to the run deadline."""
+    return _REQUEST_DEADLINE.set((deadline, now))
+
+
+def reset_request_deadline(token: Token) -> None:
+    _REQUEST_DEADLINE.reset(token)
+
+
+def bound_request_timeout(default_seconds: float, *, floor_seconds: float = 1.0) -> float:
+    """The timeout for one transport request: the default, or the time left to
+    the deadline, never below a small floor (a request started just before
+    expiry still gets its chance; starting after expiry is prevented by the
+    callers' deadline checks, not by a zero timeout)."""
+    bound = _REQUEST_DEADLINE.get()
+    if bound is None:
+        return default_seconds
+    deadline, now = bound
+    remaining = (deadline - now()).total_seconds()
+    if remaining >= default_seconds:
+        return default_seconds
+    return max(floor_seconds, min(default_seconds, remaining))

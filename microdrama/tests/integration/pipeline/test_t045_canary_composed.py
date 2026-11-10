@@ -772,6 +772,124 @@ def test_a_hard_stop_deadline_stops_and_terminates(db: Database, tmp_path: Path)
     assert runpod_transport.state == "GONE"  # stopped AND terminated at the provider
 
 
+class _AttemptRecorder:
+    """CN-6: wraps a scripted transport and records the run clock instant of
+    every RUN-attempt call. Recording stops when the run's finally block (the
+    cleanup phase: settle/stop/terminate/sweep) begins - those calls
+    legitimately run past the deadline - marked via ``mark_cleanup``."""
+
+    def __init__(self, inner: Any, clock: FakeClock) -> None:
+        self.inner = inner
+        self.clock = clock
+        self.attempts: list[tuple[datetime, str, str]] = []
+        self._shutdown_seen = False
+
+    def mark_cleanup(self) -> None:
+        self._shutdown_seen = True
+
+    def request(self, method: str, url: str, *, headers: Any, body: bytes | None = None) -> Any:
+        if not self._shutdown_seen:
+            self.attempts.append((self.clock.now(), method, url))
+        return self.inner.request(method, url, headers=headers, body=body)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+def _mark_cleanup_phase(
+    monkeypatch: pytest.MonkeyPatch, *recorders: _AttemptRecorder
+) -> None:
+    """Flip every recorder to cleanup mode when run_execute's finally begins."""
+    import microdrama.pipeline.canary as canary_module
+
+    original = canary_module._ignore_interrupts_during_shutdown
+
+    def marker(append: Any) -> Any:
+        for recorder in recorders:
+            recorder.mark_cleanup()
+        return original(append)
+
+    monkeypatch.setattr(canary_module, "_ignore_interrupts_during_shutdown", marker)
+
+
+def _assert_no_attempt_after_deadline(
+    attempts: list[tuple[datetime, str, str]], deadline: datetime
+) -> None:
+    assert attempts, "the run must have made at least one provider attempt"
+    late = [(when, method, url) for when, method, url in attempts if when >= deadline]
+    assert late == [], f"provider attempts started at/after the deadline: {late}"
+
+
+def test_no_pod_attempt_starts_after_the_deadline_during_warmup(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-6 (2026-11-09, canary-night review): the ensure_pod retry loop used to
+    sleep, then dispatch another provider call without re-checking - a warmup
+    failure at deadline-1s led to a pod API call AT/after the authorized wall
+    limit. The deadline is now checked immediately before every attempt,
+    including right after sleeping (fake clock; no real waiting)."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(no_comfy_port=True)
+    recorder = _AttemptRecorder(runpod_transport, clock)
+    _mark_cleanup_phase(monkeypatch, recorder)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=recorder,
+            comfy_transport=ComfyCanaryTransport(),
+            max_wall_seconds=2,
+        )
+    _assert_no_attempt_after_deadline(recorder.attempts, T0 + timedelta(seconds=2))
+
+
+def test_no_readback_attempt_starts_after_the_deadline(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-6: the endpoint read-back loop must not start another pod GET after
+    the deadline; a pod that never exposes its port stops at the wall limit."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(never_port_reads=True)
+    recorder = _AttemptRecorder(runpod_transport, clock)
+    _mark_cleanup_phase(monkeypatch, recorder)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=recorder,
+            comfy_transport=ComfyCanaryTransport(),
+            max_wall_seconds=2,
+        )
+    _assert_no_attempt_after_deadline(recorder.attempts, T0 + timedelta(seconds=2))
+
+
+def test_no_catalog_attempt_starts_after_the_deadline(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-6: the /object_info boot-window retry must not start another request
+    after the deadline (it used to sleep first and dispatch with the fixed
+    30-second transport timeout)."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy_transport = ComfyCanaryTransport(booting_object_info=10**6)
+    recorder = _AttemptRecorder(comfy_transport, clock)
+    _mark_cleanup_phase(monkeypatch, recorder)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=RunpodCanaryTransport(),
+            comfy_transport=recorder,
+            max_wall_seconds=2,
+        )
+    _assert_no_attempt_after_deadline(recorder.attempts, T0 + timedelta(seconds=2))
+
+
 def test_a_pod_that_never_verifies_keeps_disk_ownership_through_termination(
     db: Database, tmp_path: Path
 ) -> None:

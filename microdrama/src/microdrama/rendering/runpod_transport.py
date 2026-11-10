@@ -35,6 +35,7 @@ from microdrama.contracts.errors import (
 from microdrama.contracts.providers import PodCreateRequest, PodInfo
 from microdrama.rendering.diagnostics import (
     DIAGNOSTIC_READ_LIMIT,
+    bound_request_timeout,
     safe_diagnostic,
     uncertainty_cause,
 )
@@ -164,7 +165,10 @@ class UrllibRunpodTransport:
     ) -> RunpodResponse:
         request = Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed Runpod origin
+            # CN-6: the timeout is bounded by the time remaining to the run deadline.
+            with urlopen(  # noqa: S310 - fixed Runpod origin
+                request, timeout=bound_request_timeout(30)
+            ) as response:
                 return _Response(response.status, response.read())
         except HTTPError as exc:
             try:

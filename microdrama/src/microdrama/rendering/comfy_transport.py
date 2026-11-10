@@ -31,6 +31,7 @@ from microdrama.contracts.providers import (
 )
 from microdrama.rendering.diagnostics import (
     DIAGNOSTIC_READ_LIMIT,
+    bound_request_timeout,
     safe_diagnostic,
     uncertainty_cause,
 )
@@ -68,7 +69,10 @@ class UrllibTransport:
     ) -> bytes:
         request = Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - configured endpoint
+            # CN-6: the timeout is bounded by the time remaining to the run deadline.
+            with urlopen(  # noqa: S310 - configured endpoint
+                request, timeout=bound_request_timeout(30)
+            ) as response:
                 return response.read()
         except HTTPError as exc:
             try:

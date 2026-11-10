@@ -299,6 +299,36 @@ def test_every_route_carries_the_bearer_the_gateway_requires() -> None:
         assert headers["Authorization"] == "Bearer fixture-secret", (method, url)
 
 
+def test_the_transport_timeout_is_bounded_by_the_run_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CN-6 (2026-11-09, canary-night review): with 2 s left to the run deadline
+    the transport must not hand urllib a fixed 30-second timeout - the request
+    timeout is bounded by the time remaining."""
+    from microdrama.rendering import comfy_transport as ct
+    from microdrama.rendering.diagnostics import (
+        reset_request_deadline,
+        set_request_deadline,
+    )
+    from datetime import UTC, datetime, timedelta
+
+    seen: dict[str, Any] = {}
+
+    def stalls(request: Any, timeout: float) -> Any:
+        seen["timeout"] = timeout
+        raise ct.URLError("connection reset by peer")
+
+    monkeypatch.setattr(ct, "urlopen", stalls)
+    base = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    token = set_request_deadline(base + timedelta(seconds=2), lambda: base)
+    try:
+        with pytest.raises(NeedsReconciliation):
+            ct.UrllibTransport().request("GET", "https://comfy.invalid/object_info", headers={})
+    finally:
+        reset_request_deadline(token)
+    assert seen["timeout"] == 2.0
+
+
 def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) -> None:
     """T031 run13 (2026-11-05): the first live prompt submit died in 0.58s as a
     connection-level URLError and the runner stopped for a human - correctly -
