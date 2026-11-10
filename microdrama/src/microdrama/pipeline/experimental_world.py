@@ -67,10 +67,12 @@ class CanonicalExperimentWorld:
         binding_factory: Callable | None = None,
         stage_inputs: Callable | None = None,
         billing_readiness: Callable | None = None,
+        reconcile_uploads: Callable | None = None,
     ):
         self.db, self.jobs, self.leases, self.comfy, self.budget = db, jobs, leases, comfy, budget
         self.request_factory, self.binding_factory = request_factory, binding_factory
         self.stage_inputs = stage_inputs or (lambda acquisition: None)
+        self.reconcile_uploads = reconcile_uploads or (lambda acquisition: None)
         self.billing_readiness = billing_readiness
 
     def acquisition_requests(
@@ -702,6 +704,49 @@ class _SealedNativeInputs:
                         (jsonb({"locator": key}), digest, *identity),
                     )
 
+    def readback(self, acquisition):
+        """§5.3: existing upload intents reconcile ONLY by checksum readback.
+
+        One GET ``/view?type=input`` per open intent (``INTENT``/``UNKNOWN``)
+        through the real client scope: verified exact bytes mark the intent
+        done. Nothing else may happen here - no POST (the request guard
+        refuses it outside EXECUTE at its own layer), no intent is invented
+        for a port without a durable row, and no prompt operation appears.
+        The scope is the acquisition's current dispatched sample, exactly the
+        one staging used, so the readback proves the same linkage the upload
+        intent committed (§3.3/R4).
+        """
+        with self.db.transaction(readonly=True) as tx:
+            rows = tx.fetchall(
+                "SELECT asset_sha256,media_kind,role,subject_id,upload_key "
+                "FROM benchmark_uploads WHERE acquisition_id=%s "
+                "AND state IN ('INTENT','UNKNOWN') "
+                "ORDER BY asset_sha256,media_kind,role,subject_id",
+                (acquisition["acquisition_id"],),
+            )
+        if not rows:
+            return
+        with self._scope(acquisition):
+            for row in rows:
+                self.client.reconcile_input(
+                    expected_sha256=row["asset_sha256"], upload_key=row["upload_key"]
+                )
+                with self.db.transaction() as tx:
+                    tx.execute(
+                        "UPDATE benchmark_uploads SET state='VERIFIED',locator=%s,"
+                        "verified_readback_sha256=%s WHERE acquisition_id=%s "
+                        "AND asset_sha256=%s AND media_kind=%s AND role=%s AND subject_id=%s",
+                        (
+                            jsonb({"locator": row["upload_key"]}),
+                            row["asset_sha256"],
+                            acquisition["acquisition_id"],
+                            row["asset_sha256"],
+                            row["media_kind"],
+                            row["role"],
+                            row["subject_id"],
+                        ),
+                    )
+
     def bind(self, sample, acquisition, request):
         from microdrama.references.v2_binding import ExpectedReference
         from microdrama.rendering.workflows.pika_h3_flex import (
@@ -1209,6 +1254,7 @@ def build_experiment_world(
         binding_factory=native.bind,
         stage_inputs=native.stage,
         billing_readiness=lambda lease_id: lease_billing_readiness(db, lease_id),
+        reconcile_uploads=native.readback,
     )
     world._native = native
     world._provider = provider

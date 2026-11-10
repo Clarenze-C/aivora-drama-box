@@ -309,25 +309,83 @@ class BenchmarkService:
             (experiment_id,),
         )
 
-    def _gate_in_tx(self, tx: Any, experiment_id: UUID, action: str, **scope: Any) -> None:
+    def _assert_coordination(
+        self, tx: Any, experiment_id: UUID, acquisition_id: UUID | None, token: UUID
+    ) -> None:
+        """R3 deadline fence: a coordinator control write or first-send
+        authorisation is valid only while BOTH durable tokens - the dispatch
+        slot's and the acquisition's - still match the caller's token.
+
+        The fence committed at deadline exhaustion revokes exactly those two
+        tokens (``_deadline_fence``); revocation never proves an
+        already-authorised external send never happened (I2) - such effects
+        stay with reconciliation - it only strips the right to control or
+        dispatch further."""
+        slot = tx.fetchone(
+            "SELECT coordinator_token FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+            (experiment_id,),
+        )
+        acquisition = (
+            tx.fetchone(
+                "SELECT coordinator_token FROM benchmark_acquisitions WHERE acquisition_id=%s",
+                (acquisition_id,),
+            )
+            if acquisition_id is not None
+            else None
+        )
+        if (
+            slot is None
+            or acquisition is None
+            or slot["coordinator_token"] != token
+            or acquisition["coordinator_token"] != token
+        ):
+            raise AdmissionBlocked(
+                ["R3 fence: the coordinator token was revoked at the recovery deadline"]
+            )
+
+    def _gate_in_tx(
+        self,
+        tx: Any,
+        experiment_id: UUID,
+        action: str,
+        *,
+        coordinator_token: UUID | None = None,
+        **scope: Any,
+    ) -> None:
         """Evaluate the §4.1 blocking items under the caller's locked transaction.
 
         The caller has already taken the account/category/E locks (§6.1).
+        A dispatch decision additionally re-checks its coordinator token in
+        this same transaction (§5.4/R3): a fenced or expired coordinator never
+        authorises a first send.
         """
         self._lock_gate_rows(tx, experiment_id)
+        if coordinator_token is not None:
+            self._assert_coordination(
+                tx, experiment_id, scope.get("acquisition_id"), coordinator_token
+            )
         items = unresolved_items(tx, experiment_id, now=self.clock.now())
         blockers = blocking(items, action, **scope)
         if blockers:
             raise AdmissionBlocked([item.describe() for item in blockers])
 
-    def _gate(self, experiment_id: UUID, action: str, **scope: Any) -> None:
+    def _gate(
+        self,
+        experiment_id: UUID,
+        action: str,
+        *,
+        coordinator_token: UUID | None = None,
+        **scope: Any,
+    ) -> None:
         """A standalone gate transaction for the dispatch step (§4.2)."""
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id)
             lock_account(tx, exp["account_id"])
             lock_categories(tx, exp["account_id"])
             experiment_row(tx, experiment_id, lock=True)
-            self._gate_in_tx(tx, experiment_id, action, **scope)
+            self._gate_in_tx(
+                tx, experiment_id, action, coordinator_token=coordinator_token, **scope
+            )
 
     def _acquisition(self, experiment_id: UUID, world: Any, quote: Any):
         # Account/category locks precede experiment/slot locks in every admission.
@@ -600,8 +658,14 @@ class BenchmarkService:
     def _mark_submit_ambiguity(self, experiment_id: UUID, acquisition: dict, world: Any):
         """§5.1: a submit/poll ambiguity keeps the acquisition ACTIVE and enters
         the durable grace; the experiment moves to NEEDS_RECONCILIATION in the
-        same transaction. The pod stays for recovery - no cleanup here."""
+        same transaction. The pod stays for recovery - no cleanup here, UNLESS
+        the persisted deadline has already elapsed (SC2-2: a later ambiguity
+        on the same acquisition reuses it and starts cleanup immediately)."""
         self._enter_grace(experiment_id, acquisition, world)
+        row = self._recovery_deadline(acquisition["acquisition_id"])
+        if row is not None and row["recovery_deadline"] is not None:
+            if self.clock.now() >= row["recovery_deadline"]:
+                return self.sweep(experiment_id, world=world)
         return self.status(experiment_id)
 
     def _mark_upload_ambiguity(self, experiment_id: UUID):
@@ -657,6 +721,17 @@ class BenchmarkService:
         if self._needs_finalization(experiment_id, acquisition):
             return self.sweep(experiment_id, world=world)
         with self.db.transaction() as tx:
+            # R3: taking the acquisition coordination is itself a control
+            # write - it must not resurrect a token the deadline fence revoked.
+            slot = tx.fetchone(
+                "SELECT coordinator_token FROM benchmark_dispatch_slots "
+                "WHERE experiment_id=%s FOR UPDATE",
+                (experiment_id,),
+            )
+            if slot is None or slot["coordinator_token"] != token:
+                raise AdmissionBlocked(
+                    ["R3 fence: the coordinator token was revoked at the recovery deadline"]
+                )
             tx.execute(
                 "UPDATE benchmark_acquisitions SET coordinator_token=%s,coordinator_lease_until=%s WHERE acquisition_id=%s",
                 (token, self.clock.now() + timedelta(hours=1), acquisition["acquisition_id"]),
@@ -680,7 +755,12 @@ class BenchmarkService:
             # holds a first-send right of its own (SC2-1) - an uncertain create
             # (U1), a reopened liability (U5) or cleanup owed on this acquisition
             # (U2) reconciles instead of dispatching.
-            self._gate(experiment_id, "dispatch", acquisition_id=acquisition["acquisition_id"])
+            self._gate(
+                experiment_id,
+                "dispatch",
+                coordinator_token=token,
+                acquisition_id=acquisition["acquisition_id"],
+            )
             try:
                 world.acquire(acquisition)
             except NeedsReconciliation:
@@ -688,13 +768,22 @@ class BenchmarkService:
                 # gets NO grace - the sweep's token reconciliation owns it.
                 return self._mark_create_ambiguity(experiment_id, acquisition, world)
             with self.db.transaction() as tx:
-                tx.execute(
-                    "UPDATE benchmark_acquisitions SET state='ACTIVE' WHERE acquisition_id=%s",
-                    (acquisition["acquisition_id"],),
+                # R3: a fenced coordinator never writes acquisition control
+                # state (the write is predicated on its token surviving).
+                updated = tx.execute(
+                    "UPDATE benchmark_acquisitions SET state='ACTIVE' "
+                    "WHERE acquisition_id=%s AND coordinator_token=%s",
+                    (acquisition["acquisition_id"], token),
                 )
+                if updated != 1:
+                    raise AdmissionBlocked(
+                        ["R3 fence: the coordinator token was revoked at the recovery deadline"]
+                    )
             # At most one active prompt. Resume polls operation IDs before any submit.
             for _ in range(24):
-                sample = self._claim_sample(experiment_id, world, acquisition, eligible)
+                sample = self._claim_sample(
+                    experiment_id, world, acquisition, eligible, coordinator_token=token
+                )
                 if sample is None:
                     return self._finish_phase(experiment_id, world, phase)
                 if sample["job_id"] is None:
@@ -708,6 +797,7 @@ class BenchmarkService:
                     self._gate(
                         experiment_id,
                         "dispatch",
+                        coordinator_token=token,
                         acquisition_id=acquisition["acquisition_id"],
                         sample_id=sample["sample_id"],
                     )
@@ -728,6 +818,7 @@ class BenchmarkService:
                     self._gate(
                         experiment_id,
                         "dispatch",
+                        coordinator_token=token,
                         acquisition_id=acquisition["acquisition_id"],
                         sample_id=sample["sample_id"],
                     )
@@ -737,7 +828,7 @@ class BenchmarkService:
                         # §5.1/§5.4: the acquisition stays ACTIVE and the
                         # durable grace is persisted before any recovery.
                         return self._mark_submit_ambiguity(experiment_id, acquisition, world)
-                self._observe(experiment_id, sample, result)
+                self._observe(experiment_id, sample, result, coordinator_token=token)
                 state = getattr(result.state, "value", result.state)
                 if state not in ("SUCCEEDED", "FAILED", "CANCELLED"):
                     return self.status(experiment_id)
@@ -771,7 +862,15 @@ class BenchmarkService:
                 pass
             raise
 
-    def _claim_sample(self, experiment_id: UUID, world: Any, acquisition: dict, eligible: set[str]):
+    def _claim_sample(
+        self,
+        experiment_id: UUID,
+        world: Any,
+        acquisition: dict,
+        eligible: set[str],
+        *,
+        coordinator_token: UUID | None = None,
+    ):
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id)
             lock_account(tx, exp["account_id"])
@@ -785,6 +884,12 @@ class BenchmarkService:
                 "SELECT * FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
                 (experiment_id,),
             )
+            if coordinator_token is not None and slot["coordinator_token"] != coordinator_token:
+                # R3: the deadline fence revoked this coordinator's slot token;
+                # a returning stale worker may not claim or control anything.
+                raise AdmissionBlocked(
+                    ["R3 fence: the coordinator token was revoked at the recovery deadline"]
+                )
             if slot["sample_id"]:
                 # Returning the slot's occupied sample is not a new claim - the
                 # in-flight work on it must stay pollable (§4.1 U3p/U4).
@@ -838,7 +943,14 @@ class BenchmarkService:
                 (experiment_id, sample["sample_id"]),
             )
 
-    def _observe(self, experiment_id: UUID, sample: dict, result: Any):
+    def _observe(
+        self,
+        experiment_id: UUID,
+        sample: dict,
+        result: Any,
+        *,
+        coordinator_token: UUID | None = None,
+    ):
         state = getattr(result.state, "value", result.state)
         output = None
         if state == "SUCCEEDED":
@@ -852,6 +964,19 @@ class BenchmarkService:
         if state in ("FAILED", "CANCELLED"):
             output = {"error_code": getattr(result, "error_code", None) or "UNKNOWN_FAILURE"}
         with self.db.transaction() as tx:
+            if coordinator_token is not None:
+                # R3: projection is a coordinator control write - predicated on
+                # the slot token the fence revokes (recovery observes without
+                # a token; it never held one).
+                slot = tx.fetchone(
+                    "SELECT coordinator_token FROM benchmark_dispatch_slots "
+                    "WHERE experiment_id=%s FOR UPDATE",
+                    (experiment_id,),
+                )
+                if slot is None or slot["coordinator_token"] != coordinator_token:
+                    raise AdmissionBlocked(
+                        ["R3 fence: the coordinator token was revoked at the recovery deadline"]
+                    )
             tx.execute(
                 "UPDATE benchmark_samples SET state=%s,operation_id=%s,output=COALESCE(%s,output),coverage=COALESCE(coverage,%s) WHERE experiment_id=%s AND sample_id=%s",
                 (
@@ -1004,6 +1129,57 @@ class BenchmarkService:
             blockers.append("current acquisition quote is missing")
         return blockers
 
+    def _deadline_fence(self, experiment_id: UUID, acquisition_id: UUID) -> bool:
+        """R3 deadline fence (§5.4): at ``recovery_deadline`` exhaustion, with
+        an ambiguity on this acquisition still unresolved, sweep or the janitor
+        first COMMITS the fence - revoke the acquisition's coordinator token
+        and the matching dispatch-slot token under the §6.1 lock order - and
+        only then runs cleanup outside the transaction.
+
+        This is the explicit exception to "never preempt a valid coordinator".
+        Revoking the token never proves an already-authorised external send
+        never happened: such effects stay subject to reconciliation and get no
+        replacement send right (I2). Every later coordinator control write and
+        first-send authorisation checks the matching token in its own
+        transaction (``_assert_coordination``)."""
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            acquisition = tx.fetchone(
+                "SELECT recovery_deadline FROM benchmark_acquisitions "
+                "WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition_id,),
+            )
+            if (
+                acquisition is None
+                or acquisition["recovery_deadline"] is None
+                or self.clock.now() < acquisition["recovery_deadline"]
+            ):
+                return False
+            self._lock_gate_rows(tx, experiment_id)
+            items = unresolved_items(tx, experiment_id, now=self.clock.now())
+            if not any(
+                item.acquisition_id == acquisition_id and item.kind in ("U1", "U3", "U3u")
+                for item in items
+            ):
+                # SC2-2: the fence bites only while an ambiguity on THIS
+                # acquisition remains unresolved; a recovered episode's
+                # historical deadline never fences later healthy work.
+                return False
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET coordinator_token=NULL,"
+                "coordinator_lease_until=NULL WHERE acquisition_id=%s",
+                (acquisition_id,),
+            )
+            tx.execute(
+                "UPDATE benchmark_dispatch_slots SET coordinator_token=NULL,"
+                "coordinator_lease_until=NULL WHERE experiment_id=%s",
+                (experiment_id,),
+            )
+            return True
+
     def sweep(
         self,
         experiment_id: UUID,
@@ -1128,6 +1304,12 @@ class BenchmarkService:
                         (acquisition["acquisition_id"],),
                     )
                 continue
+            # R3 deadline fence (§5.4): at deadline exhaustion with an
+            # unresolved ambiguity on this acquisition, commit the cleanup
+            # fence FIRST - revoke the acquisition coordinator token and the
+            # matching dispatch-slot token under the §6.1 order - so cleanup
+            # then runs outside the transaction against a fenced coordinator.
+            self._deadline_fence(experiment_id, acquisition["acquisition_id"])
             # The world is composed lazily, per acquisition needing it: an
             # acquisition-less experiment never constructs one (spec §3.2).
             if world is None:
@@ -1241,10 +1423,10 @@ class BenchmarkService:
         # acquisition label. A worker that died before the ambiguity handler
         # wrote anything still reconciles by its durable token (AT-13).
         with self.db.transaction(readonly=True) as tx:
-            derived_u1 = {
-                item.acquisition_id
-                for item in unresolved_items(tx, experiment_id, now=self.clock.now())
-                if item.kind == "U1"
+            derived_items = unresolved_items(tx, experiment_id, now=self.clock.now())
+            derived_u1 = {item.acquisition_id for item in derived_items if item.kind == "U1"}
+            upload_acquisitions = {
+                item.acquisition_id for item in derived_items if item.kind == "U3u"
             }
         by_id = {a["acquisition_id"]: a for a in status["acquisitions"]}
         unknown = [
@@ -1272,12 +1454,48 @@ class BenchmarkService:
                 )
             if not self._reconcile_acquisition(experiment_id, per, acquisition):
                 unresolved.append(str(acquisition["acquisition_id"]))
+        # §5.3: existing upload intents reconcile ONLY by checksum-verified
+        # input readback (/view?type=input) through the recovery world - never
+        # a second upload POST, never an invented prompt operation. An
+        # unverifiable readback leaves the U3u item blocking every dependent
+        # sample until cleanup or an audited resolution.
+        for acquisition_id in sorted(upload_acquisitions):
+            acquisition = by_id.get(acquisition_id)
+            if acquisition is None:
+                continue
+            per = world
+            if per is None:
+                per = self._world(
+                    experiment_id,
+                    authorization,
+                    quote,
+                    mode="RECOVERY",
+                    acquisition_id=acquisition_id,
+                )
+            self._heartbeat_grace(experiment_id, per, acquisition_id)
+            if hasattr(per, "bind_for_recovery"):
+                try:
+                    per.bind_for_recovery(acquisition_id)
+                except Exception:  # noqa: BLE001 - best-effort binding, item stays blocked
+                    pass
+            bound = self._recovery_request_bound(experiment_id, acquisition_id)
+            try:
+                if bound is not None:
+                    with bound:
+                        per.reconcile_uploads(acquisition)
+                else:
+                    per.reconcile_uploads(acquisition)
+            except (NeedsReconciliation, EffectDenied, Conflict):
+                # Unverifiable readback: the intent stays open (U3u) and the
+                # dependent samples stay blocked; nothing was re-sent.
+                unresolved.append(str(acquisition_id))
         if not unresolved and slot_stuck:
             per = world
             if per is None:
                 per = self._world(experiment_id, authorization, quote, mode="RECOVERY")
             self._reconcile_slot_sample(experiment_id, per)
         slot_stuck_after = self._slot_sample_unknown(experiment_id)
+        uploads_open_after = self._uploads_open(experiment_id)
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id, lock=True)
             still_unknown = tx.fetchval(
@@ -1288,6 +1506,7 @@ class BenchmarkService:
                 exp["execution_state"] == "NEEDS_RECONCILIATION"
                 and not still_unknown
                 and not slot_stuck_after
+                and not uploads_open_after
             ):
                 # The phase to resume is derived from durable screening evidence,
                 # never from memory: a recorded PASS admits FULL, else SCREEN.
@@ -1350,6 +1569,72 @@ class BenchmarkService:
             )
         return operation in ("UNKNOWN", "SUBMITTED", "RUNNING", "PENDING_SUBMIT")
 
+    def _uploads_open(self, experiment_id: UUID) -> bool:
+        """Whether any upload intent lacks its checksum-verified readback (U3u)."""
+        with self.db.transaction(readonly=True) as tx:
+            open_uploads = tx.fetchval(
+                "SELECT COUNT(*) FROM benchmark_uploads u "
+                "JOIN benchmark_acquisitions a ON a.acquisition_id=u.acquisition_id "
+                "WHERE a.experiment_id=%s AND u.state IN ('INTENT','UNKNOWN')",
+                (experiment_id,),
+            )
+        return bool(open_uploads)
+
+    def _recovery_deadline(self, acquisition_id: UUID):
+        """The persisted §5.4 grace deadline of this acquisition, if any."""
+        with self.db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT recovery_started_at, recovery_deadline, lease_id "
+                "FROM benchmark_acquisitions WHERE acquisition_id=%s",
+                (acquisition_id,),
+            )
+        return row
+
+    def _heartbeat_grace(self, experiment_id: UUID, world: Any, acquisition_id: UUID) -> None:
+        """§5.4 during grace: heartbeat the owned lease - proof of life only.
+
+        The heartbeat extends NOTHING: not the lease expiry, not any
+        reservation and not the GPU window (``PodLeaseService.heartbeat``
+        writes ``heartbeat_at`` alone), and canonical lease usage keeps
+        accruing through the ordinary billing path."""
+        row = self._recovery_deadline(acquisition_id)
+        if row is None or row["recovery_deadline"] is None or row["lease_id"] is None:
+            return
+        if self.clock.now() >= row["recovery_deadline"]:
+            return
+        try:
+            world.leases.heartbeat(row["lease_id"])
+        except Exception:  # noqa: BLE001 - a terminal/foreign lease simply is not heartbeatable
+            pass
+
+    def _recovery_request_bound(self, experiment_id: UUID, acquisition_id: UUID):
+        """§5.4: bound every nested recovery HTTP request by the time left
+        before the persisted ``recovery_deadline`` (R3: absolute timestamps).
+
+        Returns a context manager, or None when this acquisition has no
+        persisted grace (nothing to bound by)."""
+        from contextlib import contextmanager
+
+        from microdrama.rendering.diagnostics import (
+            reset_request_deadline,
+            set_request_deadline,
+        )
+
+        row = self._recovery_deadline(acquisition_id)
+        deadline = row["recovery_deadline"] if row is not None else None
+        if deadline is None:
+            return None
+
+        @contextmanager
+        def _bound():
+            token = set_request_deadline(deadline, self.clock.now)
+            try:
+                yield
+            finally:
+                reset_request_deadline(token)
+
+        return _bound()
+
     def _reconcile_slot_sample(self, experiment_id: UUID, world: Any) -> None:
         """Reconcile the dispatched sample's operation by durable identity.
 
@@ -1408,12 +1693,28 @@ class BenchmarkService:
                 world.bind_for_recovery(sample["acquisition_id"])
             except Exception:
                 pass
+        if sample.get("acquisition_id") is not None:
+            # §5.4 during grace: heartbeat the owned lease (never extending
+            # anything) and bound every nested recovery HTTP request by the
+            # time left before the persisted recovery_deadline.
+            self._heartbeat_grace(experiment_id, world, sample["acquisition_id"])
+            bound = self._recovery_request_bound(experiment_id, sample["acquisition_id"])
+        else:
+            bound = None
         try:
-            result = (
-                world.comfy.reconcile_unknown(operation["id"])
-                if operation["state"] == "UNKNOWN"
-                else world.comfy.poll(operation["id"])
-            )
+            if bound is not None:
+                with bound:
+                    result = (
+                        world.comfy.reconcile_unknown(operation["id"])
+                        if operation["state"] == "UNKNOWN"
+                        else world.comfy.poll(operation["id"])
+                    )
+            else:
+                result = (
+                    world.comfy.reconcile_unknown(operation["id"])
+                    if operation["state"] == "UNKNOWN"
+                    else world.comfy.poll(operation["id"])
+                )
         except (NeedsReconciliation, EffectDenied, Conflict):
             # Stays ambiguous (or unbindable in this world): the item keeps
             # blocking; nothing is adopted and nothing re-sent. §5.2 rule 3
