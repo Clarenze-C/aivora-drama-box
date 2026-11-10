@@ -1046,28 +1046,25 @@ def build_experiment_world(
         sealed = decode_seal(
             tx.fetchone("SELECT * FROM benchmark_seals WHERE experiment_id=%s", (experiment_id,))
         )
-        if authorization is None and mode != "EXECUTE":
+        if mode != "EXECUTE":
+            # HB-3 (§3.2): recovery/cleanup provenance is the ACQUISITION'S OWN
+            # durable record, verified from its stored bytes. Caller-supplied
+            # new-generation documents never replace it, and "latest by
+            # timestamp" is never selected: an experiment with acquisitions
+            # must name the acquisition being touched. (An acquisition-less
+            # experiment composes no recovery world at all - its status,
+            # reconciliation and cleanup are no-effect operations.)
             if acquisition_id is not None:
-                # §3.2: this acquisition's own provenance row, verified from its
-                # bytes - never "latest by timestamp".
                 authorization = load_recovery_authorization(db, acquisition_id)
-            else:
-                row = tx.fetchone(
-                    "SELECT payload FROM benchmark_authorizations WHERE experiment_id=%s ORDER BY authorized_at DESC LIMIT 1",
-                    (experiment_id,),
-                )
-                authorization = (
-                    BenchmarkAuthorization.model_validate(row["payload"]) if row else None
-                )
-        if quote is None and mode != "EXECUTE":
-            if acquisition_id is not None:
                 quote = load_recovery_quote(db, acquisition_id)
-            else:
-                row = tx.fetchone(
-                    "SELECT quote FROM benchmark_acquisitions WHERE experiment_id=%s ORDER BY generation DESC LIMIT 1",
-                    (experiment_id,),
+            elif tx.fetchval(
+                "SELECT COUNT(*) FROM benchmark_acquisitions WHERE experiment_id=%s",
+                (experiment_id,),
+            ):
+                raise Conflict(
+                    "recovery and cleanup must name the acquisition whose durable "
+                    "records they recover (never latest-by-timestamp)"
                 )
-                quote = AcquisitionQuote.model_validate(row["quote"]) if row else None
     if sealed is None or authorization is None or quote is None:
         raise PolicyDenied(
             "experiment world needs a durable seal, recorded authorization and acquisition quote"
@@ -1312,6 +1309,13 @@ def build_experiment_world(
     world._clock = live_clock
     world._owned_lease = owned_lease
     world._mode = mode
+    # HB-3: the resolved provenance is part of the world's identity - which
+    # authorization and quote every guard, namespace and settlement in this
+    # world acts for. In RECOVERY/CLEANUP this is always the named
+    # acquisition's own durable record (§3.2).
+    world.authorization = authorization
+    world.quote = quote
+    world.acquisition_id = acquisition_id
     return world
 
 

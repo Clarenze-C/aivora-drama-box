@@ -2463,3 +2463,89 @@ def test_hb2_bind_for_recovery_binds_only_a_running_pod(
     # The pod stopped but keeps its recorded endpoint: never BOUND.
     harness.runpod.pod["status"] = "STOPPED"
     assert world.bind_for_recovery(acquisition_id) == "INDETERMINATE"
+
+
+# ---------------------------------------------------------------------------
+# HB-3 (Codex P1-P3 review): recovery provenance is acquisition-owned.
+# ---------------------------------------------------------------------------
+
+
+def test_hb3_recovery_provenance_is_acquisition_owned(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-3 (§3.2): RECOVERY/CLEANUP provenance is the acquisition's OWN
+    durable record, verified from its stored bytes. Caller-supplied
+    new-generation documents never replace it (a later authorization under a
+    different namespace would compose the wrong ownership scope and fail
+    every check), 'latest by timestamp' is never selected, and an experiment
+    WITH acquisitions must name the acquisition it touches."""
+    import json as _json
+
+    from microdrama.contracts.errors import Conflict
+    from microdrama.persistence.db import jsonb as _jsonb
+    from microdrama.pipeline.benchmark_authorization import (
+        canonical_document_bytes,
+        document_sha256,
+    )
+    from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
+
+    harness = _at17_compose(db, tmp_path, monkeypatch, upload_timeout=False, prompt_timeouts=1)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+
+    # A SECOND authorization, recorded LATER under a DIFFERENT namespace -
+    # identity-legal for this seal/plan, but not this acquisition's record.
+    second = harness.authorization.model_copy(
+        update={"change_ref": "at17-hb3-later", "namespace": "benchyhb3"}
+    )
+    raw2 = canonical_document_bytes(second)
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,"
+            "payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s)",
+            (
+                plan.experiment_id,
+                document_sha256(second),
+                _jsonb(_json.loads(raw2.decode("utf-8"))),
+                raw2,
+                harness.clock.now(),
+            ),
+        )
+
+    def world_budget():
+        return ExperimentBudgetService(
+            db, harness.clock, harness.ids, harness.settings, experiment_id=plan.experiment_id
+        )
+
+    # Supplied new-generation arguments must NOT replace the acquisition's
+    # own provenance: the world composes from the durable record - the
+    # original namespace/change_ref, never the later benchyhb3 document.
+    world = harness.factory(
+        experiment_id=plan.experiment_id,
+        budget=world_budget(),
+        authorization=second,  # the WRONG, later authorization
+        quote=harness.quote,
+        mode="RECOVERY",
+        acquisition_id=acquisition_id,
+    )
+    assert world.authorization.namespace == harness.authorization.namespace
+    assert world.authorization.change_ref == harness.authorization.change_ref
+
+    # And "latest by timestamp" is never selected: an experiment WITH
+    # acquisitions refuses an acquisition-less recovery world outright - the
+    # caller names the acquisition whose records it recovers (§3.2).
+    with pytest.raises(Conflict):
+        harness.factory(
+            experiment_id=plan.experiment_id,
+            budget=world_budget(),
+            authorization=None,
+            quote=None,
+            mode="RECOVERY",
+        )

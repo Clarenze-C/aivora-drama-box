@@ -221,6 +221,11 @@ class BenchmarkService:
             raise EffectDenied(
                 "no attested experimental world configured; local preparation remains available"
             )
+        # HB-3 (§3.2): for mode != EXECUTE, build_experiment_world itself loads
+        # the named acquisition's OWN durable authorization and quote - the
+        # caller-supplied documents below never replace recovery provenance
+        # (they only parameterize the budget service's admission caps, which
+        # recovery worlds never exercise: recovery makes no new reservations).
         budget = ExperimentBudgetService(
             self.db,
             self.clock,
@@ -1285,6 +1290,11 @@ class BenchmarkService:
         verified = True
         billed = True
         for acquisition in status["acquisitions"]:
+            # HB-3: when no caller world is supplied, each acquisition composes
+            # its own CLEANUP world from its own durable provenance; the
+            # variable is per-iteration and never carried to another
+            # acquisition (§3.1 one world per acquisition).
+            cleanup_world = world
             if acquisition["state"] == "NO_CREATE_PROVEN":
                 # R1 (spec §4.1): sweep finalizes these rows too - their
                 # exclusion from the partial unique index never authorizes the
@@ -1312,15 +1322,22 @@ class BenchmarkService:
                     ):
                         # A live lease with the discovered pod: the normal
                         # shutdown path stops, verifies and settles it.
-                        if world is None:
-                            world = self._world(
+                        # HB-3: one CLEANUP world PER acquisition - its
+                        # provenance, namespace and credentials are the
+                        # acquisition's own durable records (§3.2), never the
+                        # first acquisition's reused world.
+                        cleanup_world = (
+                            world
+                            if world is not None
+                            else self._world(
                                 experiment_id,
                                 authorization,
                                 quote,
                                 mode="CLEANUP",
                                 acquisition_id=acquisition["acquisition_id"],
                             )
-                        receipt = world.cleanup(acquisition)
+                        )
+                        receipt = cleanup_world.cleanup(acquisition)
                         verified = verified and receipt["verified"]
                         billed = billed and receipt["billing_state"] == "BILLED"
                     else:
@@ -1349,21 +1366,24 @@ class BenchmarkService:
                         # The proven-no-create lease is still live: close it through
                         # the canonical podless shutdown (U2; the pilot single-live-
                         # lease rule forbids any new lease until it is RELEASED).
-                        if world is None:
-                            world = self._world(
+                        cleanup_world = (
+                            world
+                            if world is not None
+                            else self._world(
                                 experiment_id,
                                 authorization,
                                 quote,
                                 mode="CLEANUP",
                                 acquisition_id=acquisition["acquisition_id"],
                             )
-                        world.leases.shutdown(
+                        )
+                        cleanup_world.leases.shutdown(
                             acquisition["lease_id"],
                             reason="benchmark proven-no-create lease close",
                         )
                 budget = (
-                    world.budget
-                    if world is not None
+                    cleanup_world.budget
+                    if cleanup_world is not None
                     else ExperimentBudgetService(
                         self.db,
                         self.clock,
@@ -1461,8 +1481,10 @@ class BenchmarkService:
             self._deadline_fence(experiment_id, acquisition["acquisition_id"])
             # The world is composed lazily, per acquisition needing it: an
             # acquisition-less experiment never constructs one (spec §3.2).
-            if world is None:
-                world = self._world(
+            # HB-3: composed lazily but PER acquisition (initialized at the
+            # top of each iteration) - never retained for later acquisitions.
+            if cleanup_world is None:
+                cleanup_world = self._world(
                     experiment_id,
                     authorization,
                     quote,
@@ -1477,13 +1499,13 @@ class BenchmarkService:
                         (acquisition["acquisition_id"],),
                     )
                 acquisition["intent"]["compute_reservation_id"] = str(reservation_id)
-                acquisition["lease_id"] = world.materialize_acquisition(acquisition)
+                acquisition["lease_id"] = cleanup_world.materialize_acquisition(acquisition)
                 with self.db.transaction() as tx:
                     tx.execute(
                         "UPDATE benchmark_acquisitions SET lease_id=%s WHERE acquisition_id=%s",
                         (acquisition["lease_id"], acquisition["acquisition_id"]),
                     )
-            receipt = world.cleanup(acquisition)
+            receipt = cleanup_world.cleanup(acquisition)
             verified = verified and receipt["verified"]
             billed = billed and receipt["billing_state"] == "BILLED"
             # H-2 (2026-11-10, GLM harness review): an UNKNOWN create whose Pod was
@@ -1516,7 +1538,7 @@ class BenchmarkService:
                     )
                     for row in ids:
                         if row["state"] == "ACTIVE":
-                            world.budget.release_in_transaction(
+                            cleanup_world.budget.release_in_transaction(
                                 tx,
                                 row["id"],
                                 reason="benchmark storage deletion and invoice finality verified",
@@ -1641,7 +1663,23 @@ class BenchmarkService:
         if not unresolved and slot_stuck:
             per = world
             if per is None:
-                per = self._world(experiment_id, authorization, quote, mode="RECOVERY")
+                # HB-3: slot recovery derives the acquisition from the sample it
+                # recovers - its world composes from THAT acquisition's durable
+                # provenance (§3.2), never from supplied new-generation docs.
+                with self.db.transaction(readonly=True) as tx:
+                    slot_acquisition = tx.fetchval(
+                        "SELECT s.acquisition_id FROM benchmark_dispatch_slots d "
+                        "JOIN benchmark_samples s ON s.experiment_id=d.experiment_id "
+                        "AND s.sample_id=d.sample_id WHERE d.experiment_id=%s",
+                        (experiment_id,),
+                    )
+                per = self._world(
+                    experiment_id,
+                    authorization,
+                    quote,
+                    mode="RECOVERY",
+                    acquisition_id=slot_acquisition,
+                )
             self._reconcile_slot_sample(experiment_id, per)
         slot_stuck_after = self._slot_sample_unknown(experiment_id)
         uploads_open_after = self._uploads_open(experiment_id)
@@ -2045,7 +2083,11 @@ class BenchmarkService:
             )
             if operation_id is None:
                 raise Conflict("the sample has no provider operation to resolve")
-        world = world or self._world(experiment_id, mode="CLEANUP")
+        # HB-3: the operator resolution's CLEANUP world is the sample's OWN
+        # acquisition's (its provenance, namespace and credentials - §3.2).
+        world = world or self._world(
+            experiment_id, mode="CLEANUP", acquisition_id=sample["acquisition_id"]
+        )
         status = world.comfy.resolve_unknown_operation(
             operation_id,
             actor_ref=actor_ref,
