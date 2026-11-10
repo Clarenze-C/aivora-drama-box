@@ -7,6 +7,8 @@ ComfyRenderService. No live world is constructed implicitly by a local CLI.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
@@ -128,7 +130,8 @@ class BenchmarkService:
         authorization: Any = None,
         quote: Any = None,
         *,
-        cleanup_only: bool = False,
+        mode: str = "EXECUTE",
+        acquisition_id: UUID | None = None,
     ):
         if self.world_factory is None:
             raise EffectDenied(
@@ -150,7 +153,8 @@ class BenchmarkService:
             budget=budget,
             authorization=authorization,
             quote=quote,
-            cleanup_only=cleanup_only,
+            mode=mode,
+            acquisition_id=acquisition_id,
         )
 
     def execute(
@@ -161,6 +165,7 @@ class BenchmarkService:
         authorization: Any,
         quote: Any,
         expected_sha256: str,
+        source_bytes: bytes | None = None,
     ):
         self.settings.require_effect(EffectKind.PAID_REQUEST, what="benchmark execute")
         self.settings.require_effect(EffectKind.CLOUD_RESOURCE, what="benchmark execute")
@@ -168,6 +173,14 @@ class BenchmarkService:
             raise Conflict("phase must be screen or full")
         if getattr(authorization, "authorization_sha256", None) != expected_sha256:
             raise Conflict("operator authorization byte SHA differs")
+        if source_bytes is None:
+            # Provenance default: the canonical serialization of the validated
+            # payload. A caller that loaded a file passes its exact bytes.
+            from microdrama.pipeline.benchmark_authorization import canonical_document_bytes
+
+            source_bytes = canonical_document_bytes(authorization)
+        if hashlib.sha256(source_bytes).hexdigest() != expected_sha256:
+            raise Conflict("authorization source bytes do not hash to the byte SHA")
         check = self.preflight(experiment_id, authorization, quote)
         if not check["ready"]:
             raise EffectDenied("experiment preflight is NOT_READY", blockers=check["reasons"])
@@ -185,7 +198,13 @@ class BenchmarkService:
         world = self._world(experiment_id, authorization, quote)
         with self.db.transaction() as tx:
             experiment_row(tx, experiment_id, lock=True)
-            payload = document(authorization)
+            # The stored payload is the parse of the accepted bytes (spec §3.2:
+            # "the validated file's exact bytes, the byte SHA and the parsed
+            # payload in one row") - recovery re-verifies all three agree.
+            try:
+                payload = json.loads(source_bytes.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                raise Conflict("authorization source bytes are not a JSON document") from None
             existing = tx.fetchone(
                 "SELECT payload FROM benchmark_authorizations WHERE experiment_id=%s AND authorization_sha256=%s",
                 (experiment_id, expected_sha256),
@@ -193,13 +212,22 @@ class BenchmarkService:
             if existing and existing["payload"] != payload:
                 raise Conflict("authorization hash reused with changed content")
             tx.execute(
-                "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,payload,authorized_at) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                (experiment_id, expected_sha256, jsonb(payload), self.clock.now()),
+                "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (
+                    experiment_id,
+                    expected_sha256,
+                    jsonb(payload),
+                    source_bytes,
+                    self.clock.now(),
+                ),
             )
             tx.execute(
                 "UPDATE benchmark_experiments SET execution_state=%s,revision=revision+1 WHERE experiment_id=%s",
                 ("SCREEN_RUNNING" if phase == "screen" else "FULL_RUNNING", experiment_id),
             )
+        # The authorization accepted for this execution is the provenance every
+        # acquisition admitted by it records (spec §3.2).
+        self._authorization_sha256 = expected_sha256
         return self._advance(experiment_id, world, phase, quote)
 
     def _acquisition(self, experiment_id: UUID, world: Any, quote: Any):
@@ -239,8 +267,9 @@ class BenchmarkService:
             # IDs of canonical reservations are deterministic only after reserve.
             # Persist intent with the exact request/expiry, then insert linked holds
             # in this same transaction; the immutable final intent is inserted once.
+            authorization_sha256 = self._admission_authorization_sha256(tx, experiment_id)
             tx.execute(
-                "INSERT INTO benchmark_acquisitions(acquisition_id,experiment_id,generation,quote,quote_sha256,intent,state,create_intent_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
+                "INSERT INTO benchmark_acquisitions(acquisition_id,experiment_id,generation,quote,quote_sha256,intent,state,create_intent_at,authorization_sha256) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     acquisition_id,
                     experiment_id,
@@ -250,6 +279,7 @@ class BenchmarkService:
                     jsonb(intent),
                     "ADMITTED_WITHOUT_JOB",
                     self.clock.now(),
+                    authorization_sha256,
                 ),
             )
             world.budget.reserve_linked(
@@ -269,6 +299,25 @@ class BenchmarkService:
             return tx.fetchone(
                 "SELECT * FROM benchmark_acquisitions WHERE acquisition_id=%s", (acquisition_id,)
             )
+
+    def _admission_authorization_sha256(self, tx: Any, experiment_id: UUID) -> str:
+        """The authorization accepted for this admission (spec §3.2), or a refusal.
+
+        The executing run's validated authorization comes first; an independently
+        restarted admission falls back to the newest recorded provenance row.
+        """
+        sha = getattr(self, "_authorization_sha256", None)
+        if sha is None:
+            sha = tx.fetchval(
+                "SELECT authorization_sha256 FROM benchmark_authorizations "
+                "WHERE experiment_id=%s ORDER BY authorized_at DESC LIMIT 1",
+                (experiment_id,),
+            )
+        if sha is None:
+            raise Conflict(
+                "admission requires a recorded operator authorization (run execute first)"
+            )
+        return sha
 
     def _advance(self, experiment_id: UUID, world: Any, phase: str, quote: Any):
         token = self.ids.new_id()
@@ -486,23 +535,88 @@ class BenchmarkService:
         self,
         experiment_id: UUID,
         *,
-        cleanup_only: bool = True,
+        cleanup_only: bool = False,
         authorization: Any = None,
         quote: Any = None,
         expected_sha256: str | None = None,
         phase: str | None = None,
+        source_bytes: bytes | None = None,
     ):
+        """Recovery-first resume (spec §4.2 order).
+
+        1. Identity-checked RECOVERY from durable records runs BEFORE any
+           new-generation argument, flag, authorization file or quote is
+           validated: reconcile, then cleanup. Nothing is dispatched here.
+        2. If admission is not currently permitted (flags, authorization, quote,
+           rights or deadline), the recovered durable status is returned together
+           with the admission blockers, and nothing is dispatched.
+        3. Only then does execute-style admission run, with the phase derived
+           from durable state (a current screening PASS means ``full``).
+        """
         if cleanup_only:
             return self.sweep(experiment_id)
-        status = self.status(experiment_id)
-        phase = phase or ("screen" if status["execution_state"] == "SCREEN_RUNNING" else "full")
-        return self.execute(
+        self.reconcile(experiment_id)
+        status = self.sweep(experiment_id)
+        blockers = self._admission_blockers(experiment_id, authorization, quote, expected_sha256)
+        if blockers:
+            status = dict(status)
+            status["admission"] = {"permitted": False, "blockers": blockers}
+            return status
+        derived = self._derive_phase(experiment_id)
+        result = self.execute(
             experiment_id,
-            phase=phase,
+            phase=derived,
             authorization=authorization,
             quote=quote,
             expected_sha256=expected_sha256,
+            source_bytes=source_bytes,
         )
+        if isinstance(result, dict):
+            result.setdefault("admission", {"permitted": True, "blockers": []})
+        return result
+
+    def _derive_phase(self, experiment_id: UUID) -> str:
+        """Durable phase derivation: a recorded screening PASS means full."""
+        with self.db.transaction(readonly=True) as tx:
+            has_pass = tx.fetchval(
+                "SELECT COUNT(*) FROM benchmark_screenings WHERE experiment_id=%s "
+                "AND decision->>'decision'='PASS'",
+                (experiment_id,),
+            )
+        return "full" if has_pass else "screen"
+
+    def _admission_blockers(
+        self,
+        experiment_id: UUID,
+        authorization: Any,
+        quote: Any,
+        expected_sha256: str | None,
+    ) -> list[str]:
+        """Why execute-style admission is not permitted right now, without raising."""
+        blockers: list[str] = []
+        status = self.status(experiment_id)
+        seal = (status["seal"] or {}).get("manifest")
+        if seal is None:
+            blockers.append("execution manifest is not sealed")
+        if status["execution_outcome"] is not None:
+            blockers.append("experiment outcome is terminal")
+        if status["hard_stop"] is not None and self.clock.now() >= status["hard_stop"]:
+            blockers.append("absolute experiment deadline expired")
+        if (
+            self.settings.execution_mode is not ExecutionMode.PAID_BENCHMARK
+            or not self.settings.paid_requests_enabled
+            or not self.settings.cloud_resources_enabled
+        ):
+            blockers.append("PAID_BENCHMARK and explicit effect flags are required")
+        if authorization is None:
+            blockers.append("operator byte-SHA authorization is missing")
+        elif expected_sha256 is None:
+            blockers.append("operator authorization byte SHA-256 is missing")
+        elif getattr(authorization, "authorization_sha256", None) != expected_sha256:
+            blockers.append("operator authorization byte SHA differs")
+        if quote is None:
+            blockers.append("current acquisition quote is missing")
+        return blockers
 
     def sweep(
         self,
@@ -512,13 +626,22 @@ class BenchmarkService:
         authorization: Any = None,
         quote: Any = None,
     ):
-        world = world or self._world(experiment_id, authorization, quote, cleanup_only=True)
         status = self.status(experiment_id)
         verified = True
         billed = True
         for acquisition in status["acquisitions"]:
             if acquisition["state"] == "NO_CREATE_PROVEN":
                 continue
+            # The world is composed lazily, per acquisition needing it: an
+            # acquisition-less experiment never constructs one (spec §3.2).
+            if world is None:
+                world = self._world(
+                    experiment_id,
+                    authorization,
+                    quote,
+                    mode="CLEANUP",
+                    acquisition_id=acquisition["acquisition_id"],
+                )
             if acquisition["lease_id"] is None:
                 # Materializing an owned lease is local recovery; it cannot acquire.
                 with self.db.transaction(readonly=True) as tx:
@@ -620,13 +743,26 @@ class BenchmarkService:
         unknown = [a for a in status["acquisitions"] if a["state"] == "UNKNOWN"]
         slot_stuck = self._slot_sample_unknown(experiment_id)
         unresolved: list[str] = []
-        if unknown or slot_stuck:
-            world = world or self._world(experiment_id, authorization, quote, cleanup_only=False)
         for acquisition in unknown:
-            if not self._reconcile_acquisition(experiment_id, world, acquisition):
+            # One world per acquisition (spec §3.1): the Comfy client refuses
+            # rebinding, so each acquisition it touches gets its own RECOVERY
+            # world and client, composed from that acquisition's durable records.
+            per = world
+            if per is None:
+                per = self._world(
+                    experiment_id,
+                    authorization,
+                    quote,
+                    mode="RECOVERY",
+                    acquisition_id=acquisition["acquisition_id"],
+                )
+            if not self._reconcile_acquisition(experiment_id, per, acquisition):
                 unresolved.append(str(acquisition["acquisition_id"]))
         if not unresolved and slot_stuck:
-            self._reconcile_slot_sample(experiment_id, world)
+            per = world
+            if per is None:
+                per = self._world(experiment_id, authorization, quote, mode="RECOVERY")
+            self._reconcile_slot_sample(experiment_id, per)
         slot_stuck_after = self._slot_sample_unknown(experiment_id)
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id, lock=True)
@@ -871,7 +1007,7 @@ class BenchmarkService:
             )
             if operation_id is None:
                 raise Conflict("the sample has no provider operation to resolve")
-        world = world or self._world(experiment_id, cleanup_only=True)
+        world = world or self._world(experiment_id, mode="CLEANUP")
         status = world.comfy.resolve_unknown_operation(
             operation_id,
             actor_ref=actor_ref,

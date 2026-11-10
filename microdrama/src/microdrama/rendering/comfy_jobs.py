@@ -1130,6 +1130,42 @@ class ComfyRenderService:
                 "render attempt reservation not found",
                 reservation_id=str(row["reservation_id"]),
             )
+        if reservation["state"] == ReservationState.EXPIRED.value:
+            # §3.3 (spec v3): an EXPIRED reservation retains its exposure until a
+            # settlement reconciles it (canonical expired-accrual policy). Terminal
+            # finalization settles that liability through the canonical path -
+            # never reactivates the hold, never releases it, never counts twice.
+            # The deterministic receipt id keeps a replay byte-identical.
+            observed_at = row["updated_at"]
+            interval_start = row["submitted_at"]
+            interval_end = observed_at if interval_start is not None else None
+            receipt = UsageReceipt(
+                receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
+                provider=row["provider"],
+                provider_receipt_id=f"comfy-settle:{row['id']}",
+                kind=ReceiptKind.SETTLEMENT,
+                cost_basis=(
+                    CostBasis.SYNTHETIC_FAKE
+                    if self.provenance is Provenance.FAKE_SYNTHETIC
+                    else CostBasis.BILLED
+                ),
+                reservation_id=row["reservation_id"],
+                episode_id=row["episode_id"],
+                season_id=None,
+                job_id=row["job_id"],
+                category=BudgetCategory.GPU_GENERATION,
+                amount_micro_usd=0,
+                currency="USD",
+                units=0,
+                unit=PriceUnit.GPU_SECOND,
+                interval_start=interval_start,
+                interval_end=interval_end,
+                observed_at=observed_at,
+                provenance=self.provenance,
+            )
+            policy.check_receipt_admissible(receipt, self._settings)
+            self._budget.record_usage(receipt)
+            return self._settled_amount(row["reservation_id"])
         if reservation["state"] != ReservationState.ACTIVE.value:
             return self._settled_amount(row["reservation_id"])
         if row["submitted_at"] is None:

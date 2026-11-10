@@ -27,7 +27,7 @@ CREATE TABLE benchmark_seals (
 CREATE TRIGGER benchmark_seals_append_only BEFORE UPDATE OR DELETE ON benchmark_seals FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 CREATE TABLE benchmark_authorizations (
  experiment_id uuid NOT NULL REFERENCES benchmark_experiments(experiment_id), authorization_sha256 text NOT NULL CHECK(authorization_sha256 ~ '^[0-9a-f]{64}$'),
- payload jsonb NOT NULL, authorized_at timestamptz NOT NULL, PRIMARY KEY(experiment_id,authorization_sha256)
+ payload jsonb NOT NULL, source_bytes bytea NOT NULL, authorized_at timestamptz NOT NULL, PRIMARY KEY(experiment_id,authorization_sha256)
 );
 CREATE TRIGGER benchmark_authorizations_append_only BEFORE UPDATE OR DELETE ON benchmark_authorizations FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 CREATE TABLE benchmark_acquisitions (
@@ -35,8 +35,14 @@ CREATE TABLE benchmark_acquisitions (
  quote jsonb NOT NULL, quote_sha256 text NOT NULL CHECK(quote_sha256 ~ '^[0-9a-f]{64}$'),
  intent jsonb NOT NULL, job_id uuid REFERENCES jobs(id), lease_id uuid REFERENCES pod_leases(id), state text NOT NULL,
  create_intent_at timestamptz NOT NULL, compute_window_start timestamptz, compute_window_end timestamptz,
- coordinator_token uuid, coordinator_lease_until timestamptz, UNIQUE(experiment_id,generation)
+ coordinator_token uuid, coordinator_lease_until timestamptz,
+ authorization_sha256 text NOT NULL CHECK(authorization_sha256 ~ '^[0-9a-f]{64}$'),
+ recovery_started_at timestamptz, recovery_deadline timestamptz, UNIQUE(experiment_id,generation)
 );
+-- recovery_started_at/recovery_deadline are deliberately NOT in the set-once
+-- trigger below: the persisted grace deadline may be shortened when newly
+-- discovered liability exhausts the remaining allowance (spec §5.4/R3), and a
+-- later ambiguity on the same acquisition reuses it (SC2-2).
 CREATE UNIQUE INDEX benchmark_one_acquisition ON benchmark_acquisitions(experiment_id) WHERE state NOT IN ('CLOSED','NO_CREATE_PROVEN');
 CREATE TRIGGER benchmark_acquisition_identity BEFORE UPDATE ON benchmark_acquisitions FOR EACH ROW EXECUTE FUNCTION md_immutable_columns('acquisition_id','experiment_id','generation','quote','quote_sha256','intent','create_intent_at');
 ALTER TABLE benchmark_samples ADD FOREIGN KEY(acquisition_id) REFERENCES benchmark_acquisitions(acquisition_id);
@@ -105,3 +111,10 @@ END $$;
 CREATE TRIGGER benchmark_experiments_set_once BEFORE UPDATE ON benchmark_experiments FOR EACH ROW EXECUTE FUNCTION md_benchmark_set_once('sealed_sha256','hard_stop','execution_outcome');
 CREATE TRIGGER benchmark_sample_links_set_once BEFORE UPDATE ON benchmark_samples FOR EACH ROW EXECUTE FUNCTION md_benchmark_set_once('job_id','operation_id','reservation_id','acquisition_id','request','output');
 CREATE TRIGGER benchmark_acquisition_links_set_once BEFORE UPDATE ON benchmark_acquisitions FOR EACH ROW EXECUTE FUNCTION md_benchmark_set_once('job_id','lease_id','compute_window_start','compute_window_end');
+
+-- §8: additive indexes for the unresolved-items gate (spec §4.1). Every gate
+-- query resolves an experiment's acquisitions, samples, reservation links and
+-- their provider operations/uploads through these.
+CREATE INDEX benchmark_acquisitions_experiment_idx ON benchmark_acquisitions(experiment_id);
+CREATE INDEX benchmark_reservation_links_experiment_idx ON benchmark_reservation_links(experiment_id);
+CREATE INDEX benchmark_samples_reservation_idx ON benchmark_samples(reservation_id);

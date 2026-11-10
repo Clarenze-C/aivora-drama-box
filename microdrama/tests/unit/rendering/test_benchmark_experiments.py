@@ -13,6 +13,7 @@ from test_t045_timing import RunpodIdFakePods
 from microdrama.contracts.cost import BudgetReservationRequest, ExposureCeilings
 from microdrama.contracts.enums import BudgetCategory, BudgetScopeKind, QueueName
 from microdrama.contracts.errors import BudgetExhausted, Conflict, EffectDenied
+from microdrama.persistence.db import jsonb
 from microdrama.pipeline.benchmark_authorization import BenchmarkPlan
 from microdrama.pipeline.benchmark_service import BenchmarkService
 from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
@@ -59,10 +60,30 @@ def prepare(world, **changes):
     row = service.prepare(plan)
     # Budget tests bind only the immutable hard stop; seal/binder tests separately
     # validate actual sealed references. No executable readiness is fabricated.
+    import hashlib
+    import json as _json
+
+    provenance = _json.dumps(
+        {"synthetic": "offline-fixture", "experiment_id": str(plan.experiment_id)}
+    ).encode()
     with world.db.transaction() as tx:
         tx.execute(
             "UPDATE benchmark_experiments SET hard_stop=%s WHERE experiment_id=%s",
             (world.clock.now() + timedelta(hours=4), plan.experiment_id),
+        )
+        # Offline-composed admission still records its provenance row (0026:
+        # every acquisition carries the authorization accepted for it).
+        tx.execute(
+            "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,"
+            "payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s) "
+            "ON CONFLICT DO NOTHING",
+            (
+                plan.experiment_id,
+                hashlib.sha256(provenance).hexdigest(),
+                jsonb(_json.loads(provenance.decode())),
+                provenance,
+                world.clock.now(),
+            ),
         )
     budget = ExperimentBudgetService(
         world.db, world.clock, world.ids, world.settings, experiment_id=plan.experiment_id

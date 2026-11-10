@@ -112,10 +112,10 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
     owns_db = "db" not in injection
     try:
         settings = injection.get("settings") or Settings.from_env()
-        admits_work = args.command == "execute" or (
-            args.command == "resume" and not args.cleanup_only
-        )
-        if admits_work and (
+        # Only `execute` hard-refuses on flags up front: `resume` runs its
+        # identity-checked recovery first (spec §4.2) and reports admission
+        # blockers instead of raising when new work is not currently permitted.
+        if args.command == "execute" and (
             settings.execution_mode is not ExecutionMode.PAID_BENCHMARK
             or not settings.paid_requests_enabled
             or not settings.cloud_resources_enabled
@@ -125,11 +125,16 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
             )
         authorization = None
         digest = None
+        authorization_bytes = None
         if args.authorization:
             authorization, digest = load_benchmark_authorization(args.authorization)
+            authorization_bytes = Path(args.authorization).read_bytes()
             if authorization.experiment_id != args.experiment_id:
                 raise PolicyDenied("authorization names another experiment")
-        if admits_work:
+        admits_work = args.command == "execute" or (
+            args.command == "resume" and not args.cleanup_only
+        )
+        if admits_work and args.command == "execute":
             if not authorization or not args.authorization_sha256 or not args.quote:
                 raise SchemaInvalid(
                     "new benchmark work requires authorization, verified SHA-256 and acquisition quote"
@@ -156,7 +161,12 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
             raise SchemaInvalid("MICRODRAMA_DATABASE_URL is required")
         refuse_non_loopback_dsn(database_url)
         store = injection.get("store")
-        if args.command in {"execute", "resume", "sweep"} and store is None:
+        # Every command that may compose a world gets the durable store (spec
+        # §3.1): every mode requires a non-null store, reconcile and resolve
+        # included.
+        if args.command in {"execute", "resume", "sweep", "reconcile", "resolve"} and (
+            store is None
+        ):
             store_root = settings.object_store_root
             if not store_root or not Path(store_root).is_absolute():
                 raise SchemaInvalid(
@@ -194,6 +204,7 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 quote=quote,
                 expected_sha256=args.authorization_sha256,
                 phase=args.phase,
+                source_bytes=authorization_bytes,
             )
         elif args.command == "resume":
             result = service.resume(
@@ -203,6 +214,7 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 expected_sha256=args.authorization_sha256,
                 phase=args.phase,
                 cleanup_only=args.cleanup_only,
+                source_bytes=authorization_bytes,
             )
         elif args.command == "reconcile":
             result = service.reconcile(exp, authorization=authorization, quote=quote)

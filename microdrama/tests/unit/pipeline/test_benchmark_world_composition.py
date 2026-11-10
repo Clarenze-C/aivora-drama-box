@@ -194,8 +194,8 @@ def _claim_and_link(world, plan, budget, clock) -> tuple[UUID, dict[str, Any]]:
         acquisition_id = UUID(int=9001)
         tx.execute(
             "INSERT INTO benchmark_acquisitions(acquisition_id,experiment_id,generation,"
-            "quote,quote_sha256,intent,state,create_intent_at,lease_id) "
-            "VALUES(%s,%s,1,%s,%s,%s,'ACTIVE',%s,%s)",
+            "quote,quote_sha256,intent,state,create_intent_at,lease_id,authorization_sha256) "
+            "VALUES(%s,%s,1,%s,%s,%s,'ACTIVE',%s,%s,%s)",
             (
                 acquisition_id,
                 plan.experiment_id,
@@ -204,6 +204,7 @@ def _claim_and_link(world, plan, budget, clock) -> tuple[UUID, dict[str, Any]]:
                 jsonb({"claim": {}}),
                 clock.now(),
                 lease_id,
+                "a" * 64,
             ),
         )
         tx.execute(

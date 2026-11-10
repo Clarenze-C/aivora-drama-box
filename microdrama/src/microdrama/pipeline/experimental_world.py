@@ -3,10 +3,21 @@
 Factories supply immutable request/binding inputs; they never supply reservation,
 job, operation or experiment state. Provider effects remain in LeaseService and
 ComfyRenderService. No live world is constructed implicitly by a local CLI.
+
+World modes (spec §3.1): EXECUTE admits every effect; RECOVERY and CLEANUP are
+built from durable records only, run identity checks only (no expiry, rights or
+quote-freshness revalidation) and refuse create, upload POST, prompt POST and new
+reservations (except the canonical cleanup grant) with EffectDenied at the
+composition guard, the request guard and the transport-call guard. Every mode
+requires a non-null durable object store. The Comfy client refuses rebinding, so
+recovery composes a separate RECOVERY world, with its own client, per acquisition
+it touches.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -154,6 +165,56 @@ class CanonicalExperimentWorld:
             raise NeedsReconciliation("owned acquired pod disappeared before endpoint binding")
         self.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
         return handle
+
+    def bind_for_recovery(self, acquisition_id: UUID) -> str:
+        """§3.4 recovery binding. BOUND, VERIFIED_SOURCE_GONE or INDETERMINATE.
+
+        Never calls ``ensure_pod``: recovery adopts a durable pod or reports the
+        source gone; it never creates, and a manager error stays INDETERMINATE.
+        """
+        with self.db.transaction(readonly=True) as tx:
+            lease_id = tx.fetchval(
+                "SELECT lease_id FROM benchmark_acquisitions WHERE acquisition_id=%s",
+                (acquisition_id,),
+            )
+            lease = (
+                tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (lease_id,))
+                if lease_id is not None
+                else None
+            )
+        if lease is not None and lease["pod_id"] is None:
+            # A podless lease whose create intent is positively resolved - nothing
+            # was ever sent (the durable pre-dispatch record), or the audited
+            # no-create resolution exists - has no source left to verify.
+            with self.db.transaction(readonly=True) as tx:
+                resolved = tx.fetchval(
+                    "SELECT 1 FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+                    (lease["id"],),
+                )
+            if lease["create_requested_at"] is None or resolved:
+                return "VERIFIED_SOURCE_GONE"
+            return "INDETERMINATE"
+        if lease is not None and lease["terminate_verified_at"] is not None:
+            return "VERIFIED_SOURCE_GONE"
+        if lease is not None:
+            try:
+                pod = self.leases._manager.get(lease["pod_id"])
+            except Exception:
+                return "INDETERMINATE"
+            if pod is None:
+                # The owned GET positively reports the pod absent. Only proof of
+                # a verified termination makes that absence final.
+                if lease["terminate_verified_at"] is not None:
+                    return "VERIFIED_SOURCE_GONE"
+                return "INDETERMINATE"
+            if pod.endpoint_url:
+                try:
+                    self.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
+                except Exception:
+                    return "INDETERMINATE"
+                return "BOUND"
+            return "INDETERMINATE"
+        return "INDETERMINATE"
 
     def prompt_reservation(self, exp: dict, sample: dict) -> BudgetReservationRequest:
         key = f"benchmark:{exp['experiment_id']}:sample:{sample['sample_id']}:a1"
@@ -441,7 +502,7 @@ def _validated_sources(db, settings, clock, plan, seal, *, shot_id=None):
 
 
 class _SealedNativeInputs:
-    def __init__(self, db, settings, store, clock, plan, seal, policy, quote, client, cleanup_only):
+    def __init__(self, db, settings, store, clock, plan, seal, policy, quote, client, mode):
         self.db, self.settings, self.store, self.clock = db, settings, store, clock
         self.plan, self.seal, self.policy, self.quote, self.client = (
             plan,
@@ -450,11 +511,11 @@ class _SealedNativeInputs:
             quote,
             client,
         )
-        self.cleanup_only = cleanup_only
+        self.mode = mode
 
     def current(self):
-        if self.cleanup_only:
-            raise EffectDenied("cleanup-only experiment world cannot admit new work")
+        if self.mode != "EXECUTE":
+            raise EffectDenied(f"{self.mode.lower()} experiment world cannot admit new work")
         return self.policy.validate(self.db, self.settings, self.clock, self.quote)
 
     def manifest(self, sample):
@@ -726,6 +787,116 @@ class _SealedNativeInputs:
         return bind_v2_workflow(PIKA_TEMPLATE, request, manifest, pika_context=context)
 
 
+# --- recovery provenance and the EXPIRED recovery-read exception (spec §3.2/§3.3) ---
+
+
+def load_recovery_authorization(db: Any, acquisition_id: UUID) -> BenchmarkAuthorization:
+    """§3.2: load THIS acquisition's authorization row and verify it from its bytes.
+
+    The acquisition's recorded ``authorization_sha256`` selects the row - never
+    "latest by timestamp". The stored bytes must hash to that SHA and parse to
+    the stored payload; anything else refuses and requires the original file.
+    """
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT z.authorization_sha256, z.payload, z.source_bytes "
+            "FROM benchmark_acquisitions a JOIN benchmark_authorizations z "
+            "ON z.experiment_id=a.experiment_id "
+            "AND z.authorization_sha256=a.authorization_sha256 "
+            "WHERE a.acquisition_id=%s",
+            (acquisition_id,),
+        )
+    if row is None or row["source_bytes"] is None:
+        raise Conflict(
+            "recovery requires the acquisition's original authorization "
+            "(--authorization with matching byte SHA); no durable provenance row"
+        )
+    if hashlib.sha256(bytes(row["source_bytes"])).hexdigest() != row["authorization_sha256"]:
+        raise Conflict("stored authorization bytes do not hash to the recorded byte SHA")
+    try:
+        parsed = json.loads(bytes(row["source_bytes"]).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        raise Conflict("stored authorization bytes are not the original JSON document") from None
+    if parsed != row["payload"]:
+        raise Conflict("parsing the stored authorization bytes differs from the stored payload")
+    return BenchmarkAuthorization.model_validate(parsed)
+
+
+def load_recovery_quote(db: Any, acquisition_id: UUID) -> Any:
+    """§3.2: this acquisition's own recorded quote, never the latest generation."""
+    with db.transaction(readonly=True) as tx:
+        quote = tx.fetchval(
+            "SELECT quote FROM benchmark_acquisitions WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    if quote is None:
+        raise Conflict("the acquisition has no durable quote to recover with")
+    return AcquisitionQuote.model_validate(quote)
+
+
+def expired_recovery_read_allowed(
+    db: Any,
+    experiment_id: UUID,
+    mode: str,
+    path: str,
+    authorization_key: str | None,
+    auth: Any,
+) -> bool:
+    """§3.3 + R4: benchmark RECOVERY may read through an EXPIRED-but-retained hold.
+
+    Authorises ONLY scoped recovery GETs (``/queue``, ``/history``, ``/view``)
+    and output persistence on that basis - never operation creation, pod
+    creation, upload POST or prompt POST (callers still refuse those for this
+    mode before reaching here). The linkage proved depends on the read:
+    output/history recovery proves the exact experiment, acquisition,
+    reservation, job, operation and pod linkage; a checksum input readback
+    before any prompt operation exists proves the experiment, acquisition,
+    reservation, job, pod and durable upload-intent linkage instead.
+    """
+    if mode != "RECOVERY":
+        return False
+    if not (path == "/queue" or path.startswith("/history") or path.startswith("/view")):
+        return False
+    with db.transaction(readonly=True) as tx:
+        if auth.operation_id is not None:
+            row = tx.fetchone(
+                "SELECT r.state AS reservation_state FROM provider_operations o "
+                "JOIN reservations r ON r.id=o.reservation_id "
+                "JOIN benchmark_reservation_links k ON k.reservation_id=o.reservation_id "
+                "AND k.experiment_id=%s AND k.purpose='PROMPT' "
+                "JOIN benchmark_samples s ON s.experiment_id=k.experiment_id "
+                "AND s.sample_id=k.sample_id AND s.reservation_id=o.reservation_id "
+                "AND s.job_id=o.job_id "
+                "JOIN benchmark_acquisitions a ON a.acquisition_id=s.acquisition_id "
+                "JOIN pod_leases l ON l.id=a.lease_id "
+                "WHERE o.id=%s AND o.job_id=%s AND o.reservation_id=%s "
+                "AND l.pod_id IS NOT NULL",
+                (experiment_id, auth.operation_id, auth.job_id, auth.reservation_id),
+            )
+        elif path.startswith("/view") and authorization_key is not None:
+            # Checksum input readback before a prompt operation exists.
+            row = tx.fetchone(
+                "SELECT r.state AS reservation_state "
+                "FROM benchmark_reservation_links k "
+                "JOIN reservations r ON r.id=k.reservation_id "
+                "JOIN benchmark_samples s ON s.experiment_id=k.experiment_id "
+                "AND s.sample_id=k.sample_id AND s.reservation_id=k.reservation_id "
+                "AND s.job_id=%s "
+                "JOIN benchmark_acquisitions a ON a.acquisition_id=s.acquisition_id "
+                "JOIN pod_leases l ON l.id=a.lease_id "
+                "JOIN benchmark_uploads u ON u.acquisition_id=a.acquisition_id "
+                "AND u.upload_key=%s "
+                "WHERE k.experiment_id=%s AND k.reservation_id=%s "
+                "AND k.purpose='PROMPT' AND l.pod_id IS NOT NULL",
+                (auth.job_id, authorization_key, experiment_id, auth.reservation_id),
+            )
+        else:
+            return False
+    # Exposure retained: EXPIRED (the canonical expired-accrual state), never
+    # settled or released.
+    return row is not None and row["reservation_state"] == "EXPIRED"
+
+
 def build_experiment_world(
     settings,
     db,
@@ -733,9 +904,10 @@ def build_experiment_world(
     store,
     *,
     experiment_id,
-    authorization,
-    quote,
-    cleanup_only=False,
+    authorization=None,
+    quote=None,
+    mode="EXECUTE",
+    acquisition_id=None,
     clock=None,
     ids=None,
     runpod_transport=None,
@@ -743,9 +915,12 @@ def build_experiment_world(
 ):
     """Compose canonical services without resolving credentials or doing HTTP.
 
-    New work uses only the narrow disabled-preset policy. Cleanup can reconstruct
-    the originally recorded authorization and quote after their eligibility ends;
-    every new-effect guard still refuses in that world.
+    ``mode`` is EXECUTE, RECOVERY or CLEANUP (spec §3.1). EXECUTE uses only the
+    narrow disabled-preset policy and may cause every effect. RECOVERY and
+    CLEANUP are built from durable records only (per acquisition when
+    ``acquisition_id`` names one), run identity checks only, and refuse create,
+    upload POST, prompt POST and new reservations at every guard layer. Every
+    mode requires a non-null durable object store.
     """
     from microdrama.budget.billing import lease_billing_readiness
     from microdrama.contracts.cost import PriceQuote
@@ -766,24 +941,38 @@ def build_experiment_world(
     from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
     from microdrama.rendering.runpod_transport import RunpodQuoteAttestation, RunpodRestProvider
 
+    if mode not in ("EXECUTE", "RECOVERY", "CLEANUP"):
+        raise Conflict(f"unknown experiment world mode: {mode}")
+    if store is None:
+        raise EffectDenied("every experiment world mode requires a non-null durable object store")
     live_clock, live_ids = clock or SystemClock(), ids or UuidIds()
     with db.transaction(readonly=True) as tx:
         exp = experiment_row(tx, experiment_id)
         sealed = decode_seal(
             tx.fetchone("SELECT * FROM benchmark_seals WHERE experiment_id=%s", (experiment_id,))
         )
-        if authorization is None and cleanup_only:
-            row = tx.fetchone(
-                "SELECT payload FROM benchmark_authorizations WHERE experiment_id=%s ORDER BY authorized_at DESC LIMIT 1",
-                (experiment_id,),
-            )
-            authorization = BenchmarkAuthorization.model_validate(row["payload"]) if row else None
-        if quote is None and cleanup_only:
-            row = tx.fetchone(
-                "SELECT quote FROM benchmark_acquisitions WHERE experiment_id=%s ORDER BY generation DESC LIMIT 1",
-                (experiment_id,),
-            )
-            quote = AcquisitionQuote.model_validate(row["quote"]) if row else None
+        if authorization is None and mode != "EXECUTE":
+            if acquisition_id is not None:
+                # §3.2: this acquisition's own provenance row, verified from its
+                # bytes - never "latest by timestamp".
+                authorization = load_recovery_authorization(db, acquisition_id)
+            else:
+                row = tx.fetchone(
+                    "SELECT payload FROM benchmark_authorizations WHERE experiment_id=%s ORDER BY authorized_at DESC LIMIT 1",
+                    (experiment_id,),
+                )
+                authorization = (
+                    BenchmarkAuthorization.model_validate(row["payload"]) if row else None
+                )
+        if quote is None and mode != "EXECUTE":
+            if acquisition_id is not None:
+                quote = load_recovery_quote(db, acquisition_id)
+            else:
+                row = tx.fetchone(
+                    "SELECT quote FROM benchmark_acquisitions WHERE experiment_id=%s ORDER BY generation DESC LIMIT 1",
+                    (experiment_id,),
+                )
+                quote = AcquisitionQuote.model_validate(row["quote"]) if row else None
     if sealed is None or authorization is None or quote is None:
         raise PolicyDenied(
             "experiment world needs a durable seal, recorded authorization and acquisition quote"
@@ -813,10 +1002,10 @@ def build_experiment_world(
         raise EffectDenied("experiment world requires private PAID_BENCHMARK settings")
     # Cleanup retains its cloud effect gate; expiry only removes admission.
     settings.require_effect(EffectKind.CLOUD_RESOURCE, what="experiment resource composition")
-    if not cleanup_only:
+    if mode == "EXECUTE":
         settings.require_effect(EffectKind.PAID_REQUEST, what="experiment generation composition")
     policy = ExperimentalPresetPolicy(plan, seal, authorization)
-    if not cleanup_only:
+    if mode == "EXECUTE":
         policy.validate(db, settings, live_clock, quote)
     hourly = quote.compute_micro_usd_per_hour
     price = PriceQuote(
@@ -845,7 +1034,7 @@ def build_experiment_world(
         host_ram_gb_by_gpu={quote.gpu_type: quote.host_ram_gb},
         rights_evidence_id=seal.rights_evidence_hash,
         preset_evidence_id=seal.sealed_sha256,
-        activation_enabled=not cleanup_only,
+        activation_enabled=mode == "EXECUTE",
     )
     owned_tag = f"microdrama-owned:{authorization.namespace}"
     config = PodLeaseConfig(
@@ -875,8 +1064,8 @@ def build_experiment_world(
         return row
 
     def create_guard(request, _attestation):
-        if cleanup_only:
-            raise EffectDenied("cleanup-only experiment world cannot create resources")
+        if mode != "EXECUTE":
+            raise EffectDenied(f"{mode.lower()} experiment world cannot create resources")
         policy.validate(db, settings, live_clock, quote)
         with db.transaction(readonly=True) as tx:
             row = tx.fetchone(
@@ -952,9 +1141,12 @@ def build_experiment_world(
             path.startswith("/view") and key and key.startswith("t031/")
         )
         if input_route:
-            if cleanup_only:
-                raise EffectDenied("cleanup-only world cannot stage generation inputs")
-            policy.validate(db, settings, live_clock, quote)
+            if path == "/upload/image":
+                # I5: recovery and cleanup never send an upload POST; a durable
+                # prior intent is reconciliation-only through the readback below.
+                if mode != "EXECUTE":
+                    raise EffectDenied(f"{mode.lower()} world cannot upload generation inputs")
+                policy.validate(db, settings, live_clock, quote)
             with db.transaction(readonly=True) as tx:
                 row = tx.fetchone(
                     "SELECT * FROM benchmark_uploads WHERE acquisition_id=%s AND upload_key=%s",
@@ -964,13 +1156,21 @@ def build_experiment_world(
                 raise EffectDenied("input key lacks exact durable acquisition upload intent")
             if path == "/upload/image" and row["state"] != "UNKNOWN":
                 raise EffectDenied("input POST lacks precommitted UNKNOWN intent")
-            canonical_guard("/object_info", None, auth)
+            if path.startswith("/view"):
+                # Checksum readback is a permitted recovery/cleanup read; it may
+                # run against an EXPIRED-but-retained hold only in RECOVERY
+                # (§3.3/R4), and independent of any reservation state accepted.
+                if not expired_recovery_read_allowed(db, experiment_id, mode, path, key, auth):
+                    canonical_guard("/object_info", None, auth)
+            else:
+                canonical_guard("/object_info", None, auth)
         else:
             if path == "/prompt":
-                if cleanup_only:
-                    raise EffectDenied("cleanup-only world cannot dispatch prompts")
+                if mode != "EXECUTE":
+                    raise EffectDenied(f"{mode.lower()} world cannot dispatch prompts")
                 policy.validate(db, settings, live_clock, quote)
-            canonical_guard(path, key, auth)
+            if not expired_recovery_read_allowed(db, experiment_id, mode, path, key, auth):
+                canonical_guard(path, key, auth)
 
     def dispatch_guard(auth):
         if auth.operation_id is None:
@@ -997,7 +1197,7 @@ def build_experiment_world(
         store,
     )
     native = _SealedNativeInputs(
-        db, settings, store, live_clock, plan, seal, policy, quote, client, cleanup_only
+        db, settings, store, live_clock, plan, seal, policy, quote, client, mode
     )
     world = CanonicalExperimentWorld(
         db=db,
@@ -1015,14 +1215,22 @@ def build_experiment_world(
     world._billing = billing
     world._clock = live_clock
     world._owned_lease = owned_lease
-    world._cleanup_only = cleanup_only
+    world._mode = mode
     return world
 
 
 def build_experiment_world_factory(db, settings, store, clock=None, ids=None):
     """Default CLI factory, with no credential reads or network during construction."""
 
-    def factory(*, experiment_id, budget, authorization, quote, cleanup_only):
+    def factory(
+        *,
+        experiment_id,
+        budget,
+        authorization=None,
+        quote=None,
+        mode="EXECUTE",
+        acquisition_id=None,
+    ):
         return build_experiment_world(
             settings,
             db,
@@ -1031,7 +1239,8 @@ def build_experiment_world_factory(db, settings, store, clock=None, ids=None):
             experiment_id=experiment_id,
             authorization=authorization,
             quote=quote,
-            cleanup_only=cleanup_only,
+            mode=mode,
+            acquisition_id=acquisition_id,
             clock=clock,
             ids=ids,
         )
