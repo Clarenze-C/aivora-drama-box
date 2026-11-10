@@ -91,8 +91,14 @@ def test_uncertainty_cause_is_type_and_category_never_raw_text(
 def test_request_timeouts_are_bounded_by_the_remaining_deadline() -> None:
     """CN-6 (2026-11-09, canary-night review): a fixed 30-second transport
     timeout could outlive the run's authorized wall limit; while a request
-    deadline is set, every transport timeout is the time remaining (with a
-    small floor so a request started just before expiry still gets its chance)."""
+    deadline is set, every transport timeout is the time remaining.
+
+    CN2-4 (2026-11-10, re-review round 2): the timeout is the ACTUAL POSITIVE
+    REMAINDER - the old 1 s floor let a request started with 0.1 s left run a
+    full second past the authorized wall limit, and an expired deadline still
+    granted a request. Now expiry refuses the dispatch at the transport
+    boundary; no provider request starts after the deadline."""
+    from microdrama.contracts.errors import EffectDenied
     from microdrama.rendering.diagnostics import reset_request_deadline
 
     base = datetime(2026, 11, 9, 12, tzinfo=UTC)
@@ -107,8 +113,42 @@ def test_request_timeouts_are_bounded_by_the_remaining_deadline() -> None:
         assert bound_request_timeout(30) == 30  # plenty left: the default
         clock["now"] = base + timedelta(seconds=55)
         assert bound_request_timeout(30) == 5.0  # bounded by the remainder
+        # Sub-second remainder: capped at the actual positive remainder, no floor.
         clock["now"] = base + timedelta(seconds=59, microseconds=900_000)
-        assert bound_request_timeout(30) == 1.0  # floored, never zero
+        assert bound_request_timeout(30) == pytest.approx(0.1)
+        clock["now"] = base + timedelta(seconds=59, microseconds=999_999)
+        assert bound_request_timeout(30) == pytest.approx(1e-6)
+        # An expired deadline refuses the dispatch: no request starts at all.
+        clock["now"] = deadline
+        with pytest.raises(EffectDenied, match="deadline"):
+            bound_request_timeout(30)
+        clock["now"] = base + timedelta(seconds=61)
+        with pytest.raises(EffectDenied, match="deadline"):
+            bound_request_timeout(30)
     finally:
         reset_request_deadline(token)
-    assert bound_request_timeout(30) == 30  # the reset restores the default
+    # The cleanup reset restores the default: cleanup requests after the run
+    # deadline are deliberately unbounded again.
+    assert bound_request_timeout(30) == 30
+
+
+def test_nested_requests_that_exhaust_the_deadline_refuse_later_ones() -> None:
+    """CN2-4: outer deadline checks cannot protect subsequent HTTP requests
+    nested inside one acquisition operation. The list call consumed the remaining
+    time; the paid create that follows must refuse at the transport boundary
+    instead of starting after expiry."""
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.rendering.diagnostics import reset_request_deadline
+
+    base = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    clock = {"now": base}
+    token = set_request_deadline(base + timedelta(seconds=1), lambda: clock["now"])
+    try:
+        # First request starts at t=0 with 1 s left: its timeout is the remainder.
+        assert bound_request_timeout(30) == pytest.approx(1.0)
+        # The request itself advances the clock past the deadline (a slow read).
+        clock["now"] = base + timedelta(seconds=2)
+        with pytest.raises(EffectDenied, match="deadline"):
+            bound_request_timeout(30)
+    finally:
+        reset_request_deadline(token)

@@ -8,6 +8,8 @@ from typing import Any
 from contextvars import ContextVar, Token
 from datetime import datetime
 
+from microdrama.contracts.errors import EffectDenied
+
 DIAGNOSTIC_READ_LIMIT = 8192
 DIAGNOSTIC_TEXT_LIMIT = 500
 _SENSITIVE = re.compile(r"authorization|cookie|api[-_]?key|token|secret|password", re.I)
@@ -140,16 +142,25 @@ def reset_request_deadline(token: Token) -> None:
     _REQUEST_DEADLINE.reset(token)
 
 
-def bound_request_timeout(default_seconds: float, *, floor_seconds: float = 1.0) -> float:
+def bound_request_timeout(default_seconds: float) -> float:
     """The timeout for one transport request: the default, or the time left to
-    the deadline, never below a small floor (a request started just before
-    expiry still gets its chance; starting after expiry is prevented by the
-    callers' deadline checks, not by a zero timeout)."""
+    the deadline, capped at the ACTUAL POSITIVE REMAINDER - no floor.
+
+    CN2-4 (2026-11-10, re-review round 2): a 1 s floor let a request started
+    with 0.1 s left run a full second past the authorized wall limit, and outer
+    deadline checks cannot protect requests nested inside one acquisition
+    operation - so an expired deadline now refuses the dispatch here, at the
+    transport boundary: no provider request starts after the deadline. Cleanup
+    contexts reset the deadline (reset_request_deadline) and stay unbounded."""
     bound = _REQUEST_DEADLINE.get()
     if bound is None:
         return default_seconds
     deadline, now = bound
     remaining = (deadline - now()).total_seconds()
+    if remaining <= 0:
+        raise EffectDenied(
+            "the request deadline has passed; refusing to start another provider request"
+        )
     if remaining >= default_seconds:
         return default_seconds
-    return max(floor_seconds, min(default_seconds, remaining))
+    return remaining

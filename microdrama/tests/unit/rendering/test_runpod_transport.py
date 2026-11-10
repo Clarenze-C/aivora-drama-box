@@ -337,6 +337,64 @@ def test_create_rejection_never_reflects_the_body_borne_comfy_token(
     assert "synthetic-new-comfy-token" not in captured.out + captured.err
 
 
+def test_transport_refuses_requests_that_start_after_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CN2-4 (2026-11-10, re-review round 2): outer deadline checks cannot
+    protect requests nested inside one acquisition operation - Codex's probe
+    recorded a list GET consuming the remaining time and the paid create POST
+    still starting afterwards with a full 1 s timeout. The real urllib transport
+    (urlopen faked in memory, clock advancing inside each request) must cap
+    every timeout at the actual positive remainder and refuse to start any
+    request once the deadline has passed."""
+    import io
+    from microdrama.rendering import runpod_transport as rt
+    from microdrama.rendering.diagnostics import (
+        reset_request_deadline,
+        set_request_deadline,
+    )
+
+    class FakeResponse(io.BytesIO):
+        status = 200
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+    base = NOW
+    clock = {"now": base}
+    starts: list[Any] = []
+    timeouts: list[float] = []
+
+    def fake_urlopen(request: Any, timeout: Any = None) -> FakeResponse:
+        starts.append(clock["now"])
+        timeouts.append(timeout)
+        # The request itself consumes wall time (a slow read).
+        clock["now"] = clock["now"] + timedelta(seconds=2)
+        return FakeResponse(json.dumps({"pods": []}).encode())
+
+    monkeypatch.setattr(rt, "urlopen", fake_urlopen)
+    transport = rt.UrllibRunpodTransport()
+    token = set_request_deadline(base + timedelta(seconds=0.25), lambda: clock["now"])
+    try:
+        # Sub-second remainder: the timeout is the actual remainder, not a 1 s floor.
+        transport.request("GET", "https://api.runpod.io/v2/pods", headers={})
+        assert timeouts == [pytest.approx(0.25)]
+        # The slow read pushed the clock past the deadline: the nested follow-up
+        # request must refuse at the transport boundary, never reaching urlopen.
+        with pytest.raises(EffectDenied, match="deadline"):
+            transport.request("POST", "https://api.runpod.io/v2/pods", headers={}, body=b"{}")
+        assert len(starts) == 1
+    finally:
+        reset_request_deadline(token)
+    # After the reset (the cleanup deadline reset), the default applies again.
+    transport.request("GET", "https://api.runpod.io/v2/pods", headers={})
+    assert timeouts[-1] == 30
+    assert len(starts) == 2
+
+
 def test_create_refuses_when_the_gateway_token_does_not_resolve() -> None:
     """CN-5: fail closed - a configured gateway token that does not resolve
     means the pod's ComfyUI endpoint would be unreachable by the runner, so no
