@@ -734,9 +734,7 @@ def test_at21_gate_serialises_with_absent_rows_r5(db: Database, tmp_path: Path):
     assert [row["state"] for row in uploads] == ["INTENT"]
 
 
-def test_hb9_reconcile_never_restores_running_over_canonical_blockers(
-    db: Database, tmp_path: Path
-):
+def test_hb9_reconcile_never_restores_running_over_canonical_blockers(db: Database, tmp_path: Path):
     """HB-9: the NEEDS_RECONCILIATION -> running transition is predicated on
     ZERO canonical blocking items (the common repository function, under the
     gate locks) - not on separate label/slot/upload conditions. A U5 that
