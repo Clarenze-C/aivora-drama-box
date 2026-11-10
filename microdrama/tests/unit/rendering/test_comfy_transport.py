@@ -274,6 +274,31 @@ def test_history_maps_the_vhs_gifs_key_to_video_media_kind() -> None:
     assert entry.outputs[0].filename == "a1_1.mp4"
 
 
+def test_every_route_carries_the_bearer_the_gateway_requires() -> None:
+    """CN-5 (2026-11-09, canary-night review): the pod's exposed port is a
+    token-checking gateway that 401s any request without the run's bearer
+    token - so every client route, reads included, must send it."""
+    fixture = FixtureTransport([b"{}", b"{}", b"{}"])
+    client = _client(
+        Settings(execution_mode=ExecutionMode.PAID_BENCHMARK, paid_requests_enabled=True),
+        fixture,
+        lambda _authorization: None,
+    )
+    with client.authorization_scope(
+        reservation_id=uuid4(), episode_id=uuid4(), job_id=uuid4(), operation_id=uuid4()
+    ):
+        client.object_info()
+        client.fetch_output(
+            ComfyOutputFile(
+                node_id="9", filename="out.mp4", subfolder="", folder_type="output", media_kind="video"
+            )
+        )
+        client.in_queue("prompt-1")
+    assert len(fixture.calls) == 3
+    for method, url, headers, _body in fixture.calls:
+        assert headers["Authorization"] == "Bearer fixture-secret", (method, url)
+
+
 def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) -> None:
     """T031 run13 (2026-11-05): the first live prompt submit died in 0.58s as a
     connection-level URLError and the runner stopped for a human - correctly -

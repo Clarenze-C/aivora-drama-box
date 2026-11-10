@@ -68,9 +68,14 @@ that change.
 
 - The clones inside (ComfyUI, VideoHelperSuite) float at build-time HEAD.
   Reproducibility comes from the pushed digest, which is the authorization pin.
-- `--listen 0.0.0.0` in CMD is required: the RunPod proxy cannot reach a
-  localhost bind, and the canary's Comfy endpoint is
-  `https://<pod-id>-8188.proxy.runpod.net` (public and unauthenticated for the
-  pod's lifetime — ~90 min per canary run; nothing sensitive is served).
+- CN-5 (2026-11-09, canary-night review): the exposed 8188 port is served by
+  `canary_gateway.py`, a token-checking gateway — ComfyUI itself binds
+  `127.0.0.1:8189` only. The gateway refuses (401) every request without the
+  run's bearer token (pod env `MICRODRAMA_COMFY_TOKEN`, set at create time from
+  the pipeline's Comfy credential ref; no secret is baked into the image). The
+  client already sends `Authorization: Bearer …` on every route, so the runner
+  is unaffected; the endpoint is no longer usable by anyone who merely learns
+  the URL `https://<pod-id>-8188.proxy.runpod.net`. Websocket `/ws` is refused
+  without the token as well (the runner never uses it).
 - Ports are declared at pod creation by the adapter (`ports: ["8188/http"]`,
   2026-11-04 fix); RunPod cannot add ports to a running pod.

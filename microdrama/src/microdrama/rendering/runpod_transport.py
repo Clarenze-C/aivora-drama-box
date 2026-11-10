@@ -214,6 +214,7 @@ class RunpodRestProvider:
         cleanup_guard: Callable[[str, str], None],
         absent_pod_ownership_probe: Callable[[str], bool] | None = None,
         created_pod_recorder: Callable[[str, str], None] | None = None,
+        comfy_token_provider: Callable[[], str | None] | None = None,
         transport: RunpodTransport | None = None,
     ) -> None:
         self._settings = settings
@@ -226,6 +227,12 @@ class RunpodRestProvider:
         # T045 R9: durable DB ownership proof for billing reads once the Pod is gone
         # from the provider (a terminated Pod cannot be looked up there anymore).
         self._absent_pod_ownership_probe = absent_pod_ownership_probe
+        # CN-5 (2026-11-09, canary-night review): the pod's exposed ComfyUI port is
+        # a token-checking gateway inside the image; this resolves the run's Comfy
+        # bearer token so the create request can set it as a pod env var. The token
+        # never enters the image and is never logged; a configured provider whose
+        # token does not resolve refuses the create (fail closed).
+        self._comfy_token_provider = comfy_token_provider
         # CN-2 (2026-11-09, canary-night review): called with (client_token,
         # pod_id) the moment a create POST is accepted, BEFORE any secondary
         # verification GET can fail - so the lease binds the pod id durably even
@@ -358,6 +365,16 @@ class RunpodRestProvider:
         }
         if request.volume_gb:
             payload["mounts"] = {"persistent": {"size": request.volume_gb, "path": "/workspace"}}
+        if self._comfy_token_provider is not None:
+            comfy_token = self._comfy_token_provider()
+            if not comfy_token:
+                raise EffectDenied(
+                    "the Comfy gateway token did not resolve; refusing to create a pod "
+                    "whose ComfyUI endpoint would be unreachable (fail closed)"
+                )
+            # CN-5: the in-image gateway's token rides the pod env, set at create
+            # time from the credential ref - never baked into the image, never logged.
+            payload["env"] = {"MICRODRAMA_COMFY_TOKEN": comfy_token}
         try:
             created = self._call("POST", "/pods", body=payload)
         except NeedsReconciliation as exc:

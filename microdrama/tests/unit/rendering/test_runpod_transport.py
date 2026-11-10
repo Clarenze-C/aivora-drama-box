@@ -100,6 +100,7 @@ def _provider(
     quote: int = 900_000,
     guard: Any = None,
     cleanup_guard: Any = None,
+    comfy_token_provider: Any = None,
 ) -> RunpodRestProvider:
     settings = Settings(
         execution_mode=mode,
@@ -114,6 +115,7 @@ def _provider(
         now=lambda: NOW,
         reservation_guard=guard or (lambda _request, _attestation: None),
         cleanup_guard=cleanup_guard or (lambda _operation, _pod_id: None),
+        comfy_token_provider=comfy_token_provider,
         transport=transport,
     )
 
@@ -260,6 +262,50 @@ def test_create_pod_declares_the_comfy_http_port() -> None:
     provider.create_pod(_request())
     assert bodies, "create_pod must POST once"
     assert bodies[0].get("ports") == ["8188/http"]
+
+
+def test_create_pod_sets_the_gateway_token_env_from_the_credential_ref(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CN-5 (2026-11-09, canary-night review): the pod's exposed ComfyUI port is
+    a token-checking gateway inside the image, so the create request must set
+    its token as a pod env var - resolved from the same credential ref the
+    ComfyUI client authenticates with. The token never enters the image and is
+    never printed."""
+
+    def handler(method: str, url: str, body: bytes | None) -> Response:
+        if method == "POST":
+            return _json(200, _pod())
+        if method == "GET" and url.endswith("/pods/pod-123"):
+            return _json(200, _pod())
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(
+        ScriptedTransport(handler), comfy_token_provider=lambda: "synthetic-gateway-token"
+    )
+    seen: list[dict[str, Any]] = []
+    original = provider._transport.request
+
+    def recording(method: str, url: str, *, headers: Any, body: bytes | None = None) -> Any:
+        if method == "POST":
+            seen.append(json.loads(body or b"{}"))
+        return original(method, url, headers=headers, body=body)
+
+    provider._transport.request = recording  # type: ignore[method-assign]
+    provider.create_pod(_request())
+    assert seen[0].get("env") == {"MICRODRAMA_COMFY_TOKEN": "synthetic-gateway-token"}
+    captured = capsys.readouterr()
+    assert "synthetic-gateway-token" not in captured.out + captured.err
+
+
+def test_create_refuses_when_the_gateway_token_does_not_resolve() -> None:
+    """CN-5: fail closed - a configured gateway token that does not resolve
+    means the pod's ComfyUI endpoint would be unreachable by the runner, so no
+    pod may be created."""
+    transport = ScriptedTransport(lambda *_: pytest.fail("create must be refused pre-POST"))
+    provider = _provider(transport, comfy_token_provider=lambda: None)
+    with pytest.raises(EffectDenied, match="gateway token did not resolve"):
+        provider.create_pod(_request())
 
 
 def test_same_name_collision_with_different_image_fails_closed() -> None:

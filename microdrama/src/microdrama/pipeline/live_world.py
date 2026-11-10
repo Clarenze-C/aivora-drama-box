@@ -521,6 +521,9 @@ def build_live_benchmark_world(
         # CN-2 (2026-11-09): bind a created pod id to its lease before any
         # secondary verification GET can fail.
         created_pod_recorder=durable_created_pod_recorder(db, live_clock.now),
+        # CN-5 (2026-11-09): the pod env carries the Comfy gateway token, resolved
+        # from the same credential ref the ComfyUI client authenticates with.
+        comfy_token_provider=lambda: credential_resolver(comfy_credential_ref),
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, pod_config)
