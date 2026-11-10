@@ -1545,9 +1545,7 @@ def test_consistent_fractional_projection_is_not_disputed(db: Database) -> None:
 
     lease, _, _ = _seed_terminated_lease(db)
     transport = ScriptedBillingTransport(
-        records=[
-            _record(gpu="0.0000006", cpu="0", disk="0.0000006", total="0.0000012")
-        ],
+        records=[_record(gpu="0.0000006", cpu="0", disk="0.0000006", total="0.0000012")],
         pod_present=False,
     )
     assert _janitor(db, _provider(transport, db)).sweep().failures == []
@@ -1559,9 +1557,7 @@ def test_consistent_fractional_projection_is_not_disputed(db: Database) -> None:
     assert row["finality_state"] == "ALLOCATED_PROVIDER_REPORTED"
     assert row["total_amount_micro_usd"] == 2
     assert (
-        row["gpu_amount_micro_usd"]
-        + row["cpu_amount_micro_usd"]
-        + row["disk_amount_micro_usd"]
+        row["gpu_amount_micro_usd"] + row["cpu_amount_micro_usd"] + row["disk_amount_micro_usd"]
         == row["total_amount_micro_usd"]
     )
     assert lease_billing_readiness(db, lease).state != "DISPUTED"

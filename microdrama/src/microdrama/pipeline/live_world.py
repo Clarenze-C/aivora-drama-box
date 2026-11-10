@@ -31,10 +31,14 @@ from microdrama.rendering.comfy_jobs import (
 from microdrama.rendering.comfy_transport import ComfyHttpClient, HttpTransport
 from microdrama.rendering.finality import RunpodInvoiceFinality
 from microdrama.rendering.janitor import Janitor, build_janitor
-from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
+from microdrama.rendering.leases import (
+    LeaseService,
+    PodLeaseConfig,
+    build_lease_service,
+    durable_created_pod_recorder,
+)
 from microdrama.rendering.pods import PodManager
 from microdrama.rendering.presets import PresetCatalog
-from microdrama.rendering.leases import durable_created_pod_recorder
 from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
 from microdrama.rendering.runpod_transport import (
     RunpodQuoteAttestation,

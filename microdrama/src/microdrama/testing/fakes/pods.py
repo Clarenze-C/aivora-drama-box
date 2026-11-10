@@ -19,10 +19,11 @@ Scenarios:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any, Callable, ClassVar
+from typing import Any, ClassVar
 
 from microdrama.contracts.cost import UsageReceipt
 from microdrama.contracts.enums import (

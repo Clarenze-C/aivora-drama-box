@@ -105,7 +105,9 @@ def gateway(monkeypatch: pytest.MonkeyPatch):
             server.server_close()
 
 
-def _request(server, method: str, path: str, *, token: str | None, body: bytes = b"") -> tuple[int, bytes]:
+def _request(
+    server, method: str, path: str, *, token: str | None, body: bytes = b""
+) -> tuple[int, bytes]:
     host, port = server.server_address[:2]
     connection = http.client.HTTPConnection(host, port, timeout=10)
     headers = {"Content-Type": "application/json"}
@@ -151,9 +153,7 @@ def test_every_route_refuses_missing_or_wrong_tokens(
 
 def test_valid_token_forwards_without_leaking_authorization(gateway) -> None:
     _module, upstream, server = gateway
-    status, payload = _request(
-        server, "POST", "/prompt", token=TOKEN, body=b'{"prompt": {"a": 1}}'
-    )
+    status, payload = _request(server, "POST", "/prompt", token=TOKEN, body=b'{"prompt": {"a": 1}}')
     assert status == 200
     assert json.loads(payload) == {"upstream": True}
     assert len(upstream.seen) == 1
@@ -165,9 +165,7 @@ def test_valid_token_forwards_without_leaking_authorization(gateway) -> None:
 
 def test_a_get_with_the_valid_token_forwards_the_query(gateway) -> None:
     _module, upstream, server = gateway
-    status, _payload = _request(
-        server, "GET", "/view?filename=out.mp4&type=output", token=TOKEN
-    )
+    status, _payload = _request(server, "GET", "/view?filename=out.mp4&type=output", token=TOKEN)
     assert status == 200
     assert upstream.seen[0]["path"] == "/view?filename=out.mp4&type=output"
 

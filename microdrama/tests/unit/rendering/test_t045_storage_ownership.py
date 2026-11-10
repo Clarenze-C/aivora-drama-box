@@ -112,9 +112,7 @@ def test_ownership_opens_with_the_binding_while_verification_keeps_failing(
     rows = _ownership_rows(db, row["pod_id"])
     assert len(rows) == 1
     assert rows[0]["owner_episode_id"] == episode.episode_id
-    assert rows[0]["valid_until"] == world.lease_row(handle.lease.lease_id)[
-        "terminate_verified_at"
-    ]
+    assert rows[0]["valid_until"] == world.lease_row(handle.lease.lease_id)["terminate_verified_at"]
 
 
 def test_a_crash_before_the_ownership_write_is_healed_by_a_re_ensure(

@@ -290,7 +290,11 @@ def test_every_route_carries_the_bearer_the_gateway_requires() -> None:
         client.object_info()
         client.fetch_output(
             ComfyOutputFile(
-                node_id="9", filename="out.mp4", subfolder="", folder_type="output", media_kind="video"
+                node_id="9",
+                filename="out.mp4",
+                subfolder="",
+                folder_type="output",
+                media_kind="video",
             )
         )
         client.in_queue("prompt-1")
@@ -305,12 +309,13 @@ def test_the_transport_timeout_is_bounded_by_the_run_deadline(
     """CN-6 (2026-11-09, canary-night review): with 2 s left to the run deadline
     the transport must not hand urllib a fixed 30-second timeout - the request
     timeout is bounded by the time remaining."""
+    from datetime import UTC, datetime, timedelta
+
     from microdrama.rendering import comfy_transport as ct
     from microdrama.rendering.diagnostics import (
         reset_request_deadline,
         set_request_deadline,
     )
-    from datetime import UTC, datetime, timedelta
 
     seen: dict[str, Any] = {}
 
@@ -343,9 +348,7 @@ def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) 
     from microdrama.rendering import comfy_transport as ct
 
     def resets_wrapped(request: Any, timeout: int) -> Any:
-        raise ct.URLError(
-            OSError("connection reset by peer; token=synthetic-cause-secret")
-        )
+        raise ct.URLError(OSError("connection reset by peer; token=synthetic-cause-secret"))
 
     monkeypatch.setattr(ct, "urlopen", resets_wrapped)
     with pytest.raises(NeedsReconciliation, match="URLError/socket-error") as caught:

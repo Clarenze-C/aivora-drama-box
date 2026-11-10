@@ -718,10 +718,13 @@ def build_experiment_world(
     from microdrama.rendering.benchmark_experiments import decode_seal
     from microdrama.rendering.comfy_jobs import ComfyRenderConfig, build_comfy_render_service
     from microdrama.rendering.finality import RunpodInvoiceFinality
-    from microdrama.rendering.leases import PodLeaseConfig, build_lease_service
+    from microdrama.rendering.leases import (
+        PodLeaseConfig,
+        build_lease_service,
+        durable_created_pod_recorder,
+    )
     from microdrama.rendering.pika_transport import PikaHttpClient
     from microdrama.rendering.pods import PodManager
-    from microdrama.rendering.leases import durable_created_pod_recorder
     from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
     from microdrama.rendering.runpod_transport import RunpodQuoteAttestation, RunpodRestProvider
 

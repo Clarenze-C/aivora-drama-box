@@ -796,9 +796,7 @@ class _AttemptRecorder:
         return getattr(self.inner, name)
 
 
-def _mark_cleanup_phase(
-    monkeypatch: pytest.MonkeyPatch, *recorders: _AttemptRecorder
-) -> None:
+def _mark_cleanup_phase(monkeypatch: pytest.MonkeyPatch, *recorders: _AttemptRecorder) -> None:
     """Flip every recorder to cleanup mode when run_execute's finally begins."""
     import microdrama.pipeline.canary as canary_module
 

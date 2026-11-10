@@ -957,6 +957,7 @@ def run_execute(
 
         def restore_request_deadline() -> None:  # noqa: F811 - installed like the handlers
             reset_request_deadline(_deadline_token)
+
         # Runbook step 1: reserve and create the owned-name Pod.
         handle = world.leases.claim(
             PodLeaseClaimRequest(
