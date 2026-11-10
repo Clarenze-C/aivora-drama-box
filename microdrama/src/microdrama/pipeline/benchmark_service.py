@@ -3,6 +3,67 @@
 Factories supply immutable request/binding inputs; they never supply reservation,
 job, operation or experiment state. Provider effects remain in LeaseService and
 ComfyRenderService. No live world is constructed implicitly by a local CLI.
+
+T031 H-2 §6.1/R5 - the transaction inventory (function -> locks in order ->
+writes). The shared order is: 1 account, 2 categories, 3 E
+(benchmark_experiments), 4 A (benchmark_acquisitions, by id), 5 billing
+advisory then L (pod_leases, by id), 6 D (benchmark_dispatch_slots), 7 S
+(benchmark_samples, by id), 8 R (reservations, by id); the R5 suffix continues
+with provider operation rows (O, by id) and upload rows (by their immutable
+key). No network call is made while these locks are held.
+
+Full-order benchmark transactions (canonical, all locks in the shared order):
+
+- ``execute`` / ``_advance``       account, categories, E, A, L(prior leases),
+                                   D -> gate (_lock_gate_rows: A rows, D, R, O,
+                                   uploads) -> state write / dispatch decisions.
+- ``_acquisition``                 account, categories, E, A, L(every prior
+                                   lease of the experiment, by id), gate rows;
+                                   writes the acquisition intent + linked
+                                   COMPUTE/STORAGE holds (reserve_linked).
+- ``_claim_sample``                account, categories, E, A, D, S, gate rows
+                                   (R, O, uploads); writes the PROMPT hold,
+                                   sample CLAIMED write and slot occupancy.
+- ``_observe``                     D (slot, token re-checked) before S; writes
+                                   the sample projection and clears the slot.
+- ``_mark_upload_ambiguity``       account, categories, E; E state write only.
+- ``_mark_create_ambiguity``       account, categories, E before A; A state
+                                   write + E state write.
+- ``_enter_grace`` (§5.4)          account, categories, E, A; persists
+                                   recovery_started_at / recovery_deadline.
+- ``_deadline_fence`` (R3)         account, categories, E, A; revokes the
+                                   coordinator + slot tokens (control writes
+                                   only; cleanup runs after commit).
+- ``resolve_create`` (§6.2)        account, categories, E, A, billing advisory,
+                                   L; SC2-3 replay, preconditions,
+                                   resolve_podless_create_in_tx (audit + window
+                                   end + zero-BILLED compute settlement) and
+                                   the NO_CREATE_PROVEN write in ONE
+                                   transaction. Never releases STORAGE.
+- ``sweep`` NO_CREATE_PROVEN finalization (§6.3)  account, categories, E, A;
+                                   re-checks under lock (state, contradiction,
+                                   verified termination, live lease, storage
+                                   rows) and releases the single original
+                                   STORAGE hold - the only place that may.
+- ``_gate`` / gate decisions       account, categories, E, then
+                                   _lock_gate_rows (A rows, D, R, O, upload
+                                   rows); read-only decision, refuses before
+                                   any effect.
+
+Canonical transactions kept suffix-only (they lock only R5-suffix rows and
+never take earlier-order benchmark or budget locks afterwards):
+
+- ``provider_ops.begin``/``record_result`` (comfy_jobs)  the reservation row
+  (FOR SHARE on begin) then the O row; a benchmark gate that locks R before O
+  serialises with them at R.
+- ``_SealedNativeInputs.stage`` upload-intent INSERT/UNKNOWN write  the
+  acquisition ownership row (A, R5 insertion serialization) then the upload
+  row; never earlier-order locks afterwards.
+- ``BillingRepository.resolve_podless_create_in_tx``  assumes the caller holds
+  locks 1-5; takes the billing advisory then L (re-entrantly), writes the
+  audit row, lease window and zero-BILLED settlement receipt.
+- operator terminal transitions (``resolve_sample`` -> comfy_jobs)  the O row;
+  the terminal transition commits BEFORE financial finalization is invoked.
 """
 
 from __future__ import annotations
@@ -281,11 +342,18 @@ class BenchmarkService:
     def _lock_gate_rows(self, tx: Any, experiment_id: UUID) -> None:
         """Lock the rows a §4.1 gate decision reads (§6.1 order, after E).
 
-        Dispatch slot, linked reservations, provider operations and upload
-        intents - so a gate serialises with the writers of exactly those rows
-        and cannot race a new intent into existence beside it. No network call
-        is ever made under these locks: refusal raises before any effect.
+        Acquisition ownership rows first (step 4 - upload-intent insertion
+        serialises through them, R5), then the dispatch slot, linked
+        reservations, provider operations and upload intents - so a gate
+        serialises with the writers of exactly those rows and cannot race a new
+        intent into existence beside it. No network call is ever made under
+        these locks: refusal raises before any effect.
         """
+        tx.fetchall(
+            "SELECT acquisition_id FROM benchmark_acquisitions WHERE experiment_id=%s "
+            "ORDER BY acquisition_id FOR UPDATE",
+            (experiment_id,),
+        )
         tx.fetchone(
             "SELECT * FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
             (experiment_id,),
@@ -396,6 +464,14 @@ class BenchmarkService:
             exp = experiment_row(tx, experiment_id, lock=True)
             active = tx.fetchone(
                 "SELECT * FROM benchmark_acquisitions WHERE experiment_id=%s AND state NOT IN ('CLOSED','NO_CREATE_PROVEN') FOR UPDATE",
+                (experiment_id,),
+            )
+            # §6.4/Q3: lock every prior lease of the experiment (L, step 5)
+            # before evaluating U1/U5 - the decision serialises with
+            # already-visible adoption (pod binding, contradiction).
+            tx.fetchall(
+                "SELECT l.id FROM pod_leases l JOIN benchmark_acquisitions a "
+                "ON a.lease_id=l.id WHERE a.experiment_id=%s ORDER BY l.id FOR UPDATE",
                 (experiment_id,),
             )
             if active:
@@ -673,6 +749,11 @@ class BenchmarkService:
         the acquisition unlabelled; no prompt operation is invented. The pod
         stays for the checksum readback."""
         with self.db.transaction() as tx:
+            # §6.1: account/categories before the E write.
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
             tx.execute(
                 "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' "
                 "WHERE experiment_id=%s",
@@ -684,6 +765,16 @@ class BenchmarkService:
         """§5.1: a create ambiguity labels the acquisition UNKNOWN (no grace)
         and sweeps - the reconciler owns the podless create from here."""
         with self.db.transaction() as tx:
+            # §6.1: E is locked before the A write (account/categories first).
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            tx.fetchone(
+                "SELECT acquisition_id FROM benchmark_acquisitions "
+                "WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition["acquisition_id"],),
+            )
             tx.execute(
                 "UPDATE benchmark_acquisitions SET state='UNKNOWN' WHERE acquisition_id=%s",
                 (acquisition["acquisition_id"],),
@@ -964,15 +1055,17 @@ class BenchmarkService:
         if state in ("FAILED", "CANCELLED"):
             output = {"error_code": getattr(result, "error_code", None) or "UNKNOWN_FAILURE"}
         with self.db.transaction() as tx:
+            # §6.1: D before S - the dispatch slot is locked (and its token
+            # re-checked) before any sample projection writes.
+            slot = tx.fetchone(
+                "SELECT sample_id, coordinator_token FROM benchmark_dispatch_slots "
+                "WHERE experiment_id=%s FOR UPDATE",
+                (experiment_id,),
+            )
             if coordinator_token is not None:
                 # R3: projection is a coordinator control write - predicated on
                 # the slot token the fence revokes (recovery observes without
                 # a token; it never held one).
-                slot = tx.fetchone(
-                    "SELECT coordinator_token FROM benchmark_dispatch_slots "
-                    "WHERE experiment_id=%s FOR UPDATE",
-                    (experiment_id,),
-                )
                 if slot is None or slot["coordinator_token"] != coordinator_token:
                     raise AdmissionBlocked(
                         ["R3 fence: the coordinator token was revoked at the recovery deadline"]
@@ -1196,8 +1289,9 @@ class BenchmarkService:
                 # R1 (spec §4.1): sweep finalizes these rows too - their
                 # exclusion from the partial unique index never authorizes the
                 # next acquisition while the STORAGE hold is still open.
-                # Contradicted resolutions (U5) additionally get their
-                # discovered pod cleaned through the normal shutdown path.
+                # Contradicted resolutions (U5) get their discovered pod
+                # cleaned through the normal shutdown path first; the storage
+                # release below then also requires the verified termination.
                 with self.db.transaction(readonly=True) as tx:
                     contradicted = tx.fetchval(
                         "SELECT contradicted_at IS NOT NULL FROM runpod_podless_create_resolutions "
@@ -1205,44 +1299,68 @@ class BenchmarkService:
                         (acquisition["lease_id"],),
                     )
                 if contradicted and acquisition["lease_id"] is not None:
-                    if world is None:
-                        world = self._world(
-                            experiment_id,
-                            authorization,
-                            quote,
-                            mode="CLEANUP",
-                            acquisition_id=acquisition["acquisition_id"],
-                        )
-                    receipt = world.cleanup(acquisition)
-                    verified = verified and receipt["verified"]
-                    billed = billed and receipt["billing_state"] == "BILLED"
-                    continue
-                with self.db.transaction(readonly=True) as tx:
-                    live_lease = (
-                        tx.fetchval(
-                            "SELECT l.lease_state FROM pod_leases l WHERE l.id=%s "
-                            "AND l.lease_state IN ('CLAIMED','ACTIVE','TRANSFERRING')",
+                    with self.db.transaction(readonly=True) as tx:
+                        lease_row = tx.fetchone(
+                            "SELECT lease_state, pod_id, terminate_verified_at "
+                            "FROM pod_leases WHERE id=%s",
                             (acquisition["lease_id"],),
                         )
-                        if acquisition["lease_id"] is not None
-                        else None
-                    )
-                if live_lease:
-                    # The proven-no-create lease is still live: close it through
-                    # the canonical podless shutdown (U2; the pilot single-live-
-                    # lease rule forbids any new lease until it is RELEASED).
-                    if world is None:
-                        world = self._world(
-                            experiment_id,
-                            authorization,
-                            quote,
-                            mode="CLEANUP",
-                            acquisition_id=acquisition["acquisition_id"],
+                    if lease_row is not None and lease_row["lease_state"] in (
+                        "CLAIMED",
+                        "ACTIVE",
+                        "TRANSFERRING",
+                    ):
+                        # A live lease with the discovered pod: the normal
+                        # shutdown path stops, verifies and settles it.
+                        if world is None:
+                            world = self._world(
+                                experiment_id,
+                                authorization,
+                                quote,
+                                mode="CLEANUP",
+                                acquisition_id=acquisition["acquisition_id"],
+                            )
+                        receipt = world.cleanup(acquisition)
+                        verified = verified and receipt["verified"]
+                        billed = billed and receipt["billing_state"] == "BILLED"
+                    else:
+                        # A TERMINAL lease: the discovered pod's
+                        # stop->terminate->verify tail is the janitor's
+                        # (shutdown on a terminal lease replays without
+                        # stopping anything); the sweep finalizes only against
+                        # the durable verified termination, and until then U5
+                        # keeps the storage held (I4 - provider failure can
+                        # delay verified termination, never declare it).
+                        done = bool(lease_row and lease_row["terminate_verified_at"])
+                        verified = verified and done
+                        billed = billed and done
+                else:
+                    with self.db.transaction(readonly=True) as tx:
+                        live_lease = (
+                            tx.fetchval(
+                                "SELECT l.lease_state FROM pod_leases l WHERE l.id=%s "
+                                "AND l.lease_state IN ('CLAIMED','ACTIVE','TRANSFERRING')",
+                                (acquisition["lease_id"],),
+                            )
+                            if acquisition["lease_id"] is not None
+                            else None
                         )
-                    world.leases.shutdown(
-                        acquisition["lease_id"],
-                        reason="benchmark proven-no-create lease close",
-                    )
+                    if live_lease:
+                        # The proven-no-create lease is still live: close it through
+                        # the canonical podless shutdown (U2; the pilot single-live-
+                        # lease rule forbids any new lease until it is RELEASED).
+                        if world is None:
+                            world = self._world(
+                                experiment_id,
+                                authorization,
+                                quote,
+                                mode="CLEANUP",
+                                acquisition_id=acquisition["acquisition_id"],
+                            )
+                        world.leases.shutdown(
+                            acquisition["lease_id"],
+                            reason="benchmark proven-no-create lease close",
+                        )
                 budget = (
                     world.budget
                     if world is not None
@@ -1273,30 +1391,61 @@ class BenchmarkService:
                         reservation_id,
                         reason="benchmark proven-no-create storage hold expired unused (R1)",
                     )
+                # §6.3: ONLY this finalization transaction may release the
+                # acquisition's single original STORAGE hold, and it re-checks
+                # under the §6.1 locks: the acquisition is still
+                # NO_CREATE_PROVEN, an uncontradicted no-create proof or a
+                # verified termination of the discovered pod (with its storage
+                # ownership closed), the lease is no longer live, and no U5
+                # remains for it. The lease read joins this locked decision.
                 with self.db.transaction() as tx:
                     exp = experiment_row(tx, experiment_id)
                     lock_account(tx, exp["account_id"])
                     lock_categories(tx, exp["account_id"])
                     experiment_row(tx, experiment_id, lock=True)
-                    tx.fetchone(
-                        "SELECT acquisition_id FROM benchmark_acquisitions "
-                        "WHERE acquisition_id=%s FOR UPDATE",
+                    current = tx.fetchone(
+                        "SELECT a.state, l.lease_state, l.terminate_verified_at "
+                        "FROM benchmark_acquisitions a LEFT JOIN pod_leases l "
+                        "ON l.id=a.lease_id WHERE a.acquisition_id=%s FOR UPDATE OF a",
                         (acquisition["acquisition_id"],),
                     )
-                    ids = tx.fetchall(
-                        "SELECT r.id,r.state FROM benchmark_reservation_links l "
-                        "JOIN reservations r ON r.id=l.reservation_id "
-                        "WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
-                        "ORDER BY r.id FOR UPDATE OF r",
-                        (acquisition["acquisition_id"],),
+                    contradiction = tx.fetchone(
+                        "SELECT contradicted_at IS NOT NULL AS contradicted "
+                        "FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+                        (acquisition["lease_id"],),
                     )
-                    for row in ids:
-                        if row["state"] == "ACTIVE":
-                            budget.release_in_transaction(
-                                tx,
-                                row["id"],
-                                reason="benchmark proven-no-create storage hold finalized (R1)",
-                            )
+                    ownership_open = tx.fetchval(
+                        "SELECT 1 FROM pod_storage_ownership o JOIN pod_leases l "
+                        "ON l.provider=o.provider AND l.pod_id=o.pod_id "
+                        "WHERE l.id=%s AND o.valid_until IS NULL",
+                        (acquisition["lease_id"],),
+                    )
+                    finalizable = current is not None and current["state"] == "NO_CREATE_PROVEN"
+                    if contradiction is not None and contradiction["contradicted"]:
+                        finalizable = finalizable and (
+                            current["terminate_verified_at"] is not None and not ownership_open
+                        )
+                    elif current is not None and current["lease_state"] in (
+                        "CLAIMED",
+                        "ACTIVE",
+                        "TRANSFERRING",
+                    ):
+                        finalizable = False
+                    if finalizable:
+                        ids = tx.fetchall(
+                            "SELECT r.id,r.state FROM benchmark_reservation_links l "
+                            "JOIN reservations r ON r.id=l.reservation_id "
+                            "WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
+                            "ORDER BY r.id FOR UPDATE OF r",
+                            (acquisition["acquisition_id"],),
+                        )
+                        for row in ids:
+                            if row["state"] == "ACTIVE":
+                                budget.release_in_transaction(
+                                    tx,
+                                    row["id"],
+                                    reason="benchmark proven-no-create storage hold finalized (R1)",
+                                )
                     tx.execute(
                         "UPDATE benchmark_acquisitions SET "
                         "compute_window_end=COALESCE(compute_window_end,create_intent_at) "
@@ -1731,13 +1880,18 @@ class BenchmarkService:
         reason: str,
         evidence_sha256: str,
     ):
-        """H-2: the audited OPERATOR resolution for an UNKNOWN pod create (§E).
+        """§6.2: the audited OPERATOR resolution for an uncertain pod create.
 
-        Mirrors the canary's resolve_podless_create: the operator attests, with
-        a sha256 evidence hash, that the provider console shows no Pod and no
-        charge for the owned name and period. NO_CREATE_PROVEN is set ONLY on
-        that positive proof (or the durable proof that no create was ever sent),
-        freeing the partial-index slot so a new acquisition may be admitted.
+        ONE transaction in the §6.1 order (account -> categories -> E -> A ->
+        billing advisory -> L). Replay first (SC2-3): an existing uncontradicted
+        resolution with an identical actor, reason and evidence SHA returns a
+        successful replay with no new audit or settlement; a different
+        attestation, a bound pod, or a contradicted resolution is a Conflict.
+        A FIRST resolution re-checks under lock (A UNKNOWN or the label-free U1
+        predicate, no pod, not contradicted), then calls the canonical
+        ``resolve_podless_create_in_tx`` (audit, window end, zero-BILLED compute
+        settlement) and writes NO_CREATE_PROVEN. The STORAGE hold is NOT
+        released here - only the sweep finalization (§6.3) may release it.
         """
         from microdrama.budget import BudgetService
         from microdrama.budget.billing import BillingRepository
@@ -1752,7 +1906,13 @@ class BenchmarkService:
             and all(c in "0123456789abcdef" for c in evidence_sha256)
         ):
             raise SchemaInvalid("a podless-create resolution requires a sha256 evidence hash")
+        repository = BillingRepository(
+            self.db, budget_service=BudgetService(self.db, self.clock, self.ids, self.settings)
+        )
         with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
             experiment_row(tx, experiment_id, lock=True)
             acquisition = tx.fetchone(
                 "SELECT * FROM benchmark_acquisitions WHERE experiment_id=%s "
@@ -1761,79 +1921,88 @@ class BenchmarkService:
             )
             if acquisition is None:
                 raise NotFound("benchmark acquisition not found")
-            if acquisition["state"] == "NO_CREATE_PROVEN":
-                return self.status(experiment_id)
-            lease = tx.fetchone(
-                "SELECT * FROM pod_leases WHERE id=%s FOR UPDATE", (acquisition["lease_id"],)
-            )
-            if lease is not None and lease["pod_id"] is not None:
-                raise Conflict(
-                    "the acquisition's lease has a Pod attached; reconcile adopts it",
-                    pod_id=lease["pod_id"],
+            lease = (
+                tx.fetchone(
+                    "SELECT * FROM pod_leases WHERE id=%s FOR UPDATE", (acquisition["lease_id"],)
                 )
-            resolved = lease is not None and tx.fetchval(
-                "SELECT 1 FROM runpod_podless_create_resolutions WHERE lease_id=%s",
-                (lease["id"],),
+                if acquisition["lease_id"] is not None
+                else None
             )
-            # §4.1 U1 is label-independent: the audited resolution accepts the
-            # canonical predicate (committed create intent, no pod, no
-            # resolution) even when the ambiguity handler never labelled the
-            # acquisition UNKNOWN (AT-13's crash-before-label state).
-            u1_holds = (
-                lease is not None
-                and lease["create_requested_at"] is not None
-                and lease["pod_id"] is None
-                and not resolved
-            )
-            if acquisition["state"] != "UNKNOWN" and not u1_holds:
-                raise Conflict(
-                    "only an uncertain (U1) create can be resolved as podless",
-                    acquisition_state=acquisition["state"],
+            resolution = (
+                tx.fetchone(
+                    "SELECT actor_ref, reason, evidence_sha256, contradicted_at "
+                    "FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+                    (lease["id"],),
                 )
-            create_requested = lease["create_requested_at"] if lease is not None else None
-        if create_requested is not None:
-            # The audited attestation posts the deterministic BILLED 0 settlement
-            # (freeing the compute hold's remainder) and bounds the window.
-            repository = BillingRepository(
-                self.db, budget_service=BudgetService(self.db, self.clock, self.ids, self.settings)
+                if lease is not None
+                else None
             )
-            repository.resolve_podless_create(
-                acquisition["lease_id"],
-                actor_ref=actor_ref,
-                reason=reason,
-                evidence_sha256=evidence_sha256,
-                now=self.clock.now(),
-            )
-        with self.db.transaction() as tx:
-            experiment_row(tx, experiment_id, lock=True)
-            tx.fetchone(
-                "SELECT acquisition_id FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
-                (acquisition_id,),
-            )
+            if resolution is not None:
+                # SC2-3 replay: before any unresolved-state precondition, and
+                # only for the identical attestation on an uncontradicted,
+                # podless resolution.
+                if resolution["contradicted_at"] is not None:
+                    raise Conflict(
+                        "the no-create resolution was contradicted by a later pod; "
+                        "the incident path (U5) owns this acquisition",
+                        lease_id=str(lease["id"]),
+                    )
+                if lease["pod_id"] is not None:
+                    raise Conflict(
+                        "a pod is bound to the lease; the resolution cannot replay",
+                        lease_id=str(lease["id"]),
+                        pod_id=lease["pod_id"],
+                    )
+                if (
+                    resolution["actor_ref"],
+                    resolution["reason"],
+                    resolution["evidence_sha256"],
+                ) != (actor_ref.strip(), reason.strip(), evidence_sha256):
+                    raise Conflict(
+                        "a different attestation for the same resolution is a conflict",
+                        lease_id=str(lease["id"]),
+                    )
+            else:
+                if lease is not None and lease["pod_id"] is not None:
+                    raise Conflict(
+                        "the acquisition's lease has a Pod attached; reconcile adopts it",
+                        pod_id=lease["pod_id"],
+                    )
+                # §4.1 U1 is label-independent: the audited resolution accepts
+                # the canonical predicate (committed create intent, no pod, no
+                # resolution) even when the ambiguity handler never labelled the
+                # acquisition UNKNOWN (AT-13's crash-before-label state).
+                u1_holds = (
+                    lease is not None
+                    and lease["create_requested_at"] is not None
+                    and lease["pod_id"] is None
+                )
+                if acquisition["state"] != "UNKNOWN" and not u1_holds:
+                    raise Conflict(
+                        "only an uncertain (U1) create can be resolved as podless",
+                        acquisition_state=acquisition["state"],
+                    )
+                # Locks 1-5 are held: the canonical core runs inside this
+                # transaction (audit, window end, zero-BILLED compute
+                # settlement); on replay its receipt id makes it a no-op.
+                repository.resolve_podless_create_in_tx(
+                    tx,
+                    acquisition["lease_id"],
+                    actor_ref=actor_ref,
+                    reason=reason,
+                    evidence_sha256=evidence_sha256,
+                    now=self.clock.now(),
+                )
             tx.execute(
                 "UPDATE benchmark_acquisitions SET state='NO_CREATE_PROVEN',"
                 "compute_window_end=COALESCE(compute_window_end,create_intent_at) "
                 "WHERE acquisition_id=%s",
                 (acquisition_id,),
             )
-            # No Pod ever existed for this acquisition: its protective storage
-            # hold has nothing to guard. Release it in the same resolution.
-            storage = tx.fetchall(
-                "SELECT r.id FROM benchmark_reservation_links l JOIN reservations r "
-                "ON r.id=l.reservation_id WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
-                "AND r.state='ACTIVE' ORDER BY r.id FOR UPDATE OF r",
-                (acquisition_id,),
-            )
-            for row in storage:
-                ExperimentBudgetService(
-                    self.db,
-                    self.clock,
-                    self.ids,
-                    self.settings,
-                    experiment_id=experiment_id,
-                ).release_in_transaction(
-                    tx, row["id"], reason="benchmark storage hold released at proven no-create"
-                )
+            # §6.2 step 4 / §6.3: the STORAGE hold is NEVER released here. It
+            # is released only by the sweep finalization transaction, after its
+            # locked re-checks (R1); with nothing to delete, that finalization
+            # can run immediately after the resolution, in a later sweep.
             # §4.2: no shortcut write back to a running state here - reconcile
             # is the only NEEDS_RECONCILIATION -> running writer, and only with
             # zero blocking items under the lock.

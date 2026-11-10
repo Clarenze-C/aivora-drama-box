@@ -615,12 +615,19 @@ def settle_from_recorded_usage(
         except Conflict:
             pass  # already closed by an earlier attempt (replay)
         return LeaseSettlement(0, released=True)
+    with db.transaction(readonly=True) as tx:
+        closed = tx.fetchval(
+            "SELECT state FROM reservations WHERE id = %s", (row["reservation_id"],)
+        ) in ("SETTLED", "RELEASED")
     mock = settings.is_offline_mock
     receipt = UsageReceipt(
         receipt_id=uuid5(RENDERING_NAMESPACE, f"settle:{row['provider']}:{lease_id}"),
         provider=row["provider"],
         provider_receipt_id=f"podlease-settle:{lease_id}",
-        kind=ReceiptKind.SETTLEMENT,
+        # T031 H-2 §6.4: settling GPU cost discovered after a podless
+        # resolution already closed the hold is LATE BILLING - the ledger's
+        # own rule admits it on a closed reservation only as an ADJUSTMENT.
+        kind=ReceiptKind.ADJUSTMENT if closed else ReceiptKind.SETTLEMENT,
         cost_basis=CostBasis.SYNTHETIC_FAKE if mock else CostBasis.PROVIDER_REPORTED,
         reservation_id=row["reservation_id"],
         episode_id=row["owner_episode_id"],

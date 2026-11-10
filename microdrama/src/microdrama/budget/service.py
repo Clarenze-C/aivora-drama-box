@@ -954,6 +954,16 @@ class BudgetService:
                     overlapping_intervals=len(overlapping),
                 )
             reservation = self._linked_reservation(tx, receipt, acct.id)
+            if (
+                reservation is not None
+                and reservation.state in (ReservationState.SETTLED, ReservationState.RELEASED)
+                and receipt.kind is ReceiptKind.ACCRUAL
+            ):
+                # T031 H-2 §6.4: GPU cost discovered after a podless resolution
+                # closed the hold is LATE BILLING on the closed reservation -
+                # the ledger's own rule admits it only as an ADJUSTMENT
+                # receipt, never a restatement. The amount is unchanged.
+                receipt = receipt.model_copy(update={"kind": ReceiptKind.ADJUSTMENT})
             return self._post_charge(
                 tx,
                 ledger,

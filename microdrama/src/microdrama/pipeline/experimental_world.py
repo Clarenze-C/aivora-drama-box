@@ -707,6 +707,14 @@ class _SealedNativeInputs:
                     binding.subject_id,
                 )
                 with self.db.transaction() as tx:
+                    # R5 (§6.1): upload-intent insertion serialises through the
+                    # locked acquisition ownership row, so a gate's query for
+                    # an absent intent cannot race this row into existence.
+                    tx.fetchone(
+                        "SELECT acquisition_id FROM benchmark_acquisitions "
+                        "WHERE acquisition_id=%s FOR UPDATE",
+                        (acquisition["acquisition_id"],),
+                    )
                     row = tx.fetchone(
                         "SELECT * FROM benchmark_uploads WHERE acquisition_id=%s AND asset_sha256=%s AND media_kind=%s AND role=%s AND subject_id=%s",
                         identity,
@@ -725,6 +733,11 @@ class _SealedNativeInputs:
                     validate_input_bytes(data, kind, digest)
                     # Mark UNKNOWN before POST. A timeout/crash cannot repeat it.
                     with self.db.transaction() as tx:
+                        tx.fetchone(
+                            "SELECT acquisition_id FROM benchmark_acquisitions "
+                            "WHERE acquisition_id=%s FOR UPDATE",
+                            (acquisition["acquisition_id"],),
+                        )
                         tx.execute(
                             "UPDATE benchmark_uploads SET state='UNKNOWN' WHERE acquisition_id=%s AND asset_sha256=%s AND media_kind=%s AND role=%s AND subject_id=%s",
                             identity,

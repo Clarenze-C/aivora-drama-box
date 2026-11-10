@@ -177,7 +177,8 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
         if row["lease_id"] is None:
             continue
         resolution = tx.fetchone(
-            "SELECT contradicted_at IS NOT NULL AS contradicted, contradicted_pod_id "
+            "SELECT contradicted_at IS NOT NULL AS contradicted, contradicted_pod_id, "
+            "actor_ref, evidence_sha256 "
             "FROM runpod_podless_create_resolutions WHERE lease_id=%s",
             (row["lease_id"],),
         )
@@ -212,7 +213,11 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
                         experiment_id=experiment_id,
                         acquisition_id=row["acquisition_id"],
                         lease_id=row["lease_id"],
-                        detail="contradicted no-create resolution with an unfinalized pod",
+                        detail=(
+                            "contradicted no-create attestation "
+                            f"(actor {resolution['actor_ref']}, evidence "
+                            f"{resolution['evidence_sha256'][:12]}) with an unfinalized pod"
+                        ),
                     )
                 )
 
@@ -428,12 +433,28 @@ def exposure(tx: Tx, experiment_id: UUID) -> dict[str, int]:
 
 
 def gpu_ms(tx: Tx, experiment_id: UUID, now: datetime) -> int:
+    """Aggregate GPU milliseconds across the experiment's acquisitions (§6.4).
+
+    A CONTRADICTED no-create acquisition counts from its original
+    ``create_intent_at`` through the discovered pod's verified termination
+    (the lease's own compute window - the disproved no-create window end on the
+    acquisition row is ignored, and discovery grants no new allowance). An
+    uncontradicted NO_CREATE_PROVEN acquisition is excluded: its liability was
+    positively proven absent.
+    """
     return int(
         tx.fetchval(
-            "SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM "
-            "(COALESCE(compute_window_end,%s)-create_intent_at))*1000)),0)::bigint "
-            "FROM benchmark_acquisitions WHERE experiment_id=%s AND state<>'NO_CREATE_PROVEN'",
-            (now, experiment_id),
+            "SELECT COALESCE(SUM(GREATEST(0,EXTRACT(EPOCH FROM ("
+            "CASE WHEN a.state<>'NO_CREATE_PROVEN' THEN COALESCE(a.compute_window_end,%s) "
+            "ELSE COALESCE(l.terminate_verified_at,%s) END"
+            "-a.create_intent_at))*1000)),0)::bigint "
+            "FROM benchmark_acquisitions a "
+            "LEFT JOIN pod_leases l ON l.id=a.lease_id "
+            "WHERE a.experiment_id=%s "
+            "AND (a.state<>'NO_CREATE_PROVEN' OR EXISTS ("
+            "SELECT 1 FROM runpod_podless_create_resolutions r "
+            "WHERE r.lease_id=a.lease_id AND r.contradicted_at IS NOT NULL))",
+            (now, now, experiment_id),
         )
     )
 

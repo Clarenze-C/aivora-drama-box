@@ -802,7 +802,46 @@ class BillingRepository:
         reason. A later-appearing Pod cannot double-settle: the receipt key is stable
         and later provider cost arrives as REOPENED adjustments. ``now`` stamps the
         attestation (the wall clock by default; tests pin it to their fixture world).
+
+        T031 H-2 §6.1: this wrapper takes the shared lock order - account and
+        categories BEFORE the billing advisory lock and the L rows. Callers
+        already inside a full-order benchmark transaction (locks 1-5 held) call
+        ``resolve_podless_create_in_tx`` instead.
         """
+
+        def wrapper(tx: Tx) -> None:
+            from microdrama.budget.ledger import lock_account, lock_categories
+
+            account_id = tx.fetchval(
+                "SELECT r.account_id FROM pod_leases l JOIN reservations r "
+                "ON r.id=l.reservation_id WHERE l.id=%s",
+                (lease_id,),
+            )
+            if account_id is not None:
+                lock_account(tx, account_id)
+                lock_categories(tx, account_id)
+            self.resolve_podless_create_in_tx(
+                tx,
+                lease_id,
+                actor_ref=actor_ref,
+                reason=reason,
+                evidence_sha256=evidence_sha256,
+                now=now,
+            )
+
+        self.db.run_in_transaction(wrapper)
+
+    def resolve_podless_create_in_tx(
+        self,
+        tx: Tx,
+        lease_id: UUID,
+        *,
+        actor_ref: str,
+        reason: str,
+        evidence_sha256: str,
+        now: datetime | None = None,
+    ) -> None:
+        """The §6.1 in-transaction core; the caller holds locks 1-5 already."""
         if not str(actor_ref or "").strip():
             raise SchemaInvalid("a podless-create resolution requires an actor")
         if not str(reason or "").strip():
@@ -822,95 +861,91 @@ class BillingRepository:
                 "BILLED 0 settlement"
             )
         stamped_now = now or datetime.now(UTC)
-
-        def operation(tx: Tx) -> None:
-            tx.fetchval(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 451051))", (str(lease_id),)
+        tx.fetchval(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 451051))", (str(lease_id),)
+        )
+        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
+        if lease is None:
+            raise NotFound("pod lease not found", lease_id=str(lease_id))
+        if lease["pod_id"] is not None:
+            raise Conflict(
+                "the lease has a Pod attached; the stray-adoption path applies",
+                lease_id=str(lease_id),
+                pod_id=lease["pod_id"],
             )
-            lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
-            if lease is None:
-                raise NotFound("pod lease not found", lease_id=str(lease_id))
-            if lease["pod_id"] is not None:
-                raise Conflict(
-                    "the lease has a Pod attached; the stray-adoption path applies",
-                    lease_id=str(lease_id),
-                    pod_id=lease["pod_id"],
-                )
-            if lease["create_requested_at"] is None:
-                raise Conflict(
-                    "no create was ever sent for this lease; the hold releases on that "
-                    "proof without a resolution",
-                    lease_id=str(lease_id),
-                )
-            existing = tx.fetchone(
-                "SELECT resolved_at FROM runpod_podless_create_resolutions WHERE lease_id=%s",
-                (lease_id,),
+        if lease["create_requested_at"] is None:
+            raise Conflict(
+                "no create was ever sent for this lease; the hold releases on that "
+                "proof without a resolution",
+                lease_id=str(lease_id),
             )
-            # The settlement receipt is byte-identical on a replay: its observed_at is
-            # the stored resolution instant, so record_usage_in_transaction replays as
-            # a no-op instead of an IdempotencyConflict.
-            observed_at = existing["resolved_at"] if existing is not None else stamped_now
-            if existing is None:
-                tx.execute(
-                    "INSERT INTO runpod_podless_create_resolutions (resolution_id, lease_id, "
-                    "actor_ref, reason, evidence_sha256, resolved_at) VALUES (%s,%s,%s,%s,%s,%s)",
-                    (
-                        uuid5(NAMESPACE_URL, f"runpod-podless-resolve:{lease_id}"),
-                        lease_id,
-                        actor_ref.strip(),
-                        reason.strip(),
-                        evidence_sha256,
-                        stamped_now,
-                    ),
-                )
-                if lease["compute_window_end_at"] is None:
-                    # Bound the window at the resolution instant; nothing else ends it.
-                    # T045-FIX RR-N1: through update_with_revision, like every lease write.
-                    update_with_revision(
-                        tx,
-                        "pod_leases",
-                        lease_id,
-                        lease["revision"],
-                        {"compute_window_end_at": stamped_now},
-                        now=stamped_now,
-                    )
-                append_event(
+        existing = tx.fetchone(
+            "SELECT resolved_at FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+            (lease_id,),
+        )
+        # The settlement receipt is byte-identical on a replay: its observed_at is
+        # the stored resolution instant, so record_usage_in_transaction replays as
+        # a no-op instead of an IdempotencyConflict.
+        observed_at = existing["resolved_at"] if existing is not None else stamped_now
+        if existing is None:
+            tx.execute(
+                "INSERT INTO runpod_podless_create_resolutions (resolution_id, lease_id, "
+                "actor_ref, reason, evidence_sha256, resolved_at) VALUES (%s,%s,%s,%s,%s,%s)",
+                (
+                    uuid5(NAMESPACE_URL, f"runpod-podless-resolve:{lease_id}"),
+                    lease_id,
+                    actor_ref.strip(),
+                    reason.strip(),
+                    evidence_sha256,
+                    stamped_now,
+                ),
+            )
+            if lease["compute_window_end_at"] is None:
+                # Bound the window at the resolution instant; nothing else ends it.
+                # T045-FIX RR-N1: through update_with_revision, like every lease write.
+                update_with_revision(
                     tx,
-                    aggregate_type="pod_lease",
-                    aggregate_id=lease_id,
-                    event_type="billing.podless_create_resolved",
-                    payload={
-                        "actor_ref": actor_ref.strip(),
-                        "reason": reason.strip(),
-                        "evidence_sha256": evidence_sha256,
-                    },
-                    correlation_id=lease_id,
-                    occurred_at=stamped_now,
+                    "pod_leases",
+                    lease_id,
+                    lease["revision"],
+                    {"compute_window_end_at": stamped_now},
+                    now=stamped_now,
                 )
-            # The BILLED 0 settlement posts in the SAME transaction as the resolution
-            # (T045-FIX RR-N1); on replay the receipt id makes it a no-op.
-            receipt = UsageReceipt(
-                receipt_id=uuid5(NAMESPACE_URL, f"runpod-podless-resolve:{lease_id}"),
-                provider="runpod",
-                provider_receipt_id=f"podlease-podless:{lease_id}",
-                kind=ReceiptKind.SETTLEMENT,
-                cost_basis=CostBasis.BILLED,
-                reservation_id=lease["reservation_id"],
-                episode_id=None,
-                season_id=None,
-                category=BudgetCategory.GPU_GENERATION,
-                amount_micro_usd=0,
-                currency="USD",
-                units=0,
-                unit=PriceUnit.GPU_SECOND,
-                interval_start=None,
-                interval_end=None,
-                observed_at=observed_at,
-                provenance=Provenance.LIVE_PROVIDER,
+            append_event(
+                tx,
+                aggregate_type="pod_lease",
+                aggregate_id=lease_id,
+                event_type="billing.podless_create_resolved",
+                payload={
+                    "actor_ref": actor_ref.strip(),
+                    "reason": reason.strip(),
+                    "evidence_sha256": evidence_sha256,
+                },
+                correlation_id=lease_id,
+                occurred_at=stamped_now,
             )
-            self.budget_service.record_usage_in_transaction(tx, receipt)
-
-        self.db.run_in_transaction(operation)
+        # The BILLED 0 settlement posts in the SAME transaction as the resolution
+        # (T045-FIX RR-N1); on replay the receipt id makes it a no-op.
+        receipt = UsageReceipt(
+            receipt_id=uuid5(NAMESPACE_URL, f"runpod-podless-resolve:{lease_id}"),
+            provider="runpod",
+            provider_receipt_id=f"podlease-podless:{lease_id}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=CostBasis.BILLED,
+            reservation_id=lease["reservation_id"],
+            episode_id=None,
+            season_id=None,
+            category=BudgetCategory.GPU_GENERATION,
+            amount_micro_usd=0,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            interval_start=None,
+            interval_end=None,
+            observed_at=observed_at,
+            provenance=Provenance.LIVE_PROVIDER,
+        )
+        self.budget_service.record_usage_in_transaction(tx, receipt)
 
     @staticmethod
     def matched_invoice_periods(
