@@ -772,6 +772,78 @@ def test_a_hard_stop_deadline_stops_and_terminates(db: Database, tmp_path: Path)
     assert runpod_transport.state == "GONE"  # stopped AND terminated at the provider
 
 
+def test_a_pod_that_never_verifies_keeps_disk_ownership_through_termination(
+    db: Database, tmp_path: Path
+) -> None:
+    """CN-4 (2026-11-09, canary-night review): a pod bound while its lease was
+    still CLAIMED, whose endpoint verification fails until the deadline, must
+    still get a storage-ownership interval - opened with the durable pod
+    binding and healed before shutdown - so the verified terminate closes it and
+    billing ingest attributes the pod's disk to the lease's episode, never the
+    recovery pool; readiness never becomes RECOVERY_REQUIRED."""
+    from uuid import UUID
+
+    from microdrama.budget.billing import lease_billing_readiness
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    # No exposed 8188 port at all: verification fails from the first ensure_pod
+    # until the deadline, so the lease stays CLAIMED with a bound pod id.
+    runpod_transport = RunpodCanaryTransport(no_comfy_port=True)
+    comfy_transport = ComfyCanaryTransport()
+    # Effects were sent (the Pod existed), so the deadline run raises NOT CLEAN
+    # after the shutdown path and the record write.
+    with pytest.raises(CanaryRunNotClean) as caught:
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+            max_wall_seconds=2,
+        )
+    record = json.loads(caught.value.record_path.read_text())
+    assert record["deadline_hit"] is True
+    assert record["terminate_verified_at"] is not None
+    with db.transaction(readonly=True) as tx:
+        lease = tx.fetchone(
+            "SELECT id, owner_episode_id, lease_state, terminate_verified_at "
+            "FROM pod_leases WHERE provider='runpod'"
+        )
+        ownership = tx.fetchone(
+            "SELECT owner_episode_id, valid_from, valid_until FROM pod_storage_ownership "
+            "WHERE provider='runpod' AND pod_id=%s",
+            (POD,),
+        )
+    assert lease is not None
+    assert lease["lease_state"] == "RELEASED"  # shutdown ran with the bound pod
+    # The ownership interval existed (healed before shutdown) and closed at the
+    # verified terminate, owned by the lease's episode.
+    assert ownership is not None, "storage ownership must exist for an early-bound pod"
+    assert str(ownership["owner_episode_id"]) == CANARY_EPISODE_ID
+    assert ownership["valid_until"] == lease["terminate_verified_at"]
+
+    # Billing ingest over the terminated pod: disk goes to the episode, not the
+    # recovery pool, and the lease's readiness never becomes RECOVERY_REQUIRED.
+    clock.advance(seconds=2 * 3600 + 1800)
+    world = _world_for_sweep(
+        db, tmp_path, clock, runpod_transport, comfy_transport, seq="cn4-sweep"
+    )
+    sweep = world.janitor.sweep()
+    assert sweep.failures == []
+    with db.transaction(readonly=True) as tx:
+        disk_rows = tx.fetchall(
+            "SELECT a.owner_kind, a.owner_id FROM runpod_billing_allocations a "
+            "JOIN runpod_billing_buckets b ON b.observation_id=a.bucket_observation_id "
+            "WHERE b.pod_id=%s AND a.component='DISK' AND a.delta_micro_usd > 0",
+            (POD,),
+        )
+    assert disk_rows, "the terminated pod's disk bucket must allocate"
+    assert all(row["owner_kind"] == "EPISODE" for row in disk_rows)
+    assert {row["owner_id"] for row in disk_rows} == {str(UUID(CANARY_EPISODE_ID))}
+    assert lease_billing_readiness(db, lease["id"]).state != "RECOVERY_REQUIRED"
+
+
 def test_an_object_info_mismatch_submits_nothing(db: Database, tmp_path: Path) -> None:
     from microdrama.rendering.workflows import MOCK_VIDEO_TEMPLATE
 

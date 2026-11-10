@@ -1005,13 +1005,15 @@ class LeaseService:
                     lease_id=str(lease_id),
                     pod_id=row["pod_id"],
                 )
+            # CN-4 (2026-11-09, canary-night review) + T045-FIX A-S6: storage
+            # ownership opens with the durable pod binding, BEFORE verification can
+            # fail - a pod bound while its lease was still CLAIMED that never
+            # verifies until the deadline must not lose its disk interval. The open
+            # is idempotent per (provider, pod, creating lease); any re-ensure heals.
+            open_storage_ownership(self._db, lease_id, row["pod_id"])
             self._manager.verify(pod, spec, settings=self._settings)
             if row["lease_state"] == "CLAIMED":
                 self._activate(lease_id, pod)
-            # T045-FIX A-S6: a crash between the ACTIVE write and the ownership open
-            # must not leave the pod's disk unowned forever — any re-ensure heals it,
-            # and the open itself is idempotent per (provider, pod, creating lease).
-            open_storage_ownership(self._db, lease_id, row["pod_id"])
         else:
             # Durable create-request proof is committed in its own transaction BEFORE the
             # create call is sent (T045 R8/G13): with it, a later list miss can no longer
@@ -1040,6 +1042,10 @@ class LeaseService:
             # ACTIVATE before, any failure in between orphaned the pod to manual
             # cleanup while it kept billing.
             self._record_pod_id(lease_id, pod.pod_id)
+            # CN-4 (2026-11-09): ownership opens the moment the pod id is durably
+            # bound, before verification can fail for the rest of the deadline
+            # window (idempotent; _activate re-opens harmlessly).
+            open_storage_ownership(self._db, lease_id, pod.pod_id)
             self._manager.verify(pod, spec, settings=self._settings)
             self._activate(lease_id, pod)
         return LeaseHandle(self._contract(self._load(lease_id)))
@@ -1267,6 +1273,14 @@ class LeaseService:
             spec = self._spec_for(row)
             self._manager.verify(pod, spec, settings=self._settings)
             self._activate(lease_id, pod)
+        else:
+            # CN-4 (2026-11-09, canary-night review): heal any missing ownership
+            # BEFORE shutdown and accounting - a pod bound early that never
+            # activated (verification failed to the deadline) must not have its
+            # disk interval vanish when the verified terminate closes it; without
+            # this row the close updates nothing and later positive disk charges
+            # fall to the recovery pool (RECOVERY_REQUIRED).
+            open_storage_ownership(self._db, lease_id, row["pod_id"])
         self.begin_shutdown(lease_id, reason=reason)
         row = self._load(lease_id)
         cleanup_id = self._reserve_cleanup_grant(row)

@@ -81,6 +81,42 @@ def test_fake_stop_only_leaves_ownership_open(world: RenderWorld) -> None:
     assert rows[0]["valid_until"] is None
 
 
+def test_ownership_opens_with_the_binding_while_verification_keeps_failing(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-4 (2026-11-09, canary-night review): the pod id is bound while the lease
+    is still CLAIMED (early binding); endpoint verification then fails until the
+    deadline. Storage ownership must exist from the durable binding on - never
+    only at activation - and shutdown heals it before the verified terminate
+    closes the interval, so the pod's disk is never recovery-pool orphaned."""
+    from microdrama.contracts.errors import TransientProviderError
+
+    provider = RunpodIdFakePods(clock=FakeClock(T0), ids=SequentialIds("t045-own-cn4"))
+    world = RenderWorld(db, provider=provider)
+    episode = world.episode()
+    handle = world.claim(episode, "t045-own-cn4")
+
+    def warmup_refusal(pod, spec, *, settings):
+        raise TransientProviderError("pod endpoint not exposed yet (image pull/warmup)")
+
+    monkeypatch.setattr(world.manager, "verify", warmup_refusal)
+    with pytest.raises(TransientProviderError):
+        world.leases.ensure_pod(handle.lease.lease_id)
+    row = world.lease_row(handle.lease.lease_id)
+    assert row["lease_state"] == "CLAIMED" and row["pod_id"] is not None
+    assert _ownership_rows(db, row["pod_id"]), "ownership must exist while still CLAIMED"
+
+    monkeypatch.undo()
+    world.clock.advance(seconds=5)  # paid warmup time passes before the deadline shutdown
+    world.leases.shutdown(handle.lease.lease_id, reason="CN-4 deadline reached")
+    rows = _ownership_rows(db, row["pod_id"])
+    assert len(rows) == 1
+    assert rows[0]["owner_episode_id"] == episode.episode_id
+    assert rows[0]["valid_until"] == world.lease_row(handle.lease.lease_id)[
+        "terminate_verified_at"
+    ]
+
+
 def test_a_crash_before_the_ownership_write_is_healed_by_a_re_ensure(
     db: Database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
