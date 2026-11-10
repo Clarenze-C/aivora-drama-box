@@ -414,7 +414,7 @@ def _rights_resolver(db, settings, clock, territories):
             expires_at=row["expires_at"],
             evidence=row["evidence"],
             status=row["status"],
-            recorded_at=row["recorded_at"],
+            recorded_at=row["created_at"],
         )
 
     return resolve
@@ -578,6 +578,38 @@ class _SealedNativeInputs:
                 }
             ),
         )
+        # The manifest is a durable V2 contract document: ``submit_v2`` loads
+        # and verifies it from the ledger, so persist it here, idempotently by
+        # record id - the manifest derives entirely from frozen inputs, so a
+        # replay rebuilds the identical payload (I6) and only the first build
+        # writes the row.
+        from microdrama.contracts.hashing import canonical_hash
+
+        with self.db.transaction() as tx:
+            existing = tx.fetchone(
+                "SELECT 1 FROM v2_contract_documents "
+                "WHERE contract_type = 'PromptManifest' AND record_id = %s AND current",
+                (manifest.record_id,),
+            )
+            if existing is None:
+                rights = manifest.bindings[0].rights if manifest.bindings else None
+                tx.execute(
+                    "INSERT INTO v2_contract_documents "
+                    "(contract_type, record_id, version, payload, payload_sha256, "
+                    "rights_route_id, rights_version, valid_from, valid_until, current) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)",
+                    (
+                        "PromptManifest",
+                        manifest.record_id,
+                        manifest.version,
+                        jsonb(manifest.model_dump(mode="json")),
+                        canonical_hash(manifest),
+                        rights.rights_route_id if rights is not None else None,
+                        rights.rights_version if rights is not None else None,
+                        manifest.valid_from,
+                        manifest.valid_until,
+                    ),
+                )
         return manifest, assets, resolver, episode
 
     def request(self, sample, acquisition, reservation_id):

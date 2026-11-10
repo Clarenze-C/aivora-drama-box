@@ -8,6 +8,8 @@ AT-3. Public entry points only.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 from datetime import timedelta
 from pathlib import Path
@@ -321,6 +323,45 @@ def test_at16_inflight_operation_found_via_reservation_linkage(db: Database, tmp
             )
     assert final["execution_state"] == "SCREEN_REVIEW", final["execution_state"]
     assert len(comfy.server.submissions) == 3
+
+
+def test_at16b_u3p_missing_linkage_blocks_fresh_admission(db: Database, tmp_path: Path):
+    """§9.3 extension for AT-16: a known in-flight operation whose sample
+    linkage never landed (U3p) blocks fresh admission until it is recovered
+    and finalised - the reservation linkage, not the missing sample link, is
+    what the gate reads."""
+    from microdrama.pipeline.benchmark_service import AdmissionBlocked
+
+    world, ep, plan, service, comfy, adapter, slot, operation, authorization, digest, raw = (
+        _crash_state(db, tmp_path, operation_state="SUBMITTED", with_prompt=True)
+    )
+    assert slot["operation_id"] is None
+
+    fresh = _execute_service(db, comfy, world.ids, adapter)
+    with _PatchedPolicy():
+        with pytest.raises(AdmissionBlocked) as refused:
+            fresh.execute(
+                plan.experiment_id,
+                phase="screen",
+                authorization=authorization,
+                quote=_screen_quote(world),
+                expected_sha256=digest,
+                source_bytes=raw,
+            )
+    assert any("U3p" in blocker for blocker in refused.value.blockers), refused.value.blockers
+    # The linkage is still missing: nothing was dispatched to repair it.
+    with db.transaction(readonly=True) as tx:
+        after = tx.fetchone(
+            "SELECT operation_id FROM benchmark_samples WHERE experiment_id=%s "
+            "AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+        states = tx.fetchall(
+            "SELECT DISTINCT state FROM benchmark_samples WHERE experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    assert after["operation_id"] is None
+    assert all(row["state"] != "SUCCEEDED" for row in states)
 
 
 # ---------------------------------------------------------------------------
@@ -921,3 +962,1070 @@ def test_at02_deadline_expiry_terminates_pod_and_resolution_fails_experiment(
     assert final["billing_state"] == "BILLED"
     assert after["admission"]["permitted"] is False  # no further dispatch
     assert len(comfy.server.submissions) == submissions_before
+
+
+# ---------------------------------------------------------------------------
+# AT-3 — worker SIGKILLed mid-poll, pod alive: a fresh-process CLI reconcile
+# binds BOUND from the durable lease, persists the output into the CLI-built
+# store and sends ZERO posts (§9.3 death harness: the fake server state and
+# send counters survive the killed process on disk).
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_server(state, path: Path) -> None:
+    """Serialize the fake ComfyUI server state (§9.3: outside process memory)."""
+
+    payload = {
+        "now": state.clock.now().isoformat(),
+        "counter": len(state.submissions),
+        "submissions": list(state.submissions),
+        "prompts": [
+            {
+                "prompt_id": prompt.prompt_id,
+                "completes_at": prompt.completes_at.isoformat(),
+                "scenario": prompt.scenario.value,
+                "first_node": prompt.first_node,
+                "sampler_node": prompt.sampler_node,
+                "client_id": prompt.client_id,
+                "outputs": [
+                    output.model_dump(mode="json")
+                    if hasattr(output, "model_dump")
+                    else dict(output)
+                    for output in prompt.outputs
+                ],
+            }
+            for prompt in state.prompts.values()
+        ],
+        "files": [
+            [filename, media_kind, scenario.value]
+            for filename, (media_kind, scenario) in state._files.items()
+        ],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _restore_server(state, payload: dict) -> None:
+    from datetime import datetime
+
+    from microdrama.contracts.providers import ComfyOutputFile
+    from microdrama.testing.fakes.comfy import ComfyScenario, _Prompt
+
+    for entry in payload["prompts"]:
+        state.prompts[entry["prompt_id"]] = _Prompt(
+            prompt_id=entry["prompt_id"],
+            completes_at=datetime.fromisoformat(entry["completes_at"]),
+            scenario=ComfyScenario(entry["scenario"]),
+            first_node=entry["first_node"],
+            sampler_node=entry["sampler_node"],
+            outputs=[ComfyOutputFile.model_validate(output) for output in entry["outputs"]],
+            client_id=entry["client_id"],
+        )
+    state.submissions.extend(payload["submissions"])
+    state._counter = payload["counter"]
+    for filename, media_kind, scenario in payload["files"]:
+        state.register_output(filename, media_kind, ComfyScenario(scenario))
+
+
+class _DieMidPollClient(FakeComfyClient):
+    """Kills the worker inside the first poll of a COMPLETED prompt.
+
+    The submit already committed SUBMITTED with its prompt id; the death lands
+    between the external effect and the observation commit - exactly §E's
+    mid-poll window. The server state is serialized first so the parent can
+    reconstruct what the killed process left behind."""
+
+    def __init__(self, state, snapshot: Path, marker: Path):
+        super().__init__(state)
+        self.snapshot = snapshot
+        self.marker = marker
+
+    def history(self, prompt_id):
+        prompt = self._prompt(prompt_id)
+        if (
+            not self.marker.exists()
+            and prompt is not None
+            and not self._running(prompt)
+            and prompt.outputs
+        ):
+            _snapshot_server(self.state, self.snapshot)
+            self.marker.write_text("mid-poll", encoding="utf-8")
+            os._exit(86)  # §9.3: bypasses every exception cleanup path
+        return super().history(prompt_id)
+
+
+def _at3_child(dsn: str, out_dir: str, marker: str, snapshot: str, identity: str) -> None:
+    """Runs INSIDE the subprocess: the real composed execute path until death.
+
+    The paths are already set by the launching script; only the process-local
+    policy patches happen here (they die with the subprocess)."""
+    import microdrama.pipeline.experimental_world as world_module
+    from microdrama.pipeline.benchmark_authorization import BenchmarkAuthorization
+
+    world_module.ExperimentalPresetPolicy.validate = lambda *a, **k: None
+    BenchmarkAuthorization.validate_for = lambda *a, **k: None
+
+    from rendering_support import RenderWorld
+    from test_benchmark_experiments import _composed_world
+    from test_t031_h2b_p1_modes import _authorization_pair, _bench_seal, _execute_service
+
+    from microdrama.persistence import Database
+
+    db = Database(dsn).open()
+    world = RenderWorld(db)
+    out = Path(out_dir)
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, out)
+    service.seal(plan.experiment_id, _bench_seal(plan))
+    _, authorization, digest, raw = _authorization_pair(world, plan, out)
+    Path(identity).write_text(json.dumps({"experiment_id": str(plan.experiment_id)}))
+    comfy.service._client = _DieMidPollClient(comfy.server, Path(snapshot), Path(marker))
+    # Step 1 (public execute) submits the first prompt and commits SUBMITTED
+    # with its prompt id. Every later step continues through public resume()
+    # (a fresh process never re-admits while U3p work is in flight; its
+    # reconcile polls the in-flight operation first) - and that poll of the
+    # now-completed prompt is where the worker dies mid-poll (os._exit),
+    # between the durable external-effect record and the observation commit
+    # (§9.3 death window).
+    quote = _screen_quote(world)
+    dying = _execute_service(db, comfy, world.ids, adapter)
+    dying.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=authorization,
+        quote=quote,
+        expected_sha256=digest,
+        source_bytes=raw,
+    )
+    comfy.clock.advance(seconds=1)
+    for _ in range(30):
+        dying = _execute_service(db, comfy, world.ids, adapter)
+        dying.resume(
+            plan.experiment_id,
+            authorization=authorization,
+            quote=quote,
+            expected_sha256=digest,
+            phase="screen",
+            source_bytes=raw,
+        )
+        comfy.clock.advance(seconds=1)
+    import sys
+
+    print("child finished its steps without the mid-poll death", file=sys.stderr)
+
+
+def test_at03_worker_sigkill_mid_poll_cli_reconcile_binds_bound_and_persists_output(
+    db: Database, tmp_path: Path
+):
+    import subprocess
+    import sys
+
+    marker = tmp_path / "at3.marker"
+    snapshot = tmp_path / "at3-server.json"
+    identity = tmp_path / "at3-identity.json"
+    script = (
+        "import sys; sys.argv=['child']; "
+        "sys.path[:0] = ["
+        f"{str(Path(__file__).resolve().parents[3] / 'src')!r}, "
+        f"{str(Path(__file__).resolve().parents[1])!r}, "
+        f"{str(Path(__file__).parent)!r}]; "
+        "from test_t031_h2b_p3_ambiguity import _at3_child as run; "
+        f"run({db.dsn!r}, {str(tmp_path / 'at3-child-out')!r}, {str(marker)!r}, "
+        f"{str(snapshot)!r}, {str(identity)!r})"
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "MICRODRAMA_EXECUTION_MODE": "OFFLINE_MOCK",
+            "MICRODRAMA_PAID_REQUESTS_ENABLED": "false",
+            "MICRODRAMA_CLOUD_RESOURCES_ENABLED": "false",
+            "MICRODRAMA_PUBLIC_ACTIONS_ENABLED": "false",
+        }
+    )
+    child = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(Path(__file__).parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert marker.exists(), child.stderr[-2000:]
+    assert child.returncode == 86, child.stderr[-2000:]
+    experiment_id = UUID(json.loads(identity.read_text(encoding="utf-8"))["experiment_id"])
+
+    # The durable state the killed worker left: an ACTIVE acquisition with a
+    # live pod, the dispatch slot claimed, and the operation SUBMITTED with
+    # its prompt id - the outcome never observed.
+    with db.transaction(readonly=True) as tx:
+        acquisition = tx.fetchone(
+            "SELECT a.*, l.pod_id, l.lease_state FROM benchmark_acquisitions a "
+            "JOIN pod_leases l ON l.id=a.lease_id WHERE a.experiment_id=%s",
+            (experiment_id,),
+        )
+        operation = tx.fetchone(
+            "SELECT o.id, o.state, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s",
+            (experiment_id,),
+        )
+    assert acquisition["state"] == "ACTIVE"
+    assert acquisition["pod_id"] is not None
+    # The poll had observed progress (RUNNING) before the death landed in the
+    # history call - the outcome itself was never observed or projected.
+    assert operation["state"] in ("SUBMITTED", "RUNNING")
+    assert operation["external_id"]
+
+    # §3.4 from the durable lease alone: the recovery world binds BOUND.
+    assert adapter_for_at3(db, tmp_path, experiment_id)[1] == "BOUND"
+
+    # Fresh-process CLI reconcile: output persisted into the CLI-built store,
+    # zero posts (the counters survived the killed child on disk).
+
+    comfy, adapter, store_root = _at3_parent_world(db, tmp_path, experiment_id, snapshot)
+    from test_t031_h2b_p1_modes import _offline_settings
+
+    from microdrama.pipeline.benchmark import main
+    from microdrama.pipeline.benchmark_service import BenchmarkService
+
+    settings = _offline_settings(store_root, db)
+    submissions_before = len(comfy.server.submissions)
+
+    def service_factory(db, settings, store, injection):
+        from microdrama.core.clock import UuidIds
+
+        return BenchmarkService(
+            db,
+            settings,
+            store=store,
+            clock=comfy.clock,
+            ids=UuidIds(),
+            world_factory=lambda **_kwargs: adapter,
+        )
+
+    import contextlib
+    import io
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = main(
+            ["reconcile", "--experiment-id", str(experiment_id)],
+            _injection={"db": db, "settings": settings, "service_factory": service_factory},
+        )
+    assert code == 0, buffer.getvalue()
+    payload = json.loads(buffer.getvalue())
+    assert {s["sample_id"]: s["state"] for s in payload["samples"]}["S01-R1"] == "SUCCEEDED"
+    assert len(comfy.server.submissions) == submissions_before  # ZERO posts (I5)
+    assert list(store_root.rglob("*")), "the CLI-built store received no output object"
+    with db.transaction(readonly=True) as tx:
+        stored = tx.fetchone(
+            "SELECT state, output FROM benchmark_samples WHERE experiment_id=%s "
+            "AND sample_id='S01-R1'",
+            (experiment_id,),
+        )
+    assert stored["state"] == "SUCCEEDED"
+    assert stored["output"]["sha256"]
+
+
+def adapter_for_at3(db: Database, tmp_path: Path, experiment_id: UUID):
+    """Compose a parent-side world and return (acquisition_id, bind result)."""
+    comfy, adapter, _ = _at3_parent_world(db, tmp_path, experiment_id, None)
+    with db.transaction(readonly=True) as tx:
+        acquisition_id = tx.fetchval(
+            "SELECT acquisition_id FROM benchmark_acquisitions WHERE experiment_id=%s",
+            (experiment_id,),
+        )
+    return acquisition_id, adapter.bind_for_recovery(acquisition_id)
+
+
+def _at3_seed_live_pod(db: Database, world, comfy, experiment_id: UUID) -> None:
+    """Rebuild the killed worker's pod in the parent's fresh fake provider.
+
+    The pod is alive at the provider regardless of the worker process: its
+    identity (pod id, client token, create instant) is durable on the lease,
+    and the fake endpoint URL is derived from the pod id exactly the way
+    ``create_pod`` derives it. This mirrors the provider-side pod the killed
+    child left behind - the same role the on-disk server snapshot plays for
+    the ComfyUI state."""
+    from microdrama.testing.fakes.common import fake_https
+    from microdrama.testing.fakes.pods import (
+        FAKE_GPU_TYPE,
+        FAKE_POD_HOURLY_MICRO_USD,
+        _Pod,
+    )
+
+    with db.transaction(readonly=True) as tx:
+        lease = tx.fetchone(
+            "SELECT l.pod_id, l.client_token, l.create_requested_at "
+            "FROM pod_leases l JOIN benchmark_acquisitions a ON a.lease_id = l.id "
+            "WHERE a.experiment_id = %s",
+            (experiment_id,),
+        )
+    assert lease is not None and lease["pod_id"], "the child died before any pod existed"
+    world.provider._pods[lease["pod_id"]] = _Pod(
+        pod_id=lease["pod_id"],
+        name=f"recovered-{lease['pod_id']}",
+        owned_tag=world.config.owned_tag,
+        client_token=lease["client_token"],
+        gpu_type=FAKE_GPU_TYPE,
+        hourly_price_micro_usd=FAKE_POD_HOURLY_MICRO_USD,
+        created_at=lease["create_requested_at"] or comfy.clock.now(),
+        endpoint_url=fake_https(f"{lease['pod_id']}.pods.fake", ""),
+        pipeline_owned=True,
+    )
+
+
+def _at3_parent_world(db: Database, tmp_path: Path, experiment_id: UUID, snapshot):
+    """The parent's composed world: same durable rows, reconstructed server."""
+    from dataclasses import replace
+
+    from comfy_support import ComfyWorld
+    from rendering_support import RenderWorld
+    from test_t031_h2b_p2_gate import _adapter_for
+
+    from microdrama.rendering.comfy_jobs import ComfyRenderConfig
+
+    world = RenderWorld(db)
+    store_root = tmp_path / "at3-cli-store"
+    comfy = ComfyWorld(
+        db,
+        store_root,
+        config=replace(ComfyRenderConfig.for_mock(), lease_covered=True),
+        execution_ms=0,
+    )
+    if snapshot is not None:
+        payload = json.loads(Path(snapshot).read_text(encoding="utf-8"))
+        from datetime import datetime
+
+        comfy.clock.set(datetime.fromisoformat(payload["now"]))
+        _restore_server(comfy.server, payload)
+    else:
+        comfy.clock.set(world.clock.now())
+    world.clock = comfy.clock
+    world.leases._clock = comfy.clock
+    world.provider.clock = comfy.clock
+    world.manager._clock = comfy.clock
+    _at3_seed_live_pod(db, world, comfy, experiment_id)
+    with db.transaction(readonly=True) as tx:
+        plan_row = tx.fetchone(
+            "SELECT * FROM benchmark_experiments WHERE experiment_id=%s", (experiment_id,)
+        )
+    adapter, budget = _adapter_for(db, world, comfy, plan_row, experiment_id)
+    comfy.service._client = FakeComfyClient(comfy.server)
+    comfy.service._budget = budget
+    return comfy, adapter, store_root
+
+
+# ---------------------------------------------------------------------------
+# AT-17 (§5.3) + §9.3 extensions — upload POST ambiguity on a REAL composed
+# native-inputs world (build_experiment_world with the real PikaHttpClient
+# and scripted in-memory transports). The pod-side ComfyUI accepts every input
+# upload and then loses the response: recovery may only checksum-read the
+# inputs back (GET /view), never POST a second upload, never invent a prompt
+# operation; an unverifiable readback leaves U3u blocking every dependent
+# sample; an EXPIRED hold still allows the input readback in RECOVERY (R4);
+# wrong owner and wrong mode are refused at the request guard.
+# ---------------------------------------------------------------------------
+
+
+def _at17_png(index: int) -> bytes:
+    """A distinct valid PNG per port (validate_input_bytes must accept it)."""
+    import struct
+    import zlib
+
+    def chunk(kind, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + kind
+            + payload
+            + struct.pack(">I", zlib.crc32(kind + payload))
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00" + bytes([0xA0 + index]) * 12))
+        + chunk(b"IEND", b"")
+    )
+
+
+class _At17RunpodTransport:
+    """In-memory Runpod API: echoes the create POST as a RUNNING pod with the
+    declared 8188 proxy port (the endpoint the Pika client binds)."""
+
+    def __init__(self, now) -> None:
+        self.now = now
+        self.calls: list[tuple[str, str]] = []
+        self.pod: dict | None = None
+
+    def request(self, method, url, *, headers, body=None):
+        self.calls.append((method, url))
+        if method == "GET" and url.startswith("https://api.runpod.io/v2/pods?"):
+            return type(
+                "R",
+                (),
+                {"status": 200, "body": b'{"pods": [], "pagination": {}}'},
+            )()
+        if method == "POST" and url.endswith("/pods"):
+            request = json.loads(body)
+            self.pod = {
+                "id": "pod-at17-1",
+                "name": request["name"],
+                "image": request["image"],
+                "status": "RUNNING",
+                "cost": "0.500000",
+                "createdAt": self.now().isoformat(),
+                "gpu": request["gpu"] | {"memory": 48, "vcpuCount": 16},
+                "ports": request.get("ports"),
+                "runtime": {"ports": [{"private": 8188, "public": 8188, "type": "http"}]},
+            }
+            return type("R", (), {"status": 200, "body": json.dumps(self.pod).encode()})()
+        if method == "GET" and "/pods/pod-at17-1" in url:
+            return type("R", (), {"status": 200, "body": json.dumps(self.pod).encode()})()
+        raise AssertionError(f"unexpected Runpod call: {method} {url}")
+
+
+class _At17PodComfyTransport:
+    """Scripted pod-side ComfyUI.
+
+    Every input upload POST is ACCEPTED (the bytes are remembered so /view can
+    serve them) and the response is then LOST (TimeoutError) - §9.3's
+    external-effect-acceptance crash window, per port. /view serves the
+    accepted bytes (or corrupt bytes in the unverifiable variant), /prompt
+    answers one deterministic prompt id, /object_info serves the pinned schema.
+    """
+
+    def __init__(self, schema_bytes: bytes, *, corrupt_readback: bool = False):
+        self.schema_bytes = schema_bytes
+        self.corrupt_readback = corrupt_readback
+        self.inputs: dict[str, bytes] = {}
+        self.upload_posts = 0
+        self.view_gets: list[str] = []
+        self.prompt_posts = 0
+
+    def request(self, method, url, *, headers, body=None):
+        import re as _re
+        from urllib.parse import parse_qs, urlparse
+
+        if method == "GET" and url.endswith("/object_info"):
+            return self.schema_bytes
+        if method == "POST" and url.endswith("/upload/image"):
+            self.upload_posts += 1
+            match = _re.search(rb'filename="([^"]+)"\r\nContent-Type: [^\r]+\r\n\r\n', body)
+            assert match is not None, "upload multipart lacks the image part"
+            start = match.end()
+            end = body.rfind(b"\r\n--t031_")
+            assert end > start, "upload multipart lacks its closing boundary"
+            self.inputs[match.group(1).decode()] = body[start:end]
+            raise TimeoutError("pod accepted the upload; the response was lost")
+        if method == "GET" and "/view" in url:
+            self.view_gets.append(url)
+            query = parse_qs(urlparse(url).query)
+            filename = query["filename"][0]
+            if filename not in self.inputs:
+                raise TimeoutError("input absent")
+            if self.corrupt_readback:
+                return b"corrupt-readback-bytes"
+            return self.inputs[filename]
+        if method == "POST" and url.endswith("/prompt"):
+            self.prompt_posts += 1
+            return json.dumps({"prompt_id": f"at17-prompt-{self.prompt_posts:04d}"}).encode()
+        raise AssertionError(f"unexpected ComfyUI call: {method} {url}")
+
+
+class _At17Harness:
+    pass
+
+
+def _at17_compose(
+    db: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    corrupt_readback: bool = False,
+) -> _At17Harness:
+    from datetime import UTC, datetime, timedelta
+
+    from test_benchmark_experiments import plan_for
+    from test_t031_h2b_p1_modes import _at4_quote, _paid_settings
+
+    from microdrama.budget import BudgetService
+
+    # The preset policy's live-eligibility layers (disabled+unmeasured preset,
+    # model-output rights pins) are covered by the preflight suites; this AT
+    # drives the native upload/prompt mechanics, so validate returns a real
+    # disabled, unmeasured PresetRecord for the sealed control set instead.
+    from microdrama.contracts.enums import (
+        AssetKind,
+        AssetState,
+        ControlKind,
+        EvidenceSource,
+        Provenance,
+        RenderTier,
+        RightsStatus,
+        RightsSubjectKind,
+    )
+    from microdrama.contracts.examples import media_info
+    from microdrama.contracts.hashing import sha256_hex
+    from microdrama.contracts.media import AssetDescriptor
+    from microdrama.contracts.primitives import EvidenceRef
+    from microdrama.contracts.registries import PresetRecord, RightsRecord
+    from microdrama.contracts.season import CostPolicy
+    from microdrama.contracts.v2 import ShotReferenceBinding
+    from microdrama.core.registry.rights import RightsRegistry
+    from microdrama.persistence import register_asset
+    from microdrama.persistence.object_store import FilesystemObjectStore
+    from microdrama.pipeline.benchmark_authorization import (
+        BenchmarkAuthorization,
+        BenchmarkSeal,
+        document_sha256,
+    )
+    from microdrama.pipeline.benchmark_service import BenchmarkService
+    from microdrama.pipeline.experimental_world import build_experiment_world
+    from microdrama.rendering.pika_transport import mapped_schema_sha256
+    from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
+    from microdrama.rendering.workflows.templates import (
+        template_sha256 as _template_sha256,
+    )
+    from microdrama.testing.fakes import FakeClock, SequentialIds
+    from microdrama.testing.media import make_wav_bytes
+    from microdrama.testing.seed import seed_episode, seed_season
+
+    preset = PresetRecord(
+        preset_id="pika-h3-flex-ref2va-benchmark-v1",
+        version=1,
+        tier=RenderTier.QUALITY_EIGHT_STEP,
+        workflow_sha256=_template_sha256(PIKA_TEMPLATE),
+        model_mode="fixture",
+        gpu_type="NVIDIA A40",
+        min_vram_gb=24,
+        host_ram_gb=64,
+        precision="fp16",
+        width=480,
+        height=832,
+        frames=124,
+        fps=24,
+        steps=8,
+        attention_backend="fixture",
+        supported_controls=[
+            ControlKind.TEXT_PROMPT,
+            ControlKind.SEED,
+            ControlKind.CHARACTER_REFERENCE,
+            ControlKind.WARDROBE_REFERENCE,
+            ControlKind.LOCATION_REFERENCE,
+        ],
+        supports_thai_dialogue=None,
+        rights_route_id=None,
+        measured=None,
+        evidence=[],
+        enabled=False,
+    )
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
+        lambda *a, **k: preset,
+    )
+    monkeypatch.setattr(
+        "microdrama.pipeline.benchmark_authorization.BenchmarkAuthorization.validate_for",
+        lambda *a, **k: None,
+    )
+
+    t0 = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    clock = FakeClock(t0)
+    ids = SequentialIds("at17")
+    settings = _paid_settings()
+    store = FilesystemObjectStore(tmp_path / "at17-objects")
+    budget = BudgetService(db, clock, ids, settings)
+    with db.transaction() as tx:
+        season_id = seed_season(tx)
+        episode_id = seed_episode(tx, season_id, number=1)
+        budget.open_episode_account(
+            tx, season_id=season_id, episode_id=episode_id, policy=CostPolicy()
+        )
+
+    # Real canonical assets behind every sealed port: distinct PNGs for the
+    # image roles and a real PCM WAV for the voice role, each registered with
+    # its exact bytes in the store and a current WORLDWIDE ELIGIBLE rights row.
+    payloads: dict[str, bytes] = {}
+    references, ports = [], []
+    for index, role in enumerate(("character_identity", "outfit", "location", "voice")):
+        data = _at17_png(index) if role != "voice" else make_wav_bytes(1500)
+        digest = sha256_hex(data)
+        asset_id = UUID(int=1700 + index)
+        key = f"at17-inputs/{asset_id}.{'png' if role != 'voice' else 'wav'}"
+        stored = store.put_bytes(
+            key, data, media_type="image/png" if role != "voice" else "audio/wav"
+        )
+        assert stored.sha256 == digest
+        descriptor = AssetDescriptor(
+            asset_id=asset_id,
+            asset_kind=AssetKind.IMAGE if role != "voice" else AssetKind.AUDIO,
+            object_key=key,
+            sha256=digest,
+            size_bytes=stored.size_bytes,
+            media_type="image/png" if role != "voice" else "audio/wav",
+            media=media_info() if role == "voice" else None,
+            state=AssetState.ACCEPTED,
+            provenance=Provenance.ORIGINAL_FIXTURE,
+            episode_id=episode_id,
+            season_id=season_id,
+            created_at=t0,
+        )
+        with db.transaction() as tx:
+            register_asset(tx, descriptor)
+        route = f"at17-rights-{role}"
+        kind = RightsSubjectKind.VOICE if role == "voice" else RightsSubjectKind.REFERENCE
+        grant = {
+            "rights_route_id": route,
+            "subject_kind": kind.value,
+            "subject_ref": "speaker-a",
+            "rights_version": 1,
+            "status": "ELIGIBLE",
+            "territories": ["TH"],
+            "commercial_use": True,
+            "output_release_allowed": True,
+            "expires_at": None,
+            "evidence_sha256": ["e" * 64],
+        }
+        RightsRegistry(db, clock, settings).record(
+            RightsRecord(
+                record_id=UUID(int=1800 + index),
+                rights_route_id=route,
+                version=1,
+                subject_kind=kind,
+                subject_ref="speaker-a",
+                territories=["WORLDWIDE"],
+                commercial_use=True,
+                output_release_allowed=True,
+                required_disclosures=[],
+                expires_at=None,
+                evidence=[
+                    EvidenceRef(
+                        source=EvidenceSource.OFFICIAL_DOCUMENTATION, ref="fixture:at17-rights"
+                    )
+                ],
+                status=RightsStatus.ELIGIBLE,
+                recorded_at=t0,
+            ),
+            source_provenance=Provenance.LIVE_PROVIDER,
+        )
+        payloads[f"{role}"] = data
+        # V2Record.seal computes the canonical content hash of the binding.
+        binding = ShotReferenceBinding.seal(
+            record_id=UUID(int=1900 + index),
+            version=1,
+            created_at=t0 - timedelta(hours=1),
+            updated_at=t0 - timedelta(hours=1),
+            valid_from=t0 - timedelta(hours=1),
+            valid_until=None,
+            role=role,
+            subject_id="speaker-a",
+            asset_id=asset_id,
+            asset_version=1,
+            asset_sha256=digest,
+            rights=grant,
+        )
+        references.append(binding.model_dump(mode="json"))
+        ports.append(
+            {
+                "role": role,
+                "subject_id": "speaker-a",
+                "asset_id": str(asset_id),
+                "asset_version": 1,
+                "asset_sha256": digest,
+                "media_kind": "audio" if role == "voice" else "image",
+                "destination_slot": "ref_audios.ref_audio_0"
+                if role == "voice"
+                else f"ref_images.ref_image_{index}",
+            }
+        )
+    rights_hash = document_sha256(
+        {
+            "rights": [
+                ShotReferenceBinding.model_validate(item).rights.model_dump(mode="json")
+                for item in references
+            ],
+            "territories": ["TH"],
+        }
+    )
+    # The pod serves the captured real runtime schema for the pika template.
+    fixture = json.loads(
+        (
+            Path(__file__).parents[2]
+            / "fixtures/pika_h3_flex_object_info_OFFLINE_FIXTURE_ONLY.json"
+        ).read_text()
+    )
+    raw_schema = fixture["schemas"]
+    schema_bytes = json.dumps(raw_schema).encode()
+    # The native prompt retains the frozen speaker identities: every shot names
+    # exactly the sealed voice anchor's subject.
+    plan = plan_for(
+        episode_id,
+        shots=[
+            {
+                "shot_id": f"S0{i}",
+                "thai_line": "สวัสดี",
+                "english_line": "Hello",
+                "english_prompt": "A street food stall at dusk, warm practical light.",
+                "speaker_subject_ids": ["speaker-a"],
+            }
+            for i in range(1, 9)
+        ],
+    )
+    service = BenchmarkService(db, settings, clock=clock, ids=ids)
+    service.prepare(plan)
+    seal = BenchmarkSeal.model_validate(
+        {
+            "experiment_id": str(plan.experiment_id),
+            "plan_sha256": plan.plan_sha256,
+            "references": references,
+            "port_map": ports,
+            "runtime_profile": {"profile": "fixture"},
+            "image_ref": "registry.example/drama@sha256:" + "b" * 64,
+            "node_schema_sha256": mapped_schema_sha256(raw_schema, PIKA_TEMPLATE.node_classes),
+            "rights_evidence_hash": rights_hash,
+            "schema_evidence": "LIVE_PROVIDER",
+            "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
+            "territories": ["TH"],
+            "eligible_until": (t0 + timedelta(hours=6)).isoformat(),
+            "hard_stop_utc": (t0 + timedelta(hours=4)).isoformat(),
+        }
+    )
+    service.seal(plan.experiment_id, seal)
+    authorization = BenchmarkAuthorization.model_validate(
+        {
+            "operator": "fixture-operator.invalid",
+            "change_ref": "at17-native-inputs",
+            "experiment_id": str(plan.experiment_id),
+            "episode_id": str(plan.episode_id),
+            "plan_sha256": plan.plan_sha256,
+            "sealed_sha256": seal.sealed_sha256,
+            "provider_account_ref": "acct:fixture",
+            "max_new_exposure_micro_usd": 8_000_000,
+            "max_gpu_ms": 14_400_000,
+            "hard_stop_utc": (t0 + timedelta(hours=4)).isoformat(),
+            "allowed_gpu_types": ["NVIDIA A40"],
+            "minimum_host_ram_gb": 64,
+            "max_hourly_micro_usd": 850_000,
+            "max_storage_exposure_micro_usd": 2_000_000,
+            "container_disk_gb": 100,
+            "persistent_volume_gb": 100,
+            "shutdown_reserve_micro_usd": 500_000,
+            "namespace": "benchx",
+            "runpod_credential_ref": "credref:fixture-runpod",
+            "comfy_credential_ref": "credref:fixture-comfy",
+            "rights_evidence_hash": seal.rights_evidence_hash,
+        }
+    )
+    for ref in (authorization.runpod_credential_ref, authorization.comfy_credential_ref):
+        import os as _os
+
+        path = tmp_path / f"{ref.replace(':', '_')}.secret"
+        path.write_text(f"synthetic-{ref}", encoding="utf-8")
+        _os.chmod(path, 0o600)
+        with db.transaction() as tx:
+            tx.execute(
+                "INSERT INTO credential_refs(ref, purpose, provider, store, locator) "
+                "VALUES(%s, 'fixture', 'runpod', 'FILE', %s)",
+                (ref, str(path)),
+            )
+    runpod = _At17RunpodTransport(clock.now)
+    comfy = _At17PodComfyTransport(schema_bytes, corrupt_readback=corrupt_readback)
+
+    def factory(
+        *,
+        experiment_id,
+        budget,
+        authorization=None,
+        quote=None,
+        mode="EXECUTE",
+        acquisition_id=None,
+    ):
+        return build_experiment_world(
+            settings,
+            db,
+            budget,
+            store,
+            experiment_id=experiment_id,
+            authorization=authorization,
+            quote=quote,
+            mode=mode,
+            acquisition_id=acquisition_id,
+            clock=clock,
+            ids=ids,
+            runpod_transport=runpod,
+            comfy_transport=comfy,
+        )
+
+    harness = _At17Harness()
+    harness.db = db
+    harness.settings = settings
+    harness.store = store
+    harness.clock = clock
+    harness.ids = ids
+    harness.plan = plan
+    harness.seal = seal
+    harness.authorization = authorization
+    harness.quote = _at4_quote(clock)
+    harness.payloads = payloads
+    harness.runpod = runpod
+    harness.comfy = comfy
+    harness.factory = factory
+    harness.service = BenchmarkService(db, settings, clock=clock, ids=ids, world_factory=factory)
+    return harness
+
+
+def _at17_resume(harness, *, limit=24):
+    """Drive public resume until the first prompt operation exists (or the
+    limit hits), one dispatch step per call."""
+    last = None
+    for _ in range(limit):
+        last = harness.service.resume(
+            harness.plan.experiment_id,
+            authorization=harness.authorization,
+            quote=harness.quote,
+            expected_sha256=harness.authorization.authorization_sha256,
+            phase="screen",
+        )
+        with harness.db.transaction(readonly=True) as tx:
+            operation = tx.fetchone(
+                "SELECT o.id FROM provider_operations o JOIN benchmark_samples s "
+                "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s",
+                (harness.plan.experiment_id,),
+            )
+        if operation is not None:
+            return last
+        harness.clock.advance(seconds=1)
+    return last
+
+
+def test_at17_upload_ambiguity_readback_verifies_and_never_reposts(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    harness = _at17_compose(db, tmp_path, monkeypatch)
+    plan = harness.plan
+
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    # §5.1: the upload ambiguity is classified as such - the experiment needs
+    # reconciliation, the acquisition stays ACTIVE, the intent stays open and
+    # NO prompt operation was invented.
+    assert first["execution_state"] == "NEEDS_RECONCILIATION"
+    assert first["acquisitions"][0]["state"] == "ACTIVE"
+    with db.transaction(readonly=True) as tx:
+        open_uploads = tx.fetchall(
+            "SELECT state FROM benchmark_uploads WHERE acquisition_id=%s",
+            (first["acquisitions"][0]["acquisition_id"],),
+        )
+        operations = tx.fetchall(
+            "SELECT o.id FROM provider_operations o JOIN benchmark_samples s "
+            "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    assert open_uploads and all(row["state"] == "UNKNOWN" for row in open_uploads)
+    assert operations == []  # no prompt operation exists (§5.1)
+    assert harness.comfy.upload_posts == 1  # the first port POSTed once, then died
+
+    # §5.3 recovery: every open intent reconciles ONLY by checksum readback.
+    final = _at17_resume(harness)
+    assert final is not None and final["execution_state"] != "NEEDS_RECONCILIATION", final[
+        "execution_state"
+    ]
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT state, verified_readback_sha256 FROM benchmark_uploads WHERE acquisition_id=%s",
+            (first["acquisitions"][0]["acquisition_id"],),
+        )
+        operation = tx.fetchone(
+            "SELECT o.id, o.state, o.external_id FROM provider_operations o "
+            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+            "WHERE s.experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    assert len(rows) == 4 and all(row["state"] == "VERIFIED" for row in rows)
+    assert all(row["verified_readback_sha256"] for row in rows)
+    # Exactly one prompt operation now exists (dispatch continued after the
+    # readbacks) and it was never invented during the ambiguity.
+    assert operation is not None and operation["state"] == "SUBMITTED"
+    assert operation["external_id"]
+    # §5.3/I1: four upload intents, exactly four upload POSTs - never a second
+    # POST for any intent; readbacks served every recovery; one prompt POST.
+    assert harness.comfy.upload_posts == 4
+    assert len(harness.comfy.view_gets) >= 4
+    assert harness.comfy.prompt_posts == 1
+    assert sum(1 for method, _ in harness.runpod.calls if method == "POST") == 1
+
+
+def test_at17b_unverifiable_readback_blocks_every_dependent_sample(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from microdrama.rendering.benchmark_experiments import blocking, unresolved_items
+
+    harness = _at17_compose(db, tmp_path, monkeypatch, corrupt_readback=True)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+
+    # The readback cannot verify: U3u stays open and blocks every dependent
+    # sample (acquisition-scoped), across repeated fresh-process resumes.
+    for _ in range(3):
+        status = harness.service.resume(
+            plan.experiment_id,
+            authorization=harness.authorization,
+            quote=harness.quote,
+            expected_sha256=harness.authorization.authorization_sha256,
+            phase="screen",
+        )
+        harness.clock.advance(seconds=1)
+    assert status["execution_state"] == "NEEDS_RECONCILIATION"
+    blockers = status["admission"]["blockers"]
+    assert any("U3u" in blocker for blocker in blockers), blockers
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT state FROM benchmark_uploads WHERE acquisition_id=%s", (acquisition_id,)
+        )
+        operations = tx.fetchall(
+            "SELECT o.id FROM provider_operations o JOIN benchmark_samples s "
+            "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s",
+            (plan.experiment_id,),
+        )
+        items = unresolved_items(tx, plan.experiment_id, now=harness.clock.now())
+    assert rows and all(row["state"] == "UNKNOWN" for row in rows)
+    assert operations == []  # no prompt was dispatched while blocked
+    assert any(item.kind == "U3u" for item in blocking(items, "claims"))
+    # Never a second upload POST for the open intent (I1).
+    assert harness.comfy.upload_posts == 1
+    assert harness.comfy.prompt_posts == 0
+
+
+def test_at17d_expired_hold_input_readback_allowed_in_recovery_r4(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from microdrama.budget import BudgetService
+
+    harness = _at17_compose(db, tmp_path, monkeypatch)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+    with db.transaction(readonly=True) as tx:
+        reservation_id = tx.fetchval(
+            "SELECT s.reservation_id FROM benchmark_samples s WHERE s.experiment_id=%s "
+            "AND s.sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+
+    # AT-20's extension: expire_stale() moves the sample's hold to EXPIRED
+    # with exposure retained while the upload intent is still open and NO
+    # prompt operation exists.
+    harness.clock.advance(seconds=601)
+    BudgetService(harness.db, harness.clock, harness.ids, harness.settings).expire_stale()
+    with db.transaction(readonly=True) as tx:
+        state = tx.fetchval("SELECT state FROM reservations WHERE id=%s", (reservation_id,))
+    assert state == "EXPIRED"
+
+    # §3.3/R4: the input readback is authorised in RECOVERY through the
+    # durable upload-intent linkage (experiment/acquisition/reservation/job/pod
+    # + intent), with no prompt operation to link through.
+    uploads_before = harness.comfy.upload_posts
+    status = harness.service.reconcile(plan.experiment_id)
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT state, verified_readback_sha256 FROM benchmark_uploads WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    assert rows and all(row["state"] == "VERIFIED" for row in rows)
+    assert all(row["verified_readback_sha256"] for row in rows)
+    assert harness.comfy.upload_posts == uploads_before  # never a second POST
+    assert harness.comfy.prompt_posts == 0  # no prompt operation appeared
+    assert status["execution_state"] != "NEEDS_RECONCILIATION"
+
+
+def test_at17e_wrong_owner_and_wrong_mode_refusals(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from microdrama.contracts.errors import EffectDenied
+    from microdrama.contracts.hashing import sha256_hex
+    from microdrama.rendering.benchmark_experiments import ExperimentBudgetService
+    from microdrama.rendering.pika_transport import upload_key_for
+
+    harness = _at17_compose(db, tmp_path, monkeypatch)
+    plan = harness.plan
+    first = harness.service.execute(
+        plan.experiment_id,
+        phase="screen",
+        authorization=harness.authorization,
+        quote=harness.quote,
+        expected_sha256=harness.authorization.authorization_sha256,
+    )
+    acquisition_id = first["acquisitions"][0]["acquisition_id"]
+    with db.transaction(readonly=True) as tx:
+        sample = tx.fetchone(
+            "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    digest = sha256_hex(harness.payloads["character_identity"])
+    key = upload_key_for(plan.experiment_id, acquisition_id, digest, "image")
+
+    def world_budget():
+        return ExperimentBudgetService(
+            db, harness.clock, harness.ids, harness.settings, experiment_id=plan.experiment_id
+        )
+
+    execute_client = harness.factory(
+        experiment_id=plan.experiment_id,
+        budget=world_budget(),
+        authorization=harness.authorization,
+        quote=harness.quote,
+    ).comfy._client
+    execute_client.bind_pod_endpoint("pod-at17-1", "https://pod-at17-1-8188.proxy.runpod.net")
+    # Wrong owner: a scope naming a foreign job never reaches the transport.
+    with execute_client.authorization_scope(
+        reservation_id=sample["reservation_id"],
+        episode_id=plan.episode_id,
+        job_id=UUID(int=999999),
+        operation_id=None,
+    ):
+        with pytest.raises(EffectDenied):
+            execute_client.reconcile_input(expected_sha256=digest, upload_key=key)
+    posts_before = harness.comfy.upload_posts
+
+    # Wrong mode: a RECOVERY world never uploads and never dispatches prompts,
+    # even scoped exactly like the original send (I5).
+    recovery = harness.factory(
+        experiment_id=plan.experiment_id,
+        budget=world_budget(),
+        authorization=None,
+        quote=None,
+        mode="RECOVERY",
+        acquisition_id=acquisition_id,
+    )
+    recovery_client = recovery.comfy._client
+    recovery_client.bind_pod_endpoint("pod-at17-1", "https://pod-at17-1-8188.proxy.runpod.net")
+    with recovery_client.authorization_scope(
+        reservation_id=sample["reservation_id"],
+        episode_id=plan.episode_id,
+        job_id=sample["job_id"],
+        operation_id=None,
+    ):
+        with pytest.raises(EffectDenied, match="recovery world cannot upload"):
+            recovery_client.upload_input(
+                harness.payloads["character_identity"], "image", digest, key
+            )
+        with pytest.raises(EffectDenied):
+            recovery_client.queue_prompt(_valid_fake_graph(), client_id="at17e")
+    assert harness.comfy.upload_posts == posts_before
+    assert harness.comfy.prompt_posts == 0
