@@ -191,6 +191,13 @@ class FakeComfyClient(FakeBase):
         super().__init__(clock=state.clock, ids=SequentialIds("comfy"), scenarios=scenarios)
         self.state = state
         self.provenance = Provenance.FAKE_SYNTHETIC
+        # H-1 (2026-11-10, GLM harness review): the REAL two-argument signature,
+        # so the default acquire path is exercised against fakes too - a fake
+        # server accepts its fake endpoint, but the signature can never drift.
+        self.bound_pod_endpoint: tuple[str, str | None] | None = None
+
+    def bind_pod_endpoint(self, pod_id: str, endpoint_url: str | None) -> None:
+        self.bound_pod_endpoint = (pod_id, endpoint_url)
 
     def object_info(self) -> dict[str, ComfyNodeInfo]:
         self._note("object_info")

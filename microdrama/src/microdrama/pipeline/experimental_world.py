@@ -143,11 +143,16 @@ class CanonicalExperimentWorld:
 
     def acquire(self, acquisition: dict) -> Any:
         handle = self.leases.ensure_pod(acquisition["lease_id"])
-        if hasattr(self.comfy._client, "bind_pod_endpoint"):
-            pod = self.leases._manager.get(handle.lease.pod_id)
-            if pod is None:
-                raise NeedsReconciliation("owned acquired pod disappeared before endpoint binding")
-            self.comfy._client.bind_pod_endpoint(pod)
+        # H-1 (2026-11-10, GLM harness review): the live client MUST bind - the
+        # hasattr guard hid a signature drift (one-arg call vs the real
+        # (pod_id, endpoint_url)) that crashed every default live execution
+        # after the paid pod was already created. A client without the method
+        # now fails loudly instead of silently skipping the binding that gates
+        # every later authenticated call.
+        pod = self.leases._manager.get(handle.lease.pod_id)
+        if pod is None:
+            raise NeedsReconciliation("owned acquired pod disappeared before endpoint binding")
+        self.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
         return handle
 
     def prompt_reservation(self, exp: dict, sample: dict) -> BudgetReservationRequest:
