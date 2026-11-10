@@ -36,6 +36,7 @@ from microdrama.contracts.providers import PodCreateRequest, PodInfo
 from microdrama.rendering.diagnostics import (
     DIAGNOSTIC_READ_LIMIT,
     bound_request_timeout,
+    collect_body_secrets,
     safe_diagnostic,
     uncertainty_cause,
 )
@@ -278,7 +279,16 @@ class RunpodRestProvider:
                 "Runpod API temporarily unavailable", status=response.status
             )
         if response.status < 200 or response.status >= 300:
-            detail = safe_diagnostic(response.body[:DIAGNOSTIC_READ_LIMIT], headers)
+            # CN2-2 (2026-11-10, re-review round 2): the redaction context is
+            # every resolved credential THIS request carries - the header
+            # credentials and any secret the body bears (the create payload's
+            # env carries the Comfy gateway token) - so an unlabelled echo of
+            # either in the rejection body cannot survive into the message.
+            detail = safe_diagnostic(
+                response.body[:DIAGNOSTIC_READ_LIMIT],
+                headers,
+                extra_secrets=collect_body_secrets(body),
+            )
             raise ProviderError(
                 f"Runpod rejected request: HTTP {response.status} {detail}".strip(),
                 status=response.status,

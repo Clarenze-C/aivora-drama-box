@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -296,6 +297,44 @@ def test_create_pod_sets_the_gateway_token_env_from_the_credential_ref(
     assert seen[0].get("env") == {"MICRODRAMA_COMFY_TOKEN": "synthetic-gateway-token"}
     captured = capsys.readouterr()
     assert "synthetic-gateway-token" not in captured.out + captured.err
+
+
+def test_create_rejection_never_reflects_the_body_borne_comfy_token(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CN2-2 (2026-11-10, re-review round 2): the create payload carries the
+    resolved Comfy gateway token in its env. Both Runpod sanitization passes
+    knew only the request headers, so an unlabelled echo of that different
+    credential in a rejection body survived into the exception, its formatted
+    traceback and stderr - and from there into persisted run records. Every
+    resolved credential the request carries (headers AND body env values) is
+    redaction context for that request's diagnostics."""
+    import traceback
+
+    echoed = b'{"detail": "invalid environment value synthetic-new-comfy-token"}'
+
+    def handler(method: str, url: str, body: bytes | None) -> Response:
+        if method == "POST":
+            return Response(400, echoed)
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(
+        ScriptedTransport(handler), comfy_token_provider=lambda: "synthetic-new-comfy-token"
+    )
+    with pytest.raises(ProviderError) as caught:
+        provider.create_pod(_request())
+    message = str(caught.value)
+    assert "HTTP 400" in message
+    assert "synthetic-new-comfy-token" not in message
+    # The exception's whole formatted traceback is what a worker prints and a
+    # run record can persist; the reflected token must be absent there too.
+    formatted = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    assert "synthetic-new-comfy-token" not in formatted
+    print(message, file=sys.stderr)
+    captured = capsys.readouterr()
+    assert "synthetic-new-comfy-token" not in captured.out + captured.err
 
 
 def test_create_refuses_when_the_gateway_token_does_not_resolve() -> None:

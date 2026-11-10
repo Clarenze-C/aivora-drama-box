@@ -3,7 +3,8 @@
 import errno
 import re
 import socket
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
+from typing import Any
 from contextvars import ContextVar, Token
 from datetime import datetime
 
@@ -36,8 +37,39 @@ _SIGNED_QUERY = re.compile(
 )
 
 
-def safe_diagnostic(value: bytes | str, headers: Mapping[str, str]) -> str:
-    """Redact before truncating; never consult environment or credential files."""
+def collect_body_secrets(body: Any) -> tuple[str, ...]:
+    """CN2-2 (2026-11-10, re-review round 2): every resolved credential the
+    request BODY carries - a nonempty string under a secret-shaped JSON key, at
+    any depth - is redaction context for that request's diagnostics. The Runpod
+    create payload's env carries the Comfy gateway token under
+    ``MICRODRAMA_COMFY_TOKEN``; a provider rejection can echo it back unlabelled,
+    where header-only redaction cannot catch it."""
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, Mapping):
+            for key, value in node.items():
+                if isinstance(value, str) and value and _SENSITIVE.search(str(key)):
+                    found.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+
+    walk(body)
+    return tuple(found)
+
+
+def safe_diagnostic(
+    value: bytes | str, headers: Mapping[str, str], *, extra_secrets: Collection[str] = ()
+) -> str:
+    """Redact before truncating; never consult environment or credential files.
+
+    The redaction context is every resolved credential the request carries: the
+    sensitive header values AND any body-borne secrets the caller resolved
+    (``collect_body_secrets``), so a provider echoing either one back - even
+    unlabelled - cannot disclose it."""
     text = value[:DIAGNOSTIC_READ_LIMIT]
     text = text.decode("utf-8", "replace") if isinstance(text, bytes) else text
     secrets = set()
@@ -46,6 +78,7 @@ def safe_diagnostic(value: bytes | str, headers: Mapping[str, str]) -> str:
             secrets.add(raw)
             if raw.lower().startswith(("bearer ", "basic ")):
                 secrets.add(raw.split(" ", 1)[1])
+    secrets.update(secret for secret in extra_secrets if secret)
     for secret in sorted(filter(None, secrets), key=len, reverse=True):
         text = text.replace(secret, "[REDACTED]")
         # A bounded read may end halfway through a reflected known credential.
