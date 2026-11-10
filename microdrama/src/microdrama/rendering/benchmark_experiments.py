@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -16,6 +17,354 @@ from microdrama.persistence.db import Database, Tx, jsonb
 
 SCREEN_IDS = ("S01-R1", "S03-R1", "S07-R1")
 TERMINAL_SAMPLES = {"SUCCEEDED", "FAILED"}
+
+TERMINAL_LEASE_STATES = ("RELEASED", "EXPIRED", "ORPHANED")
+TERMINAL_OPERATION_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "NOT_FOUND")
+
+
+@dataclass(frozen=True)
+class UnresolvedItem:
+    """One blocking or replayable item derived from canonical records (spec §4.1).
+
+    Derived only through immutable linkage - the acquisition's COMPUTE/STORAGE
+    reservation and lease, each sample's fixed ``:a1`` reservation and its job
+    and operation, the durable upload intents and the podless-create
+    resolutions - never from a benchmark state label alone.
+    """
+
+    kind: str  # U1, U2, U3, U3p, U3u, U4, U5, U6
+    experiment_id: UUID
+    detail: str
+    acquisition_id: UUID | None = None
+    sample_id: str | None = None
+    reservation_id: UUID | None = None
+    operation_id: UUID | None = None
+    lease_id: UUID | None = None
+
+    def describe(self) -> str:
+        target = self.sample_id or (str(self.acquisition_id) if self.acquisition_id else "-")
+        return f"{self.kind}({target}): {self.detail}"
+
+
+# Blocking scopes (spec §4.1 R2). Actions: "admission" (a new acquisition
+# generation), "claims" (admitting the next sample), "dispatch" (sending a
+# create, upload or prompt effect). U6 never appears here: it gates only the
+# effect on its own item until local replay repairs it (§4.1/SC2-1), so
+# callers evaluate U6 item-wise, never as a blanket block.
+BLOCKING_SCOPES: dict[str, frozenset[str]] = {
+    "U1": frozenset({"admission", "claims", "dispatch"}),
+    # U2 blocks admission of the NEXT acquisition and any dispatch on its own
+    # acquisition - never claims on a healthy one (SC-2).
+    "U2": frozenset({"admission", "dispatch"}),
+    "U3": frozenset({"admission", "claims", "dispatch"}),
+    # In-flight work is polled by recovery, not blocked: U3p stops fresh
+    # admission only, until the existing work is recovered and finalised (R2).
+    "U3p": frozenset({"admission", "claims"}),
+    # Upload uncertainty is acquisition-scoped for the dependent samples, but
+    # blocks fresh admission across the whole experiment (R2 bullet 1).
+    "U3u": frozenset({"admission", "claims", "dispatch"}),
+    "U4": frozenset({"admission", "claims"}),
+    "U5": frozenset({"admission", "claims", "dispatch"}),
+    "U6": frozenset(),
+}
+
+# Kinds whose block applies only to the named acquisition for that action.
+# Admission is deliberately absent: U2 blocks the NEXT acquisition whatever it
+# is, and U3u/U1/U3/U5 block new generation experiment-wide.
+ACQUISITION_SCOPED: dict[str, frozenset[str]] = {
+    "claims": frozenset({"U3u"}),
+    "dispatch": frozenset({"U2", "U3u"}),
+    "admission": frozenset(),
+}
+
+
+def blocking(
+    items: list[UnresolvedItem],
+    action: str,
+    *,
+    acquisition_id: UUID | None = None,
+    sample_id: str | None = None,
+) -> list[UnresolvedItem]:
+    """The items that block ``action`` ("admission"/"claims"/"dispatch").
+
+    ``sample_id`` never narrows a block: the dispatch slot already serialises
+    one in-flight sample; it is accepted for call-site symmetry and ignored.
+    """
+    result: list[UnresolvedItem] = []
+    for item in items:
+        if action not in BLOCKING_SCOPES.get(item.kind, frozenset()):
+            continue
+        if (
+            item.kind in ACQUISITION_SCOPED.get(action, frozenset())
+            and acquisition_id is not None
+            and item.acquisition_id != acquisition_id
+        ):
+            continue
+        result.append(item)
+    return result
+
+
+def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[UnresolvedItem]:
+    """Every unresolved item, derived from canonical lease/reservation/
+    operation/upload rows (spec §4.1). One repository function used by every
+    caller. ``now`` comes from the caller's clock so the sweep and every gate
+    agree on time; no label is trusted where a canonical predicate exists.
+    """
+    items: list[UnresolvedItem] = []
+    acquisitions = tx.fetchall(
+        "SELECT a.*, l.lease_state, l.pod_id, l.create_requested_at, "
+        "l.terminate_verified_at FROM benchmark_acquisitions a "
+        "LEFT JOIN pod_leases l ON l.id=a.lease_id WHERE a.experiment_id=%s "
+        "ORDER BY generation",
+        (experiment_id,),
+    )
+    outcome = tx.fetchval(
+        "SELECT execution_outcome FROM benchmark_experiments WHERE experiment_id=%s",
+        (experiment_id,),
+    )
+    samples = tx.fetchall(
+        "SELECT s.sample_id, s.state, s.job_id, s.operation_id, s.reservation_id, "
+        "s.acquisition_id, s.output FROM benchmark_samples s WHERE s.experiment_id=%s "
+        "AND s.reservation_id IS NOT NULL ORDER BY s.sample_id",
+        (experiment_id,),
+    )
+    operations: dict[UUID, list[dict[str, Any]]] = {}
+    for row in tx.fetchall(
+        "SELECT o.id, o.state, o.reservation_id FROM provider_operations o "
+        "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+        "WHERE s.experiment_id=%s ORDER BY o.id",
+        (experiment_id,),
+    ):
+        operations.setdefault(row["reservation_id"], []).append(row)
+    open_uploads = {
+        row["acquisition_id"]: row["open"]
+        for row in tx.fetchall(
+            "SELECT u.acquisition_id, COUNT(*) AS open FROM benchmark_uploads u "
+            "JOIN benchmark_acquisitions a ON a.acquisition_id=u.acquisition_id "
+            "WHERE a.experiment_id=%s AND u.state IN ('INTENT','UNKNOWN') "
+            "GROUP BY u.acquisition_id",
+            (experiment_id,),
+        )
+    }
+    storage_open = {
+        row["acquisition_id"]: row["open"]
+        for row in tx.fetchall(
+            "SELECT l.acquisition_id, COUNT(*) AS open FROM benchmark_reservation_links l "
+            "JOIN reservations r ON r.id=l.reservation_id "
+            "WHERE l.experiment_id=%s AND l.purpose='STORAGE' AND r.state='ACTIVE' "
+            "GROUP BY l.acquisition_id",
+            (experiment_id,),
+        )
+    }
+    reservation_states = {
+        row["id"]: row["state"]
+        for row in tx.fetchall(
+            "SELECT r.id, r.state FROM reservations r JOIN benchmark_samples s "
+            "ON s.reservation_id=r.id WHERE s.experiment_id=%s",
+            (experiment_id,),
+        )
+    }
+    slot_sample = tx.fetchval(
+        "SELECT sample_id FROM benchmark_dispatch_slots WHERE experiment_id=%s",
+        (experiment_id,),
+    )
+
+    # ---- per-acquisition create liability (U1, U5) --------------------------
+    # ambiguity per acquisition, reused by U2's deadline clause (SC2-2): an
+    # unresolved create, submit or upload uncertainty on that acquisition.
+    ambiguous_acquisition: set[UUID] = set()
+    for row in acquisitions:
+        if row["lease_id"] is None:
+            continue
+        resolution = tx.fetchone(
+            "SELECT contradicted_at IS NOT NULL AS contradicted, contradicted_pod_id "
+            "FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+            (row["lease_id"],),
+        )
+        if row["create_requested_at"] is not None and row["pod_id"] is None and resolution is None:
+            # U1 - create uncertain: committed create intent, no pod, and no
+            # resolution (positive adoption binds pod_id; audited NO_CREATE_PROVEN
+            # writes the resolution row). Independent of the acquisition label.
+            ambiguous_acquisition.add(row["acquisition_id"])
+            items.append(
+                UnresolvedItem(
+                    kind="U1",
+                    experiment_id=experiment_id,
+                    acquisition_id=row["acquisition_id"],
+                    lease_id=row["lease_id"],
+                    detail="committed podless create intent without resolution",
+                )
+            )
+        if resolution is not None and resolution["contradicted"]:
+            ownership_open = tx.fetchval(
+                "SELECT 1 FROM pod_storage_ownership WHERE pod_id=%s AND valid_until IS NULL",
+                (resolution["contradicted_pod_id"],),
+            )
+            if row["terminate_verified_at"] is None or ownership_open:
+                # U5 - reopened liability: the no-create attestation was
+                # contradicted by a later pod binding and the discovered
+                # resource is not final yet (terminate verified, ownership
+                # closed; billing follows the verified termination). Historical
+                # contradicted_at alone does not block after finalization.
+                items.append(
+                    UnresolvedItem(
+                        kind="U5",
+                        experiment_id=experiment_id,
+                        acquisition_id=row["acquisition_id"],
+                        lease_id=row["lease_id"],
+                        detail="contradicted no-create resolution with an unfinalized pod",
+                    )
+                )
+
+    # ---- per-sample operation linkage (U3, U3p, U4, U6-sample) --------------
+    for sample in samples:
+        ops = operations.get(sample["reservation_id"], [])
+        if not ops:
+            if sample["state"] == "CLAIMED" and sample["job_id"] is None:
+                # U6 - a claim and hold committed without job or operation
+                # (§F ADMITTED_WITHOUT_JOB at sample level). Local-only: replay
+                # materializes and adopts; it never blocks other work.
+                items.append(
+                    UnresolvedItem(
+                        kind="U6",
+                        experiment_id=experiment_id,
+                        acquisition_id=sample["acquisition_id"],
+                        sample_id=sample["sample_id"],
+                        reservation_id=sample["reservation_id"],
+                        detail="sample claim+hold committed without job/operation",
+                    )
+                )
+            continue
+        states = {operation["state"] for operation in ops}
+        uncertain = states & {"UNKNOWN", "PENDING_SUBMIT"}
+        in_flight = states & {"SUBMITTED", "RUNNING"}
+        if uncertain:
+            # U3 - submit uncertain. PENDING_SUBMIT always counts: a durable
+            # pre-dispatch refusal transitions the operation to FAILED before
+            # any send could be accepted, so a still-pending operation has no
+            # refusal proof (I2: PENDING_SUBMIT alone proves nothing).
+            if states & {"UNKNOWN", "PENDING_SUBMIT"}:
+                ambiguous_acquisition.add(sample["acquisition_id"])
+            items.append(
+                UnresolvedItem(
+                    kind="U3",
+                    experiment_id=experiment_id,
+                    acquisition_id=sample["acquisition_id"],
+                    sample_id=sample["sample_id"],
+                    reservation_id=sample["reservation_id"],
+                    detail=f"operation {','.join(sorted(uncertain))} without a proven outcome",
+                )
+            )
+        elif in_flight:
+            # U3p - known in flight: recovery adopts the linkage and polls it
+            # before any other sample or acquisition may start (R2).
+            items.append(
+                UnresolvedItem(
+                    kind="U3p",
+                    experiment_id=experiment_id,
+                    acquisition_id=sample["acquisition_id"],
+                    sample_id=sample["sample_id"],
+                    reservation_id=sample["reservation_id"],
+                    detail=f"operation {','.join(sorted(in_flight))} in flight",
+                )
+            )
+        else:
+            terminal = states & set(TERMINAL_OPERATION_STATES)
+            projected = sample["state"] in TERMINAL_SAMPLES
+            slot_held = slot_sample is not None and slot_sample == sample["sample_id"]
+            settled = reservation_states.get(sample["reservation_id"]) in ("SETTLED", "RELEASED")
+            output_missing = any(
+                operation["state"] == "SUCCEEDED" and not (sample["output"] or {}).get("sha256")
+                for operation in ops
+                if operation["state"] == "SUCCEEDED"
+            )
+            if terminal and (not projected or slot_held or not settled or output_missing):
+                # U4 - terminal operation whose settlement/release, projection
+                # or dispatch slot is not final yet (§7.1 finalize_terminal).
+                items.append(
+                    UnresolvedItem(
+                        kind="U4",
+                        experiment_id=experiment_id,
+                        acquisition_id=sample["acquisition_id"],
+                        sample_id=sample["sample_id"],
+                        reservation_id=sample["reservation_id"],
+                        detail="terminal operation not fully finalized/projected",
+                    )
+                )
+
+    # ---- upload uncertainty (U3u), acquisition-scoped (R2) ------------------
+    for acquisition_id, count in open_uploads.items():
+        ambiguous_acquisition.add(acquisition_id)
+        items.append(
+            UnresolvedItem(
+                kind="U3u",
+                experiment_id=experiment_id,
+                acquisition_id=acquisition_id,
+                detail=f"{count} upload intent(s) without checksum-verified readback",
+            )
+        )
+
+    # ---- cleanup owed (U2) --------------------------------------------------
+    for row in acquisitions:
+        if row["state"] == "CLOSED":
+            continue
+        reasons: list[str] = []
+        if row["state"] == "CLEANUP_PENDING":
+            reasons.append("cleanup pending")
+        if row["state"] == "NO_CREATE_PROVEN" and storage_open.get(row["acquisition_id"], 0):
+            # R1: the partial unique index excludes NO_CREATE_PROVEN, but that
+            # never authorizes the next acquisition - the original STORAGE
+            # reservation must be canonically finalized first.
+            reasons.append("resolved no-create storage hold not yet finalized (R1)")
+        if row["state"] == "NO_CREATE_PROVEN" and row["lease_state"] in (
+            "CLAIMED",
+            "ACTIVE",
+            "TRANSFERRING",
+        ):
+            # The proven-no-create lease is still live: cleanup is required (the
+            # canonical podless close must run before any new lease may exist).
+            reasons.append("resolved no-create lease still awaits its canonical close")
+        if row["state"] != "NO_CREATE_PROVEN":
+            if row["lease_state"] in TERMINAL_LEASE_STATES or row["terminate_verified_at"]:
+                reasons.append("terminal lease awaits acquisition finalization")
+            if outcome is not None:
+                reasons.append("experiment outcome set; cleanup owed")
+        deadline = row["recovery_deadline"]
+        if (
+            deadline is not None
+            and now >= deadline
+            and row["acquisition_id"] in ambiguous_acquisition
+        ):
+            # SC2-2: the deadline only bites while an ambiguity on THIS
+            # acquisition remains unresolved; a recovered episode's historical
+            # deadline never blocks later healthy work.
+            reasons.append("recovery deadline passed with an unresolved ambiguity")
+        if reasons:
+            items.append(
+                UnresolvedItem(
+                    kind="U2",
+                    experiment_id=experiment_id,
+                    acquisition_id=row["acquisition_id"],
+                    lease_id=row["lease_id"],
+                    detail="; ".join(reasons),
+                )
+            )
+
+    # ---- acquisition materialization (U6) -----------------------------------
+    for row in acquisitions:
+        if row["lease_id"] is None and row["state"] not in ("CLOSED", "NO_CREATE_PROVEN"):
+            # §F ADMITTED_WITHOUT_JOB: intent and holds are committed, the
+            # canonical lease/job links are not. Replay is local; U6 never
+            # blocks other work (SC2-1).
+            items.append(
+                UnresolvedItem(
+                    kind="U6",
+                    experiment_id=experiment_id,
+                    acquisition_id=row["acquisition_id"],
+                    detail="acquisition intent+holds committed without lease/job links",
+                )
+            )
+    return items
 
 
 def document(value: Any) -> dict[str, Any]:
@@ -212,6 +561,82 @@ class ExperimentBudgetService(BudgetService):
             if current["committed"] + floor > acct.cap:
                 raise BudgetExhausted("episode allowance must retain cleanup floor")
         return result
+
+    def settle_expired_unused_hold(self, reservation_id: UUID, *, reason: str) -> bool:
+        """§4.1 U6/§F: zero-settle an EXPIRED hold whose effect never dispatched.
+
+        An expired pre-effect intent that cannot be materialized closes only its
+        positively unused liability: no lease, job or provider operation was ever
+        begun under the hold, so the canonical settlement is the deterministic
+        zero-charge receipt (never a release - an EXPIRED hold keeps its
+        exposure until settled). Idempotent: a hold that is settled, released,
+        ACTIVE or absent is a no-op returning False. The caller proves under the
+        §6.1 locks that nothing was dispatched.
+        """
+        from uuid import uuid5
+
+        from microdrama.budget import policy
+        from microdrama.contracts.cost import ReceiptKind, UsageReceipt
+        from microdrama.contracts.enums import BudgetCategory, CostBasis, PriceUnit, Provenance
+        from microdrama.core.events import append_event
+        from microdrama.rendering.leases import RENDERING_NAMESPACE
+
+        with self._db.transaction(readonly=True) as tx:
+            reservation = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (reservation_id,))
+        if reservation is None or reservation["state"] != "EXPIRED":
+            return False
+        now = self._now()
+        provenance = (
+            Provenance.FAKE_SYNTHETIC
+            if self._settings.is_offline_mock
+            else Provenance.LIVE_PROVIDER
+        )
+        receipt = UsageReceipt(
+            receipt_id=uuid5(RENDERING_NAMESPACE, f"bench-settle-unused:{reservation_id}"),
+            provider=reservation["provider"],
+            provider_receipt_id=f"bench-settle-unused:{reservation_id}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=(
+                CostBasis.SYNTHETIC_FAKE
+                if provenance is Provenance.FAKE_SYNTHETIC
+                else CostBasis.BILLED
+            ),
+            reservation_id=reservation_id,
+            episode_id=reservation["episode_id"],
+            season_id=None,
+            job_id=None,
+            category=BudgetCategory(reservation["category"]),
+            amount_micro_usd=0,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            # An undispatched hold measures no interval; leaving both None also
+            # never mixes the caller's clock with DB-stamped times.
+            interval_start=None,
+            interval_end=None,
+            observed_at=now,
+            provenance=provenance,
+        )
+        policy.check_receipt_admissible(receipt, self._settings)
+        with self._db.transaction() as tx:
+            result = self.record_usage_in_transaction(tx, receipt)
+            if not result.replayed:
+                append_event(
+                    tx,
+                    aggregate_type="prompt_hold",
+                    aggregate_id=uuid5(
+                        RENDERING_NAMESPACE, f"bench-settle-unused:{reservation_id}"
+                    ),
+                    event_type="prompt_hold.zero_settled",
+                    payload={
+                        "reason": reason,
+                        "reservation_id": str(reservation_id),
+                        "amount_micro_usd": 0,
+                    },
+                    correlation_id=reservation_id,
+                    occurred_at=now,
+                )
+        return True
 
 
 class BenchmarkRepository:

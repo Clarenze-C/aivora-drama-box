@@ -189,6 +189,36 @@ def _authorization_pair(world, plan, tmp_path, *, change="fixture-change-1"):
     return seal, authorization, digest, raw
 
 
+def _drive_resume(db, world, comfy, adapter, plan, authorization, digest, raw, *, phase, limit):
+    """Loop public resume() (fresh service each step).
+
+    §4.2: a fresh process continues work through resume - recovery polls the
+    in-flight operation (U3p) before admission is allowed again, so plain
+    execute() correctly refuses once anything is in flight.
+    """
+    last = None
+    with _PatchedPolicy():
+        for _ in range(limit):
+            service = _execute_service(db, comfy, world.ids, adapter)
+            last = service.resume(
+                plan.experiment_id,
+                authorization=authorization,
+                quote=_screen_quote(world),
+                expected_sha256=digest,
+                phase=phase,
+                source_bytes=raw,
+            )
+            comfy.clock.advance(seconds=1)
+            if last["execution_state"] in (
+                "SCREEN_REVIEW",
+                "COMPUTE_COMPLETE",
+                "FAILED",
+                "NEEDS_RECONCILIATION",
+            ):
+                return last
+    return last
+
+
 def _drive_execute(db, world, comfy, adapter, plan, authorization, digest, raw, *, phase, limit):
     """Loop public execute() (fresh service each step) one dispatch step per call."""
     last = None
@@ -367,7 +397,7 @@ def test_at23_provenance_bytes_sha_and_per_acquisition_recovery(db: Database, tm
         request_factory=request_factory,
     )
 
-    state = _drive_execute(
+    state = _drive_resume(
         db,
         world,
         comfy,
@@ -395,7 +425,7 @@ def test_at23_provenance_bytes_sha_and_per_acquisition_recovery(db: Database, tm
             "rubric_version": "offline-fixture",
         },
     )
-    state = _drive_execute(
+    state = _drive_resume(
         db,
         world,
         comfy,
@@ -548,6 +578,32 @@ def test_at20_expired_liability_retained_readable_and_settled(db: Database, tmp_
         settled = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (slot["reservation_id"],))
     assert settled["state"] == "SETTLED"
     final = service.status(plan.experiment_id)["exposure"]
+    with world.db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT r.id, r.semantic_key, r.state, r.reserved_micro_usd, r.accrued_micro_usd, "
+            "r.settled_micro_usd FROM reservations r JOIN benchmark_reservation_links l "
+            "ON l.reservation_id=r.id WHERE l.experiment_id=%s",
+            (plan.experiment_id,),
+        )
+    import sys as _sys
+
+    with world.db.transaction(readonly=True) as tx:
+        events = (
+            tx.fetchall(
+                "SELECT event_type, payload FROM domain_events WHERE aggregate_id IN "
+                "(SELECT id FROM pod_leases) ORDER BY occurred_at",
+            )
+            if True
+            else []
+        )
+        charges = tx.fetchall(
+            "SELECT c.amount_micro_usd, c.kind FROM charges c JOIN reservations r "
+            "ON r.id=c.reservation_id WHERE r.semantic_key LIKE %s",
+            ("%",),
+        )
+    print("DBG reservations:", [dict(r) for r in rows], file=_sys.stderr)
+    print("DBG events:", [dict(e) for e in events][-6:], file=_sys.stderr)
+    print("DBG charges:", [dict(c) for c in charges][:8], file=_sys.stderr)
     # The expired hold's retained exposure closed exactly once through the
     # canonical settlement (lease-covered attempts settle at zero: the pod
     # lease's invoice is the only GPU cost), never double-counted.

@@ -53,8 +53,8 @@ def plan_for(episode_id, **changes):
     )
 
 
-def prepare(world, **changes):
-    ep = world.episode()
+def prepare(world, episode_number: int = 1, **changes):
+    ep = world.episode(number=episode_number)
     plan = plan_for(ep.episode_id, **changes)
     service = BenchmarkService(world.db, world.settings, clock=world.clock, ids=world.ids)
     row = service.prepare(plan)
@@ -274,14 +274,21 @@ class _OfflineFinalityWorld:
     """
 
     def cleanup(self, acquisition):
-        # Mirrors CanonicalExperimentWorld.cleanup: verified only at a verified
-        # terminate; a podless close (H-2's unknown create) stays unverified and
-        # billing-pending exactly like production until an audited resolution.
-        self.leases.shutdown(acquisition["lease_id"], reason="offline benchmark phase boundary")
+        # §9.1 restored strictness: the two unconditional assertions H-2 dropped
+        # are back - every pod-bound cleanup must have stopped compute and must
+        # hold durable stop/terminate evidence, or the fixture fails loudly
+        # instead of fabricating a verified receipt. Only a podless close (H-2's
+        # unknown create) reports unverified/pending, exactly like production
+        # until an audited resolution.
+        result = self.leases.shutdown(
+            acquisition["lease_id"], reason="offline benchmark phase boundary"
+        )
         with self.db.transaction(readonly=True) as tx:
             row = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (acquisition["lease_id"],))
-        # The fake provider stops without terminating; production Runpod terminates.
         verified = row["stop_verified_at"] is not None or row["terminate_verified_at"] is not None
+        if row["pod_id"] is not None:
+            assert result.compute_stopped
+            assert verified
         return {
             "verified": verified,
             "compute_window_end": row["compute_window_end_at"],
@@ -474,7 +481,7 @@ class _LaggingCreatePods(RunpodIdFakePods):
         return found
 
 
-def _composed_world(world: RenderWorld, tmp_path, **kwargs):
+def _composed_world(world: RenderWorld, tmp_path, *, episode_number: int = 1, **kwargs):
     """The composed screen harness from the 24-sample test, parameterized."""
     from dataclasses import replace
 
@@ -485,7 +492,7 @@ def _composed_world(world: RenderWorld, tmp_path, **kwargs):
     from microdrama.pipeline.experimental_world import CanonicalExperimentWorld
     from microdrama.rendering.comfy_jobs import ComfyRenderConfig, render_id_for
 
-    ep, plan, service, budget, row = prepare(world)
+    ep, plan, service, budget, row = prepare(world, episode_number=episode_number)
     comfy = ComfyWorld(
         world.db,
         tmp_path / "composed-h2-output",
@@ -637,7 +644,13 @@ def test_unknown_create_without_pod_is_operator_resolved_and_resumes(
     )
     first = [a for a in resolved["acquisitions"] if a["generation"] == 1][0]
     assert first["state"] == "NO_CREATE_PROVEN"
-    assert resolved["execution_state"] == "SCREEN_RUNNING"
+    # §4.2: resolve no longer shortcuts NEEDS_RECONCILIATION -> running; the
+    # sweep finalizes the resolution's cleanup debt (R1) and reconcile is the
+    # only writer back to a running state.
+    assert resolved["execution_state"] == "NEEDS_RECONCILIATION"
+    service.sweep(plan.experiment_id, world=adapter)
+    reconciled = service.reconcile(plan.experiment_id, world=adapter)
+    assert reconciled["execution_state"] == "SCREEN_RUNNING"
     with world.db.transaction(readonly=True) as tx:
         resolutions = tx.fetchall("SELECT * FROM runpod_podless_create_resolutions")
         assert len(resolutions) == 1

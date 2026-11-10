@@ -126,11 +126,34 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
         authorization = None
         digest = None
         authorization_bytes = None
+        argument_blockers: list[str] = []
+        soft_validation = args.command == "resume" and not args.cleanup_only
+        # §4.2 CLI resume order: recovery from durable records runs BEFORE any
+        # new-generation argument is validated. For `resume` an unusable
+        # authorization/quote file becomes an admission blocker reported with
+        # the recovered status instead of a door refusal; `execute` stays strict.
         if args.authorization:
-            authorization, digest = load_benchmark_authorization(args.authorization)
-            authorization_bytes = Path(args.authorization).read_bytes()
-            if authorization.experiment_id != args.experiment_id:
-                raise PolicyDenied("authorization names another experiment")
+            try:
+                authorization, digest = load_benchmark_authorization(args.authorization)
+                authorization_bytes = Path(args.authorization).read_bytes()
+                if authorization.experiment_id != args.experiment_id:
+                    raise PolicyDenied("authorization names another experiment")
+            except (SchemaInvalid, PolicyDenied) as exc:
+                if not soft_validation:
+                    raise
+                argument_blockers.append(f"authorization file refused ({exc.code})")
+        if (
+            args.authorization
+            and args.authorization_sha256
+            and not hmac.compare_digest(digest or "", args.authorization_sha256)
+        ):
+            if not soft_validation:
+                raise PolicyDenied("benchmark authorization file SHA-256 mismatch")
+            argument_blockers.append("authorization file SHA-256 mismatch")
+        if args.authorization_sha256 and not args.authorization:
+            if not soft_validation:
+                raise PolicyDenied("benchmark authorization file SHA-256 mismatch")
+            argument_blockers.append("authorization file SHA-256 without a usable file")
         admits_work = args.command == "execute" or (
             args.command == "resume" and not args.cleanup_only
         )
@@ -141,11 +164,13 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 )
             if not hmac.compare_digest(digest or "", args.authorization_sha256):
                 raise PolicyDenied("benchmark authorization file SHA-256 mismatch")
-        elif args.authorization_sha256 and (
-            not digest or not hmac.compare_digest(digest, args.authorization_sha256)
-        ):
-            raise PolicyDenied("benchmark authorization file SHA-256 mismatch")
-        quote = load_document(args.quote, AcquisitionQuote) if args.quote else None
+        try:
+            quote = load_document(args.quote, AcquisitionQuote) if args.quote else None
+        except SchemaInvalid as exc:
+            if not soft_validation:
+                raise
+            argument_blockers.append(f"quote file refused ({exc.code})")
+            quote = None
 
         # H-2: the audited operator resolution validates its attestation shape
         # before any DB or provider work (same rule as the work-command gates).
@@ -216,6 +241,12 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 cleanup_only=args.cleanup_only,
                 source_bytes=authorization_bytes,
             )
+            if argument_blockers and isinstance(result, dict):
+                # The recovery above already ran; the unusable new-generation
+                # arguments are reported as admission blockers on its status.
+                admission = dict(result.get("admission") or {})
+                blockers = list(argument_blockers) + list(admission.get("blockers") or [])
+                result["admission"] = {"permitted": False, "blockers": blockers}
         elif args.command == "reconcile":
             result = service.reconcile(exp, authorization=authorization, quote=quote)
         elif args.command == "resolve":

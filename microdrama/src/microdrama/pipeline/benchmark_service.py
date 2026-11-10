@@ -18,7 +18,13 @@ from microdrama.budget.ledger import lock_account, lock_categories
 from microdrama.config import Settings
 from microdrama.contracts.cost import BudgetReservationRequest
 from microdrama.contracts.enums import EffectKind, ExecutionMode
-from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation, NotFound
+from microdrama.contracts.errors import (
+    Conflict,
+    EffectDenied,
+    MicrodramaError,
+    NeedsReconciliation,
+    NotFound,
+)
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.core.clock import SystemClock, UuidIds
 from microdrama.persistence.db import jsonb
@@ -27,11 +33,26 @@ from microdrama.rendering.benchmark_experiments import (
     TERMINAL_SAMPLES,
     BenchmarkRepository,
     ExperimentBudgetService,
+    blocking,
     document,
     experiment_row,
     gpu_ms,
+    unresolved_items,
 )
-from microdrama.rendering.leases import RENDERING_NAMESPACE
+from microdrama.rendering.leases import LIVE_LEASE_STATES, RENDERING_NAMESPACE
+
+
+class AdmissionBlocked(MicrodramaError):
+    """§4.2/I3: unresolved items block this admission, claim or dispatch.
+
+    Raised inside the locked transaction that evaluated the items, so nothing
+    was written when it fires. ``_advance_owned`` converts it into a
+    reconciliation status instead of a failed experiment.
+    """
+
+    def __init__(self, blockers: list[str]):
+        super().__init__("; ".join(blockers) or "unresolved items block this action")
+        self.blockers = blockers
 
 
 class BenchmarkService:
@@ -197,7 +218,13 @@ class BenchmarkService:
                 raise Conflict("explicit same-experiment screen PASS required")
         world = self._world(experiment_id, authorization, quote)
         with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
             experiment_row(tx, experiment_id, lock=True)
+            # §4.2: the gate runs under the §6.1 lock order, before any state
+            # write. Anything that blocks admission refuses the whole execute.
+            self._gate_in_tx(tx, experiment_id, "admission")
             # The stored payload is the parse of the accepted bytes (spec §3.2:
             # "the validated file's exact bytes, the byte SHA and the parsed
             # payload in one row") - recovery re-verifies all three agree.
@@ -221,14 +248,84 @@ class BenchmarkService:
                     self.clock.now(),
                 ),
             )
-            tx.execute(
-                "UPDATE benchmark_experiments SET execution_state=%s,revision=revision+1 WHERE experiment_id=%s",
-                ("SCREEN_RUNNING" if phase == "screen" else "FULL_RUNNING", experiment_id),
+            # §4.2: predicate the running-state write on its source - PREPARED,
+            # SCREEN_REVIEW with a current PASS (full phase only), or the same
+            # phase already running. Never from NEEDS_RECONCILIATION: reconcile
+            # is the only writer back to a running state.
+            running = "SCREEN_RUNNING" if phase == "screen" else "FULL_RUNNING"
+            has_pass = bool(
+                phase == "full"
+                and tx.fetchval(
+                    "SELECT 1 FROM benchmark_screenings WHERE experiment_id=%s "
+                    "AND decision->>'decision'='PASS' LIMIT 1",
+                    (experiment_id,),
+                )
             )
+            updated = tx.fetchval(
+                "UPDATE benchmark_experiments SET execution_state=%s,revision=revision+1 "
+                "WHERE experiment_id=%s AND (execution_state IN ('PREPARED',%s) "
+                "OR (execution_state='SCREEN_REVIEW' AND %s)) RETURNING 1",
+                (running, experiment_id, running, has_pass),
+            )
+            if not updated:
+                raise Conflict(
+                    "execution state does not admit this phase from its current source state"
+                )
         # The authorization accepted for this execution is the provenance every
         # acquisition admitted by it records (spec §3.2).
         self._authorization_sha256 = expected_sha256
         return self._advance(experiment_id, world, phase, quote)
+
+    def _lock_gate_rows(self, tx: Any, experiment_id: UUID) -> None:
+        """Lock the rows a §4.1 gate decision reads (§6.1 order, after E).
+
+        Dispatch slot, linked reservations, provider operations and upload
+        intents - so a gate serialises with the writers of exactly those rows
+        and cannot race a new intent into existence beside it. No network call
+        is ever made under these locks: refusal raises before any effect.
+        """
+        tx.fetchone(
+            "SELECT * FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+            (experiment_id,),
+        )
+        tx.fetchall(
+            "SELECT r.id FROM reservations r JOIN benchmark_reservation_links l "
+            "ON l.reservation_id=r.id WHERE l.experiment_id=%s ORDER BY r.id FOR UPDATE OF r",
+            (experiment_id,),
+        )
+        tx.fetchall(
+            "SELECT o.id FROM provider_operations o JOIN benchmark_samples s "
+            "ON s.reservation_id=o.reservation_id WHERE s.experiment_id=%s "
+            "ORDER BY o.id FOR UPDATE OF o",
+            (experiment_id,),
+        )
+        tx.fetchall(
+            "SELECT u.acquisition_id FROM benchmark_uploads u JOIN benchmark_acquisitions a "
+            "ON a.acquisition_id=u.acquisition_id WHERE a.experiment_id=%s "
+            "ORDER BY u.acquisition_id, u.asset_sha256, u.media_kind, u.role, u.subject_id "
+            "FOR UPDATE OF u",
+            (experiment_id,),
+        )
+
+    def _gate_in_tx(self, tx: Any, experiment_id: UUID, action: str, **scope: Any) -> None:
+        """Evaluate the §4.1 blocking items under the caller's locked transaction.
+
+        The caller has already taken the account/category/E locks (§6.1).
+        """
+        self._lock_gate_rows(tx, experiment_id)
+        items = unresolved_items(tx, experiment_id, now=self.clock.now())
+        blockers = blocking(items, action, **scope)
+        if blockers:
+            raise AdmissionBlocked([item.describe() for item in blockers])
+
+    def _gate(self, experiment_id: UUID, action: str, **scope: Any) -> None:
+        """A standalone gate transaction for the dispatch step (§4.2)."""
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            self._gate_in_tx(tx, experiment_id, action, **scope)
 
     def _acquisition(self, experiment_id: UUID, world: Any, quote: Any):
         # Account/category locks precede experiment/slot locks in every admission.
@@ -242,7 +339,31 @@ class BenchmarkService:
                 (experiment_id,),
             )
             if active:
+                # Returning an existing acquisition is not an admission - the
+                # in-flight work on it must stay pollable (U3p/U4 block fresh
+                # admission only) - but a create that is uncertain (U1) or a
+                # reopened liability (U5) on it forbids proceeding at all:
+                # reconciliation owns that acquisition next.
+                self._lock_gate_rows(tx, experiment_id)
+                items = unresolved_items(tx, experiment_id, now=self.clock.now())
+                owning = {
+                    item.acquisition_id
+                    for item in items
+                    if item.kind in ("U1", "U5") and item.acquisition_id == active["acquisition_id"]
+                }
+                if owning:
+                    raise AdmissionBlocked(
+                        [
+                            item.describe()
+                            for item in items
+                            if item.acquisition_id == active["acquisition_id"]
+                            and item.kind in ("U1", "U5")
+                        ]
+                    )
                 return active
+            # Fresh admission: every admission-blocking kind refuses (U1, U2,
+            # U3, U3p, U3u, U4, U5 - §4.1 R2). U6 never blocks other work.
+            self._gate_in_tx(tx, experiment_id, "admission")
             generation = int(
                 tx.fetchval(
                     "SELECT COALESCE(MAX(generation),0)+1 FROM benchmark_acquisitions WHERE experiment_id=%s",
@@ -334,6 +455,12 @@ class BenchmarkService:
                 slot["coordinator_token"] is not None
                 and slot["coordinator_lease_until"] > self.clock.now()
             ):
+                import os as _os
+
+                if _os.environ.get("T031_DEBUG"):
+                    import sys as _sys
+
+                    print("DBG advance token-held", file=_sys.stderr)
                 return self.status(experiment_id)
             tx.execute(
                 "UPDATE benchmark_dispatch_slots SET coordinator_token=%s,coordinator_lease_until=%s,revision=revision+1 WHERE experiment_id=%s",
@@ -348,7 +475,80 @@ class BenchmarkService:
                     (experiment_id, token),
                 )
 
+    def _needs_finalization(self, experiment_id: UUID, acquisition: dict) -> bool:
+        """Whether this acquisition must be finalized before ANY work continues.
+
+        AT-5/I3: a CLEANUP_PENDING/UNKNOWN acquisition, or one whose lease is
+        terminal, is never acquired again - cleanup and finalization own it, and
+        the next generation is admitted only after that completes (U2).
+        """
+        if acquisition["state"] in ("CLEANUP_PENDING", "UNKNOWN"):
+            return True
+        if acquisition["lease_id"] is None:
+            return False
+        with self.db.transaction(readonly=True) as tx:
+            lease = tx.fetchone(
+                "SELECT lease_state, terminate_verified_at FROM pod_leases WHERE id=%s",
+                (acquisition["lease_id"],),
+            )
+        return (
+            lease is None
+            or lease["lease_state"] not in LIVE_LEASE_STATES
+            or lease["terminate_verified_at"] is not None
+        )
+
+    def _close_undispatchable_sample(self, experiment_id: UUID, world: Any, sample: dict):
+        """§4.1 U6: a claim whose pre-effect hold is no longer adoptable.
+
+        Replay adopts an ACTIVE hold (returns None so the caller materializes
+        and submits). A hold that expired before anything was dispatched has no
+        operation under it - the send right was never exercised - so only its
+        positively unused liability closes (§F): a zero-charge settlement, the
+        sample FAILED, the slot freed, and the experiment outcome set once
+        (§7.4 fail-fast). No effect is ever sent.
+        """
+        with self.db.transaction(readonly=True) as tx:
+            state = tx.fetchval(
+                "SELECT state FROM reservations WHERE id=%s", (sample["reservation_id"],)
+            )
+            operations = tx.fetchval(
+                "SELECT COUNT(*) FROM provider_operations WHERE reservation_id=%s",
+                (sample["reservation_id"],),
+            )
+        if state == "ACTIVE" or operations:
+            return None
+        if state == "EXPIRED":
+            world.budget.settle_expired_unused_hold(
+                sample["reservation_id"],
+                reason=f"benchmark sample {sample['sample_id']} hold expired before dispatch",
+            )
+        elif state not in ("SETTLED", "RELEASED"):
+            raise Conflict(
+                "undispatched sample hold is in an unexpected canonical state",
+                reservation_state=state,
+            )
+        from types import SimpleNamespace
+
+        self._observe(
+            experiment_id,
+            sample,
+            SimpleNamespace(
+                state="FAILED",
+                operation_id=None,
+                error_code="HOLD_EXPIRED_BEFORE_DISPATCH",
+                assets=(),
+            ),
+        )
+        self.repo.outcome(experiment_id, "FAILED")
+        return self.sweep(experiment_id, world=world)
+
     def _advance_owned(self, experiment_id: UUID, world: Any, phase: str, quote: Any, token: UUID):
+        import os as _os
+
+        if _os.environ.get("T031_DEBUG"):
+            import sys as _sys
+
+            print("DBG advance_owned enter", phase, file=_sys.stderr)
         status = self.status(experiment_id)
         if status["execution_state"] == "NEEDS_RECONCILIATION":
             # H-2: resolve every UNKNOWN provider effect before any new dispatch;
@@ -364,6 +564,9 @@ class BenchmarkService:
         ):
             return self._finish_phase(experiment_id, world, phase)
         acquisition = self._acquisition(experiment_id, world, quote)
+        # I3/AT-5: never acquire on an acquisition awaiting finalization.
+        if self._needs_finalization(experiment_id, acquisition):
+            return self.sweep(experiment_id, world=world)
         with self.db.transaction() as tx:
             tx.execute(
                 "UPDATE benchmark_acquisitions SET coordinator_token=%s,coordinator_lease_until=%s WHERE acquisition_id=%s",
@@ -384,6 +587,11 @@ class BenchmarkService:
                         (lease_id, acquisition["acquisition_id"]),
                     )
                 acquisition["lease_id"] = lease_id
+            # Dispatch gate before the create send (§4.2): a fresh process never
+            # holds a first-send right of its own (SC2-1) - an uncertain create
+            # (U1), a reopened liability (U5) or cleanup owed on this acquisition
+            # (U2) reconciles instead of dispatching.
+            self._gate(experiment_id, "dispatch", acquisition_id=acquisition["acquisition_id"])
             world.acquire(acquisition)
             with self.db.transaction() as tx:
                 tx.execute(
@@ -396,14 +604,31 @@ class BenchmarkService:
                 if sample is None:
                     return self._finish_phase(experiment_id, world, phase)
                 if sample["job_id"] is None:
+                    closed = self._close_undispatchable_sample(experiment_id, world, sample)
+                    if closed is not None:
+                        return closed
                     sample["job_id"] = world.materialize_sample(sample)
                 if not sample["operation_id"]:
+                    # Dispatch gate before the upload send (§4.2/U3u): an
+                    # unverified intent on this acquisition is read-back-only.
+                    self._gate(
+                        experiment_id,
+                        "dispatch",
+                        acquisition_id=acquisition["acquisition_id"],
+                        sample_id=sample["sample_id"],
+                    )
                     world.stage_inputs(acquisition)
-                result = (
-                    world.poll(sample)
-                    if sample["operation_id"]
-                    else world.submit(sample, acquisition)
-                )
+                if sample["operation_id"]:
+                    result = world.poll(sample)
+                else:
+                    # Dispatch gate before the prompt send (§4.2/U3).
+                    self._gate(
+                        experiment_id,
+                        "dispatch",
+                        acquisition_id=acquisition["acquisition_id"],
+                        sample_id=sample["sample_id"],
+                    )
+                    result = world.submit(sample, acquisition)
                 self._observe(experiment_id, sample, result)
                 state = getattr(result.state, "value", result.state)
                 if state not in ("SUCCEEDED", "FAILED", "CANCELLED"):
@@ -423,6 +648,19 @@ class BenchmarkService:
                     (experiment_id,),
                 )
             return self.sweep(experiment_id, world=world)
+        except AdmissionBlocked as refused:
+            # I3: the gate refused inside its locked transaction; nothing was
+            # written and nothing dispatched. Return the reconciliation status
+            # (with the blockers) instead of failing the experiment.
+            status = self.status(experiment_id)
+            status["admission"] = {"permitted": False, "blockers": refused.blockers}
+            import os as _os
+
+            if _os.environ.get("T031_DEBUG"):
+                import sys as _sys
+
+                print("DBG advance blocked", refused.blockers, file=_sys.stderr)
+            return status
         except BaseException:
             self.repo.outcome(experiment_id, "FAILED")
             try:
@@ -446,6 +684,8 @@ class BenchmarkService:
                 (experiment_id,),
             )
             if slot["sample_id"]:
+                # Returning the slot's occupied sample is not a new claim - the
+                # in-flight work on it must stay pollable (§4.1 U3p/U4).
                 return tx.fetchone(
                     "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id=%s FOR UPDATE",
                     (experiment_id, slot["sample_id"]),
@@ -456,6 +696,19 @@ class BenchmarkService:
             )
             if sample is None:
                 return None
+            # §4.2: a fresh claim re-evaluates the blocking items inside this
+            # locked transaction (I3). The occupied-slot path above is exempt:
+            # polling existing work is recovery, not admission.
+            self._lock_gate_rows(tx, experiment_id)
+            items = unresolved_items(tx, experiment_id, now=self.clock.now())
+            blockers = blocking(
+                items,
+                "claims",
+                acquisition_id=acquisition["acquisition_id"],
+                sample_id=sample["sample_id"],
+            )
+            if blockers:
+                raise AdmissionBlocked([item.describe() for item in blockers])
             reservation = world.budget.reserve_linked(
                 tx,
                 world.prompt_reservation(exp, sample),
@@ -555,22 +808,53 @@ class BenchmarkService:
         """
         if cleanup_only:
             return self.sweep(experiment_id)
+        # 1. Identity-checked RECOVERY from durable records, before any
+        #    new-generation argument matters (the CLI defers its argument
+        #    validation for resume the same way - spec §4.2).
         self.reconcile(experiment_id)
-        status = self.sweep(experiment_id)
+        # Cleanup runs only when it is owed (a U2 item): a healthy ACTIVE
+        # acquisition inside its window is never swept mid-run (SC-2).
+        with self.db.transaction(readonly=True) as tx:
+            owed = any(
+                item.kind == "U2"
+                for item in unresolved_items(tx, experiment_id, now=self.clock.now())
+            )
+        if owed:
+            self.sweep(experiment_id)
+        # 2. Blocking items remaining after reconciliation: return the durable
+        #    reconciliation status and dispatch nothing.
+        with self.db.transaction(readonly=True) as tx:
+            items = unresolved_items(tx, experiment_id, now=self.clock.now())
+        item_blockers = [item.describe() for item in blocking(items, "admission")]
         blockers = self._admission_blockers(experiment_id, authorization, quote, expected_sha256)
-        if blockers:
-            status = dict(status)
-            status["admission"] = {"permitted": False, "blockers": blockers}
+        if item_blockers or blockers:
+            status = dict(self.status(experiment_id))
+            status["admission"] = {"permitted": False, "blockers": item_blockers + blockers}
             return status
+        # A finished phase has nothing to admit: the durable state is the answer
+        # (the derived phase never re-runs a completed screen; a SCREEN_REVIEW
+        # WITH a durable PASS derives full and proceeds - §4.2).
+        state = self.status(experiment_id)["execution_state"]
         derived = self._derive_phase(experiment_id)
-        result = self.execute(
-            experiment_id,
-            phase=derived,
-            authorization=authorization,
-            quote=quote,
-            expected_sha256=expected_sha256,
-            source_bytes=source_bytes,
-        )
+        if state == "COMPUTE_COMPLETE" or (state == "SCREEN_REVIEW" and derived == "screen"):
+            status = dict(self.status(experiment_id))
+            status["admission"] = {"permitted": True, "blockers": []}
+            return status
+        try:
+            result = self.execute(
+                experiment_id,
+                phase=derived,
+                authorization=authorization,
+                quote=quote,
+                expected_sha256=expected_sha256,
+                source_bytes=source_bytes,
+            )
+        except AdmissionBlocked as refused:
+            # A blocking item appeared between the pre-check and the locked
+            # gate (raced writer). Nothing was written; converge idempotently.
+            status = dict(self.status(experiment_id))
+            status["admission"] = {"permitted": False, "blockers": refused.blockers}
+            return status
         if isinstance(result, dict):
             result.setdefault("admission", {"permitted": True, "blockers": []})
         return result
@@ -631,6 +915,116 @@ class BenchmarkService:
         billed = True
         for acquisition in status["acquisitions"]:
             if acquisition["state"] == "NO_CREATE_PROVEN":
+                # R1 (spec §4.1): sweep finalizes these rows too - their
+                # exclusion from the partial unique index never authorizes the
+                # next acquisition while the STORAGE hold is still open.
+                # Contradicted resolutions (U5) additionally get their
+                # discovered pod cleaned through the normal shutdown path.
+                with self.db.transaction(readonly=True) as tx:
+                    contradicted = tx.fetchval(
+                        "SELECT contradicted_at IS NOT NULL FROM runpod_podless_create_resolutions "
+                        "WHERE lease_id=%s",
+                        (acquisition["lease_id"],),
+                    )
+                if contradicted and acquisition["lease_id"] is not None:
+                    if world is None:
+                        world = self._world(
+                            experiment_id,
+                            authorization,
+                            quote,
+                            mode="CLEANUP",
+                            acquisition_id=acquisition["acquisition_id"],
+                        )
+                    receipt = world.cleanup(acquisition)
+                    verified = verified and receipt["verified"]
+                    billed = billed and receipt["billing_state"] == "BILLED"
+                    continue
+                with self.db.transaction(readonly=True) as tx:
+                    live_lease = (
+                        tx.fetchval(
+                            "SELECT l.lease_state FROM pod_leases l WHERE l.id=%s "
+                            "AND l.lease_state IN ('CLAIMED','ACTIVE','TRANSFERRING')",
+                            (acquisition["lease_id"],),
+                        )
+                        if acquisition["lease_id"] is not None
+                        else None
+                    )
+                if live_lease:
+                    # The proven-no-create lease is still live: close it through
+                    # the canonical podless shutdown (U2; the pilot single-live-
+                    # lease rule forbids any new lease until it is RELEASED).
+                    if world is None:
+                        world = self._world(
+                            experiment_id,
+                            authorization,
+                            quote,
+                            mode="CLEANUP",
+                            acquisition_id=acquisition["acquisition_id"],
+                        )
+                    world.leases.shutdown(
+                        acquisition["lease_id"],
+                        reason="benchmark proven-no-create lease close",
+                    )
+                budget = (
+                    world.budget
+                    if world is not None
+                    else ExperimentBudgetService(
+                        self.db,
+                        self.clock,
+                        self.ids,
+                        self.settings,
+                        experiment_id=experiment_id,
+                    )
+                )
+                # An EXPIRED never-used hold settles through its own
+                # transaction (I4: never released); the deterministic
+                # receipt makes a race with the locked release replay.
+                with self.db.transaction(readonly=True) as tx:
+                    expired_storage = [
+                        row["id"]
+                        for row in tx.fetchall(
+                            "SELECT r.id FROM benchmark_reservation_links l "
+                            "JOIN reservations r ON r.id=l.reservation_id "
+                            "WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
+                            "AND r.state='EXPIRED' ORDER BY r.id",
+                            (acquisition["acquisition_id"],),
+                        )
+                    ]
+                for reservation_id in expired_storage:
+                    budget.settle_expired_unused_hold(
+                        reservation_id,
+                        reason="benchmark proven-no-create storage hold expired unused (R1)",
+                    )
+                with self.db.transaction() as tx:
+                    exp = experiment_row(tx, experiment_id)
+                    lock_account(tx, exp["account_id"])
+                    lock_categories(tx, exp["account_id"])
+                    experiment_row(tx, experiment_id, lock=True)
+                    tx.fetchone(
+                        "SELECT acquisition_id FROM benchmark_acquisitions "
+                        "WHERE acquisition_id=%s FOR UPDATE",
+                        (acquisition["acquisition_id"],),
+                    )
+                    ids = tx.fetchall(
+                        "SELECT r.id,r.state FROM benchmark_reservation_links l "
+                        "JOIN reservations r ON r.id=l.reservation_id "
+                        "WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
+                        "ORDER BY r.id FOR UPDATE OF r",
+                        (acquisition["acquisition_id"],),
+                    )
+                    for row in ids:
+                        if row["state"] == "ACTIVE":
+                            budget.release_in_transaction(
+                                tx,
+                                row["id"],
+                                reason="benchmark proven-no-create storage hold finalized (R1)",
+                            )
+                    tx.execute(
+                        "UPDATE benchmark_acquisitions SET "
+                        "compute_window_end=COALESCE(compute_window_end,create_intent_at) "
+                        "WHERE acquisition_id=%s",
+                        (acquisition["acquisition_id"],),
+                    )
                 continue
             # The world is composed lazily, per acquisition needing it: an
             # acquisition-less experiment never constructs one (spec §3.2).
@@ -740,7 +1134,25 @@ class BenchmarkService:
         CLI records the audited resolution). Holds stay retained throughout.
         """
         status = self.status(experiment_id)
-        unknown = [a for a in status["acquisitions"] if a["state"] == "UNKNOWN"]
+        # §4.1/SC-3: an uncertain create is selected by its canonical predicate
+        # (committed create intent, no pod, no resolution) - NOT by the
+        # acquisition label. A worker that died before the ambiguity handler
+        # wrote anything still reconciles by its durable token (AT-13).
+        with self.db.transaction(readonly=True) as tx:
+            derived_u1 = {
+                item.acquisition_id
+                for item in unresolved_items(tx, experiment_id, now=self.clock.now())
+                if item.kind == "U1"
+            }
+        by_id = {a["acquisition_id"]: a for a in status["acquisitions"]}
+        unknown = [
+            by_id[acquisition_id]
+            for acquisition_id in (
+                derived_u1
+                | {a["acquisition_id"] for a in status["acquisitions"] if a["state"] == "UNKNOWN"}
+            )
+            if acquisition_id in by_id
+        ]
         slot_stuck = self._slot_sample_unknown(experiment_id)
         unresolved: list[str] = []
         for acquisition in unknown:
@@ -823,11 +1235,8 @@ class BenchmarkService:
         return True
 
     def _slot_sample_unknown(self, experiment_id: UUID) -> bool:
-        """Whether the dispatch slot holds a sample whose operation is UNKNOWN.
-
-        The sample's own ``operation_id`` link is written by ``_observe`` - a
-        submit that raised NEVER got there - so the operation is resolved through
-        the sample's fixed PROMPT reservation (attempts_per_sample is 1)."""
+        """Whether the dispatch slot holds a sample whose operation is UNKNOWN
+        or still in flight (U3/U3p - recovery owns both)."""
         with self.db.transaction(readonly=True) as tx:
             operation = tx.fetchval(
                 "SELECT o.state FROM benchmark_dispatch_slots d "
@@ -837,10 +1246,17 @@ class BenchmarkService:
                 "WHERE d.experiment_id=%s",
                 (experiment_id,),
             )
-        return operation == "UNKNOWN"
+        return operation in ("UNKNOWN", "SUBMITTED", "RUNNING")
 
     def _reconcile_slot_sample(self, experiment_id: UUID, world: Any) -> None:
-        """Re-poll the dispatched sample's UNKNOWN operation by durable identity."""
+        """Reconcile the dispatched sample's operation by durable identity.
+
+        An UNKNOWN operation is re-sought by its deterministic client identity
+        (never re-POSTed). A known in-flight operation (U3p, §4.1 R2) is
+        POLLED - recovery adopts the existing linkage and polls it before any
+        other sample or acquisition may start - after binding the recovery
+        client to the durable pod when binding is required.
+        """
         with self.db.transaction(readonly=True) as tx:
             sample = tx.fetchone(
                 "SELECT s.* FROM benchmark_dispatch_slots d JOIN benchmark_samples s "
@@ -856,10 +1272,25 @@ class BenchmarkService:
                 if sample
                 else None
             )
-        if sample is None or operation is None or operation["state"] != "UNKNOWN":
+        if sample is None or operation is None:
             return
+        if operation["state"] not in ("UNKNOWN", "SUBMITTED", "RUNNING"):
+            return
+        if operation["state"] != "UNKNOWN" and hasattr(world, "bind_for_recovery"):
+            # A production RECOVERY world must bind its fresh client to the
+            # durable pod before any authenticated poll; offline adapters have
+            # no binding requirement.
+            try:
+                if world.bind_for_recovery(sample["acquisition_id"]) != "BOUND":
+                    return
+            except Exception:
+                return
         try:
-            result = world.comfy.reconcile_unknown(operation["id"])
+            result = (
+                world.comfy.reconcile_unknown(operation["id"])
+                if operation["state"] == "UNKNOWN"
+                else world.comfy.poll(operation["id"])
+            )
         except NeedsReconciliation:
             return
         self._observe(experiment_id, sample, result)
@@ -905,11 +1336,6 @@ class BenchmarkService:
                 raise NotFound("benchmark acquisition not found")
             if acquisition["state"] == "NO_CREATE_PROVEN":
                 return self.status(experiment_id)
-            if acquisition["state"] != "UNKNOWN":
-                raise Conflict(
-                    "only an UNKNOWN create can be resolved as podless",
-                    acquisition_state=acquisition["state"],
-                )
             lease = tx.fetchone(
                 "SELECT * FROM pod_leases WHERE id=%s FOR UPDATE", (acquisition["lease_id"],)
             )
@@ -917,6 +1343,25 @@ class BenchmarkService:
                 raise Conflict(
                     "the acquisition's lease has a Pod attached; reconcile adopts it",
                     pod_id=lease["pod_id"],
+                )
+            resolved = lease is not None and tx.fetchval(
+                "SELECT 1 FROM runpod_podless_create_resolutions WHERE lease_id=%s",
+                (lease["id"],),
+            )
+            # §4.1 U1 is label-independent: the audited resolution accepts the
+            # canonical predicate (committed create intent, no pod, no
+            # resolution) even when the ambiguity handler never labelled the
+            # acquisition UNKNOWN (AT-13's crash-before-label state).
+            u1_holds = (
+                lease is not None
+                and lease["create_requested_at"] is not None
+                and lease["pod_id"] is None
+                and not resolved
+            )
+            if acquisition["state"] != "UNKNOWN" and not u1_holds:
+                raise Conflict(
+                    "only an uncertain (U1) create can be resolved as podless",
+                    acquisition_state=acquisition["state"],
                 )
             create_requested = lease["create_requested_at"] if lease is not None else None
         if create_requested is not None:
@@ -962,17 +1407,9 @@ class BenchmarkService:
                 ).release_in_transaction(
                     tx, row["id"], reason="benchmark storage hold released at proven no-create"
                 )
-            if not tx.fetchval(
-                "SELECT COUNT(*) FROM benchmark_acquisitions WHERE experiment_id=%s "
-                "AND state='UNKNOWN'",
-                (experiment_id,),
-            ):
-                tx.execute(
-                    "UPDATE benchmark_experiments SET execution_state="
-                    "'SCREEN_RUNNING' WHERE experiment_id=%s AND execution_state="
-                    "'NEEDS_RECONCILIATION'",
-                    (experiment_id,),
-                )
+            # §4.2: no shortcut write back to a running state here - reconcile
+            # is the only NEEDS_RECONCILIATION -> running writer, and only with
+            # zero blocking items under the lock.
         return self.status(experiment_id)
 
     def resolve_sample(
