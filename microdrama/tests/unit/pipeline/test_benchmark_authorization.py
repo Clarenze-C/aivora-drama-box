@@ -147,6 +147,35 @@ def test_seal_checks_exact_asset_version_and_media_port():
     changed["port_map"][0]["asset_version"] = 2
     with pytest.raises(ValidationError):
         BenchmarkSeal.model_validate(changed)
+
+
+def test_shot_scoped_costume_ports_reuse_the_same_destination_per_shot():
+    plan = BenchmarkPlan.model_validate(plan_data())
+    data = seal_data(plan)
+    outfit = next(item for item in data["references"] if item["role"] == "outfit")
+    alternate = outfit | {
+        "subject_id": "outfit-b",
+        "asset_id": str(UUID(int=999)),
+        "asset_sha256": "f" * 64,
+    }
+    data["references"].append(alternate)
+    shared = [item for item in data["port_map"] if item["role"] != "outfit"]
+    shot_ports = []
+    for index in range(1, 9):
+        shot_id = f"S0{index}"
+        shot_ports.extend(item | {"shot_id": shot_id} for item in shared)
+        selected = alternate if index == 8 else outfit
+        shot_ports.append(
+            selected
+            | {
+                "shot_id": shot_id,
+                "media_kind": "image",
+                "destination_slot": "ref_images.ref_image_1",
+            }
+        )
+    data["port_map"] = shot_ports
+    seal = BenchmarkSeal.model_validate(data)
+    assert len(seal.port_map) == 32
     changed = copy.deepcopy(data)
     changed["port_map"][-1]["destination_slot"] = "ref_images.ref_image_3"
     with pytest.raises(ValidationError):
@@ -161,6 +190,68 @@ def test_fixture_schema_cannot_authorize_generation():
     auth = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
     with pytest.raises(PolicyDenied, match="fixture|Fixture"):
         auth.validate_for(plan, seal, now=NOW)
+
+
+def test_published_cpu_no_weights_hash_cannot_be_relabelled_live():
+    plan = BenchmarkPlan.model_validate(plan_data())
+    seal = BenchmarkSeal.model_validate(
+        seal_data(plan)
+        | {
+            "schema_evidence": "LIVE_PROVIDER",
+            "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
+            "node_schema_sha256": "339021b1e3106ee0648b264f0ef1ddc8e1bb68c0374d8d6c7c1a6b0f375ba9ae",
+        }
+    )
+    auth = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
+    with pytest.raises(PolicyDenied, match="CPU/no-weights"):
+        auth.validate_for(plan, seal, now=NOW)
+
+
+def test_live_provider_label_without_independent_capture_is_denied():
+    plan = BenchmarkPlan.model_validate(plan_data())
+    seal = BenchmarkSeal.model_validate(seal_data(plan) | {"schema_evidence": "LIVE_PROVIDER"})
+    auth = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
+    with pytest.raises(PolicyDenied, match="self-asserted"):
+        auth.validate_for(plan, seal, now=NOW)
+
+
+def test_preflight_is_not_ready_when_factory_policy_refuses(monkeypatch: pytest.MonkeyPatch):
+    from microdrama.config import Settings
+    from microdrama.contracts.enums import ExecutionMode
+    from microdrama.pipeline.benchmark_service import BenchmarkService
+    from microdrama.testing.fakes import FakeClock
+
+    plan = BenchmarkPlan.model_validate(plan_data())
+    seal = BenchmarkSeal.model_validate(seal_data(plan))
+    authorization = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
+    status = {
+        "plan": plan.model_dump(mode="json"),
+        "seal": {"manifest": seal.model_dump(mode="json")},
+        "hard_stop": NOW + timedelta(hours=1),
+        "plan_sha256": plan.plan_sha256,
+        "sealed_sha256": seal.sealed_sha256,
+        "exposure": {},
+        "gpu_ms": 0,
+    }
+    service = object.__new__(BenchmarkService)
+    service.status = lambda _experiment_id: status
+    service.clock = FakeClock(NOW)
+    service.settings = Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+    service._validate_authorization = lambda *args: None
+
+    def reject(*args, **kwargs):
+        raise PolicyDenied("preset or rights refused")
+
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate", reject
+    )
+    result = service.preflight(plan.experiment_id, authorization, object())
+    assert result["ready"] is False
+    assert "authorization or sealed-manifest validation failed" in result["reasons"]
 
 
 def test_operator_file_uses_actual_bytes_not_model_serialization(tmp_path):

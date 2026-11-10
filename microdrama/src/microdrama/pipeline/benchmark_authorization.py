@@ -36,6 +36,15 @@ _ALLOWED_GPUS = {
     "NVIDIA L40S",
     "NVIDIA RTX 6000 Ada Generation",
 }
+# H-6 (2026-11-10, GLM harness review): the published CPU/no-weights runtime
+# attestation (microdrama/deployment/pika-h3-flex/schema-attestation.cpu.json,
+# evidence_kind ACTUAL_RUNTIME_CPU_NO_WEIGHTS) and the offline fixture hash to
+# the SAME mapped schema hash. A seal built from that JSON is self-consistent,
+# so only a machine check can keep it from being relabelled LIVE_PROVIDER: the
+# hash is a constant pin and can never authorize live benchmark work.
+DENIED_LIVE_SCHEMA_SHA256 = frozenset(
+    {"339021b1e3106ee0648b264f0ef1ddc8e1bb68c0374d8d6c7c1a6b0f375ba9ae"}
+)
 
 
 def _aware(value: datetime) -> datetime:
@@ -161,6 +170,9 @@ class BenchmarkSeal(_Document):
     image_ref: str = Field(pattern=IMAGE_PATTERN)
     node_schema_sha256: str = Field(pattern=SHA256_PATTERN)
     schema_evidence: Literal["UNVERIFIED", "OFFLINE_FIXTURE_ONLY", "LIVE_PROVIDER"] = "UNVERIFIED"
+    schema_attestation_source: Literal["SELF_ASSERTED", "INDEPENDENT_RUNTIME_CAPTURE"] = (
+        "SELF_ASSERTED"
+    )
     raw_object_info: dict[str, Any] = Field(default_factory=dict)
     width: StrictInt = 480
     height: StrictInt = 832
@@ -397,6 +409,15 @@ class BenchmarkAuthorization(_Document):
             raise PolicyDenied("benchmark rights evidence differs from the seal")
         if seal.schema_evidence != "LIVE_PROVIDER":
             raise PolicyDenied("fixture or unverified schema cannot authorize live benchmark work")
+        if seal.schema_attestation_source != "INDEPENDENT_RUNTIME_CAPTURE":
+            raise PolicyDenied("LIVE schema evidence is only a self-asserted label")
+        # H-6: the CPU/no-weights attestation hash is machine-denied for LIVE
+        # seals regardless of the label - a self-asserted relabel of the
+        # published CPU schema can never qualify a live run.
+        if seal.node_schema_sha256 in DENIED_LIVE_SCHEMA_SHA256:
+            raise PolicyDenied(
+                "the published CPU/no-weights schema hash can never authorize live work"
+            )
         if quote is not None:
             if not quote.captured_at <= now < quote.expires_at:
                 raise PolicyDenied("benchmark acquisition quote is not current")

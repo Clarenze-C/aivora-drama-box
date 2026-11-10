@@ -27,6 +27,7 @@ from microdrama.config import Settings
 from microdrama.contracts.enums import ExecutionMode
 from microdrama.persistence import Database
 from microdrama.persistence.db import jsonb
+from microdrama.persistence.object_store import FilesystemObjectStore
 from microdrama.pipeline.benchmark_authorization import (
     AcquisitionQuote,
     BenchmarkAuthorization,
@@ -38,7 +39,6 @@ from microdrama.pipeline.experimental_world import (
     CanonicalExperimentWorld,
     build_experiment_world,
 )
-from microdrama.persistence.object_store import FilesystemObjectStore
 from microdrama.rendering.leases import PodLeaseClaimRequest
 from microdrama.rendering.runpod_transport import pod_name
 from microdrama.testing.fakes import FakeClock, SequentialIds
@@ -71,7 +71,8 @@ class ScriptedRunpodTransport:
         if method == "GET" and url.startswith("https://api.runpod.io/v2/pods?"):
             # reconcile_by_token's list pass before the create: nothing owned yet.
             return _Response(
-                200, json.dumps({"pods": [], "pagination": {"cursor": None, "more": False}}).encode()
+                200,
+                json.dumps({"pods": [], "pagination": {"cursor": None, "more": False}}).encode(),
             )
         if method == "GET" and f"/pods/{self.pod['id']}" in url:
             return _Response(200, json.dumps(self.pod).encode())
@@ -247,6 +248,32 @@ def test_default_factory_acquire_binds_the_pika_client_with_the_real_signature(
     assert client._bound_pod_id == "pod-h1-1"
     assert client._endpoint == "https://pod-h1-1-8188.proxy.runpod.net"
     assert any(call == ("POST", "https://api.runpod.io/v2/pods") for call in transport.calls)
+
+
+def test_preflight_uses_the_same_policy_as_the_default_factory(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from microdrama.contracts.errors import PolicyDenied
+
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
+        lambda *args, **kwargs: None,
+    )
+    world, plan, authorization, _, clock, _ = _compose(
+        db, tmp_path, comfy_transport=FailingComfyTransport()
+    )
+
+    # Model a current preset/rights/account condition the factory rejects.
+    def reject(*args: Any, **kwargs: Any) -> None:
+        raise PolicyDenied("fixture policy refusal")
+
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate", reject
+    )
+    service = BenchmarkService(db, _settings(), clock=clock)
+    result = service.preflight(plan.experiment_id, authorization, _quote())
+    assert result["ready"] is False
+    assert "authorization or sealed-manifest validation failed" in result["reasons"]
 
 
 def test_acquire_fails_loudly_when_the_client_cannot_bind() -> None:

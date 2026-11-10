@@ -57,7 +57,7 @@ CREATE TABLE benchmark_uploads (
  media_kind text NOT NULL CHECK(media_kind IN ('image','audio')), role text NOT NULL, subject_id text NOT NULL,
  destination_slot text NOT NULL, upload_key text NOT NULL, locator jsonb,
  state text NOT NULL CHECK(state IN ('INTENT','UNKNOWN','VERIFIED')), verified_readback_sha256 text,
- PRIMARY KEY(acquisition_id,asset_sha256,media_kind,role,subject_id), UNIQUE(acquisition_id,destination_slot),
+ PRIMARY KEY(acquisition_id,asset_sha256,media_kind,role,subject_id),
  CHECK(state<>'VERIFIED' OR verified_readback_sha256=asset_sha256)
 );
 CREATE TRIGGER benchmark_upload_identity BEFORE UPDATE ON benchmark_uploads FOR EACH ROW EXECUTE FUNCTION md_immutable_columns('acquisition_id','asset_sha256','media_kind','role','subject_id','destination_slot','upload_key');

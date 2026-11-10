@@ -1124,3 +1124,53 @@ def test_complete_unknown_sensitive_values_are_redacted(
     else:
         assert "GPU unavailable" in str(caught.value)
         assert "schema mismatch" in str(caught.value)
+
+
+def test_benchmark_raw_billing_writer_receives_original_amount_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from microdrama.rendering import runpod_billing
+    from microdrama.rendering.benchmark_experiments import BenchmarkRepository
+
+    captured = []
+
+    class Tx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def fetchone(self, query, params):
+            assert "benchmark_acquisitions" in query
+            return {"experiment_id": "exp-1", "acquisition_id": "acq-1"}
+
+    class DB:
+        def transaction(self, *, readonly=False):
+            return Tx()
+
+    monkeypatch.setattr(
+        BenchmarkRepository,
+        "record_billing_evidence",
+        lambda self, experiment_id, acquisition_id, evidence: captured.append(
+            (experiment_id, acquisition_id, evidence)
+        ),
+    )
+    record = SimpleNamespace(
+        pod_id="pod-1",
+        interval_start=NOW,
+        interval_end=NOW + timedelta(hours=1),
+        raw_amounts=("0.0000030000001", "0.0000009999999", "0.0000009999999", "0.0000009999999"),
+        raw_discrepancy_usd="0.0000000000004",
+        normalization_policy="ceiling-v1",
+    )
+    runpod_billing._record_benchmark_raw_evidence(DB(), record)
+    assert captured[0][0:2] == ("exp-1", "acq-1")
+    assert captured[0][2]["amounts"] == {
+        "total": "0.0000030000001",
+        "gpu": "0.0000009999999",
+        "cpu": "0.0000009999999",
+        "disk": "0.0000009999999",
+    }

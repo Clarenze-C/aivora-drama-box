@@ -91,6 +91,44 @@ def _delta_microseconds(delta: timedelta) -> int:
     return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
 
 
+def _record_benchmark_raw_evidence(db: Database, record: object) -> None:
+    """Persist nonsecret exact provider strings before bucket allocation."""
+    with db.transaction(readonly=True) as tx:
+        owner = tx.fetchone(
+            "SELECT a.experiment_id, a.acquisition_id FROM benchmark_acquisitions a "
+            "JOIN pod_leases p ON p.id=a.lease_id WHERE p.provider='runpod' "
+            "AND p.pod_id=%s ORDER BY a.generation DESC LIMIT 1",
+            (record.pod_id,),
+        )
+    if owner is None:
+        return
+    if record.raw_amounts is None or record.raw_discrepancy_usd is None:
+        raise Conflict("benchmark billing observation is missing exact provider amount strings")
+    from microdrama.contracts.hashing import canonical_hash
+    from microdrama.rendering.benchmark_experiments import BenchmarkRepository
+
+    identity = canonical_hash(
+        {
+            "pod_id": record.pod_id,
+            "interval_start": record.interval_start,
+            "interval_end": record.interval_end,
+        }
+    )
+    BenchmarkRepository(db, clock=None).record_billing_evidence(
+        owner["experiment_id"],
+        owner["acquisition_id"],
+        {
+            "observation_identity": identity,
+            "amounts": dict(zip(("total", "gpu", "cpu", "disk"), record.raw_amounts, strict=True)),
+            "pod_id": record.pod_id,
+            "interval_start": record.interval_start.isoformat(),
+            "interval_end": record.interval_end.isoformat(),
+            "normalization_policy": record.normalization_policy or "unknown",
+            "discrepancy": record.raw_discrepancy_usd,
+        },
+    )
+
+
 #: The integer-epoch reference instant for the bucket rounding below.
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
@@ -177,6 +215,10 @@ def map_billing_history(
             size,
         )
         record_hash = _record_hash(record)
+        # §G: preserve exact raw strings before they are converted into canonical
+        # micro-USD allocations. The evidence table is supplementary, never the
+        # budget authority.
+        _record_benchmark_raw_evidence(db, record)
         if identity in seen:
             if seen[identity] != record_hash:
                 raise Conflict(

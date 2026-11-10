@@ -171,6 +171,16 @@ class ExperimentBudgetService(BudgetService):
                 if cleanup
                 else ("COMPUTE" if request.operation_kind == "pod.lease" else "PROMPT")
             )
+        if acquisition_id is None and cleanup and request.operation_kind == "pod.stop":
+            # The canonical stop key is lease-scoped. Preserve that ownership
+            # instead of choosing acquisitions[0] (UUID order is not generation
+            # order and may point at a different lease after a retry).
+            lease_id = request.semantic_key.removeprefix("pod.stop:")
+            acquisition_id = tx.fetchval(
+                "SELECT acquisition_id FROM benchmark_acquisitions "
+                "WHERE experiment_id=%s AND lease_id=%s",
+                (self.experiment_id, lease_id),
+            )
         if acquisition_id is None and acquisitions:
             acquisition_id = acquisitions[0]["acquisition_id"]
         existing = tx.fetchone(

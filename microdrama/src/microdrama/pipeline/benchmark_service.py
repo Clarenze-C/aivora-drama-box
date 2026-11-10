@@ -85,6 +85,19 @@ class BenchmarkService:
         if authorization is not None and seal is not None and quote is not None:
             try:
                 self._validate_authorization(status, authorization, quote)
+                # Readiness must use the same live policy as the default world
+                # factory. Authorization identity alone does not prove current
+                # preset, model-rights, reference-rights, or schema eligibility.
+                from microdrama.pipeline.benchmark_authorization import (
+                    BenchmarkPlan,
+                    BenchmarkSeal,
+                )
+                from microdrama.pipeline.experimental_world import ExperimentalPresetPolicy
+
+                plan = BenchmarkPlan.model_validate(status["plan"])
+                manifest = BenchmarkSeal.model_validate(seal)
+                policy = ExperimentalPresetPolicy(plan, manifest, authorization)
+                policy.validate(self.db, self.settings, self.clock, quote)
             except Exception:
                 # Validation failures may include input values; never expose a
                 # pasted credential or the sealed document in diagnostics.

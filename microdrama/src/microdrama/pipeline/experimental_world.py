@@ -357,7 +357,7 @@ def _rights_resolver(db, settings, clock, territories):
     return resolve
 
 
-def _validated_sources(db, settings, clock, plan, seal):
+def _validated_sources(db, settings, clock, plan, seal, *, shot_id=None):
     """Sealed semantic roles resolve to exact current private canonical assets/rights."""
     resolver = _rights_resolver(db, settings, clock, seal.territories)
     bindings = []
@@ -413,17 +413,30 @@ def _validated_sources(db, settings, clock, plan, seal):
     )
     if rights_hash != seal.rights_evidence_hash:
         raise PolicyDenied("sealed reference rights evidence hash differs")
-    ports = {(p["role"], p["subject_id"]): p for p in seal.port_map}
-    if set(ports) != {(b.role.value, b.subject_id) for b in bindings}:
-        raise PolicyDenied("explicit ports do not cover exact sealed semantic roles")
-    for binding in bindings:
-        port = ports[(binding.role.value, binding.subject_id)]
-        if (str(port.get("asset_id")), port.get("asset_version"), port.get("asset_sha256")) != (
-            str(binding.asset_id),
-            binding.asset_version,
-            binding.asset_sha256,
-        ):
-            raise PolicyDenied("sealed port asset/version/hash differs from typed source")
+    reference_keys = {
+        (b.role.value, b.subject_id, str(b.asset_id), b.asset_version, b.asset_sha256)
+        for b in bindings
+    }
+    mapped_keys = {
+        (p["role"], p["subject_id"], str(p["asset_id"]), p["asset_version"], p["asset_sha256"])
+        for p in seal.port_map
+    }
+    if mapped_keys != reference_keys:
+        raise PolicyDenied("explicit ports do not cover exact sealed semantic assets")
+    selected = [p for p in seal.port_map if shot_id is None or p.get("shot_id") in (None, shot_id)]
+    selected_keys = {
+        (p["role"], p["subject_id"], str(p["asset_id"]), p["asset_version"], p["asset_sha256"])
+        for p in selected
+    }
+    if shot_id is not None and not selected:
+        raise PolicyDenied("sealed port map has no references for this shot")
+    bindings = [
+        b
+        for b in bindings
+        if (b.role.value, b.subject_id, str(b.asset_id), b.asset_version, b.asset_sha256)
+        in selected_keys
+    ]
+    assets = {b.asset_id: assets[b.asset_id] for b in bindings}
     return tuple(bindings), assets, resolver, episode
 
 
@@ -447,7 +460,12 @@ class _SealedNativeInputs:
     def manifest(self, sample):
         self.current()
         bindings, assets, resolver, episode = _validated_sources(
-            self.db, self.settings, self.clock, self.plan, self.seal
+            self.db,
+            self.settings,
+            self.clock,
+            self.plan,
+            self.seal,
+            shot_id=sample["shot_id"],
         )
         shot = next((s for s in self.plan.shots if s["shot_id"] == sample["shot_id"]), None)
         if shot is None:
@@ -565,11 +583,22 @@ class _SealedNativeInputs:
         bindings, assets, _, _ = _validated_sources(
             self.db, self.settings, self.clock, self.plan, self.seal
         )
-        by_key = {(b.role.value, b.subject_id): b for b in bindings}
+        by_key = {
+            (b.role.value, b.subject_id, str(b.asset_id), b.asset_version, b.asset_sha256): b
+            for b in bindings
+        }
         with self._scope(acquisition):
             self.client.attest_schema()
             for port in self.seal.port_map:
-                binding = by_key[(port["role"], port["subject_id"])]
+                binding = by_key[
+                    (
+                        port["role"],
+                        port["subject_id"],
+                        str(port["asset_id"]),
+                        port["asset_version"],
+                        port["asset_sha256"],
+                    )
+                ]
                 kind = port["media_kind"]
                 digest = binding.asset_sha256
                 key = upload_key_for(
@@ -637,6 +666,8 @@ class _SealedNativeInputs:
         ports = []
         uploads = []
         for item in self.seal.port_map:
+            if item.get("shot_id") not in (None, sample["shot_id"]):
+                continue
             port = PikaPortMap(
                 role=ReferenceRole(item["role"]),
                 subject_id=item["subject_id"],
@@ -659,7 +690,9 @@ class _SealedNativeInputs:
                     media_kind=row["media_kind"],
                     role=port.role,
                     subject_id=port.subject_id,
-                    destination_slot=row["destination_slot"],
+                    # The durable source upload is acquisition-scoped; the exact
+                    # destination is shot-scoped and comes from the immutable seal.
+                    destination_slot=port.destination_slot,
                     upload_key=row["upload_key"],
                     locator=row["locator"]["locator"],
                     state=row["state"],
