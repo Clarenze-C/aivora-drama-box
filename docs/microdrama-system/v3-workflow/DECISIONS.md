@@ -147,7 +147,7 @@ shot).
 - The master spec is final at **v0.3** after two Codex critique rounds. The v0.1 baseline is pinned
   (`SPEC-v3-v0.1.md`, sha256 0a2677c9…).
 
-## D2 update: Botnoi voice catalogue sources (operator + orchestrator, 11 Nov, ~13:00Z)
+## D2 update: Botnoi voice catalogue sources (operator + orchestrator, 11 Nov, ~12:20Z)
 
 ### What the operator said
 

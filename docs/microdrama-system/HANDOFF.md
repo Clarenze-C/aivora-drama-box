@@ -15,8 +15,18 @@ Everything below this section is history. This section is the live state.
     `t031-h2-offline-gates-b`. Receipts are in `.scratch/t031-gate-h2b/.scratch/gate/` (`check.exit`,
     `pilot.exit`, `overall.exit`, logs).
   - `.scratch/t031-gate-h2` (at `0e34630`) is the checkout Codex reviews.
-- **Codex review** of `45e4f2a...0e34630` (P4, HBF, LF, P5): [brief](T031-fix-round/codex-review-h2-p4p5-brief.md)
-  → `T031-fix-round/codex-review-h2-p4p5.md`. It is round 1 for P4/P5/LF and round 2 for HB-1..14.
+- **Codex review** of `45e4f2a...0e34630`: [result](T031-fix-round/codex-review-h2-p4p5.md) =
+  **FIX-REQUIRED**.
+  - HC-1..HC-10 BLOCKING, HC-11/12 SHOULD-FIX.
+  - HB-1..4 and HB-14 CLOSED; HB-5..13 PARTIAL.
+  - The orchestrator verified HC-4, HC-7 and the out-of-spec canonical edits (HC-2).
+- **The operator approved a fix round plus one final Codex review** (a 3rd round for the HB items).
+- **Fix round HCF** is running: [brief](T031-fix-round/h2-hcf-brief.md), tag `dramabox:t031-h2-hcf`,
+  report `T031-fix-round/h2-hcf-REPORT.md`.
+  - Package F1 reverts the out-of-spec canonical billing edits first.
+  - Marker: `H2-HCF: ALL FIXES DONE`.
+  - Then: the full gate, then the final Codex review. **If that review still finds BLOCKING issues, the
+    orchestrator recommends parking T031** and building V3's generic recovery (phase A3) instead.
 - **After both pass:**
   - fast-forward `feat/t031-pika-flex-native` to the accepted tip (local only, never pushed);
   - A0-D then branches from that tip.

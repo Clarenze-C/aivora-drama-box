@@ -1,6 +1,6 @@
 # Drama Box v3 — series production workflow: MASTER SPEC
 
-**Version 0.4.3, 11 Nov 2026.** Author: Opus orchestrator. (v0.4.3 changes only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
+**Version 0.4.4, 11 Nov 2026.** Author: Opus orchestrator. (v0.4.4 changes only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.3 changed only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
 
 **Status: BINDING MASTER.**
 - Codex critique rounds 1–2 are applied: [codex-spec-critique.md](codex-spec-critique.md) (V3C-1..34) and
@@ -645,8 +645,10 @@ Gate 2. (§8 is kept only as a pointer; N25.)
 | failed (terminal) | `FAILED` | `BLOCKED` (with an operator action) |
 | cancelled | — | `CANCELLED` |
 
-Phase A0 owns any schema additions to the jobs and provider-operation records. Phase A owns the workers,
-enforcement and views.
+Phase A0 owns the jobs and provider-operation schema for the LLM plumbing (`defer_reason`, the claim's
+`consumed_attempt`, `REFUSED_PRELAUNCH`, the `llm.subscription` kind, the `DeferReason` enum). The phase A
+packages own their work-scope columns as allocated in the A1 design note (AC-23; amendment v0.4.4). Phase
+A owns the workers, enforcement and views.
 
 ### 10.1 LLM calls (V3C-21/22, V3R-10; amendment v0.4.2)
 
