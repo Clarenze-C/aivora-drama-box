@@ -274,18 +274,26 @@ class CanonicalExperimentWorld:
         self.comfy.adopt_reserved_attempt(request, request.reservation_id)
         return result.job_id
 
-    def submit(self, sample: dict, acquisition: dict) -> Any:
+    def submit(
+        self,
+        sample: dict,
+        acquisition: dict,
+        *,
+        send_authorizer: Any = None,
+    ) -> Any:
         request = RenderRequest.model_validate(sample["request"])
         if request.prompt_manifest_id is not None:
             if self.binding_factory is None:
                 raise Conflict("native semantic binding factory is required")
             bound = self.binding_factory(sample, acquisition, request)
-            return self.comfy.submit_v2(request, bound, job_id=sample["job_id"])
+            return self.comfy.submit_v2(
+                request, bound, job_id=sample["job_id"], send_authorizer=send_authorizer
+            )
         if self.binding_factory is not None:
             raise Conflict("native semantic binding requires a PromptManifest")
         # Existing actual service path remains available to offline composition
         # tests; the executable preflight only accepts the native sealed profile.
-        return self.comfy.submit(request, job_id=sample["job_id"])
+        return self.comfy.submit(request, job_id=sample["job_id"], send_authorizer=send_authorizer)
 
     def poll(self, sample: dict) -> Any:
         return self.comfy.poll(sample["operation_id"])

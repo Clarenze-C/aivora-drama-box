@@ -29,7 +29,7 @@ Recovery rules this module is built on:
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -505,7 +505,13 @@ class ComfyRenderService:
             )
         return template
 
-    def submit(self, request: RenderRequest, *, job_id: UUID) -> ComfyAttemptStatus:
+    def submit(
+        self,
+        request: RenderRequest,
+        *,
+        job_id: UUID,
+        send_authorizer: Callable[[Any], None] | None = None,
+    ) -> ComfyAttemptStatus:
         """Validate, bind, durably begin and dispatch one paid prompt attempt.
 
         Replays are safe: if a durable operation already exists for this attempt's
@@ -514,6 +520,12 @@ class ComfyRenderService:
         terminal outcome) instead of re-rendering it. Only the call that creates the
         operation dispatches; job-lease exclusivity (core T004) serializes workers, and
         ``begin``'s advisory locks arbitrate any residual race.
+
+        ``send_authorizer`` (T031 HCF HC-5) is an optional predicate the caller
+        supplies; it runs INSIDE the first-send claim's transaction, so the
+        right to the first POST is consumed only while the caller's send
+        authorization is still valid. A refusal rolls begin and claim back
+        whole (nothing consumed, nothing sent).
         """
         if self._config.price is None:
             raise UnknownPrice(
@@ -565,7 +577,9 @@ class ComfyRenderService:
             # it would otherwise sit as reserved exposure until expiry.
             self._release_attempt_hold_quietly(request)
             raise
-        return self._submit_bound_graph(request, bound, job_id=job_id, token=token)
+        return self._submit_bound_graph(
+            request, bound, job_id=job_id, token=token, send_authorizer=send_authorizer
+        )
 
     def submit_v2(
         self,
@@ -573,6 +587,7 @@ class ComfyRenderService:
         bound_workflow: BoundWorkflow,
         *,
         job_id: UUID,
+        send_authorizer: Callable[[Any], None] | None = None,
     ) -> ComfyAttemptStatus:
         """Submit a pre-bound semantic graph without the legacy positional binder.
 
@@ -638,7 +653,9 @@ class ComfyRenderService:
         except MicrodramaError:
             self._release_attempt_hold_quietly(request)
             raise
-        return self._submit_bound_graph(request, bound_workflow, job_id=job_id, token=token)
+        return self._submit_bound_graph(
+            request, bound_workflow, job_id=job_id, token=token, send_authorizer=send_authorizer
+        )
 
     def _load_current_prompt_manifest(self, request: RenderRequest) -> PromptManifest:
         """Load the current exact manifest and verify both document and V2 content hashes."""
@@ -675,6 +692,7 @@ class ComfyRenderService:
         *,
         job_id: UUID,
         token: str,
+        send_authorizer: Callable[[Any], None] | None = None,
     ) -> ComfyAttemptStatus:
         """Begin operation, queue the supplied graph and persist its external prompt ID.
 
@@ -688,7 +706,14 @@ class ComfyRenderService:
         replay of it: only the caller that appends the claim may POST; every
         later caller finds the claim consumed and raises NeedsReconciliation
         (the send's outcome is uncertain - reconciliation owns it, and no
-        second POST ever leaves, I1)."""
+        second POST ever leaves, I1).
+
+        HC-5 (T031 HCF): when ``send_authorizer`` is supplied it runs inside
+        this same transaction, BEFORE the claim is consumed - the right to the
+        first POST is consumed only by a caller whose send authorization is
+        still valid at claim time. A refusal rolls begin and claim back whole:
+        nothing consumed, nothing sent; an effect authorized before fencing
+        stays with reconciliation (I2)."""
         now = self._now()
         deadline = now + timedelta(milliseconds=self._config.timeout_ms)
         with self._db.transaction() as tx:
@@ -704,6 +729,8 @@ class ComfyRenderService:
                 reservation_id=request.reservation_id,
                 episode_id=request.episode_id,
             )
+            if send_authorizer is not None and operation.state in _DISPATCHABLE:
+                send_authorizer(tx)
             if operation.state in _DISPATCHABLE and not _claim_first_send(
                 tx, operation.operation_id, now=now, correlation_id=request.reservation_id
             ):

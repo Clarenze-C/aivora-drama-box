@@ -5,50 +5,87 @@ job, operation or experiment state. Provider effects remain in LeaseService and
 ComfyRenderService. No live world is constructed implicitly by a local CLI.
 
 T031 H-2 §6.1/R5 - the transaction inventory (function -> locks in order ->
-writes). The shared order is: 1 account, 2 categories, 3 E
-(benchmark_experiments), 4 A (benchmark_acquisitions, by id), 5 billing
-advisory then L (pod_leases, by id), 6 D (benchmark_dispatch_slots), 7 S
-(benchmark_samples, by id), 8 R (reservations, by id); the R5 suffix continues
-with provider operation rows (O, by id) and upload rows (by their immutable
-key). No network call is made while these locks are held.
+writes), rewritten from the actual SQL after the HCF round (HC-6). The shared
+order is: 1 account, 2 categories, 3 E (benchmark_experiments), 4 A
+(benchmark_acquisitions, by id), 5 billing advisory then L (pod_leases, by
+id), 6 D (benchmark_dispatch_slots), 7 S (benchmark_samples, by id), 8 R
+(reservations, by id); the R5 suffix continues with provider operation rows
+(O, by id) and upload rows (by their immutable key). No network call is made
+while these locks are held.
 
-Full-order benchmark transactions (canonical, all locks in the shared order):
+``_lock_gate_rows`` is the ONE ordered row-lock helper for steps 4-8 plus the
+R5 suffix (A rows by id -> the experiment's L rows by id -> D -> S rows by id
+-> linked R rows by id -> O rows by id -> upload rows by key); every
+transaction below that evaluates or writes gate rows takes it, after the
+caller's account/category/E prefix locks.
 
-- ``execute`` / ``_advance``       account, categories, E, A, L(prior leases),
-                                   D -> gate (_lock_gate_rows: A rows, D, R, O,
-                                   uploads) -> state write / dispatch decisions.
-- ``_acquisition``                 account, categories, E, A, L(every prior
-                                   lease of the experiment, by id), gate rows;
-                                   writes the acquisition intent + linked
-                                   COMPUTE/STORAGE holds (reserve_linked).
-- ``_claim_sample``                account, categories, E, A, D, S, gate rows
-                                   (R, O, uploads); writes the PROMPT hold,
-                                   sample CLAIMED write and slot occupancy.
-- ``_observe``                     D (slot, token re-checked) before S; writes
-                                   the sample projection and clears the slot.
-- ``_mark_upload_ambiguity``       account, categories, E; E state write only.
-- ``_mark_create_ambiguity``       account, categories, E before A; A state
-                                   write + E state write.
-- ``_enter_grace`` (§5.4)          account, categories, E, A; persists
+Full-order benchmark transactions (actual locks in the shared order):
+
+- ``execute``                      account, categories, E; the predicated
+                                   state write (never from
+                                   NEEDS_RECONCILIATION); then ``_advance``.
+- ``_advance``                     account, categories, E, D; takes the slot
+                                   coordinator token (control write) or
+                                   returns the status while a live token held.
+- ``_advance_owned`` coordination  account, categories, E, A(row), D(slot);
+                                   writes the acquisition coordinator token
+                                   (HC-6: A before D, the fence's own order).
+- ``_activate_acquisition``        account, categories, E, A(row), D(slot);
+                                   HC-5 ownership assertion (BOTH tokens,
+                                   live leases), then the ACTIVE write.
+- ``_acquisition``                 account, categories, E, helper (A, L, D, S,
+                                   R, O, uploads); returns the existing
+                                   acquisition only without U1/U5 on it, or
+                                   admits (gate + intent + linked
+                                   COMPUTE/STORAGE holds via reserve_linked).
+- ``_claim_sample``                account, categories, E, helper; HC-5
+                                   ownership assertion, then the occupied-slot
+                                   return or the fresh claim (PROMPT hold,
+                                   sample CLAIMED write, slot occupancy) with
+                                   ``unresolved_items`` re-evaluated under the
+                                   same locks.
+- ``_gate`` / ``_gate_in_tx``      account, categories, E, helper; read-only
+                                   decision (plus the HC-5 ownership assertion
+                                   for dispatch), refuses before any effect.
+- ``_observe``                     E, D(slot), S(row) - a shared-order suffix;
+                                   token assertion, monotonic projection, slot
+                                   clear and the R6 outcome write.
+- ``finalize_terminal`` (3+4)      account, categories, E, D(slot), S(row);
+                                   projection + slot clear + R6 outcome in one
+                                   transaction (settlement ran before, through
+                                   the canonical receipts).
+- ``_mark_upload_ambiguity``       account, categories, E (+ A, D and the HC-5
+                                   ownership assertion when a coordinator drove
+                                   the upload); E state write only.
+- ``_mark_create_ambiguity``       account, categories, E, A(row) (+ D and the
+                                   HC-5 ownership assertion when a coordinator
+                                   drove the create); A + E state writes.
+- ``_enter_grace`` (§5.4)          account, categories, E, A(row) (+ the
+                                   ownership assertion when a coordinator drove
+                                   the ambiguity); persists
                                    recovery_started_at / recovery_deadline.
-- ``_deadline_fence`` (R3)         account, categories, E, A; revokes the
-                                   coordinator + slot tokens (control writes
-                                   only; cleanup runs after commit).
-- ``resolve_create`` (§6.2)        account, categories, E, A, billing advisory,
-                                   L; SC2-3 replay, preconditions,
+- ``_deadline_fence`` (R3)         account, categories, E, A(row), helper;
+                                   recomputes under lock (shorten-only), then
+                                   revokes the coordinator + slot tokens.
+- ``resolve_create`` (§6.2)        account, categories, E, A(row), billing
+                                   advisory (billing.py key 451051), L(row);
+                                   SC2-3 replay, preconditions,
                                    resolve_podless_create_in_tx (audit + window
                                    end + zero-BILLED compute settlement) and
                                    the NO_CREATE_PROVEN write in ONE
                                    transaction. Never releases STORAGE.
-- ``sweep`` NO_CREATE_PROVEN finalization (§6.3)  account, categories, E, A;
-                                   re-checks under lock (state, contradiction,
-                                   verified termination, live lease, storage
-                                   rows) and releases the single original
-                                   STORAGE hold - the only place that may.
-- ``_gate`` / gate decisions       account, categories, E, then
-                                   _lock_gate_rows (A rows, D, R, O, upload
-                                   rows); read-only decision, refuses before
-                                   any effect.
+- ``sweep`` NO_CREATE finalization (§6.3)  account, categories, E, helper (the
+                                   lease row the decision reads is L-locked
+                                   inside it); re-checks under lock and
+                                   releases the single original STORAGE hold -
+                                   the only place that may.
+- ``sweep`` cleanup finalization   account, categories, E, helper; storage
+                                   release, upload fence, failed-sample
+                                   projection, slot clear, outcome write and
+                                   prompt-hold releases, all on rows the
+                                   helper already locked in the shared order
+                                   (HC-6: the previous shape locked R and
+                                   uploads before the D/S writes).
 
 Canonical transactions kept suffix-only (they lock only R5-suffix rows and
 never take earlier-order benchmark or budget locks afterwards):
@@ -56,12 +93,16 @@ never take earlier-order benchmark or budget locks afterwards):
 - ``provider_ops.begin``/``record_result`` (comfy_jobs)  the reservation row
   (FOR SHARE on begin) then the O row; a benchmark gate that locks R before O
   serialises with them at R.
+- ``_submit_bound_graph``'s first-send claim (comfy_jobs, HB-7/HC-5)  the O
+  row via ``begin``; the optional ``send_authorizer`` predicate runs inside
+  the claim transaction (reads the coordinator ownership, takes no locks).
 - ``_SealedNativeInputs.stage`` upload-intent INSERT/UNKNOWN write  the
   acquisition ownership row (A, R5 insertion serialization) then the upload
   row; never earlier-order locks afterwards.
 - ``BillingRepository.resolve_podless_create_in_tx``  assumes the caller holds
-  locks 1-5; takes the billing advisory then L (re-entrantly), writes the
-  audit row, lease window and zero-BILLED settlement receipt.
+  locks 1-5 (account, categories, E, A, advisory); takes L (re-entrantly with
+  the advisory), writes the audit row, lease window and zero-BILLED
+  settlement receipt.
 - operator terminal transitions (``resolve_sample`` -> comfy_jobs)  the O row;
   the terminal transition commits BEFORE financial finalization is invoked.
 """
@@ -360,22 +401,36 @@ class BenchmarkService:
         return self._advance(experiment_id, world, phase, quote)
 
     def _lock_gate_rows(self, tx: Any, experiment_id: UUID) -> None:
-        """Lock the rows a §4.1 gate decision reads (§6.1 order, after E).
+        """The ONE §6.1 ordered row-lock helper (HC-6): steps 4-8 plus the R5 suffix.
 
-        Acquisition ownership rows first (step 4 - upload-intent insertion
-        serialises through them, R5), then the dispatch slot, linked
-        reservations, provider operations and upload intents - so a gate
-        serialises with the writers of exactly those rows and cannot race a new
-        intent into existence beside it. No network call is ever made under
-        these locks: refusal raises before any effect.
+        Every benchmark transaction that evaluates or writes gate rows locks
+        them through this helper, in the shared order: the acquisition
+        ownership rows (step 4 - upload-intent insertion serialises through
+        them, R5), the experiment's lease rows (L, step 5 - a canonical L-only
+        janitor adoption cannot bind a pod or contradict a resolution while a
+        gate or finalization transaction proceeds), the dispatch slot (D, step
+        6), the samples (S, step 7), the linked reservations (R, step 8), then
+        the provider operations (O) and upload intents (R5 suffix) - the
+        complete canonical set a gate decision evaluates. No network call is
+        ever made under these locks: refusal raises before any effect.
         """
         tx.fetchall(
             "SELECT acquisition_id FROM benchmark_acquisitions WHERE experiment_id=%s "
             "ORDER BY acquisition_id FOR UPDATE",
             (experiment_id,),
         )
+        tx.fetchall(
+            "SELECT l.id FROM pod_leases l JOIN benchmark_acquisitions a "
+            "ON a.lease_id=l.id WHERE a.experiment_id=%s ORDER BY l.id FOR UPDATE",
+            (experiment_id,),
+        )
         tx.fetchone(
             "SELECT * FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+            (experiment_id,),
+        )
+        tx.fetchall(
+            "SELECT sample_id FROM benchmark_samples WHERE experiment_id=%s "
+            "ORDER BY sample_id FOR UPDATE",
             (experiment_id,),
         )
         tx.fetchall(
@@ -439,6 +494,39 @@ class BenchmarkService:
                 ["R3 fence: the coordinator token was revoked at the recovery deadline"]
             )
 
+    def _activate_acquisition(
+        self, experiment_id: UUID, acquisition_id: UUID, *, coordinator_token: UUID
+    ) -> None:
+        """HC-5: the ACTIVE control write, under the A and D row locks.
+
+        The write is authorised only by the FULL live ownership - both durable
+        tokens with live ownership leases (``_assert_coordination``), not the
+        acquisition row's token alone: a coordinator whose dispatch-slot token
+        was fenced at the recovery deadline writes no control state. Effects
+        authorized before fencing stay with reconciliation; the fence only
+        strips the right to control further.
+        """
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            tx.fetchone(
+                "SELECT acquisition_id FROM benchmark_acquisitions "
+                "WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition_id,),
+            )
+            tx.fetchone(
+                "SELECT coordinator_token, coordinator_lease_until "
+                "FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+                (experiment_id,),
+            )
+            self._assert_coordination(tx, experiment_id, acquisition_id, coordinator_token)
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET state='ACTIVE' WHERE acquisition_id=%s",
+                (acquisition_id,),
+            )
+
     def _gate_in_tx(
         self,
         tx: Any,
@@ -490,16 +578,13 @@ class BenchmarkService:
             lock_account(tx, exp["account_id"])
             lock_categories(tx, exp["account_id"])
             exp = experiment_row(tx, experiment_id, lock=True)
+            # HC-6: the ONE shared-order helper locks A rows, the experiment's
+            # lease rows (L - the Q3/§6.4 prior-lease serialization this
+            # admission evaluates U1/U5 under), D, S, R, O and uploads before
+            # any evaluation. A row read below re-acquires rows it holds.
+            self._lock_gate_rows(tx, experiment_id)
             active = tx.fetchone(
                 "SELECT * FROM benchmark_acquisitions WHERE experiment_id=%s AND state NOT IN ('CLOSED','NO_CREATE_PROVEN') FOR UPDATE",
-                (experiment_id,),
-            )
-            # §6.4/Q3: lock every prior lease of the experiment (L, step 5)
-            # before evaluating U1/U5 - the decision serialises with
-            # already-visible adoption (pod binding, contradiction).
-            tx.fetchall(
-                "SELECT l.id FROM pod_leases l JOIN benchmark_acquisitions a "
-                "ON a.lease_id=l.id WHERE a.experiment_id=%s ORDER BY l.id FOR UPDATE",
                 (experiment_id,),
             )
             if active:
@@ -508,7 +593,6 @@ class BenchmarkService:
                 # admission only) - but a create that is uncertain (U1) or a
                 # reopened liability (U5) on it forbids proceeding at all:
                 # reconciliation owns that acquisition next.
-                self._lock_gate_rows(tx, experiment_id)
                 items = unresolved_items(tx, experiment_id, now=self.clock.now())
                 owning = {
                     item.acquisition_id
@@ -858,16 +942,43 @@ class BenchmarkService:
                 return self.sweep(experiment_id, world=world)
         return self.status(experiment_id)
 
-    def _mark_upload_ambiguity(self, experiment_id: UUID):
+    def _mark_upload_ambiguity(
+        self,
+        experiment_id: UUID,
+        acquisition: dict | None = None,
+        *,
+        coordinator_token: UUID | None = None,
+    ):
         """§5.1: an upload ambiguity keeps the intent INTENT/UNKNOWN (U3u) and
         the acquisition unlabelled; no prompt operation is invented. The pod
-        stays for the checksum readback."""
+        stays for the checksum readback. HC-5: when a coordinator drove the
+        upload, the E control write validates its FULL live ownership (both
+        tokens) under the A and D row locks - a fenced or replaced coordinator
+        stamps no ambiguity state (takeover handlers stay tokenless, §5.2)."""
         with self.db.transaction() as tx:
             # §6.1: account/categories before the E write.
             exp = experiment_row(tx, experiment_id)
             lock_account(tx, exp["account_id"])
             lock_categories(tx, exp["account_id"])
             experiment_row(tx, experiment_id, lock=True)
+            if coordinator_token is not None:
+                if acquisition is None:
+                    raise Conflict(
+                        "an upload ambiguity driven by a coordinator names its acquisition"
+                    )
+                tx.fetchone(
+                    "SELECT acquisition_id FROM benchmark_acquisitions "
+                    "WHERE acquisition_id=%s FOR UPDATE",
+                    (acquisition["acquisition_id"],),
+                )
+                tx.fetchone(
+                    "SELECT coordinator_token, coordinator_lease_until "
+                    "FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+                    (experiment_id,),
+                )
+                self._assert_coordination(
+                    tx, experiment_id, acquisition["acquisition_id"], coordinator_token
+                )
             tx.execute(
                 "UPDATE benchmark_experiments SET execution_state='NEEDS_RECONCILIATION' "
                 "WHERE experiment_id=%s",
@@ -875,9 +986,22 @@ class BenchmarkService:
             )
         return self.status(experiment_id)
 
-    def _mark_create_ambiguity(self, experiment_id: UUID, acquisition: dict, world: Any):
+    def _mark_create_ambiguity(
+        self,
+        experiment_id: UUID,
+        acquisition: dict,
+        world: Any,
+        *,
+        coordinator_token: UUID | None = None,
+    ):
         """§5.1: a create ambiguity labels the acquisition UNKNOWN (no grace)
-        and sweeps - the reconciler owns the podless create from here."""
+        and sweeps - the reconciler owns the podless create from here. HC-5:
+        when a coordinator drove the create, the A control write validates its
+        FULL live ownership (both tokens) under the A and D row locks - a
+        stalled original create that returns after takeover and fencing must
+        not rewrite its acquisition to UNKNOWN (a newer acquisition may hold
+        the partial-index slot; the stale write could collide with it).
+        Takeover handlers stay tokenless (§5.2)."""
         with self.db.transaction() as tx:
             # §6.1: E is locked before the A write (account/categories first).
             exp = experiment_row(tx, experiment_id)
@@ -889,6 +1013,15 @@ class BenchmarkService:
                 "WHERE acquisition_id=%s FOR UPDATE",
                 (acquisition["acquisition_id"],),
             )
+            if coordinator_token is not None:
+                tx.fetchone(
+                    "SELECT coordinator_token, coordinator_lease_until "
+                    "FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+                    (experiment_id,),
+                )
+                self._assert_coordination(
+                    tx, experiment_id, acquisition["acquisition_id"], coordinator_token
+                )
             tx.execute(
                 "UPDATE benchmark_acquisitions SET state='UNKNOWN' WHERE acquisition_id=%s",
                 (acquisition["acquisition_id"],),
@@ -937,6 +1070,11 @@ class BenchmarkService:
             lock_account(tx, exp["account_id"])
             lock_categories(tx, exp["account_id"])
             experiment_row(tx, experiment_id, lock=True)
+            tx.fetchone(
+                "SELECT acquisition_id FROM benchmark_acquisitions "
+                "WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition["acquisition_id"],),
+            )
             slot = tx.fetchone(
                 "SELECT coordinator_token, coordinator_lease_until "
                 "FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
@@ -992,21 +1130,14 @@ class BenchmarkService:
             except NeedsReconciliation:
                 # §5.1: a create ambiguity labels the acquisition UNKNOWN and
                 # gets NO grace - the sweep's token reconciliation owns it.
-                return self._mark_create_ambiguity(experiment_id, acquisition, world)
-            with self.db.transaction() as tx:
-                # R3/HB-8: a fenced or lease-lapsed coordinator never writes
-                # acquisition control state - the write is predicated on its
-                # token surviving inside a live ownership lease.
-                updated = tx.execute(
-                    "UPDATE benchmark_acquisitions SET state='ACTIVE' "
-                    "WHERE acquisition_id=%s AND coordinator_token=%s "
-                    "AND coordinator_lease_until > %s",
-                    (acquisition["acquisition_id"], token, self.clock.now()),
+                # HC-5: the control write validates this coordinator's live
+                # ownership; a stalled create returning after fencing refuses.
+                return self._mark_create_ambiguity(
+                    experiment_id, acquisition, world, coordinator_token=token
                 )
-                if updated != 1:
-                    raise AdmissionBlocked(
-                        ["R3 fence: the coordinator token was revoked at the recovery deadline"]
-                    )
+            self._activate_acquisition(
+                experiment_id, acquisition["acquisition_id"], coordinator_token=token
+            )
             # At most one active prompt. Resume polls operation IDs before any submit.
             for _ in range(24):
                 sample = self._claim_sample(
@@ -1034,8 +1165,11 @@ class BenchmarkService:
                     except NeedsReconciliation:
                         # §5.1: an upload ambiguity keeps the intent open (U3u)
                         # and invents no prompt operation; the pod stays for the
-                        # checksum readback (§5.3).
-                        return self._mark_upload_ambiguity(experiment_id)
+                        # checksum readback (§5.3). HC-5: the E control write
+                        # validates this coordinator's live ownership.
+                        return self._mark_upload_ambiguity(
+                            experiment_id, acquisition, coordinator_token=token
+                        )
                 if sample["operation_id"]:
                     try:
                         result = world.poll(sample)
@@ -1053,7 +1187,20 @@ class BenchmarkService:
                         sample_id=sample["sample_id"],
                     )
                     try:
-                        result = world.submit(sample, acquisition)
+                        # HC-5: the first-send right is consumed only inside a
+                        # transaction that still sees this coordinator's FULL
+                        # live ownership (both tokens) - a coordinator fenced
+                        # between the dispatch gate and the claim sends
+                        # nothing and consumes nothing.
+                        result = world.submit(
+                            sample,
+                            acquisition,
+                            send_authorizer=(
+                                lambda tx, _token=token, _acq=acquisition["acquisition_id"]: (
+                                    self._assert_coordination(tx, experiment_id, _acq, _token)
+                                )
+                            ),
+                        )
                     except NeedsReconciliation:
                         # §5.1/§5.4: the acquisition stays ACTIVE and the
                         # durable grace is persisted before any recovery.
@@ -1071,8 +1218,11 @@ class BenchmarkService:
         except NeedsReconciliation:
             # Any ambiguity the stage handlers above did not classify (a new
             # call site) keeps the conservative create treatment: labelled
-            # UNKNOWN and swept for token reconciliation.
-            return self._mark_create_ambiguity(experiment_id, acquisition, world)
+            # UNKNOWN and swept for token reconciliation. HC-5: the control
+            # write validates this coordinator's live ownership.
+            return self._mark_create_ambiguity(
+                experiment_id, acquisition, world, coordinator_token=token
+            )
         except AdmissionBlocked as refused:
             # I3: the gate refused inside its locked transaction; nothing was
             # written and nothing dispatched. Return the reconciliation status
@@ -1108,6 +1258,9 @@ class BenchmarkService:
             lock_account(tx, exp["account_id"])
             lock_categories(tx, exp["account_id"])
             exp = experiment_row(tx, experiment_id, lock=True)
+            # HC-6: the ONE shared-order helper first (A rows, L, D, S, R, O,
+            # uploads); the site's own row reads below re-acquire held rows.
+            self._lock_gate_rows(tx, experiment_id)
             tx.fetchone(
                 "SELECT * FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
                 (acquisition["acquisition_id"],),
@@ -1116,11 +1269,13 @@ class BenchmarkService:
                 "SELECT * FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
                 (experiment_id,),
             )
-            if coordinator_token is not None and slot["coordinator_token"] != coordinator_token:
-                # R3: the deadline fence revoked this coordinator's slot token;
-                # a returning stale worker may not claim or control anything.
-                raise AdmissionBlocked(
-                    ["R3 fence: the coordinator token was revoked at the recovery deadline"]
+            if coordinator_token is not None:
+                # HC-5: a claim is authorised only by the FULL live ownership -
+                # BOTH durable tokens (values and live ownership leases), not
+                # the slot token's value alone. A returning stale worker may
+                # not claim or control anything.
+                self._assert_coordination(
+                    tx, experiment_id, acquisition["acquisition_id"], coordinator_token
                 )
             if slot["sample_id"]:
                 # Returning the slot's occupied sample is not a new claim - the
@@ -1138,7 +1293,6 @@ class BenchmarkService:
             # §4.2: a fresh claim re-evaluates the blocking items inside this
             # locked transaction (I3). The occupied-slot path above is exempt:
             # polling existing work is recovery, not admission.
-            self._lock_gate_rows(tx, experiment_id)
             items = unresolved_items(tx, experiment_id, now=self.clock.now())
             blockers = blocking(
                 items,
@@ -1612,12 +1766,17 @@ class BenchmarkService:
                 # NO_CREATE_PROVEN, an uncontradicted no-create proof or a
                 # verified termination of the discovered pod (with its storage
                 # ownership closed), the lease is no longer live, and no U5
-                # remains for it. The lease read joins this locked decision.
+                # remains for it. HC-6: the ONE shared-order helper locks the
+                # lease row (L) this decision reads inside the locked
+                # finalization - the previous FOR UPDATE OF a join read the
+                # lease row without locking it - plus D, S and R before any
+                # release.
                 with self.db.transaction() as tx:
                     exp = experiment_row(tx, experiment_id)
                     lock_account(tx, exp["account_id"])
                     lock_categories(tx, exp["account_id"])
                     experiment_row(tx, experiment_id, lock=True)
+                    self._lock_gate_rows(tx, experiment_id)
                     current = tx.fetchone(
                         "SELECT a.state, l.lease_state, l.terminate_verified_at "
                         "FROM benchmark_acquisitions a LEFT JOIN pod_leases l "
@@ -1722,6 +1881,12 @@ class BenchmarkService:
                 lock_account(tx, exp["account_id"])
                 lock_categories(tx, exp["account_id"])
                 experiment_row(tx, experiment_id, lock=True)
+                # HC-6: the ONE shared-order helper (A, L, D, S, R, then O and
+                # uploads) - the upload-fence, sample, slot and reservation
+                # writes below all touch rows locked in the shared order; the
+                # previous shape locked the STORAGE reservations (R) before the
+                # upload rows and wrote D/S after both.
+                self._lock_gate_rows(tx, experiment_id)
                 tx.fetchone(
                     "SELECT acquisition_id FROM benchmark_acquisitions WHERE acquisition_id=%s FOR UPDATE",
                     (acquisition["acquisition_id"],),
@@ -2358,6 +2523,15 @@ class BenchmarkService:
             )
             if acquisition is None:
                 raise NotFound("benchmark acquisition not found")
+            # HC-6/§6.1 step 5: the billing advisory comes BEFORE the L rows -
+            # the same order the canonical wrapper takes. The advisory key is
+            # billing.py's own (resolve_podless_create_in_tx re-takes it
+            # re-entrantly inside this transaction; xact locks are re-entrant).
+            if acquisition["lease_id"] is not None:
+                tx.fetchval(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 451051))",
+                    (str(acquisition["lease_id"]),),
+                )
             lease = (
                 tx.fetchone(
                     "SELECT * FROM pod_leases WHERE id=%s FOR UPDATE", (acquisition["lease_id"],)
