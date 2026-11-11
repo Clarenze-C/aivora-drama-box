@@ -37,8 +37,12 @@ Everything below this section is history. This section is the live state.
       time, **after `t031-r4-loop` ends** and while z.ai is under 50%.
     - Outputs `v3-workflow/A2-design-note.md`, `A3-…`, `A6b-…`.
     - The orchestrator adds rulings, then Codex critiques after the reset.
-  - **Phase B spec:** the orchestrator writes it from the GLM-Flash fact map
-    [b-factmap-brief.md](v3-workflow/b-factmap-brief.md) → `v3-workflow/b-factmap.md`, which is running.
+  - **Phase B spec: [phase-B-spec.md](v3-workflow/phase-B-spec.md) v0.1 DRAFT** (11 Nov 23:55Z).
+    - Written from the [fact map](v3-workflow/b-factmap.md) (GLM-Flash; 6 claims spot-checked).
+    - Packages B1–B6; B1 and B5 notes are critiqued first. Tests B-T1..B-T12 cover V3-AT-3/4/18/19.
+    - Open items O-B1..O-B6, each with a recommendation.
+    - **Next: Codex critique round 1 after the Codex reset** (13 Nov 10:30Z). Use the pattern of
+      `a-critique-brief.md`.
 
 ### Update, 11 Nov 22:25Z (Opus session e4e3c05c)
 
