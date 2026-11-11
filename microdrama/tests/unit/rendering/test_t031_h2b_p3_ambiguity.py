@@ -1012,6 +1012,7 @@ def _snapshot_server(state, path: Path) -> None:
 
     payload = {
         "now": state.clock.now().isoformat(),
+        "alive": state.alive,  # HB-13: pod lifetime is server state too
         "counter": len(state.submissions),
         "submissions": list(state.submissions),
         "prompts": [
@@ -1045,6 +1046,7 @@ def _restore_server(state, payload: dict) -> None:
     from microdrama.contracts.providers import ComfyOutputFile
     from microdrama.testing.fakes.comfy import ComfyScenario, _Prompt
 
+    state.alive = payload.get("alive", True)  # HB-13: restore the lifetime too
     for entry in payload["prompts"]:
         state.prompts[entry["prompt_id"]] = _Prompt(
             prompt_id=entry["prompt_id"],
@@ -1338,12 +1340,19 @@ def _at3_parent_world(db: Database, tmp_path: Path, experiment_id: UUID, snapsho
     world.leases._clock = comfy.clock
     world.provider.clock = comfy.clock
     world.manager._clock = comfy.clock
-    _at3_seed_live_pod(db, world, comfy, experiment_id)
+    # HB-13 (spec §9.1): the fake ComfyUI server lives only as long as its
+    # pod - a cleaned-up pod's server is unreachable afterwards.
+    from microdrama.testing.fakes.comfy import couple_server_to_pod_lifetime
+
+    couple_server_to_pod_lifetime(comfy.server, world.manager)
     with db.transaction(readonly=True) as tx:
         plan_row = tx.fetchone(
             "SELECT * FROM benchmark_experiments WHERE experiment_id=%s", (experiment_id,)
         )
     adapter, budget = _adapter_for(db, world, comfy, plan_row, experiment_id)
+    # Seed AFTER the adapter build (it fixes the world's provider pairing):
+    # the rebuilt pod lands in the provider the adapter's manager will read.
+    _at3_seed_live_pod(db, world, comfy, experiment_id)
     comfy.service._client = FakeComfyClient(comfy.server)
     comfy.service._budget = budget
     return comfy, adapter, store_root

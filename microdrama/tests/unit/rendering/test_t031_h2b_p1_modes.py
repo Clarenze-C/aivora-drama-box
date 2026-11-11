@@ -56,7 +56,7 @@ def _screen_quote(world: RenderWorld) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _bench_seal(plan) -> BenchmarkSeal:
+def _bench_seal(plan, *, node_schema_sha256: str = "c" * 64) -> BenchmarkSeal:
     refs, ports = [], []
     for index, role in enumerate(("character_identity", "outfit", "location", "voice")):
         ref = {
@@ -84,7 +84,7 @@ def _bench_seal(plan) -> BenchmarkSeal:
             "port_map": ports,
             "runtime_profile": {"profile": "fixture"},
             "image_ref": "registry.example/drama@sha256:" + "b" * 64,
-            "node_schema_sha256": "c" * 64,
+            "node_schema_sha256": node_schema_sha256,
             "rights_evidence_hash": "d" * 64,
             "schema_evidence": "LIVE_PROVIDER",
             "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
@@ -358,6 +358,21 @@ def test_at23_provenance_bytes_sha_and_per_acquisition_recovery(db: Database, tm
     budget._clock = comfy.clock
     world.leases._budget = budget
     comfy.service._budget = budget
+    # HB-13 (spec §9.1): the fake ComfyUI server lives only as long as its
+    # pod - a cleaned-up pod's server is unreachable afterwards.
+    from microdrama.testing.fakes.comfy import couple_server_to_pod_lifetime
+
+    couple_server_to_pod_lifetime(comfy.server, world.manager)
+    # HB-13/§9.1: runpod-addressed (the AT-13 pairing) so cleanups run the full
+    # canonical terminate->verify->settle tail - the receipt is earned.
+    from test_t045_timing import RunpodIdFakePods
+
+    from microdrama.rendering.leases import durable_created_pod_recorder
+
+    inner = RunpodIdFakePods(clock=comfy.clock, ids=world.ids)
+    inner.created_pod_recorder = durable_created_pod_recorder(world.db, comfy.clock.now)
+    world.provider = inner
+    world.manager._provider = inner
     reference = UUID(int=4242)
     comfy._seed_reference_assets([reference])
 
@@ -652,7 +667,9 @@ def _at4_quote(clock):
     )
 
 
-def _compose_default_world(db, tmp_path, monkeypatch, mode):
+def _compose_default_world(
+    db, tmp_path, monkeypatch, mode, *, node_schema_sha256=None, comfy_transport=None
+):
     from test_benchmark_experiments import plan_for
 
     from microdrama.budget import BudgetService
@@ -681,7 +698,7 @@ def _compose_default_world(db, tmp_path, monkeypatch, mode):
     plan = plan_for(episode_id)
     service = BenchmarkService(db, settings, clock=clock, ids=ids)
     service.prepare(plan)
-    seal = _bench_seal(plan)
+    seal = _bench_seal(plan, node_schema_sha256=node_schema_sha256 or "c" * 64)
     service.seal(plan.experiment_id, seal)
     authorization = BenchmarkAuthorization.model_validate(_authorization_document(plan, seal))
 
@@ -711,7 +728,7 @@ def _compose_default_world(db, tmp_path, monkeypatch, mode):
         "runtime": {"ports": [{"private": 8188, "public": 8188, "type": "http"}]},
     }
     runpod_transport = _RecordingRunpodTransport(pod)
-    comfy_transport = _RecordingComfyTransport()
+    comfy_transport = comfy_transport or _RecordingComfyTransport()
     world = build_experiment_world_for_at4(
         settings,
         db,
@@ -1031,3 +1048,166 @@ def test_hb10_cleanup_only_resume_ignores_broken_generation_documents(db: Databa
     assert code == 0
     payload = json.loads(buffer.getvalue())
     assert payload["execution_state"]  # the swept durable status, not an error
+
+
+# ---------------------------------------------------------------------------
+# HB-13 (Codex P1-P3 review): AT-4's third-layer probe used an unbound client
+# with permissive guards - it proved the unbound refusal, not independent
+# RECOVERY-mode transport denial. Each transport-layer guard is isolated below
+# with otherwise VALID inputs.
+# ---------------------------------------------------------------------------
+
+
+class _SchemaServingTransport:
+    """Serves only the schema attestation GET; a POST reaching this transport
+    is the EXECUTE control's boundary (recorded, then refused loudly)."""
+
+    def __init__(self, schema_bytes: bytes):
+        self.schema_bytes = schema_bytes
+        self.calls: list[tuple[str, str]] = []
+
+    def request(self, method, url, *, headers, body=None):
+        self.calls.append((method, url))
+        if method == "GET" and url.endswith("/object_info"):
+            return self.schema_bytes
+        raise AssertionError(f"HB-13 probe transport reached {method} {url}")
+
+
+def _hb13_guard_probe(db, tmp_path, monkeypatch, mode: str):
+    """A composed AT-4 world whose durable rows are the FULL valid shape the
+    request guard checks: a bound lease carrying the world's identity, an
+    ACTIVE prompt hold, a job, a provider operation and a claimed sample
+    linking them - plus a client bound to the pod and a verifiable schema."""
+
+    from test_t031_h2b_p2_gate import _prompt_hold_request
+
+    from microdrama.budget import BudgetService
+    from microdrama.persistence.db import jsonb
+    from microdrama.rendering.pika_transport import mapped_schema_sha256
+    from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
+    from microdrama.testing.fakes import SequentialIds
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[2]
+            / "fixtures/pika_h3_flex_object_info_OFFLINE_FIXTURE_ONLY.json"
+        ).read_text()
+    )
+    raw_schema = fixture["schemas"]
+    schema_bytes = json.dumps(raw_schema).encode()
+    schema_sha = mapped_schema_sha256(raw_schema, PIKA_TEMPLATE.node_classes)
+
+    transport = _SchemaServingTransport(schema_bytes)
+    world, plan, authorization, runpod_transport, _shared, clock, lease_row = (
+        _compose_default_world(
+            db,
+            tmp_path,
+            monkeypatch,
+            mode,
+            node_schema_sha256=schema_sha,
+            comfy_transport=transport,
+        )
+    )
+    budget = BudgetService(
+        db, clock, SequentialIds("hb13-at4"), _offline_settings(tmp_path / "hb13-store", db)
+    )
+    hold = budget.reserve(_prompt_hold_request(world, plan.episode_id, plan, "S01-R1", clock))
+    job_id = UUID(int=778)
+    operation_id = UUID(int=779)
+    owned_tag = f"microdrama-owned:{authorization.namespace}"
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE pod_leases SET pod_id='pod-at4-1', owned_tag=%s, "
+            "provider_account_ref=%s WHERE id=%s",
+            (owned_tag, authorization.provider_account_ref, lease_row["id"]),
+        )
+        tx.execute(
+            "INSERT INTO jobs(id,job_type,queue,semantic_key,input_hash,input,status) "
+            "VALUES(%s,'render.shot','production',%s,%s,%s,'WAITING_EXTERNAL')",
+            (
+                job_id,
+                f"benchmark:{plan.experiment_id}:sample:S01-R1:a1",
+                "a" * 64,
+                jsonb({}),
+            ),
+        )
+        tx.execute(
+            "INSERT INTO provider_operations(id,provider,operation_kind,client_token,"
+            "request_hash,state,reservation_id,job_id,deadline_at) "
+            "VALUES(%s,'comfyui','comfy.queue_prompt','hb13-op',%s,"
+            "'SUBMITTED',%s,%s,%s)",
+            (
+                operation_id,
+                "e" * 64,
+                hold.id,
+                job_id,
+                clock.now() + timedelta(minutes=30),
+            ),
+        )
+        tx.execute(
+            "UPDATE benchmark_samples SET state='CLAIMED',job_id=%s,reservation_id=%s,"
+            "acquisition_id=%s,operation_id=%s WHERE experiment_id=%s AND sample_id='S01-R1'",
+            (job_id, hold.id, UUID(int=9101), operation_id, plan.experiment_id),
+        )
+    client = world.comfy._client
+    client.bind_pod_endpoint("pod-at4-1", "https://pod-at4-1-8188.proxy.runpod.net")
+    return world, plan, client, transport, hold, job_id, operation_id
+
+
+def test_hb13_at4_recovery_mode_denial_isolated_with_valid_inputs(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-13 guard 1 (mode): every ownership input valid, the schema verifies -
+    ONLY the world mode is RECOVERY. The prompt POST is refused by the mode
+    rule itself, before any transport POST; guard 2 (ownership) refuses the
+    same valid shape with a foreign job, independently of the mode rule."""
+
+    from test_t031_h2b_p3_ambiguity import _valid_fake_graph
+
+    world, plan, client, transport, hold, job_id, operation_id = _hb13_guard_probe(
+        db, tmp_path, monkeypatch, "RECOVERY"
+    )
+    with client.authorization_scope(
+        reservation_id=hold.id,
+        episode_id=plan.episode_id,
+        job_id=job_id,
+        operation_id=operation_id,
+    ):
+        with pytest.raises(EffectDenied, match="recovery world cannot dispatch prompts"):
+            client.queue_prompt(_valid_fake_graph(), client_id="hb13-mode")
+    assert [method for method, _ in transport.calls] == ["GET"]  # attestation only
+    assert not any(method == "POST" for method, _ in transport.calls)
+
+    with client.authorization_scope(
+        reservation_id=hold.id,
+        episode_id=plan.episode_id,
+        job_id=UUID(int=555),
+        operation_id=operation_id,
+    ):
+        with pytest.raises(
+            EffectDenied, match="differs from experiment sample/acquisition ownership"
+        ):
+            client.queue_prompt(_valid_fake_graph(), client_id="hb13-owner")
+
+
+def test_hb13_at4_execute_control_reaches_the_transport(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HB-13 control (EXECUTE): the same valid inputs pass every guard and the
+    POST itself reaches the transport boundary - the RECOVERY denial is the
+    mode rule's, not an artifact of invalid inputs."""
+
+    from test_t031_h2b_p3_ambiguity import _valid_fake_graph
+
+    world, plan, client, transport, hold, job_id, operation_id = _hb13_guard_probe(
+        db, tmp_path, monkeypatch, "EXECUTE"
+    )
+    with client.authorization_scope(
+        reservation_id=hold.id,
+        episode_id=plan.episode_id,
+        job_id=job_id,
+        operation_id=operation_id,
+    ):
+        with pytest.raises(AssertionError, match="HB-13 probe transport"):
+            client.queue_prompt(_valid_fake_graph(), client_id="hb13-execute")
+    assert transport.calls[-1][0] == "POST"  # the POST reached the boundary

@@ -274,26 +274,33 @@ class _OfflineFinalityWorld:
     """
 
     def cleanup(self, acquisition):
-        # §9.1 restored strictness: the two unconditional assertions H-2 dropped
-        # are back - every pod-bound cleanup must have stopped compute and must
-        # hold durable stop/terminate evidence, or the fixture fails loudly
-        # instead of fabricating a verified receipt. Only a podless close (H-2's
-        # unknown create) reports unverified/pending, exactly like production
-        # until an audited resolution.
+        # §9.1/HB-13 restored strictness: only a VERIFIED TERMINATION is cleanup
+        # evidence. The two unconditional assertions H-2 dropped are back (every
+        # pod-bound cleanup stopped compute and holds durable stop evidence, or
+        # the fixture fails loudly), and a verified stop ALONE no longer
+        # fabricates a VERIFIED/BILLED/storage-final receipt - the offline close
+        # through the default synthetic provider stops without terminating, so
+        # it reports unverified/pending exactly like production until the
+        # terminate->verify tail (the runpod-addressed pairing, or the janitor)
+        # completes it.
         result = self.leases.shutdown(
             acquisition["lease_id"], reason="offline benchmark phase boundary"
         )
         with self.db.transaction(readonly=True) as tx:
             row = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (acquisition["lease_id"],))
-        verified = row["stop_verified_at"] is not None or row["terminate_verified_at"] is not None
+        terminated = row["terminate_verified_at"] is not None
         if row["pod_id"] is not None:
             assert result.compute_stopped
-            assert verified
+            assert row["stop_verified_at"] is not None
         return {
-            "verified": verified,
+            "verified": terminated,
             "compute_window_end": row["compute_window_end_at"],
-            "billing_state": "BILLED" if verified else "PENDING_PROVIDER_FINALITY",
-            "storage_final": verified,
+            "billing_state": (
+                "BILLED"
+                if terminated and not result.billing_pending
+                else "PENDING_PROVIDER_FINALITY"
+            ),
+            "storage_final": terminated,
         }
 
 
@@ -327,6 +334,21 @@ def test_composed_24_samples_use_actual_jobs_holds_leases_and_comfy_recovery(
     budget._clock = comfy.clock
     world.leases._budget = budget
     comfy.service._budget = budget
+    # HB-13 (spec §9.1): the fake ComfyUI server lives only as long as its
+    # pod - a cleaned-up pod's server is unreachable afterwards.
+    from microdrama.testing.fakes.comfy import couple_server_to_pod_lifetime
+
+    couple_server_to_pod_lifetime(comfy.server, world.manager)
+    # HB-13/§9.1: the composed benchmark world is runpod-addressed (the AT-13
+    # pairing) so every pod cleanup runs the canonical stop->terminate->verify->
+    # settle tail offline - a VERIFIED/BILLED cleanup receipt is EARNED through
+    # the real tail, never synthesized from a mere verified stop. A provider the
+    # test already made runpod-addressed (its own scenarios/recorder) is kept.
+    if world.manager._provider.provider_id != "runpod":
+        inner = RunpodIdFakePods(clock=comfy.clock, ids=world.ids)
+        inner.created_pod_recorder = durable_created_pod_recorder(world.db, comfy.clock.now)
+        world.provider = inner
+        world.manager._provider = inner
     reference = uuid4()
     comfy._seed_reference_assets([reference])
 
@@ -522,6 +544,21 @@ def _composed_world(
     budget._clock = comfy.clock
     world.leases._budget = budget
     comfy.service._budget = budget
+    # HB-13 (spec §9.1): the fake ComfyUI server lives only as long as its
+    # pod - a cleaned-up pod's server is unreachable afterwards.
+    from microdrama.testing.fakes.comfy import couple_server_to_pod_lifetime
+
+    couple_server_to_pod_lifetime(comfy.server, world.manager)
+    # HB-13/§9.1: the composed benchmark world is runpod-addressed (the AT-13
+    # pairing) so every pod cleanup runs the canonical stop->terminate->verify->
+    # settle tail offline - a VERIFIED/BILLED cleanup receipt is EARNED through
+    # the real tail, never synthesized from a mere verified stop. A provider the
+    # test already made runpod-addressed (its own scenarios/recorder) is kept.
+    if world.manager._provider.provider_id != "runpod":
+        inner = RunpodIdFakePods(clock=comfy.clock, ids=world.ids)
+        inner.created_pod_recorder = durable_created_pod_recorder(world.db, comfy.clock.now)
+        world.provider = inner
+        world.manager._provider = inner
     reference = uuid4()
     comfy._seed_reference_assets([reference])
 

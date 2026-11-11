@@ -146,16 +146,34 @@ class _Prompt:
 
 
 class FakeComfyServerState:
-    """Server-side memory shared by every client attached to it."""
+    """Server-side memory shared by every client attached to it.
+
+    HB-13 (spec §9.1): the fake server lives only as long as its pod. A
+    harness that couples the pod lifetime (``couple_server_to_pod_lifetime``)
+    flips ``alive`` off when the pod stops or terminates - every later client
+    call is unreachable, exactly like a real pod-side ComfyUI."""
 
     def __init__(self, clock: FakeClock, *, execution_ms: int = EXECUTION_MS) -> None:
         self.clock = clock
         self.execution_ms = execution_ms
+        self.alive = True
         self.prompts: dict[str, _Prompt] = {}
         self.submissions: list[str] = []
         self._files: dict[str, tuple[str, ComfyScenario]] = {}
         self._rendered: dict[str, bytes] = {}
         self._counter = 0
+
+    def require_alive(self) -> None:
+        if not self.alive:
+            raise TimeoutError("the pod-side ComfyUI is gone with its pod")
+
+    def reborn(self) -> None:
+        """HB-13 (spec §9.1): a NEW pod boots a fresh pod-side ComfyUI - no
+        prompt or output state survives the previous pod. The POST ledger and
+        the prompt-id counter stay monotonic (prompt ids never repeat)."""
+        self.alive = True
+        self.prompts.clear()
+        self._files.clear()
 
     def next_prompt_id(self) -> str:
         self._counter += 1
@@ -201,6 +219,7 @@ class FakeComfyClient(FakeBase):
         self.bound_pod_endpoint = (pod_id, endpoint_url)
 
     def find_prompt_id_by_client(self, client_id: str) -> str | None:
+        self.state.require_alive()
         """H-2: the fake server remembers the deterministic client id per prompt
         (queue and history alike), mirroring the live /queue + /history scan.
         §5.2 rule 3: MORE THAN ONE match is a conflict - the caller keeps the
@@ -221,10 +240,12 @@ class FakeComfyClient(FakeBase):
         return matches[0] if matches else None
 
     def object_info(self) -> dict[str, ComfyNodeInfo]:
+        self.state.require_alive()
         self._note("object_info")
         return dict(FAKE_NODE_CLASSES)
 
     def queue_prompt(self, graph: dict[str, Any], *, client_id: str) -> str:
+        self.state.require_alive()
         validate_api_graph(graph)
         step = self._step("queue_prompt", key=client_id)
         prompt_id = self.state.next_prompt_id()
@@ -267,11 +288,13 @@ class FakeComfyClient(FakeBase):
         return self.clock.now() < prompt.completes_at
 
     def in_queue(self, prompt_id: str) -> bool:
+        self.state.require_alive()
         self._note("in_queue", key=prompt_id)
         prompt = self._prompt(prompt_id)
         return prompt is not None and self._running(prompt)
 
     def history(self, prompt_id: str) -> ComfyHistoryEntry | None:
+        self.state.require_alive()
         self._note("history", key=prompt_id)
         prompt = self._prompt(prompt_id)
         if prompt is None or self._running(prompt):
@@ -300,6 +323,7 @@ class FakeComfyClient(FakeBase):
         )
 
     def progress_events(self, prompt_id: str) -> list[ComfyProgressEvent]:
+        self.state.require_alive()
         self._note("progress_events", key=prompt_id)
         prompt = self._prompt(prompt_id)
         if prompt is None:
@@ -336,6 +360,7 @@ class FakeComfyClient(FakeBase):
         return events
 
     def fetch_output(self, output: ComfyOutputFile) -> bytes:
+        self.state.require_alive()
         self._note("fetch_output", key=output.filename)
         return self.state.serve(output.filename)
 
@@ -348,3 +373,40 @@ __all__ = [
     "FakeComfyServerState",
     "validate_api_graph",
 ]
+
+
+def couple_server_to_pod_lifetime(server: FakeComfyServerState, manager) -> None:
+    """HB-13 (spec §9.1): the fake ComfyUI server lives only as long as its
+    pod. Wraps the fake pod manager's stop/terminate so the server becomes
+    unreachable the moment its pod leaves RUNNING - recovery can no longer
+    read output "from a pod that was cleaned up" through a surviving fake.
+    A NEW pod (``acquire_or_reconcile`` creating one) boots a fresh server
+    (``reborn``): no prompt or output state survives the previous pod."""
+    original_stop = manager.stop
+    original_terminate = manager.terminate
+    original_acquire = manager.acquire_or_reconcile
+
+    def stopping(pod_id):
+        result = original_stop(pod_id)
+        server.alive = False
+        return result
+
+    def terminating(pod_id):
+        result = original_terminate(pod_id)
+        server.alive = False
+        return result
+
+    seen_pod: list[str | None] = [None]
+
+    def acquiring(spec, *, name, client_token):
+        result = original_acquire(spec, name=name, client_token=client_token)
+        # Only a genuinely NEW pod boots a fresh server; reconciling the same
+        # pod (create retry that finds it) keeps its ComfyUI state.
+        if seen_pod[0] != result.pod_id:
+            seen_pod[0] = result.pod_id
+            server.reborn()
+        return result
+
+    manager.stop = stopping
+    manager.terminate = terminating
+    manager.acquire_or_reconcile = acquiring

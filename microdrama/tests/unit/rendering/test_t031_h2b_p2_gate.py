@@ -926,6 +926,23 @@ def _adapter_for(db, world: RenderWorld, comfy, plan_row: dict, experiment_id: U
     world.leases._clock = comfy.clock
     world.provider.clock = comfy.clock
     world.manager._clock = comfy.clock
+    # HB-13 (spec §9.1): the fake ComfyUI server lives only as long as its
+    # pod - a cleaned-up pod's server is unreachable afterwards.
+    from microdrama.testing.fakes.comfy import couple_server_to_pod_lifetime
+
+    couple_server_to_pod_lifetime(comfy.server, world.manager)
+    # HB-13/§9.1: the restarted process keeps the experiment's runpod
+    # addressing (the child's pairing) - the same experiment may not clean up
+    # its pods under a stop-only provider in one process and a terminate+verify
+    # provider in another.
+    from test_t045_timing import RunpodIdFakePods as _RunpodFake
+
+    from microdrama.rendering.leases import durable_created_pod_recorder as _recorder
+
+    _inner = _RunpodFake(clock=comfy.clock, ids=world.ids)
+    _inner.created_pod_recorder = _recorder(world.db, comfy.clock.now)
+    world.provider = _inner
+    world.manager._provider = _inner
     adapter = ParentWorld(
         db=db,
         jobs=comfy.jobs,
@@ -1251,21 +1268,70 @@ def test_at14_u6_after_hold_expiry_closes_only_positively_unused_liability(
 
 
 def test_cleanup_fixture_requires_verified_termination_evidence(db: Database, tmp_path: Path):
-    """§9.1: the composed fixture's two unconditional assertions are restored -
-    a pod-bound cleanup without durable stop/terminate evidence fails loudly,
-    and only a podless close reports unverified (never a fabricated receipt)."""
+    """HB-13/§9.1: a verified STOP alone is not cleanup evidence.
+
+    The offline receipt never fabricates a VERIFIED/BILLED/storage-final status:
+    a stop-only close (the default synthetic provider pairing) reports
+    unverified/pending, and only the canonical stop->terminate->verify->settle
+    tail through the runpod-addressed provider EARNS the verified receipt."""
+    from test_t045_timing import RunpodIdFakePods
+
+    from microdrama.rendering.leases import durable_created_pod_recorder
+    from microdrama.testing.fakes.pods import FakePodProvider
+
     world = RenderWorld(db)
     ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    # The default synthetic pairing (NOT runpod-addressed): shutdown stops the
+    # pod but never terminates it - the stop-only close under test.
+    plain = FakePodProvider(clock=comfy.clock, ids=world.ids)
+    world.provider = plain
+    world.manager._provider = plain
     lease_id = _lease_with_live_pod(db, world, ep.episode_id)
     acquisition = {"acquisition_id": uuid5_seed(plan.experiment_id, 1), "lease_id": lease_id}
 
-    # Happy path: the pod-bound cleanup carries durable stop evidence.
+    # Stop-only close: compute really stopped (the unconditional assertions
+    # hold), but no verified TERMINATION exists - the receipt must not claim
+    # verified cleanup, billing finality or storage finality (HB-13: the
+    # H-2 fixture synthesized BILLED from a mere verified stop).
     receipt = adapter.cleanup(acquisition)
-    assert receipt["verified"] is True
-    assert receipt["billing_state"] == "BILLED"
+    assert receipt["verified"] is False
+    assert receipt["billing_state"] == "PENDING_PROVIDER_FINALITY"
+    assert receipt["storage_final"] is False
     with db.transaction(readonly=True) as tx:
         row = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (lease_id,))
-    assert row["stop_verified_at"] is not None or row["terminate_verified_at"] is not None
+    assert row["lease_state"] == "RELEASED"
+    assert row["stop_verified_at"] is not None
+    assert row["terminate_verified_at"] is None  # stop-only: termination not verified
+
+    # The canonical tail (runpod-addressed pairing, the AT-13 pattern): the
+    # shutdown terminates the pod, records the verified termination, closes the
+    # storage ownership against it and settles - VERIFIED/BILLED is earned.
+    inner = RunpodIdFakePods(clock=comfy.clock, ids=world.ids)
+    inner.created_pod_recorder = durable_created_pod_recorder(world.db, comfy.clock.now)
+    world.provider = inner
+    world.manager._provider = inner
+    lease2 = _lease_with_live_pod(db, world, ep.episode_id)
+    receipt2 = adapter.cleanup(
+        {"acquisition_id": uuid5_seed(plan.experiment_id, 3), "lease_id": lease2}
+    )
+    assert receipt2["verified"] is True
+    assert receipt2["billing_state"] == "BILLED"
+    assert receipt2["storage_final"] is True
+    with db.transaction(readonly=True) as tx:
+        row2 = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (lease2,))
+        ownership = tx.fetchall(
+            "SELECT * FROM pod_storage_ownership WHERE pod_id=%s AND provider='runpod'",
+            (row2["pod_id"],),
+        )
+        # The stop-only close left ITS storage ownership open - honest pending
+        # finality, exactly what §9.1 requires until the terminate tail runs.
+        open_ownership = tx.fetchall(
+            "SELECT * FROM pod_storage_ownership WHERE pod_id=%s AND provider='fake-runpod'",
+            (row["pod_id"],),
+        )
+    assert row2["terminate_verified_at"] is not None
+    assert ownership and all(o["valid_until"] is not None for o in ownership)
+    assert open_ownership and all(o["valid_until"] is None for o in open_ownership)
 
     # A pod-bound lease WITHOUT durable evidence must fail the fixture's
     # unconditional assertion - the H-2 softening that silently accepted a
