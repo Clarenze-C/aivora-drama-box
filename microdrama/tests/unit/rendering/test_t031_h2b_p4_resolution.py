@@ -352,6 +352,20 @@ def test_at06_janitor_adoption_at_each_boundary(boundary: str, db: Database, tmp
             )
     assert any("U5" in blocker for blocker in refused.value.blockers), refused.value.blockers
 
+    # HC-1 (HCF round): the sweep's cleanup finishes the discovered pod's
+    # terminate->verify tail, but finalization ALSO requires the pod's
+    # canonical INVOICE finality - terminate-verified + ownership closed alone
+    # no longer clears U5 or releases the STORAGE hold.
+    _service(fixed).sweep(plan.experiment_id)
+    assert "U5" in _item_kinds(db, plan.experiment_id, comfy.clock)
+    assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] == "ACTIVE"
+
+    # The provider's billing evidence arrives and verifies (the recovery
+    # allocation the degenerate adopted window opens is resolved through the
+    # audited canonical tail); the next sweep finalizes.
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    _bill_lease_to_billed(db, fixed["world"], lease_id=fixed["lease_id"], amount_micro_usd=900_250)
     _service(fixed).sweep(plan.experiment_id)
     assert "U5" not in _item_kinds(db, plan.experiment_id, comfy.clock)
     assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] != "ACTIVE"
@@ -491,6 +505,11 @@ def test_at07_late_adoption_after_newer_admission_blocks_then_clears(db: Databas
             "SELECT terminate_verified_at FROM pod_leases WHERE id=%s", (fixed["lease_id"],)
         )
     assert terminate_verified is not None
+    # HC-1 (HCF round): the sweep finalizes only at the discovered pod's
+    # canonical INVOICE finality - drive the verified billing evidence first.
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    _bill_lease_to_billed(db, fixed["world"], lease_id=fixed["lease_id"], amount_micro_usd=900_250)
     _service(fixed).sweep(plan.experiment_id)
     assert "U5" not in _item_kinds(db, plan.experiment_id, comfy.clock)
     assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] != "ACTIVE"
@@ -828,6 +847,11 @@ def test_hb9_reconcile_never_restores_running_over_canonical_blockers(db: Databa
             (fixed["lease_id"],),
         )
     world.janitor(config=_replace(world.config, provider_account_ref="acct:fixture")).sweep()
+    # HC-1 (HCF round): U5 clears only at the discovered pod's canonical
+    # INVOICE finality - terminate-verified alone no longer finalizes.
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    _bill_lease_to_billed(db, fixed["world"], lease_id=fixed["lease_id"], amount_micro_usd=900_250)
     _service(fixed).sweep(plan.experiment_id)
     assert "U5" not in _item_kinds(db, plan.experiment_id, comfy.clock)
     with _PatchedPolicy():
@@ -989,14 +1013,24 @@ def test_hb12_u5_requires_complete_finality(db: Database, tmp_path: Path):
         item.kind == "U5" and item.acquisition_id == fixed["acquisition_id"] for item in items_now()
     )
 
-    # Ownership closed and the reservation canonically settled: U5 clears -
-    # every durable finality signal is complete.
+    # Ownership closed but the discovered pod's billing is NOT final: HC-1
+    # (HCF round, ruling 2) - a reservation settled BEFORE the contradiction
+    # is never billing evidence, so U5 KEEPS blocking until the provider's
+    # verified invoice evidence covers the pod's liability window.
     with db.transaction() as tx:
         tx.execute(
             "UPDATE pod_storage_ownership SET valid_until=%s WHERE pod_id='late-pod-0004' "
             "AND valid_until IS NULL",
             (comfy.clock.now() + timedelta(seconds=1),),
         )
+    assert any(
+        item.kind == "U5" and item.acquisition_id == fixed["acquisition_id"] for item in items_now()
+    ), "invoice-pending discovered pod must keep U5 blocking (HC-1)"
+
+    # The canonical invoice finality of the discovered resource clears it.
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    _bill_lease_to_billed(db, fixed["world"], lease_id=fixed["lease_id"], amount_micro_usd=900_250)
     assert not any(
         item.kind == "U5" and item.acquisition_id == fixed["acquisition_id"] for item in items_now()
     ), [item.describe() for item in items_now()]

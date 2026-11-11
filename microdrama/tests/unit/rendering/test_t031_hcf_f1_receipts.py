@@ -311,9 +311,9 @@ def test_hc2_incident_path_bills_discovered_pod_once_as_adjustments(db: Database
         )
     assert compute["terminate_verified_at"] is not None
 
-    _service(fixed).sweep(plan.experiment_id)  # cleanup + storage finalization
-    assert "U5" not in _item_kinds(db, plan.experiment_id, comfy.clock)
-    assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] != "ACTIVE"
+    _service(fixed).sweep(plan.experiment_id)  # cleanup; HC-1: storage RETAINED while billing pends
+    assert "U5" in _item_kinds(db, plan.experiment_id, comfy.clock)
+    assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] == "ACTIVE"
 
     rows = _charges(db, compute["id"])
     adjustments = [row for row in rows if row["kind"] == "ADJUSTMENT"]
@@ -324,6 +324,20 @@ def test_hc2_incident_path_bills_discovered_pod_once_as_adjustments(db: Database
     expected = -(-(900_000 * ms) // 3_600_000)
     assert adjustments[0]["amount_micro_usd"] == expected
     assert _settled_total(db, compute["id"]) == expected  # settled once, never restated
+
+    # HC-1 (F3): the discovered pod's canonical INVOICE finality - the
+    # verified invoice covering its liability window, with the recovery
+    # allocation the degenerate adopted window opens resolved through the
+    # audited canonical tail - is what finalizes; the invoice equals the
+    # recorded interval cost.
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    _bill_lease_to_billed(db, fixed["world"], lease_id=fixed["lease_id"], amount_micro_usd=expected)
+    _service(fixed).sweep(plan.experiment_id)
+    assert "U5" not in _item_kinds(db, plan.experiment_id, comfy.clock)
+    assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] != "ACTIVE"
+    assert _charges(db, compute["id"]) == rows
+    assert _settled_total(db, compute["id"]) == expected
 
     # The sweep replay adds nothing.
     _service(fixed).sweep(plan.experiment_id)

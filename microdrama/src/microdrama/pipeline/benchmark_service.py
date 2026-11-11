@@ -137,6 +137,7 @@ from microdrama.rendering.benchmark_experiments import (
     BenchmarkRepository,
     ExperimentBudgetService,
     blocking,
+    discovered_resource_billing_final,
     document,
     experiment_row,
     gpu_ms,
@@ -822,25 +823,46 @@ class BenchmarkService:
         if margin_ms is None:
             margin_ms = 60_000
         margin = timedelta(milliseconds=margin_ms)
+        open_windows_sql = (
+            "SELECT COUNT(*) FROM benchmark_acquisitions a "
+            "LEFT JOIN pod_leases l ON l.id=a.lease_id "
+            "WHERE a.experiment_id=%s AND a.create_intent_at IS NOT NULL "
+            "AND (a.state<>'NO_CREATE_PROVEN' OR EXISTS ("
+            "SELECT 1 FROM runpod_podless_create_resolutions r WHERE r.lease_id=a.lease_id "
+            "AND r.contradicted_at IS NOT NULL)) "
+            "AND (CASE WHEN a.state<>'NO_CREATE_PROVEN' THEN a.compute_window_end IS NULL "
+            "ELSE l.terminate_verified_at IS NULL END)"
+        )
         if tx is not None:
             exp = experiment_row(tx, experiment_id)
             compute_expires = tx.fetchval(
                 "SELECT r.expires_at FROM benchmark_reservation_links l "
                 "JOIN reservations r ON r.id=l.reservation_id "
-                "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE'",
+                "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE' "
+                # HC-9: only a hold that still owns funds bounds the funded
+                # window. A SETTLED/RELEASED hold's expiry is history - in the
+                # late-contradiction scenario the reopened generation-1 hold is
+                # settled at the podless resolution's zero while its REOPENED
+                # window is counted by the aggregate gpu_ms bound below;
+                # letting the dead expiry into the min() would collapse the
+                # effective deadline onto a closed window's past expiry.
+                "AND r.state IN ('ACTIVE','EXPIRED')",
                 (acquisition_id,),
             )
             used_gpu_ms = gpu_ms(tx, experiment_id, now)
+            open_windows = int(tx.fetchval(open_windows_sql, (experiment_id,)) or 0)
         else:
             with self.db.transaction(readonly=True) as readonly:
                 exp = experiment_row(readonly, experiment_id)
                 compute_expires = readonly.fetchval(
                     "SELECT r.expires_at FROM benchmark_reservation_links l "
                     "JOIN reservations r ON r.id=l.reservation_id "
-                    "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE'",
+                    "WHERE l.acquisition_id=%s AND l.purpose='COMPUTE' "
+                    "AND r.state IN ('ACTIVE','EXPIRED')",
                     (acquisition_id,),
                 )
                 used_gpu_ms = gpu_ms(readonly, experiment_id, now)
+                open_windows = int(readonly.fetchval(open_windows_sql, (experiment_id,)) or 0)
         effective_gpu_limit = exp["gpu_limit_ms"]
         if auth_gpu is not None:
             effective_gpu_limit = min(effective_gpu_limit, auth_gpu)
@@ -860,8 +882,17 @@ class BenchmarkService:
         # funded window must still leave room to stop the pod inside the
         # effective limit (HB-6: 50 s of allowance under a 60 s shutdown
         # reserve is immediate exhaustion, not another 50 s of grace).
+        # HC-9: EVERY open window consumes the allowance concurrently and each
+        # requires its own shutdown tail - the exhaustion point is when the
+        # combined windows plus ALL required shutdown margins reach the limit
+        # (the late-contradiction scenario has two open windows at once: the
+        # reopened original and the newer generation).
         remaining_gpu_ms = effective_gpu_limit - used_gpu_ms
-        candidates.append(now + timedelta(milliseconds=max(remaining_gpu_ms - margin_ms, 0)))
+        consumers = max(open_windows, 1)
+        reserved = max(open_windows, 1) * margin_ms
+        candidates.append(
+            now + timedelta(milliseconds=max((remaining_gpu_ms - reserved) / consumers, 0))
+        )
         return min(candidates) if candidates else None
 
     def _enter_grace(
@@ -1741,36 +1772,23 @@ class BenchmarkService:
                         experiment_id=experiment_id,
                     )
                 )
-                # An EXPIRED never-used hold settles through its own
-                # transaction (I4: never released); the deterministic
-                # receipt makes a race with the locked release replay.
-                with self.db.transaction(readonly=True) as tx:
-                    expired_storage = [
-                        row["id"]
-                        for row in tx.fetchall(
-                            "SELECT r.id FROM benchmark_reservation_links l "
-                            "JOIN reservations r ON r.id=l.reservation_id "
-                            "WHERE l.acquisition_id=%s AND l.purpose='STORAGE' "
-                            "AND r.state='EXPIRED' ORDER BY r.id",
-                            (acquisition["acquisition_id"],),
-                        )
-                    ]
-                for reservation_id in expired_storage:
-                    budget.settle_expired_unused_hold(
-                        reservation_id,
-                        reason="benchmark proven-no-create storage hold expired unused (R1)",
-                    )
                 # §6.3: ONLY this finalization transaction may release the
                 # acquisition's single original STORAGE hold, and it re-checks
                 # under the §6.1 locks: the acquisition is still
                 # NO_CREATE_PROVEN, an uncontradicted no-create proof or a
                 # verified termination of the discovered pod (with its storage
-                # ownership closed), the lease is no longer live, and no U5
-                # remains for it. HC-6: the ONE shared-order helper locks the
-                # lease row (L) this decision reads inside the locked
-                # finalization - the previous FOR UPDATE OF a join read the
-                # lease row without locking it - plus D, S and R before any
-                # release.
+                # ownership closed AND its canonical invoice final - HC-1: the
+                # pre-contradiction zero settlement is never billing
+                # evidence), the lease is no longer live, and no U5 remains
+                # for it. HC-6: the ONE shared-order helper locks the lease row
+                # (L) this decision reads inside the locked finalization - the
+                # previous FOR UPDATE OF a join read the lease row without
+                # locking it - plus D, S and R before any release.
+                # HC-1: the EXPIRED financial closure runs INSIDE this same
+                # decision - zero-settling the EXPIRED STORAGE hold before it
+                # (including for a contradicted acquisition whose discovered
+                # pod's disk invoice was still pending) discharged liability
+                # the decision had not yet proven final.
                 with self.db.transaction() as tx:
                     exp = experiment_row(tx, experiment_id)
                     lock_account(tx, exp["account_id"])
@@ -1796,9 +1814,27 @@ class BenchmarkService:
                     )
                     finalizable = current is not None and current["state"] == "NO_CREATE_PROVEN"
                     if contradiction is not None and contradiction["contradicted"]:
-                        finalizable = finalizable and (
-                            current["terminate_verified_at"] is not None and not ownership_open
-                        )
+                        # HC-1 (ruling 2): "billing ready" for the CONTRADICTED
+                        # case is the canonical invoice finality of the
+                        # DISCOVERED RESOURCE - readiness BILLED with no
+                        # reopened liability, or a reopened window covered by
+                        # MATCHED invoice evidence. The compute reservation's
+                        # SETTLED state is never evidence (the podless
+                        # resolution settled it at zero BEFORE the
+                        # contradiction, while the discovered pod's disk and
+                        # compute invoices may still be pending).
+                        readiness_billed = False
+                        if current["terminate_verified_at"] is not None and not ownership_open:
+                            lease_full = tx.fetchone(
+                                "SELECT * FROM pod_leases WHERE id=%s",
+                                (acquisition["lease_id"],),
+                            )
+                            readiness_billed = (
+                                lease_full is not None
+                                and lease_full["pod_id"] is not None
+                                and discovered_resource_billing_final(tx, lease_full)
+                            )
+                        finalizable = finalizable and readiness_billed
                     elif current is not None and current["lease_state"] in (
                         "CLAIMED",
                         "ACTIVE",
@@ -1819,6 +1855,16 @@ class BenchmarkService:
                                     tx,
                                     row["id"],
                                     reason="benchmark proven-no-create storage hold finalized (R1)",
+                                )
+                            elif row["state"] == "EXPIRED":
+                                # HC-1: the EXPIRED financial closure rides the
+                                # same locked decision (I4: never a release);
+                                # the deterministic receipt makes a race with
+                                # the locked release replay.
+                                budget.settle_expired_unused_hold_in_tx(
+                                    tx,
+                                    row["id"],
+                                    reason="benchmark proven-no-create storage hold expired unused (R1)",
                                 )
                     tx.execute(
                         "UPDATE benchmark_acquisitions SET "
@@ -2082,6 +2128,13 @@ class BenchmarkService:
                     per.bind_for_recovery(acquisition_id)
                 except Exception:  # noqa: BLE001 - best-effort binding, item stays blocked
                     pass
+            # HC-9: recompute the bound under the locks before the readback
+            # work; an exhausted episode routes through the fenced cleanup.
+            deadline = self._shorten_recovery_deadline(
+                experiment_id, acquisition_id, margin_ms=self._shutdown_margin_ms(per)
+            )
+            if deadline is not None and self.clock.now() >= deadline:
+                return self.sweep(experiment_id, world=world)
             bound = self._recovery_request_bound(experiment_id, acquisition_id)
             try:
                 if bound is not None:
@@ -2299,6 +2352,47 @@ class BenchmarkService:
 
         return _bound()
 
+    def _shorten_recovery_deadline(
+        self,
+        experiment_id: UUID,
+        acquisition_id: UUID,
+        *,
+        margin_ms: int | None = None,
+    ):
+        """HC-9 (R3): recompute the effective deadline UNDER the §6.1 locks
+        before bounded recovery work, persist ONLY a shortening, and return
+        the effective deadline.
+
+        Liability discovered since the episode was persisted (a late
+        adoption's reopened window, a second open acquisition) can exhaust the
+        remaining allowance BEFORE the stored deadline: ordinary recovery must
+        not keep polling against a stale, longer bound. The caller fences
+        immediately when the returned deadline has already elapsed."""
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            current = tx.fetchone(
+                "SELECT recovery_deadline FROM benchmark_acquisitions "
+                "WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition_id,),
+            )
+            if current is None or current["recovery_deadline"] is None:
+                return None
+            recomputed = self._effective_recovery_deadline(
+                experiment_id, acquisition_id, tx=tx, margin_ms=margin_ms
+            )
+            deadline = current["recovery_deadline"]
+            if recomputed is not None and recomputed < deadline:
+                tx.execute(
+                    "UPDATE benchmark_acquisitions SET recovery_deadline=%s "
+                    "WHERE acquisition_id=%s",
+                    (recomputed, acquisition_id),
+                )
+                deadline = recomputed
+            return deadline
+
     def _reconcile_slot_sample(self, experiment_id: UUID, world: Any) -> None:
         """Reconcile the dispatched sample's operation by durable identity.
 
@@ -2381,6 +2475,29 @@ class BenchmarkService:
             except Exception:
                 binding = "INDETERMINATE"
             if binding != "BOUND":
+                # HC-8: a failed binding still owns its durable ambiguity
+                # episode. An UNKNOWN operation whose pod cannot be bound (the
+                # worker died before its handler, or the pod is temporarily
+                # unreachable) gets the SAME bounded episode the discovery
+                # handlers write - without it, repeated public recovery leaves
+                # the item blocked with no persisted deadline and no
+                # deadline-driven cleanup (HB-5's exit gap). In-flight work a
+                # live pod cannot currently bind gets the episode too: SC2-2
+                # reuses it for the later ambiguity, and the fence only bites
+                # while an ambiguity is unresolved. Idempotent, shorten-only.
+                self._enter_grace(
+                    experiment_id, {"acquisition_id": sample["acquisition_id"]}, world
+                )
+                row = self._recovery_deadline(sample["acquisition_id"])
+                if (
+                    row is not None
+                    and row["recovery_deadline"] is not None
+                    and self.clock.now() >= row["recovery_deadline"]
+                ):
+                    # SC2-2: the episode is already exhausted - route through
+                    # the fenced cleanup sweep instead of a doomed bounded
+                    # lookup against a dead window.
+                    return self.sweep(experiment_id, world=world)
                 return
         # §5.4/SC2-2 (HB-4): the grace heartbeat and request bound apply
         # ONLY while an ambiguity on this acquisition is unresolved (the
@@ -2391,6 +2508,17 @@ class BenchmarkService:
         # independently. The persisted timestamp itself is kept for a later
         # ambiguity (SC2-2 reuse), which may only shorten it.
         if sample.get("acquisition_id") is not None and operation["state"] == "UNKNOWN":
+            # HC-9: recompute the effective deadline under the locks BEFORE
+            # the bounded work - liability discovered since the episode was
+            # persisted may have exhausted the allowance. An exhausted
+            # episode routes through the fenced cleanup sweep immediately.
+            deadline = self._shorten_recovery_deadline(
+                experiment_id,
+                sample["acquisition_id"],
+                margin_ms=self._shutdown_margin_ms(world),
+            )
+            if deadline is not None and self.clock.now() >= deadline:
+                return self.sweep(experiment_id, world=world)
             # during grace: heartbeat the owned lease (never extending
             # anything) and bound every nested recovery HTTP request by the
             # time left before the persisted recovery_deadline.

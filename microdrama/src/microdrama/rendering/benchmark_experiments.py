@@ -104,6 +104,64 @@ def blocking(
     return result
 
 
+def discovered_resource_billing_final(tx: Tx, lease: Any) -> bool:
+    """HC-1 (T031 HCF, ruling 2): the CANONICAL INVOICE FINALITY of the
+    discovered resource - the proof the provider itself has priced the pod's
+    whole liability window.
+
+    ``_lease_readiness_in_transaction`` also reports ``BILLED`` with
+    ``reopened=True`` when post-settlement accounting merely MOVED (a late
+    interval ADJUSTMENT recorded on the settled reservation) even though no
+    invoice evidence exists - recorded usage is not provider finality, and a
+    reservation settled before the contradiction is never evidence. Finality
+    for a discovered pod therefore requires the readiness to be ``BILLED``
+    AND either no reopened liability at all, or MATCHED invoice period
+    evidence covering the full window (compute window closed plus every
+    storage ownership interval, no gaps). An uncontradicted no-create
+    resolution (``BILLED`` at 0, never reopened) stays final: the audited
+    resolution is itself the proof that no charge exists.
+    """
+    from microdrama.budget.billing import (
+        BillingRepository,
+        _lease_readiness_in_transaction,
+    )
+
+    readiness = _lease_readiness_in_transaction(tx, lease)
+    if readiness.state != "BILLED":
+        return False
+    if not getattr(readiness, "reopened", False):
+        return True
+    window_start = lease["compute_window_start_at"] or lease["create_requested_at"]
+    if window_start is None:
+        # Nothing was ever sent for this lease (readiness BILLED 0 needs no
+        # invoice); a pod attached without a window start is not final.
+        return lease["pod_id"] is None
+    window_end = lease["compute_window_end_at"]
+    if window_end is None:
+        return False
+    coverage_end = window_end
+    for row in tx.fetchall(
+        "SELECT valid_until FROM pod_storage_ownership WHERE provider=%s AND pod_id=%s "
+        "AND owner_episode_id=%s",
+        (lease["provider"], lease["pod_id"], lease["owner_episode_id"]),
+    ):
+        end = row["valid_until"] or lease["terminate_verified_at"]
+        if end is None:
+            return False  # storage still owned with no verified terminate
+        coverage_end = max(coverage_end, end)
+    evidence = BillingRepository.matched_invoice_periods(tx, lease, window_start, coverage_end)
+    cursor = window_start
+    for row in sorted(evidence, key=lambda item: (item["period_start"], item["period_end"])):
+        start = max(window_start, row["period_start"])
+        end = min(coverage_end, row["period_end"])
+        if end <= cursor:
+            continue
+        if start > cursor:
+            return False
+        cursor = max(cursor, end)
+    return cursor >= coverage_end
+
+
 def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[UnresolvedItem]:
     """Every unresolved item, derived from canonical lease/reservation/
     operation/upload rows (spec §4.1). One repository function used by every
@@ -207,23 +265,23 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
             )
             billing_final = False
             if row["terminate_verified_at"] is not None and not ownership_open:
-                # HB-12/§4.1 U5: finalization is terminate-verified + ownership
-                # closed + BILLING FINAL - a billing-pending contradiction keeps
-                # the reopened liability blocking. The durable billing-final
-                # signal is the lease's own reservation being canonically
-                # closed (the deterministic BILLED settlement settles it); an
-                # open reservation means the final amount is not posted yet.
-                billing_final = tx.fetchval(
-                    "SELECT r.state FROM pod_leases l JOIN reservations r "
-                    "ON r.id=l.reservation_id WHERE l.id=%s",
-                    (row["lease_id"],),
-                ) in ("SETTLED", "RELEASED")
+                # HC-1 (T031 HCF, ruling 2): "billing ready" means the CANONICAL
+                # INVOICE FINALITY of the DISCOVERED RESOURCE - a readiness of
+                # BILLED is final only when no liability was reopened, or the
+                # reopened window is covered by MATCHED invoice evidence. A
+                # compute reservation settled BEFORE the contradiction (the
+                # podless resolution's zero final) is never evidence: the
+                # discovered pod's disk and compute invoices can still be
+                # pending while that old settlement sits closed.
+                lease_row = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (row["lease_id"],))
+                if lease_row is not None and lease_row["pod_id"] is not None:
+                    billing_final = discovered_resource_billing_final(tx, lease_row)
             if row["terminate_verified_at"] is None or ownership_open or not billing_final:
                 # U5 - reopened liability: the no-create attestation was
                 # contradicted by a later pod binding and the discovered
                 # resource is not final yet (terminate verified, ownership
-                # closed; billing follows the verified termination). Historical
-                # contradicted_at alone does not block after finalization.
+                # closed, invoice final). Historical contradicted_at alone does
+                # not block after finalization.
                 items.append(
                     UnresolvedItem(
                         kind="U5",
@@ -518,6 +576,23 @@ class ExperimentBudgetService(BudgetService):
         with self._db.transaction() as tx:
             return self.reserve_linked(tx, request)
 
+    def reserve_in_transaction(self, tx: Tx, request: BudgetReservationRequest):
+        """HC-7 (HB-11, I5): the mode restriction sits at EVERY public
+        reservation entry point.
+
+        ``reserve``/``reserve_linked`` carry the mode refusal, but the
+        transaction-owning composition could still reach the inherited
+        canonical core directly - bypassing both the mode refusal and the
+        benchmark linkage/sub-limit checks. A recovery/cleanup world's budget
+        refuses any non-cleanup reservation here too; the canonical cleanup
+        grant (``is_shutdown_or_cleanup``) is preserved.
+        """
+        if self.cleanup_grants_only and not request.is_shutdown_or_cleanup:
+            raise EffectDenied(
+                f"recovery/cleanup world cannot reserve new work ({request.operation_kind})"
+            )
+        return super().reserve_in_transaction(tx, request)
+
     def reserve_linked(
         self,
         tx: Tx,
@@ -636,6 +711,20 @@ class ExperimentBudgetService(BudgetService):
         ACTIVE or absent is a no-op returning False. The caller proves under the
         §6.1 locks that nothing was dispatched.
         """
+        with self._db.transaction() as tx:
+            return self.settle_expired_unused_hold_in_tx(tx, reservation_id, reason=reason)
+
+    def settle_expired_unused_hold_in_tx(
+        self, tx: Tx, reservation_id: UUID, *, reason: str
+    ) -> bool:
+        """The zero-settlement core inside a caller-owned transaction (HC-1).
+
+        The sweep's §6.3 finalization decision performs the EXPIRED financial
+        closure INSIDE its locked finalization transaction - zero-settling an
+        EXPIRED STORAGE hold before the decision (including for a contradicted
+        acquisition whose discovered pod's disk invoice is still pending)
+        discharged liability the decision had not yet proven final.
+        """
         from uuid import uuid5
 
         from microdrama.budget import policy
@@ -644,8 +733,7 @@ class ExperimentBudgetService(BudgetService):
         from microdrama.core.events import append_event
         from microdrama.rendering.leases import RENDERING_NAMESPACE
 
-        with self._db.transaction(readonly=True) as tx:
-            reservation = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (reservation_id,))
+        reservation = tx.fetchone("SELECT * FROM reservations WHERE id=%s", (reservation_id,))
         if reservation is None or reservation["state"] != "EXPIRED":
             return False
         now = self._now()
@@ -681,24 +769,21 @@ class ExperimentBudgetService(BudgetService):
             provenance=provenance,
         )
         policy.check_receipt_admissible(receipt, self._settings)
-        with self._db.transaction() as tx:
-            result = self.record_usage_in_transaction(tx, receipt)
-            if not result.replayed:
-                append_event(
-                    tx,
-                    aggregate_type="prompt_hold",
-                    aggregate_id=uuid5(
-                        RENDERING_NAMESPACE, f"bench-settle-unused:{reservation_id}"
-                    ),
-                    event_type="prompt_hold.zero_settled",
-                    payload={
-                        "reason": reason,
-                        "reservation_id": str(reservation_id),
-                        "amount_micro_usd": 0,
-                    },
-                    correlation_id=reservation_id,
-                    occurred_at=now,
-                )
+        result = self.record_usage_in_transaction(tx, receipt)
+        if not result.replayed:
+            append_event(
+                tx,
+                aggregate_type="prompt_hold",
+                aggregate_id=uuid5(RENDERING_NAMESPACE, f"bench-settle-unused:{reservation_id}"),
+                event_type="prompt_hold.zero_settled",
+                payload={
+                    "reason": reason,
+                    "reservation_id": str(reservation_id),
+                    "amount_micro_usd": 0,
+                },
+                correlation_id=reservation_id,
+                occurred_at=now,
+            )
         return True
 
     # --- HC-2 (T031 HCF): late billing on a closed hold, at the benchmark layer ---
