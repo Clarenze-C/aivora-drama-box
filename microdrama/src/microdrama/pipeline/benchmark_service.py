@@ -2168,10 +2168,46 @@ class BenchmarkService:
                     if operation["state"] == "UNKNOWN"
                     else world.comfy.poll(operation["id"])
                 )
-        except (NeedsReconciliation, EffectDenied, Conflict):
+        except Conflict as exc:
+            # HB-14 (§5.2 rule 3): a multi-match conflict from the
+            # deterministic client-id finder is a DISTINCT diagnostic - it is
+            # durably recorded (bounded, nonsecret: the exception's own code
+            # and message carry only the client id and match count), so the
+            # operator sees WHY the operation stays UNKNOWN with its exposure
+            # instead of an ordinary unresolved item. Nothing is adopted and
+            # nothing re-sent.
+            from microdrama.core.events import append_event
+
+            detail = f"{getattr(exc, 'code', 'CONFLICT')}: {exc}"[:200]
+            try:
+                with self.db.transaction() as tx:
+                    append_event(
+                        tx,
+                        aggregate_type="provider_operation",
+                        aggregate_id=operation["id"],
+                        event_type="provider_operation.reconcile_conflict",
+                        payload={"detail": detail},
+                        correlation_id=sample["reservation_id"],
+                        occurred_at=self.clock.now(),
+                    )
+            except Exception:  # noqa: BLE001 - the diagnostic never blocks recovery
+                pass
+            if sample.get("acquisition_id") is not None:
+                if operation["state"] in ("SUBMITTED", "RUNNING"):
+                    try:
+                        world.comfy.mark_operation_unknown(operation["id"])
+                    except Exception:
+                        pass
+                try:
+                    self._enter_grace(
+                        experiment_id, {"acquisition_id": sample["acquisition_id"]}, world
+                    )
+                except Exception:
+                    pass
+            return
+        except (NeedsReconciliation, EffectDenied):
             # Stays ambiguous (or unbindable in this world): the item keeps
-            # blocking; nothing is adopted and nothing re-sent. §5.2 rule 3
-            # surfaces a multi-match conflict through the finder's Conflict.
+            # blocking; nothing is adopted and nothing re-sent.
             # HB-5: a NeedsReconciliation raised while polling a positively
             # in-flight operation is the §5.1 poll-ambiguity classification -
             # the op moves to UNKNOWN under the lock (its prompt id kept) -

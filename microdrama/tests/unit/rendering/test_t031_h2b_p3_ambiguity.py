@@ -395,6 +395,21 @@ def test_at25_two_matching_prompt_ids_stay_unknown_and_report_conflict(
     assert after["state"] == "UNKNOWN"
     assert after["external_id"] is None
 
+    # HB-14: the multi-match conflict is a DISTINCT, durable, nonsecret
+    # diagnostic - recorded on the operation through the public reconcile, so
+    # the operator sees why the item stays UNKNOWN with its exposure instead
+    # of an ordinary unresolved operation.
+    from microdrama.core.events import list_events
+
+    with db.transaction(readonly=True) as tx:
+        conflicts = [
+            event
+            for event in list_events(tx, operation["id"])
+            if event.event_type == "provider_operation.reconcile_conflict"
+        ]
+    assert conflicts, "the multi-match conflict left no diagnostic"
+    assert "more than one prompt" in conflicts[-1].payload["detail"]
+
 
 # ---------------------------------------------------------------------------
 # §5.4 helpers: clients for the grace/deadline ATs.
