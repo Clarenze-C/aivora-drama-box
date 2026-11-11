@@ -701,6 +701,110 @@ class ExperimentBudgetService(BudgetService):
                 )
         return True
 
+    # --- HC-2 (T031 HCF): late billing on a closed hold, at the benchmark layer ---
+    #
+    # A podless-create resolution closes its COMPUTE hold at zero; the §6.4
+    # contradiction (the pod appears later) must still bill that pod's cost on
+    # the closed hold. The canonical ledger admits only ADJUSTMENT after a
+    # close, and the canonical receipt-conversion the P4 build added was ruled
+    # out of spec (it broke replay identity and double-counted the settle
+    # total). The shape exists only in the benchmark - the plain BudgetService
+    # never sees a closed hold with late pod cost - so both behaviours live
+    # here, at the benchmark's budget boundary, BEFORE the canonical replay
+    # comparison.
+
+    def _reservation_closed(self, reservation_id: UUID) -> bool:
+        with self._db.transaction(readonly=True) as tx:
+            state = tx.fetchval("SELECT state FROM reservations WHERE id=%s", (reservation_id,))
+        return state in ("SETTLED", "RELEASED")
+
+    def record_usage(self, receipt: Any) -> Any:
+        """Reuse the recorded final: a SETTLEMENT onto a closed hold posts nothing.
+
+        The settle the incident path performs on the closed hold reuses the
+        recorded settlement (one final amount per reservation - the ledger's
+        own invariant, mirrored from ``settle_billed_lease``); genuinely new
+        late cost arrives only as ADJUSTMENT deltas through
+        ``record_gpu_interval`` below. Without this, ``_settlement_totals``
+        (which already includes the late ADJUSTMENTs) would be restated as a
+        second final amount - 100 becomes 200.
+        """
+        from microdrama.contracts.cost import ReceiptKind
+
+        if (
+            receipt.kind is ReceiptKind.SETTLEMENT
+            and receipt.reservation_id is not None
+            and self._reservation_closed(receipt.reservation_id)
+        ):
+            with self._db.transaction(readonly=True) as tx:
+                row = tx.fetchone(
+                    "SELECT id, receipt_id, account_id FROM charges "
+                    "WHERE reservation_id=%s AND kind='SETTLEMENT' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (receipt.reservation_id,),
+                )
+            if row is not None:
+                from microdrama.budget.service import ChargeResult
+
+                return ChargeResult(
+                    charge_id=row["id"],
+                    receipt_id=row["receipt_id"],
+                    account_id=row["account_id"],
+                    replayed=True,
+                )
+        return super().record_usage(receipt)
+
+    def record_gpu_interval(
+        self,
+        *,
+        lease_id: UUID,
+        provider: str,
+        pod_id: str,
+        account_id: UUID,
+        interval_start: datetime,
+        interval_end: datetime,
+        basis: str,
+        receipt: Any,
+    ) -> Any:
+        """Late GPU usage on a closed hold posts as an ADJUSTMENT, identity and all.
+
+        The receipt is normalized HERE, before the canonical replay comparison,
+        under a receipt identity reserved for late billing: the stored content
+        never depends on when the receipt was presented, so a crash between the
+        interval post and the ``accrued_until`` advance replays identically,
+        and a pre-close ACCRUAL and a post-close late ADJUSTMENT for the same
+        interval can never collide on one receipt key.
+        """
+        from uuid import uuid5
+
+        from microdrama.contracts.cost import ReceiptKind
+        from microdrama.rendering.leases import RENDERING_NAMESPACE
+
+        if (
+            receipt.kind is ReceiptKind.ACCRUAL
+            and receipt.reservation_id is not None
+            and self._reservation_closed(receipt.reservation_id)
+        ):
+            receipt = receipt.model_copy(
+                update={
+                    "receipt_id": uuid5(RENDERING_NAMESPACE, f"late:{receipt.receipt_id}"),
+                    "provider_receipt_id": f"late:{receipt.provider_receipt_id}",
+                    "kind": ReceiptKind.ADJUSTMENT,
+                }
+            )
+            # The canonical accrual loop attributes non-ACCRUAL usage as IDLE.
+            basis = "IDLE"
+        return super().record_gpu_interval(
+            lease_id=lease_id,
+            provider=provider,
+            pod_id=pod_id,
+            account_id=account_id,
+            interval_start=interval_start,
+            interval_end=interval_end,
+            basis=basis,
+            receipt=receipt,
+        )
+
 
 class BenchmarkRepository:
     def __init__(self, db: Database, clock: Any):
