@@ -274,6 +274,24 @@ def _enter_submit_ambiguity(db, world, comfy, adapter, plan, tmp_path):
     return state
 
 
+def _evict_prompt_history(comfy, experiment_id, sample_id):
+    """HC-3 (T031 HCF round): an accepted prompt is POSITIVELY RECOVERABLE by
+    its deterministic client id, so an operator resolution - even with
+    ``--force-unrecoverable`` - refuses it. Tests that exercise the audited
+    force resolution must first make the work genuinely unrecoverable: the
+    provider's queue and history no longer show any prompt for the
+    deterministic client id (AT-15's console-evidence shape)."""
+    from microdrama.rendering.comfy_jobs import render_client_id
+
+    key = f"benchmark:{experiment_id}:sample:{sample_id}:a1"
+    client_id = render_client_id(key)
+    comfy.server.prompts = {
+        prompt_id: prompt
+        for prompt_id, prompt in comfy.server.prompts.items()
+        if prompt.client_id != client_id
+    }
+
+
 # ---------------------------------------------------------------------------
 # AT-24 — no acquisition: reconcile/sweep/resume after expiry need no quote.
 # ---------------------------------------------------------------------------
@@ -581,6 +599,12 @@ def test_at20_expired_liability_retained_readable_and_settled(db: Database, tmp_
     # resolution still owes runs through the sweep (§7.4: financial finalization
     # and cleanup continue to billing closure).
     # Terminal finalization settles the EXPIRED liability canonically, exactly once.
+    # HC-3 (T031 HCF): the timed-out POST was ACCEPTED, so the prompt is
+    # positively recoverable by its deterministic client id and the operator
+    # resolution would refuse even with force. The audited force resolution
+    # needs the genuinely unrecoverable shape: the provider's queue and
+    # history no longer show any prompt for the client id.
+    _evict_prompt_history(comfy, plan.experiment_id, slot["sample_id"])
     resolved = service.resolve_sample(
         plan.experiment_id,
         sample_id=slot["sample_id"],

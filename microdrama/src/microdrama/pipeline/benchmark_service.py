@@ -2784,18 +2784,29 @@ class BenchmarkService:
             )
         # 1. Financial finalization first, from durable state alone.
         world.comfy.settle_terminal(operation_id)
-        # 2. The durable outputs recorded with the terminal result.
+        # 2. Load the EXISTING durable assets (HC-4: the operation row's
+        # last_result.outputs is not evidence - a SUCCEEDED result without a
+        # registered asset never projects; only results already persisted for
+        # the attempt count, fetched from the durable asset registry alone).
         output = None
         if operation["state"] == "SUCCEEDED":
-            outputs = (operation["last_result"] or {}).get("outputs") or []
-            if outputs:
-                first = outputs[0]
-                output = {
-                    "object_key": first.get("provider_ref"),
-                    "sha256": first.get("sha256"),
-                    "media_type": first.get("media_type"),
-                    "size_bytes": first.get("size_bytes"),
-                }
+            with self.db.transaction(readonly=True) as tx:
+                asset = tx.fetchone(
+                    "SELECT descriptor FROM assets WHERE generation_key=%s ORDER BY id LIMIT 1",
+                    (operation["request_hash"],),
+                )
+            if asset is None:
+                # Nothing durable to project: the finalization is incomplete
+                # and U4 keeps blocking the sample (never a fabricated
+                # success).
+                return
+            first = asset["descriptor"]
+            output = {
+                "object_key": first.get("object_key"),
+                "sha256": first.get("sha256"),
+                "media_type": first.get("media_type"),
+                "size_bytes": first.get("size_bytes"),
+            }
         sample_state = "SUCCEEDED" if operation["state"] == "SUCCEEDED" else "FAILED"
         if sample_state == "FAILED":
             # §7.2: the original reason is kept - FAILED, CANCELLED and
@@ -2805,7 +2816,11 @@ class BenchmarkService:
                 or "UNKNOWN_FAILURE"
             }
         # 3+4. Projection and slot clear in one transaction (D before S),
-        # monotonic; R6's outcome write rides the same transaction.
+        # monotonic; R6's outcome write rides the same transaction. HC-4: a
+        # replay on an ALREADY-terminal sample completes every unfinished
+        # stage - linkage/output repair (set-once), the matching-slot clear
+        # and the R6 fail-fast restore - while the terminal state itself is
+        # never overwritten.
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id)
             lock_account(tx, exp["account_id"])
@@ -2820,22 +2835,37 @@ class BenchmarkService:
                 "AND sample_id=%s FOR UPDATE",
                 (experiment_id, operation["sample_id"]),
             )
-            if current is None or current["state"] in ("SUCCEEDED", "FAILED"):
-                # Monotonic projection: a terminal sample is never overwritten.
+            if current is None:
                 return
-            tx.execute(
-                "UPDATE benchmark_samples SET state=%s,operation_id=%s,"
-                "output=COALESCE(%s,output),coverage=COALESCE(coverage,%s) "
-                "WHERE experiment_id=%s AND sample_id=%s",
-                (
-                    sample_state,
-                    operation_id,
-                    jsonb(output) if output else None,
-                    jsonb({"quality": "UNKNOWN"}),
-                    experiment_id,
-                    operation["sample_id"],
-                ),
-            )
+            if current["state"] in ("SUCCEEDED", "FAILED"):
+                # Monotonic projection: the terminal state stands; only the
+                # missing linkage/output are repaired (HC-4).
+                tx.execute(
+                    "UPDATE benchmark_samples SET operation_id=COALESCE(operation_id,%s),"
+                    "output=COALESCE(output,%s),coverage=COALESCE(coverage,%s) "
+                    "WHERE experiment_id=%s AND sample_id=%s",
+                    (
+                        operation_id,
+                        jsonb(output) if output else None,
+                        jsonb({"quality": "UNKNOWN"}),
+                        experiment_id,
+                        operation["sample_id"],
+                    ),
+                )
+            else:
+                tx.execute(
+                    "UPDATE benchmark_samples SET state=%s,operation_id=%s,"
+                    "output=COALESCE(%s,output),coverage=COALESCE(coverage,%s) "
+                    "WHERE experiment_id=%s AND sample_id=%s",
+                    (
+                        sample_state,
+                        operation_id,
+                        jsonb(output) if output else None,
+                        jsonb({"quality": "UNKNOWN"}),
+                        experiment_id,
+                        operation["sample_id"],
+                    ),
+                )
             if slot is not None and slot["sample_id"] == operation["sample_id"]:
                 tx.execute(
                     "UPDATE benchmark_dispatch_slots SET sample_id=NULL,revision=revision+1 "
@@ -2844,7 +2874,8 @@ class BenchmarkService:
                 )
             if sample_state == "FAILED":
                 # R6 atomic fail-fast: the outcome is set once, generation
-                # stops, in the same transaction as the projection.
+                # stops, in the same transaction as the projection; the
+                # COALESCE restores it idempotently on every replay (HC-4).
                 tx.execute(
                     "UPDATE benchmark_experiments SET "
                     "execution_outcome=COALESCE(execution_outcome,'FAILED'),"
@@ -2922,19 +2953,37 @@ class BenchmarkService:
             except Exception:  # noqa: BLE001 - binding failures are INDETERMINATE
                 binding = "INDETERMINATE"
         if binding == "BOUND":
-            # Positively recoverable work or usable output belongs to
-            # reconciliation - never to an operator attestation, even forced.
+            # HC-3 (T031 HCF): recoverability is determined through the
+            # RECOVERY path - the deterministic client-id reconciliation, never
+            # a bare poll (which raises on UNKNOWN-without-id before ever
+            # querying the server, letting force fail a sample whose accepted
+            # prompt is positively recoverable by client id) - and read through
+            # a RECOVERY composition (the EXPIRED recovery-read exception
+            # admits RECOVERY only; this resolution's CLEANUP world cannot read
+            # a recoverable EXPIRED operation at all, making it look
+            # unreachable). Positively recoverable work or usable output
+            # belongs to reconciliation - never to an operator attestation,
+            # even forced.
+            # A factory-less service (local preparation) cannot compose the
+            # RECOVERY world; its caller-supplied world is the recovery path
+            # it has (production always wires the factory).
+            recovery_probe = (
+                self._world(experiment_id, mode="RECOVERY", acquisition_id=sample["acquisition_id"])
+                if self.world_factory is not None
+                else world
+            )
+            probed_state = None
             try:
-                polled = world.comfy.poll(operation_id)
-                polled_state = getattr(polled.state, "value", polled.state)
+                probed = recovery_probe.comfy.reconcile_unknown(operation_id)
+                probed_state = getattr(probed.state, "value", probed.state)
             except Exception:  # noqa: BLE001 - unreachable/ambiguous history
-                polled_state = None
-            if polled_state is not None:
+                probed_state = None
+            if probed_state is not None:
                 raise Conflict(
                     "a bound source with recoverable work requires reconciliation, "
                     "not an operator resolution (R7)",
                     operation_id=str(operation_id),
-                    polled_state=polled_state,
+                    probed_state=probed_state,
                 )
             if not force_unrecoverable:
                 raise PolicyDenied(

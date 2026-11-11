@@ -364,7 +364,14 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
                 for operation in ops
                 if operation["state"] == "SUCCEEDED"
             )
-            if terminal and (not projected or slot_held or not settled or output_missing):
+            # HC-4 (T031 HCF): a FAILED sample whose R6 fail-fast outcome never
+            # committed (a crash between the projection and the outcome write,
+            # or a cleared slot with the outcome still unset) is an incomplete
+            # finalization - the replay must restore it.
+            failfast_missing = sample["state"] == "FAILED" and outcome != "FAILED"
+            if terminal and (
+                not projected or slot_held or not settled or output_missing or failfast_missing
+            ):
                 # U4 - terminal operation whose settlement/release, projection
                 # or dispatch slot is not final yet (§7.1 finalize_terminal).
                 # The terminal operation's id names the finalization target.

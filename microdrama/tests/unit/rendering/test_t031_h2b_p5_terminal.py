@@ -9,7 +9,7 @@ resolve_create/resolve_sample/sweep and the CLI main().
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from test_t031_h2b_p1_modes import (
@@ -316,7 +316,10 @@ def test_at08b_r7_bound_unrecoverable_forces_and_replays(db: Database, tmp_path:
 def _seed_terminal(db, plan, comfy, state, *, error_code=None, outputs=None):
     """A sample operation in a TERMINAL state with its recorded result - the
     durable state after record_result committed and before the benchmark
-    projection (the AT-22a / R6 crash windows)."""
+    projection (the AT-22a / R6 crash windows). HC-4 (HCF round): the real
+    success flow registers the durable assets BEFORE the terminal result is
+    recorded, so a seeded SUCCEEDED operation seeds its assets too - the
+    finalization projects from the durable registry, never from last_result."""
     with db.transaction(readonly=True) as tx:
         reservation_id = tx.fetchval(
             "SELECT reservation_id FROM benchmark_samples WHERE experiment_id=%s "
@@ -342,6 +345,42 @@ def _seed_terminal(db, plan, comfy, state, *, error_code=None, outputs=None):
             "UPDATE provider_operations SET state=%s, last_result=%s, submitted_at=%s WHERE id=%s",
             (state, jsonb(result), comfy.clock.now(), operation_id),
         )
+    if outputs:
+        from microdrama.contracts.enums import AssetKind, AssetState, Provenance
+        from microdrama.contracts.media import AssetDescriptor, MediaInfo
+        from microdrama.persistence.assets import register_asset
+
+        with db.transaction(readonly=True) as tx:
+            request_hash = tx.fetchval(
+                "SELECT request_hash FROM provider_operations WHERE id=%s", (operation_id,)
+            )
+        with db.transaction() as tx:
+            for output in outputs:
+                audio = "audio" in output["media_type"]
+                register_asset(
+                    tx,
+                    AssetDescriptor(
+                        asset_id=uuid4(),
+                        asset_kind=AssetKind.AUDIO if audio else AssetKind.VIDEO,
+                        object_key=output["provider_ref"],
+                        sha256=output["sha256"],
+                        size_bytes=output["size_bytes"],
+                        media_type=output["media_type"],
+                        media=MediaInfo(
+                            duration_ms=1000,
+                            has_video=not audio,
+                            has_audio=audio,
+                            width=64 if not audio else None,
+                            height=64 if not audio else None,
+                            fps_num=24 if not audio else None,
+                            fps_den=1 if not audio else None,
+                        ),
+                        state=AssetState.PROVISIONAL,
+                        provenance=Provenance.FAKE_SYNTHETIC,
+                        created_at=comfy.clock.now(),
+                    ),
+                    generation_key=request_hash,
+                )
     return operation_id
 
 
@@ -551,6 +590,14 @@ def test_at12_r8_exposure_projection(db: Database, tmp_path: Path):
             "AND s.sample_id=d.sample_id WHERE d.experiment_id=%s",
             (experiment_id,),
         )
+    # HC-3 (T031 HCF): the timed-out POST was ACCEPTED, so the prompt is
+    # positively recoverable by its deterministic client id and the operator
+    # resolution would refuse even with force. The audited force resolution
+    # needs the genuinely unrecoverable shape: the provider's queue and
+    # history no longer show any prompt for the client id.
+    from test_t031_h2b_p1_modes import _evict_prompt_history
+
+    _evict_prompt_history(comfy, experiment_id, sample["sample_id"])
     resolved = service.resolve_sample(
         experiment_id,
         sample_id=sample["sample_id"],
