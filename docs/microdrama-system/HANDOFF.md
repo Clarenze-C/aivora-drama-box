@@ -11,9 +11,8 @@ Everything below this section is history. This section is the live state.
 - **Full offline gate:**
   - **First run at `0e34630`: FAILED at lint.** `ruff format --check` flagged 2 files.
   - Orchestrator fix: **`4e28514`**, formatting only; the new branch tip.
-  - **Rerun:** pinned checkout `.scratch/t031-gate-h2b` (detached at `4e28514`), unit
-    `t031-h2-offline-gates-b`. Receipts are in `.scratch/t031-gate-h2b/.scratch/gate/` (`check.exit`,
-    `pilot.exit`, `overall.exit`, logs).
+  - **Rerun at `4e28514`: GREEN**: 3,038 unit / 462 contract / 275 integration, `make pilot` OK
+    ([receipt](T031-fix-round/gate-4e28514.md)). This is the pre-HCF baseline, not acceptance.
   - `.scratch/t031-gate-h2` (at `0e34630`) is the checkout Codex reviews.
 - **Codex review** of `45e4f2a...0e34630`: [result](T031-fix-round/codex-review-h2-p4p5.md) =
   **FIX-REQUIRED**.
@@ -21,10 +20,20 @@ Everything below this section is history. This section is the live state.
   - HB-1..4 and HB-14 CLOSED; HB-5..13 PARTIAL.
   - The orchestrator verified HC-4, HC-7 and the out-of-spec canonical edits (HC-2).
 - **The operator approved a fix round plus one final Codex review** (a 3rd round for the HB items).
-- **Fix round HCF** is running: [brief](T031-fix-round/h2-hcf-brief.md), tag `dramabox:t031-h2-hcf`,
-  report `T031-fix-round/h2-hcf-REPORT.md`.
-  - Package F1 reverts the out-of-spec canonical billing edits first.
-  - Marker: `H2-HCF: ALL FIXES DONE`.
+- **Fix round HCF** ([brief](T031-fix-round/h2-hcf-brief.md), report `T031-fix-round/h2-hcf-REPORT.md`):
+  - **F1 `6db5fe8`** (out-of-spec canonical billing edits reverted) and **F2 `9b736da`** are committed.
+  - **It stopped at the z.ai 5 h limit (429) during F3.** Its F3 code edits are in stash
+    `1f9bc18eb17e…` ("t031-hcf-f3-wip"), **pinned on branch `wip/t031-hcf-f3-stash`**. The F3 test file
+    is untracked in the worktree.
+  - **Resume:** systemd timer **`t031-hcf-resume-loop` at 16:30Z**. It runs
+    `scratchpad/keep/t031-hcf-resume-loop.sh` (session 21694f19) with
+    [h2-hcf-resume-brief.md](T031-fix-round/h2-hcf-resume-brief.md) (apply the stash by SHA, then
+    F3 → F5), tag `dramabox:t031-h2-hcf-r2`.
+  - The loop stops at the marker `H2-HCF: ALL FIXES DONE`, after 3 runs, or after a run with no commit
+    progress.
+  - Check it with `systemctl status t031-hcf-resume-loop` and `journalctl -u t031-hcf-resume-loop`.
+  - **After F3 the stash entry should be dropped by SHA. Delete the branch `wip/t031-hcf-f3-stash`
+    after HCF is accepted.**
   - Then: the full gate, then the final Codex review. **If that review still finds BLOCKING issues, the
     orchestrator recommends parking T031** and building V3's generic recovery (phase A3) instead.
 - **After both pass:**
@@ -37,18 +46,24 @@ Everything below this section is history. This section is the live state.
 
 | Doc | State |
 |-----|-------|
-| [SPEC-v3.md](v3-workflow/SPEC-v3.md) master | **v0.4.2 BINDING** (Codex ×2 + Goldfish applied; v0.4.2 = the LLM-call wording) |
+| [SPEC-v3.md](v3-workflow/SPEC-v3.md) master | **v0.4.4 BINDING** (Codex ×2 + Goldfish applied; v0.4.2 LLM-call wording, v0.4.3 Botnoi catalogue, v0.4.4 jobs-schema ownership) |
 | [phase-A0-spec.md](v3-workflow/phase-A0-spec.md) (LLM gateway) | **v0.4 READY FOR BUILD**: Codex ×3; the 3rd round was operator-approved and scoped. The build review must verify A0S-1/2 |
 | [phase-A-spec.md](v3-workflow/phase-A-spec.md) (Foundations) | **v0.3**: Codex ×2. The operator chose no 3rd round; the A1, A2, A3 and A6b design notes are Codex-critiqued **before code** |
 
 **Build order:**
-1. **A0-R1**, the ai-route `dramabox-llm` role, in a claude-configs worktree:
-   - [brief](v3-workflow/a0r1-build-brief.md);
-   - running as tag `dramabox:a0r1-build`;
-   - report `v3-workflow/a0r1-build-REPORT.md`.
-
-   Then a Codex review, then the orchestrator merges into `/root/.claude` (with the snapshot proof that
-   existing roles are unchanged).
+1. **A0-R1**, the ai-route `dramabox-llm` role: **BUILD DONE.**
+   - Worktree `/root/.claude/.claude/worktrees/a0r1-airoute`, branch `worktree-a0r1-airoute`.
+   - 5 commits: `9776fb3`, `a6cf997`, `b0ce72e`, `646e42e`, `02af779`.
+   - [report](v3-workflow/a0r1-build-REPORT.md).
+   - **Orchestrator verification:** 62 new tests passed; `test_guards` and `test_goldfish` ALL PASS.
+     `test_observability.py` fails 3 checks **identically on `main` `02b361a`**: an existing,
+     load-sensitive failure, not a regression.
+   - Two policy entries are `UNCONFIRMED` (the remote-settings cache path, the built-in extension
+     inventory), so the role **fails closed** until the §7 live qualification.
+   - **The Codex review is running:** [brief](v3-workflow/codex-review-a0r1-brief.md) →
+     `v3-workflow/codex-review-a0r1.md`, tag `dramabox:a0r1-review`.
+   - After ACCEPT: merge into `/root/.claude` `main`, staging only `scripts/ai_route.py`, `models.json`
+     and `scripts/tests/ai_route/`. Never `git add -A` there (auto-logger churn).
 2. **A0-D**, the drama-box half (gateway, `LlmStep`, migration 0027):
    - **its brief is not written yet**: write it against the accepted T031 tip;
    - the operator installs the systemd unit, group 64010 and directories;
