@@ -4,6 +4,28 @@
 
 Everything below this section is history. This section is the live state.
 
+### Update, 11 Nov 22:25Z (Opus session e4e3c05c)
+
+- **HCF resumed at the 21:27Z reset.** F4 is committed as **`c044daf`** (HC-3, HC-4); F5 (HC-10..12) is
+  building. `git diff 45e4f2a c044daf` on `budget/service.py` and `rendering/leases.py` is empty, so the
+  F1 revert holds.
+- **The gate and the final review are now chained:** systemd **`t031-hcf-after-done`**, script
+  `scratchpad/keep/t031-hcf-after-done.sh` (session e4e3c05c). When the HCF loop ends, it:
+  1. stops unless the report has `H2-HCF: ALL FIXES DONE` and the tracked tree is clean;
+  2. pins `.scratch/t031-gate-hcf` (detached) at the tip;
+  3. starts the full gate as unit **`t031-hcf-offline-gates`**, with receipts in
+     `.scratch/t031-gate-hcf/.scratch/gate/`;
+  4. launches the **final Codex review** ([brief](T031-fix-round/codex-review-hcf-final-brief.md),
+     tag `dramabox:t031-hcf-final-review`, out `T031-fix-round/codex-review-hcf-final.md`), retrying on
+     exit 75.
+
+  Check: `journalctl -u t031-hcf-after-done -o cat`.
+- **Codex week 88% (shared with the ICT and SFW sessions; resets 13 Nov 10:30Z).** Its remaining budget
+  goes to the HCF final review only. **The A0-R1 re-review (round 2) is held until the reset**, together
+  with the A1 note re-critique. Neither is on the T031/A0-D critical path: A0-D tests use a fake
+  ai-route shim.
+- The A0-R1 fix1 build (`a0r1-fix1-after-hcf`) still starts by itself when the HCF loop ends.
+
 ### T031 / H-2 (benchmark recovery): build DONE, verification running
 
 - **Build:** [h2-build-REPORT.md](T031-fix-round/h2-build-REPORT.md) is marked `H2-BUILD: ALL PACKAGES
