@@ -4,6 +4,42 @@
 
 Everything below this section is history. This section is the live state.
 
+### Update, 11 Nov 23:50Z (Opus session e4e3c05c): T031 round 4; v3 notes and phase B queued
+
+- **HCF finished:** `H2-HCF: ALL FIXES DONE`, tip **`7060e02`** (F5).
+  - The full gate is running there now: unit `t031-hcf-offline-gates`, checkout `.scratch/t031-gate-hcf`.
+  - **The final Codex review (round 3) = FIX-REQUIRED** ([result](T031-fix-round/codex-review-hcf-final.md)):
+    - **HD-1** BLOCKING: an unbound RECOVERY probe lets a forced resolution discard recoverable work;
+    - **HD-3** BLOCKING: race tests accept translated deadlocks;
+    - **HD-2** SHOULD-FIX.
+
+    The orchestrator confirmed HD-1 and HD-3 in code.
+- **Operator, 23:40Z:** **round 4, verified by the orchestrator only (no Codex)**. The remaining partials
+  (HC-6, HC-9, HC-11, HB-13 broad) are **known limits**, to be re-audited before phase D's render adapter
+  ([rulings](T031-fix-round/rulings-hcf-final.md)).
+  - **R4 build:** [brief](T031-fix-round/h2-r4-brief.md); systemd **`t031-r4-loop`** (tag
+    `dramabox:t031-h2-r4`, script `scratchpad/keep/t031-r4-loop.sh`, session e4e3c05c).
+  - It starts when the z.ai 5 h window is under 50% (the 02:31Z reset), resumes across windows, and
+    stops on the marker `H2-R4: ALL FIXES DONE`.
+  - **Then the orchestrator:**
+    1. re-runs every red/green line in `h2-r4-REPORT.md`;
+    2. reads the R1 diff against spec R7;
+    3. runs the full gate in a new pinned checkout.
+
+    Pass → T031 accepted at the R4 tip, `feat/t031-pika-flex-native` fast-forwarded, A0-D based there
+    (A0 = 0027). Fail → park T031.
+- **A0-R1 fix1 is building** (`dramabox:a0r1-fix1`, started when the HCF loop ended). Its Codex re-review
+  is held until the Codex reset (13 Nov 10:30Z).
+- **v3 prep (operator: "draft phase B spec and A2/3/6b notes"):**
+  - **A2/A3/A6b design notes:** GLM drafts them from [a2-note-brief.md](v3-workflow/a2-note-brief.md),
+    [a3-note-brief.md](v3-workflow/a3-note-brief.md) and [a6b-note-brief.md](v3-workflow/a6b-note-brief.md).
+    - systemd **`v3-a-notes-chain`** (script `scratchpad/keep/v3-a-notes-chain.sh`) runs them one at a
+      time, **after `t031-r4-loop` ends** and while z.ai is under 50%.
+    - Outputs `v3-workflow/A2-design-note.md`, `A3-…`, `A6b-…`.
+    - The orchestrator adds rulings, then Codex critiques after the reset.
+  - **Phase B spec:** the orchestrator writes it from the GLM-Flash fact map
+    [b-factmap-brief.md](v3-workflow/b-factmap-brief.md) → `v3-workflow/b-factmap.md`, which is running.
+
 ### Update, 11 Nov 22:25Z (Opus session e4e3c05c)
 
 - **HCF resumed at the 21:27Z reset.** F4 is committed as **`c044daf`** (HC-3, HC-4); F5 (HC-10..12) is
