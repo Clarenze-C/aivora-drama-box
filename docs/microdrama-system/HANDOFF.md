@@ -74,7 +74,10 @@ Everything below this section is history. This section is the live state.
    - After ACCEPT: merge into `/root/.claude` `main`, staging only `scripts/ai_route.py`, `models.json`
      and `scripts/tests/ai_route/`. Never `git add -A` there (auto-logger churn).
 2. **A0-D**, the drama-box half (gateway, `LlmStep`, migration 0027):
-   - **its brief is not written yet**: write it against the accepted T031 tip;
+   - **The brief is written:** [a0d-build-brief.md](v3-workflow/a0d-build-brief.md), packages D1–D3.
+   - **Settle its base before launch:** the accepted T031 tip (A0 = 0027), or `feat/microdrama-m0-m4` if
+     T031 is parked (A0 = 0026).
+   - Launch: `ai-route build <brief> -w a0d-gateway --effort xhigh`.
    - the operator installs the systemd unit, group 64010 and directories;
    - the live qualification (≤5 calls) needs the operator's OK.
 3. **Phase A**, packages A1 → A2 → A3 → A4 → A5 → A6a → A6b → A6c.
