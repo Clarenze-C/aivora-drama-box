@@ -254,6 +254,117 @@ def test_preflight_is_not_ready_when_factory_policy_refuses(monkeypatch: pytest.
     assert "authorization or sealed-manifest validation failed" in result["reasons"]
 
 
+# ---------------------------------------------------------------------------
+# L-4 (GLM Luna review): preflight must not report ready in two more
+# factory-refusing states - public actions enabled, and no budget headroom.
+# ---------------------------------------------------------------------------
+
+
+def _l4_preflight_service(status):
+    from microdrama.config import Settings
+    from microdrama.contracts.enums import ExecutionMode
+    from microdrama.pipeline.benchmark_service import BenchmarkService
+    from microdrama.testing.fakes import FakeClock
+
+    service = object.__new__(BenchmarkService)
+    service.status = lambda _experiment_id: status
+    service.clock = FakeClock(NOW)
+    service.settings = Settings(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+    )
+    service._validate_authorization = lambda *args: None
+    return service
+
+
+def _l4_plan_seal_auth():
+    """An otherwise-READY baseline: a LIVE seal with a future hard stop, so
+    each L-4 test flips exactly one factory-refusing condition."""
+    plan = BenchmarkPlan.model_validate(plan_data())
+    seal = BenchmarkSeal.model_validate(
+        seal_data(plan)
+        | {
+            "schema_evidence": "LIVE_PROVIDER",
+            "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
+            "eligible_until": (NOW + timedelta(hours=6)).isoformat(),
+            "hard_stop_utc": (NOW + timedelta(hours=4)).isoformat(),
+        }
+    )
+    authorization = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
+    return plan, seal, authorization
+
+
+def _l4_status(plan, seal, *, exposure_total=0, gpu_ms=0):
+    return {
+        "plan": plan.model_dump(mode="json"),
+        "seal": {"manifest": seal.model_dump(mode="json")},
+        "hard_stop": NOW + timedelta(hours=1),
+        "plan_sha256": plan.plan_sha256,
+        "sealed_sha256": seal.sealed_sha256,
+        "exposure": {"total": exposure_total},
+        "gpu_ms": gpu_ms,
+    }
+
+
+def test_l4_preflight_refuses_public_actions_enabled(monkeypatch: pytest.MonkeyPatch):
+    """L-4(a): parity with the factory's own public-actions guard.
+
+    Validated Settings refuse public_actions_enabled=True in PAID_BENCHMARK
+    (the Settings model validator fires first), so this state is unreachable
+    through normal construction - the factory AND preflight still defend
+    against it independently, and the reason matches the factory's refusal."""
+    from microdrama.config import Settings
+    from microdrama.contracts.enums import ExecutionMode
+    from microdrama.pipeline.benchmark_service import BenchmarkService
+    from microdrama.testing.fakes import FakeClock
+
+    plan, seal, authorization = _l4_plan_seal_auth()
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
+        lambda *args, **kwargs: None,
+    )
+    service = object.__new__(BenchmarkService)
+    service.status = lambda _experiment_id: _l4_status(plan, seal)
+    service.clock = FakeClock(NOW)
+    service.settings = Settings.model_construct(
+        execution_mode=ExecutionMode.PAID_BENCHMARK,
+        paid_requests_enabled=True,
+        cloud_resources_enabled=True,
+        public_actions_enabled=True,
+    )
+    service._validate_authorization = lambda *args: None
+    result = service.preflight(plan.experiment_id, authorization, object())
+    assert result["ready"] is False
+    assert any("public actions" in reason for reason in result["reasons"])
+
+
+def test_l4_preflight_refuses_when_exposure_headroom_is_gone(monkeypatch: pytest.MonkeyPatch):
+    plan, seal, authorization = _l4_plan_seal_auth()
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
+        lambda *args, **kwargs: None,
+    )
+    service = _l4_preflight_service(
+        _l4_status(plan, seal, exposure_total=plan.max_new_exposure_micro_usd)
+    )
+    result = service.preflight(plan.experiment_id, authorization, object())
+    assert result["ready"] is False
+    assert any("exposure" in reason for reason in result["reasons"])
+
+
+def test_l4_preflight_refuses_when_gpu_budget_is_exhausted(monkeypatch: pytest.MonkeyPatch):
+    plan, seal, authorization = _l4_plan_seal_auth()
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
+        lambda *args, **kwargs: None,
+    )
+    service = _l4_preflight_service(_l4_status(plan, seal, gpu_ms=plan.max_gpu_ms))
+    result = service.preflight(plan.experiment_id, authorization, object())
+    assert result["ready"] is False
+    assert any("GPU" in reason for reason in result["reasons"])
+
+
 def test_operator_file_uses_actual_bytes_not_model_serialization(tmp_path):
     plan = BenchmarkPlan.model_validate(plan_data())
     seal = BenchmarkSeal.model_validate(seal_data(plan))

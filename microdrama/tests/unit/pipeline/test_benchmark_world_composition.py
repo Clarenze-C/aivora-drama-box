@@ -130,6 +130,7 @@ def _compose(
     tmp_path: Path,
     *,
     comfy_transport: Any,
+    seal_overrides: dict | None = None,
 ):
     """Episode+account, prepare+seal+authorize one experiment, default world.
 
@@ -150,7 +151,7 @@ def _compose(
             tx, season_id=season_id, episode_id=episode_id, policy=CostPolicy()
         )
     plan = BenchmarkPlan.model_validate(plan_data() | {"episode_id": str(episode_id)})
-    seal = BenchmarkSeal.model_validate(seal_data(plan))
+    seal = BenchmarkSeal.model_validate(seal_data(plan) | (seal_overrides or {}))
     authorization = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
     service = BenchmarkService(db, settings, clock=clock, ids=ids)
     service.prepare(plan)
@@ -256,13 +257,39 @@ def test_preflight_uses_the_same_policy_as_the_default_factory(
 ) -> None:
     from microdrama.contracts.errors import PolicyDenied
 
+    # L-3 (GLM Luna review): the shared seal fixture's schema evidence is
+    # UNVERIFIED, so preflight's own _validate_authorization refused FIRST at
+    # every revision and the monkeypatched policy was never reached - the test
+    # passed vacuously at the parent commit. The authorization layer is stubbed
+    # here (it has its own suite) so the POLICY is what decides readiness.
+    monkeypatch.setattr(
+        BenchmarkService,
+        "_validate_authorization",
+        lambda *args, **kwargs: None,
+    )
+
+    # Control: with the policy accepting, preflight is ready - nothing else
+    # refuses, so only the policy layer can flip the verdict below. The seal
+    # carries live schema evidence and a future hard stop so preflight's own
+    # seal checks pass too.
     monkeypatch.setattr(
         "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
         lambda *args, **kwargs: None,
     )
     world, plan, authorization, _, clock, _ = _compose(
-        db, tmp_path, comfy_transport=FailingComfyTransport()
+        db,
+        tmp_path,
+        comfy_transport=FailingComfyTransport(),
+        seal_overrides={
+            "schema_evidence": "LIVE_PROVIDER",
+            "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
+            "eligible_until": (T0 + timedelta(hours=6)).isoformat(),
+            "hard_stop_utc": (T0 + timedelta(hours=4)).isoformat(),
+        },
     )
+    service = BenchmarkService(db, _settings(), clock=clock)
+    result = service.preflight(plan.experiment_id, authorization, _quote())
+    assert result["ready"] is True, result["reasons"]
 
     # Model a current preset/rights/account condition the factory rejects.
     def reject(*args: Any, **kwargs: Any) -> None:
@@ -271,7 +298,6 @@ def test_preflight_uses_the_same_policy_as_the_default_factory(
     monkeypatch.setattr(
         "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate", reject
     )
-    service = BenchmarkService(db, _settings(), clock=clock)
     result = service.preflight(plan.experiment_id, authorization, _quote())
     assert result["ready"] is False
     assert "authorization or sealed-manifest validation failed" in result["reasons"]

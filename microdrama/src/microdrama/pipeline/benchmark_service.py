@@ -169,6 +169,19 @@ class BenchmarkService:
             or not self.settings.cloud_resources_enabled
         ):
             reasons.append("PAID_BENCHMARK and explicit effect flags are required")
+        if self.settings.public_actions_enabled:
+            # L-4: the factory refuses PAID_BENCHMARK with public actions on;
+            # readiness must say so instead of reporting ready.
+            reasons.append("public actions must stay disabled for the paid benchmark")
+        # L-4: no budget headroom means the first acquire would refuse - both
+        # are local durable reads, so readiness reports them without reserving.
+        plan_doc = status.get("plan") or {}
+        if plan_doc:
+            exposure_total = int((status.get("exposure") or {}).get("total") or 0)
+            if exposure_total >= int(plan_doc["max_new_exposure_micro_usd"]):
+                reasons.append("new-exposure cap already committed - no headroom")
+            if int(status.get("gpu_ms") or 0) >= int(plan_doc["max_gpu_ms"]):
+                reasons.append("aggregate GPU budget exhausted - no headroom")
         if authorization is not None and seal is not None and quote is not None:
             try:
                 self._validate_authorization(status, authorization, quote)
