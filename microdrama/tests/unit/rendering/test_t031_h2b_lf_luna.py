@@ -455,3 +455,203 @@ def test_l1_l2_shot_scoped_costume_change_stages_and_binds(
         manifest, _, _, _ = world._native.manifest(sample)
         outfits = [b for b in manifest.bindings if b.role.value == "outfit"]
         assert [b.asset_sha256 for b in outfits] == [harness.asset_shas[expected_outfit]], shot_id
+
+
+# ---------------------------------------------------------------------------
+# L-6 (GLM Luna review): H-8's stub removal dropped the only "experimental
+# preset never widens production eligibility" regression coverage. The five
+# parametrized cases re-homed on the LIVE policy (ExperimentalPresetPolicy),
+# against real registry rows.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("change", ["version", "workflow", "enabled", "thai", "measurement"])
+def test_l6_live_policy_never_widens_production_eligibility(db: Database, change: str):
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent.parent / "pipeline"))
+    from test_benchmark_authorization import (
+        authorization_data,
+        plan_data,
+        seal_data,
+    )
+
+    from microdrama.config import Settings
+    from microdrama.contracts.enums import ExecutionMode, Provenance
+    from microdrama.contracts.errors import PolicyDenied
+    from microdrama.contracts.examples import preset_record
+    from microdrama.core.registry.presets import PresetRegistry
+    from microdrama.pipeline.benchmark_authorization import (
+        BenchmarkAuthorization,
+        BenchmarkPlan,
+        BenchmarkSeal,
+        document_sha256,
+    )
+    from microdrama.pipeline.experimental_world import ExperimentalPresetPolicy
+    from microdrama.rendering.workflows.pika_h3_flex import PikaGraphConfig
+    from microdrama.rendering.workflows.templates import PIKA_TEMPLATE, template_sha256
+    from microdrama.testing.fakes import FakeClock
+
+    settings = Settings(execution_mode=ExecutionMode.OFFLINE_MOCK)
+    preset_id = f"l6-{change}"
+    # An ENABLED preset must carry full measured evidence AND non-empty
+    # evidence refs (the registry's own check constraints) - exactly the
+    # production shape that must never widen experimental eligibility.
+    from microdrama.contracts.enums import ControlKind, EvidenceSource
+    from microdrama.contracts.primitives import EvidenceRef
+
+    full_measurement = preset_record().measured
+    record = preset_record().model_copy(
+        update={
+            "preset_id": preset_id,
+            "workflow_sha256": (
+                "0" * 64 if change == "workflow" else template_sha256(PIKA_TEMPLATE)
+            ),
+            "enabled": change == "enabled",
+            "measured": full_measurement if change in ("enabled", "measurement") else None,
+            "supports_thai_dialogue": True if change == "thai" else None,
+            "rights_route_id": None if change != "enabled" else preset_record().rights_route_id,
+            "supported_controls": [
+                ControlKind.TEXT_PROMPT,
+                ControlKind.FIRST_FRAME,
+            ]
+            if change == "enabled"
+            else preset_record().supported_controls,
+            "evidence": [EvidenceRef(source=EvidenceSource.FAKE_FIXTURE, ref="fixture:l6")]
+            if change == "enabled"
+            else [],
+        }
+    )
+    PresetRegistry(db, settings).record(record, source_provenance=Provenance.FAKE_SYNTHETIC)
+
+    profile = {
+        "preset_id": preset_id,
+        "preset_version": 1,
+        "workflow_sha256": template_sha256(PIKA_TEMPLATE),
+        "configuration_sha256": PikaGraphConfig().sha256,
+    }
+    plan = BenchmarkPlan.model_validate(
+        plan_data() | {"runtime_profile_sha256": document_sha256(profile)}
+    )
+    seal = BenchmarkSeal.model_validate(seal_data(plan) | {"runtime_profile": profile})
+    authorization = BenchmarkAuthorization.model_validate(authorization_data(plan, seal))
+    original_validate_for = BenchmarkAuthorization.validate_for
+    BenchmarkAuthorization.validate_for = staticmethod(lambda *a, **k: None)
+    try:
+        policy = ExperimentalPresetPolicy(plan, seal, authorization)
+        if change == "version":
+            # The profile pins version 1; the seeded current record is version 1
+            # plus a NEWER current row that no longer matches the pin.
+            newer = record.model_copy(update={"version": 2})
+            PresetRegistry(db, settings).record(newer, source_provenance=Provenance.FAKE_SYNTHETIC)
+            message = "experiment requires the exact current disabled, unmeasured preset"
+        elif change == "workflow":
+            message = "experimental workflow/configuration pin differs"
+        else:
+            message = "experiment requires the exact current disabled, unmeasured preset"
+        with pytest.raises(PolicyDenied, match=message):
+            policy.validate(
+                db, settings, FakeClock(datetime(2026, 11, 10, 12, tzinfo=UTC)), object()
+            )
+    finally:
+        BenchmarkAuthorization.validate_for = original_validate_for
+
+
+# ---------------------------------------------------------------------------
+# L-7 (GLM Luna review): the §G evidence write path had never run against a
+# real database (fake-Tx test only). One DB-backed test: seed an experiment
+# with a runpod-addressed leased pod, run the raw-amount record through
+# _record_benchmark_raw_evidence twice, assert one idempotent evidence row;
+# a restated bucket (different amounts, same observation identity) lands as a
+# second row - revisions preserved; a foreign pod writes nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_l7_raw_billing_evidence_writes_and_dedups_on_real_postgres(db: Database, tmp_path: Path):
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from rendering_support import RenderWorld
+    from test_benchmark_experiments import _composed_world
+    from test_t031_h2b_p2_gate import _lease_with_live_pod, uuid5_seed
+
+    from microdrama.rendering import runpod_billing
+
+    world = RenderWorld(db)
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    lease_id = _lease_with_live_pod(db, world, ep.episode_id)
+    acquisition_id = uuid5_seed(plan.experiment_id, 9)
+    with db.transaction() as tx:
+        lease = tx.fetchone("SELECT pod_id FROM pod_leases WHERE id=%s", (lease_id,))
+        from microdrama.contracts.hashing import canonical_hash
+        from microdrama.persistence.db import jsonb
+
+        tx.execute(
+            "INSERT INTO benchmark_acquisitions(acquisition_id,experiment_id,generation,"
+            "quote,quote_sha256,intent,state,create_intent_at,lease_id,authorization_sha256) "
+            "VALUES(%s,%s,1,%s,%s,%s,'ACTIVE',%s,%s,%s)",
+            (
+                acquisition_id,
+                plan.experiment_id,
+                jsonb({"l7": True}),
+                canonical_hash({"l7": True}),
+                jsonb({}),
+                comfy.clock.now(),
+                lease_id,
+                "f" * 64,
+            ),
+        )
+    pod_id = lease["pod_id"]
+    now = comfy.clock.now()
+    record = SimpleNamespace(
+        pod_id=pod_id,
+        interval_start=now,
+        interval_end=now + timedelta(hours=1),
+        raw_amounts=("0.0000030000001", "0.0000009999999", "0.0000009999999", "0.0000009999999"),
+        raw_discrepancy_usd="0.0000000000004",
+        normalization_policy="ceiling-v1",
+    )
+    runpod_billing._record_benchmark_raw_evidence(db, record)
+    runpod_billing._record_benchmark_raw_evidence(db, record)  # exact replay: no-op
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT * FROM benchmark_billing_evidence WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    assert len(rows) == 1  # dedup on the raw commit identity (ON CONFLICT DO NOTHING)
+    assert rows[0]["amounts"]["total"] == "0.0000030000001"
+
+    # A restated bucket (different amounts, same pod/interval identity) is a
+    # REVISION, preserved as its own row - never silently overwritten.
+    restated = SimpleNamespace(
+        pod_id=pod_id,
+        interval_start=record.interval_start,
+        interval_end=record.interval_end,
+        raw_amounts=("0.0000040000000", "0.0000009999999", "0.0000009999999", "0.0000009999999"),
+        raw_discrepancy_usd="0.0000000000000",
+        normalization_policy="ceiling-v1",
+    )
+    runpod_billing._record_benchmark_raw_evidence(db, restated)
+    with db.transaction(readonly=True) as tx:
+        revised = tx.fetchall(
+            "SELECT * FROM benchmark_billing_evidence WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    assert len(revised) == 2
+
+    # A pod no benchmark acquisition owns writes nothing (and does not raise).
+    foreign = SimpleNamespace(
+        pod_id="pod-nobody-owns",
+        interval_start=record.interval_start,
+        interval_end=record.interval_end,
+        raw_amounts=record.raw_amounts,
+        raw_discrepancy_usd=record.raw_discrepancy_usd,
+        normalization_policy="ceiling-v1",
+    )
+    runpod_billing._record_benchmark_raw_evidence(db, foreign)
+    with db.transaction(readonly=True) as tx:
+        final = tx.fetchval(
+            "SELECT COUNT(*) FROM benchmark_billing_evidence WHERE acquisition_id=%s",
+            (acquisition_id,),
+        )
+    assert final == 2
