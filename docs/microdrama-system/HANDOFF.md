@@ -1,6 +1,6 @@
 # Drama Box microdrama handoff — updated 11 November 2026 UTC
 
-## CURRENT — read this first (11 Nov 2026, Opus orchestrator session 21694f19; refreshed before 19:00Z)
+## CURRENT — read this first (11 Nov 2026 18:35Z, Opus orchestrator session 21694f19, final handoff)
 
 Everything below this section is history. This section is the live state.
 
@@ -21,19 +21,17 @@ Everything below this section is history. This section is the live state.
   - The orchestrator verified HC-4, HC-7 and the out-of-spec canonical edits (HC-2).
 - **The operator approved a fix round plus one final Codex review** (a 3rd round for the HB items).
 - **Fix round HCF** ([brief](T031-fix-round/h2-hcf-brief.md), report `T031-fix-round/h2-hcf-REPORT.md`):
-  - **F1 `6db5fe8`** (out-of-spec canonical billing edits reverted) and **F2 `9b736da`** are committed.
-  - **It stopped at the z.ai 5 h limit (429) during F3.** Its F3 code edits are in stash
-    `1f9bc18eb17e…` ("t031-hcf-f3-wip"), **pinned on branch `wip/t031-hcf-f3-stash`**. The F3 test file
-    is untracked in the worktree.
-  - **Resume:** systemd timer **`t031-hcf-resume-loop` at 16:30Z**. It runs
-    `scratchpad/keep/t031-hcf-resume-loop.sh` (session 21694f19) with
-    [h2-hcf-resume-brief.md](T031-fix-round/h2-hcf-resume-brief.md) (apply the stash by SHA, then
-    F3 → F5), tag `dramabox:t031-h2-hcf-r2`.
-  - The loop stops at the marker `H2-HCF: ALL FIXES DONE`, after 3 runs, or after a run with no commit
-    progress.
-  - Check it with `systemctl status t031-hcf-resume-loop` and `journalctl -u t031-hcf-resume-loop`.
-  - **After F3 the stash entry should be dropped by SHA. Delete the branch `wip/t031-hcf-f3-stash`
-    after HCF is accepted.**
+  - **F1 `6db5fe8`, F2 `9b736da`, F3 `e521653` are committed.** F4 (HC-3, HC-4) and F5 (HC-10..12) are
+    pending.
+  - The F3 stash was applied and dropped by the builder. **Branch `wip/t031-hcf-f3-stash` remains: delete
+    it after HCF is accepted.**
+  - **The loop is still running at 18:30Z:** systemd `t031-hcf-resume-loop`, tag `dramabox:t031-h2-hcf-r2`,
+    [resume brief](T031-fix-round/h2-hcf-resume-brief.md).
+    - The z.ai 5 h window was spent again at 18:13Z. The loop retries every 10 min (it stops after 30
+      quota retries, 3 runs, a run with no commit progress, or the marker), so **it should resume at the
+      21:27Z reset by itself**.
+    - Check: `journalctl -u t031-hcf-resume-loop -o cat | tail`.
+    - Marker: `H2-HCF: ALL FIXES DONE`.
   - Then: the full gate, then the final Codex review. **If that review still finds BLOCKING issues, the
     orchestrator recommends parking T031** and building V3's generic recovery (phase A3) instead.
 - **After both pass:**
@@ -92,6 +90,39 @@ Everything below this section is history. This section is the live state.
        defects.
      - Then the A1 build. **A1 can't build before A0-D**
        (migration 0027) exists.
+
+### Next session: do these in order (written 11 Nov 18:35Z)
+
+1. **Check the two overnight units:**
+   - `systemctl status t031-hcf-resume-loop a0r1-fix1-after-hcf`;
+   - `journalctl -u t031-hcf-resume-loop -o cat | tail`;
+   - `journalctl -u a0r1-fix1-after-hcf -o cat | tail`.
+
+   The A0-R1 fix waits for the HCF loop to finish, then runs once.
+2. **When HCF has `H2-HCF: ALL FIXES DONE`:**
+   1. Run the full offline gate on its tip, in a **new pinned detached checkout** (copy
+      `.scratch/t031-gate-h2b/.scratch/gate/run.sh` and change the paths; unit name
+      `t031-hcf-offline-gates`).
+   2. Then the **final Codex review**: round 3 for the HB items, operator-approved. Scope `4e28514...<tip>`
+      against `codex-review-h2-p4p5.md`.
+   3. **If it is still BLOCKING: recommend parking T031 to the operator.**
+3. **When A0-R1 has `A0-R1 FIX1: ALL DONE`:**
+   1. Re-run the 4 new test files plus the 3 legacy scripts (`test_observability` already fails 3 on
+      `main`).
+   2. Then the Codex re-review (round 2 of 2).
+   3. On ACCEPT, merge into `/root/.claude` `main`, staging only the A0-R1 paths.
+4. **After the T031 decision:** settle the A0-D base and launch [a0d-build-brief.md](v3-workflow/a0d-build-brief.md).
+5. **From 13 Nov 10:30Z (the Codex week reset):** the A1 note re-critique (round 2 of 2).
+6. **Quota at 18:30Z:**
+   - Claude week 70%, **off pace** (7.7%/day vs the 8% rule), so start the next session as `cms glm` or
+     Codex unless the pace recovers;
+   - Codex week 88% (resets 13 Nov 10:30Z);
+   - z.ai 5 h spent (resets 21:27Z).
+7. **Cleanup later, via `git worktree remove`:**
+   - `.scratch/t031-gate-h2`, `.scratch/t031-gate-h2b`, `.scratch/t031-review-r3`,
+     `.scratch/t031-verify-h2b`, `/tmp/t031-luna-redcheck`;
+   - the stray `.scratch/a1-note-reflow.py`;
+   - after acceptance, the branches `wip/t031-hcf-f3-stash` and `worktree-a0r1-airoute` (once merged).
 
 ### Operator to-dos
 
