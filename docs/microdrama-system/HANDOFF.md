@@ -54,9 +54,17 @@ Everything below this section is history. This section is the live state.
    - the operator installs the systemd unit, group 64010 and directories;
    - the live qualification (≤5 calls) needs the operator's OK.
 3. **Phase A**, packages A1 → A2 → A3 → A4 → A5 → A6a → A6b → A6c.
-   - **A1 note** being drafted by GLM: [brief](v3-workflow/a1-note-brief.md) →
-     `v3-workflow/A1-design-note.md`.
-   - Next: a Codex critique of the note, then the A1 build.
+   - **A1 note** ([A1-design-note.md](v3-workflow/A1-design-note.md)):
+     - v1.1 was GLM's draft, with orchestrator rulings in §12.
+     - The Codex critique is **REWORK**: [N1-1..18](v3-workflow/codex-a1-note-critique.md), 13 BLOCKING.
+     - **GLM revision v1.2 is done** ([brief](v3-workflow/a1-note-r2-brief.md)); §13 maps every N1
+       finding.
+     - **Next: the Codex re-critique (round 2 of 2), deliberately held until the Codex week resets
+       (13 Nov 10:30Z).** The Codex week was at 85% on 11 Nov; it is kept for the HCF final review and the
+       A0-R1 review. Use the brief pattern of `a1-note-critique-brief.md`, scoped to N1-1..18 and the new
+       defects.
+     - Then the A1 build. **A1 can't build before A0-D**
+       (migration 0027) exists.
 
 ### Operator to-dos
 
