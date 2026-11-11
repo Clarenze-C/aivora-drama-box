@@ -50,6 +50,8 @@ Commit at the end of each package with its tests green, and update the report af
 - Leave migrations 0001–0025 alone; 0026 changes only if a finding requires it (none does).
 - Run every pytest under `systemd-run --scope -p CPUQuota=45% --quiet` with
   `--basetemp=/tmp/t031-r4-basetemp`. Keep each command under 10 minutes and run focused files.
+  - **Put `/usr/sbin` on PATH** (`env PATH="/usr/sbin:$PATH" …`). The test PostgreSQL fixture calls
+    `runuser`, and without it every DB test errors at setup.
 - **Run `make lint` (it includes `ruff format --check`) before every commit.**
 - **For red runs, never stash:** use a temporary WIP commit on a scratch branch, or restore committed file
   versions with `git show <rev>:<path> > <path>` and re-apply your saved diff from a file.
