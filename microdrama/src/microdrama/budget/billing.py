@@ -861,9 +861,7 @@ class BillingRepository:
                 "BILLED 0 settlement"
             )
         stamped_now = now or datetime.now(UTC)
-        tx.fetchval(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 451051))", (str(lease_id),)
-        )
+        tx.fetchval("SELECT pg_advisory_xact_lock(hashtextextended(%s, 451051))", (str(lease_id),))
         lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s FOR UPDATE", (lease_id,))
         if lease is None:
             raise NotFound("pod lease not found", lease_id=str(lease_id))

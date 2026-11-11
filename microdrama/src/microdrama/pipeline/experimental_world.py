@@ -841,9 +841,7 @@ class _SealedNativeInputs:
         # (role, subject) may legitimately bind different assets in different
         # shots (a same-subject costume change), and a collapsed lookup bound
         # the wrong receipt after pod acquisition.
-        by_key = {
-            (r["role"], r["subject_id"], r["asset_sha256"], r["media_kind"]): r for r in rows
-        }
+        by_key = {(r["role"], r["subject_id"], r["asset_sha256"], r["media_kind"]): r for r in rows}
         staged = []
         for item in self.seal.port_map:
             if item.get("shot_id") not in (None, sample["shot_id"]):
@@ -857,9 +855,7 @@ class _SealedNativeInputs:
                 media_kind=item["media_kind"],
                 destination_slot=item["destination_slot"],
             )
-            row = by_key.get(
-                (port.role.value, port.subject_id, port.asset_sha256, port.media_kind)
-            )
+            row = by_key.get((port.role.value, port.subject_id, port.asset_sha256, port.media_kind))
             if row is None or row["state"] != "VERIFIED":
                 raise NeedsReconciliation("native prompt has unverified acquisition input")
             staged.append(
