@@ -547,6 +547,30 @@ def _race_connection(db: Database):
     return conn
 
 
+def _bounded_worker_locks(db: Database, *, seconds: str = "2500ms") -> None:
+    """HC-10 (HCF): the race WORKERS run on the service's own pool, so the
+    bounded ``lock_timeout`` the helper connections get must apply to them
+    too - every currently pooled connection gets the session setting and the
+    database default covers connections the pool opens later. A deadlock or a
+    lock wedge then FAILS the test instead of hanging it."""
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict
+
+    assert seconds.replace("m", "").replace("s", "").isdigit()
+    name = conninfo_to_dict(db.dsn)["dbname"]
+    with psycopg.connect(db.dsn, autocommit=True) as admin:
+        admin.execute(f"ALTER DATABASE \"{name}\" SET lock_timeout TO '{seconds}'")
+    # The pool's currently IDLE connections (checked-out ones are not in this
+    # container - the race threads have not started yet) get the session
+    # setting too (a deque in psycopg_pool 3.3, a dict in older versions).
+    idle = getattr(db._pool, "_pool", [])
+    if hasattr(idle, "values"):
+        idle = list(idle.values())
+    for conn in list(idle):
+        conn.execute(f"SET lock_timeout TO '{seconds}'")
+        conn.commit()
+
+
 def _deadlocks(exc: BaseException) -> bool:
     import psycopg
 
@@ -554,14 +578,22 @@ def _deadlocks(exc: BaseException) -> bool:
 
 
 def test_at21_billing_wrapper_vs_resolve_create_never_deadlocks(db: Database, tmp_path: Path):
-    """The canonical wrapper (account->categories->advisory->L) and the
-    benchmark resolution (same order, locks 1-5) serialise on the account row:
-    the resolution blocks, then proceeds after the wrapper commits. With the
-    pre-P4 wrapper order (advisory+L first) this interleaving deadlocks."""
+    """HC-10 (HCF): the REAL canonical billing wrapper
+    (``billing.resolve_podless_create``: account->categories->advisory->L) and
+    the benchmark resolution (same shared order, locks 1-5) contend on the
+    account row behind a third holder: both block, then serialise - the first
+    posts the resolution, the second replays the IDENTICAL attestation - with
+    no deadlock (SQLSTATE 40P01), exactly one resolution row and no unsafe
+    release. With the pre-P4 wrapper order (advisory+L first) this
+    interleaving deadlocks; a manual account lock here would prove nothing
+    about the wrapper itself."""
     import threading
+
+    from microdrama.budget.billing import BillingRepository
 
     fixed = _at6_context(db, tmp_path)
     plan = fixed["plan"]
+    _bounded_worker_locks(db)
     helper = _race_connection(db)
     helper.execute("BEGIN")
     helper.execute(
@@ -570,6 +602,19 @@ def test_at21_billing_wrapper_vs_resolve_create_never_deadlocks(db: Database, tm
         (str(plan.experiment_id),),
     )
     outcome: dict[str, object] = {}
+
+    def wrapper_call():
+        try:
+            BillingRepository(db, budget_service=fixed["budget"]).resolve_podless_create(
+                fixed["lease_id"],
+                actor_ref="operator-console",
+                reason="provider console shows no pod",
+                evidence_sha256="a" * 64,
+                now=fixed["comfy"].clock.now(),
+            )
+            outcome["wrapper"] = True
+        except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
+            outcome["wrapper_error"] = exc
 
     def resolver():
         try:
@@ -584,16 +629,22 @@ def test_at21_billing_wrapper_vs_resolve_create_never_deadlocks(db: Database, tm
         except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
             outcome["error"] = exc
 
-    thread = threading.Thread(target=resolver)
-    thread.start()
-    thread.join(timeout=1.0)
-    assert thread.is_alive()  # blocked on the account row, not errored
+    wrapper_thread = threading.Thread(target=wrapper_call)
+    wrapper_thread.start()
+    wrapper_thread.join(timeout=1.0)
+    assert wrapper_thread.is_alive()  # blocked on the account row INSIDE the wrapper
+    resolver_thread = threading.Thread(target=resolver)
+    resolver_thread.start()
+    resolver_thread.join(timeout=1.0)
+    assert resolver_thread.is_alive()  # queued behind the same account row
     helper.execute("COMMIT")
-    thread.join(timeout=10.0)
+    wrapper_thread.join(timeout=10.0)
+    resolver_thread.join(timeout=10.0)
     helper.close()
-    assert not thread.is_alive()
+    assert not wrapper_thread.is_alive() and not resolver_thread.is_alive()
+    assert "wrapper_error" not in outcome, repr(outcome.get("wrapper_error"))
     assert "error" not in outcome, repr(outcome.get("error"))
-    assert outcome.get("resolved") is True
+    assert outcome.get("wrapper") is True and outcome.get("resolved") is True
     (row,) = _resolution_rows(db, fixed["lease_id"])
     assert row["actor_ref"] == "operator-console"
     # No unsafe release: the resolution kept the STORAGE hold (R1).
@@ -609,6 +660,7 @@ def test_at21_ambiguity_vs_admission_vs_sweep_ordered(db: Database, tmp_path: Pa
 
     fixed = _at6_context(db, tmp_path)
     plan = fixed["plan"]
+    _bounded_worker_locks(db)
     helper = _race_connection(db)
     helper.execute("BEGIN")
     helper.execute(
@@ -630,29 +682,23 @@ def test_at21_ambiguity_vs_admission_vs_sweep_ordered(db: Database, tmp_path: Pa
 
     def admit():
         with _PatchedPolicy():
-            try:
-                _service(fixed).execute(
-                    plan.experiment_id,
-                    phase="screen",
-                    authorization=fixed["authorization"],
-                    quote=_screen_quote(fixed["world"]),
-                    expected_sha256=fixed["digest"],
-                    source_bytes=fixed["raw"],
-                )
-            except Exception:
-                pass  # a refusal is a clean outcome; only deadlocks fail this AT
+            # HC-10 (HCF): no swallowed exceptions - a refusal is fine, but it
+            # must be a precise, expected one; anything else (deadlock
+            # included) fails the test through the recorded errors below.
+            _service(fixed).execute(
+                plan.experiment_id,
+                phase="screen",
+                authorization=fixed["authorization"],
+                quote=_screen_quote(fixed["world"]),
+                expected_sha256=fixed["digest"],
+                source_bytes=fixed["raw"],
+            )
 
     def sweep():
-        try:
-            _service(fixed).sweep(plan.experiment_id)
-        except Exception:
-            pass
+        _service(fixed).sweep(plan.experiment_id)
 
     def mark():
-        try:
-            _service(fixed).reconcile(plan.experiment_id)
-        except Exception:
-            pass
+        _service(fixed).reconcile(plan.experiment_id)
 
     threads = [
         threading.Thread(target=call("admission", admit)),
@@ -671,6 +717,12 @@ def test_at21_ambiguity_vs_admission_vs_sweep_ordered(db: Database, tmp_path: Pa
     for thread in threads:
         thread.join(timeout=15)
     assert not any(_deadlocks(exc) for exc in errors), [repr(e) for e in errors]
+    # HC-10 (HCF): no swallowed exceptions - any recorded error must be a
+    # precise microdrama refusal (AdmissionBlocked/NeedsReconciliation/
+    # PolicyDenied/...). A deadlock, a driver error or a bug surfaces here.
+    from microdrama.contracts.errors import MicrodramaError
+
+    assert all(isinstance(exc, MicrodramaError) for exc in errors), [repr(e) for e in errors]
     assert all(not thread.is_alive() for thread in threads)
     # Nothing was dispatched while U1 held (I3 held under the race).
     with db.transaction(readonly=True) as tx:
@@ -688,17 +740,50 @@ def test_at21_ambiguity_vs_admission_vs_sweep_ordered(db: Database, tmp_path: Pa
 
 
 def test_at21_gate_serialises_with_absent_rows_r5(db: Database, tmp_path: Path):
-    """R5: a gate decision locks the acquisition ownership rows (then the
-    operation/upload rows); intent insertion serialises through the same
-    ownership row. An inserter holding the acquisition cannot race a new
-    operation or upload intent past a gate that already committed, and a gate
-    cannot miss a row an inserter committed first."""
-    fixed = _at6_context(db, tmp_path)
-    plan = fixed["plan"]
-    acquisition_id = fixed["acquisition_id"]
+    """R5 (HC-10/HCF): the REAL standalone gate (``_gate``: account ->
+    categories -> E, then the ONE shared-order row helper incl. the operation
+    and upload rows) serialises with an inserter holding the acquisition
+    ownership row: the gate blocks behind the ownership lock while the
+    inserter commits an initially-absent upload intent AND a provider
+    operation, and the gate - through the real §4.1 evaluation - then refuses
+    admission naming BOTH rows. An initially-absent row cannot slip past the
+    locked gate, and the gate cannot miss rows an inserter committed first.
+    (The inserter's raw SQL is the injected adversarial boundary; the
+    implementation under test is the gate itself.)"""
+    import threading
+    import time
+    import uuid as uuid_module
 
-    # Inserter holds the acquisition row, inserts an initially-absent upload
-    # intent and a provider operation, then commits.
+    from test_t031_h2b_p2_gate import _at14_context
+
+    from microdrama.pipeline.benchmark_service import AdmissionBlocked
+
+    world, ep, plan, service, comfy, adapter, budget, acquisition = _at14_context(db, tmp_path)
+    fixed = {
+        "world": world,
+        "ep": ep,
+        "plan": plan,
+        "comfy": comfy,
+        "adapter": adapter,
+        "budget": budget,
+        "acquisition_id": acquisition["acquisition_id"],
+    }
+    acquisition_id = acquisition["acquisition_id"]
+    _bounded_worker_locks(db)
+
+    with db.transaction(readonly=True) as tx:
+        sample = tx.fetchone(
+            "SELECT reservation_id FROM benchmark_samples WHERE experiment_id=%s "
+            "AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+        provider = tx.fetchval(
+            "SELECT provider FROM reservations WHERE id=%s", (sample["reservation_id"],)
+        )
+    now = comfy.clock.now()
+
+    # The adversarial inserter: holds the acquisition ownership row, then
+    # commits an initially-absent upload intent AND provider operation.
     inserter = _race_connection(db)
     inserter.execute("BEGIN")
     inserter.execute(
@@ -708,49 +793,81 @@ def test_at21_gate_serialises_with_absent_rows_r5(db: Database, tmp_path: Path):
     inserter.execute(
         "INSERT INTO benchmark_uploads(acquisition_id,asset_sha256,media_kind,role,"
         "subject_id,destination_slot,upload_key,state) VALUES(%s,%s,'image',"
-        "'character_identity','speaker-a','ref_images.ref_image_0',%s,'INTENT')",
+        "'character_identity','speaker-a','ref_images.ref_image_0',%s,'UNKNOWN')",
         (str(acquisition_id), "c" * 64, "t031/race/key"),
     )
-    gate = _race_connection(db)
-    gate.execute("BEGIN")
-    import threading
-    import time
+    job_id = uuid_module.uuid4()
+    inserter.execute(
+        "INSERT INTO jobs(id,job_type,job_version,queue,semantic_key,input_hash,input,"
+        "status,priority,attempt,max_attempts,run_after,episode_id,correlation_id,"
+        "causation_id,created_at,updated_at) "
+        "VALUES(%s,'render.shot',1,'production',%s,%s,'{}'::jsonb,'QUEUED',100,0,3,%s,%s,%s,%s,%s,%s)",
+        (
+            str(job_id),
+            f"benchmark:{plan.experiment_id}:race:r5",
+            "e" * 64,
+            str(now),
+            str(ep.episode_id),
+            str(uuid_module.uuid4()),
+            str(uuid_module.uuid4()),
+            str(now),
+            str(now),
+        ),
+    )
+    inserter.execute(
+        "INSERT INTO provider_operations(id,provider,operation_kind,client_token,"
+        "request_hash,job_id,reservation_id,state,attempt,deadline_at,episode_id,"
+        "created_at,updated_at) "
+        "VALUES(%s,%s,'comfy.queue_prompt',%s,%s,%s,%s,'PENDING_SUBMIT',1,%s,%s,%s,%s)",
+        (
+            str(uuid_module.uuid4()),
+            provider,
+            str(uuid_module.uuid4()),
+            "d" * 64,
+            str(job_id),
+            str(sample["reservation_id"]),
+            str(now.replace(year=now.year + 1)),
+            str(ep.episode_id),
+            str(now),
+            str(now),
+        ),
+    )
+    outcome: dict[str, object] = {}
 
-    def gate_scan():
-        # The gate's own lock order (R5): acquisition ownership rows first ...
-        gate.execute(
-            "SELECT acquisition_id FROM benchmark_acquisitions WHERE experiment_id=%s "
-            "ORDER BY acquisition_id FOR UPDATE",
-            (str(plan.experiment_id),),
-        )  # blocks behind the inserter's ownership lock
-        # ... then the upload rows - the previously-absent intent cannot slip in.
-        gate.execute(
-            "SELECT u.acquisition_id FROM benchmark_uploads u WHERE u.acquisition_id=%s "
-            "ORDER BY u.acquisition_id, u.asset_sha256 FOR UPDATE OF u",
-            (str(acquisition_id),),
-        )
+    def gate_call():
+        try:
+            _service(fixed)._gate(plan.experiment_id, "admission")
+            outcome["gate"] = "permitted"
+        except BaseException as exc:  # noqa: BLE001 - recorded, asserted below
+            outcome["gate"] = exc
 
-    waiter = threading.Thread(target=gate_scan)
+    waiter = threading.Thread(target=gate_call)
     waiter.start()
     time.sleep(0.5)
-    assert waiter.is_alive()  # the gate's upload scan waits, it cannot miss
+    assert waiter.is_alive()  # the REAL gate is blocked at its ownership prefix
     inserter.execute("COMMIT")
     waiter.join(timeout=5)
     inserter.close()
     assert not waiter.is_alive()
-    seen = gate.execute(
-        "SELECT count(*) FROM benchmark_uploads WHERE acquisition_id=%s",
-        (str(acquisition_id),),
-    ).fetchone()[0]
-    gate.execute("COMMIT")
-    gate.close()
-    assert seen == 1  # the previously-absent intent is visible to the gate
-    # The insertion serialised through the ownership row it locked first.
+
+    # Through the real §4.1 evaluation the gate now sees BOTH committed rows:
+    # the upload intent (U3u) and the PENDING_SUBMIT operation (U3).
+    gate_result = outcome["gate"]
+    assert isinstance(gate_result, AdmissionBlocked), repr(gate_result)
+    text = " ".join(gate_result.blockers)
+    assert "upload intent" in text, gate_result.blockers
+    assert "PENDING_SUBMIT" in text, gate_result.blockers
     with db.transaction(readonly=True) as tx:
-        uploads = tx.fetchall(
-            "SELECT state FROM benchmark_uploads WHERE acquisition_id=%s", (acquisition_id,)
+        uploads = tx.fetchval(
+            "SELECT COUNT(*) FROM benchmark_uploads WHERE acquisition_id=%s AND state='UNKNOWN'",
+            (acquisition_id,),
         )
-    assert [row["state"] for row in uploads] == ["INTENT"]
+        operations = tx.fetchval(
+            "SELECT COUNT(*) FROM provider_operations WHERE reservation_id=%s "
+            "AND state='PENDING_SUBMIT'",
+            (sample["reservation_id"],),
+        )
+    assert uploads == 1 and operations == 1  # exactly once, no duplicates
 
 
 def test_hb9_reconcile_never_restores_running_over_canonical_blockers(db: Database, tmp_path: Path):

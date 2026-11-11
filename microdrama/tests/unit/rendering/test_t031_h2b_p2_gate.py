@@ -514,8 +514,19 @@ def test_at05_resume_finalizes_terminal_acquisition_before_any_new_admission(
     assert "U2" in _item_kinds(db, plan.experiment_id, comfy.clock)
     assert still["lease_state"] == "RELEASED"  # no acquire() on the terminal lease
 
-    # Phase A — finalization completes: the NEXT resume admits generation 2 on a
+    # Phase A — finalization completes: the canonical invoice tail closes the
+    # pod-bound runpod lease hold (a pod-bound hold is released only through
+    # billing finality - R8/G13), the NEXT resume admits generation 2 on a
     # NEW lease, never on the terminal one, and the screen continues.
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    from microdrama.budget.billing import settle_billed_lease
+
+    readiness = _bill_lease_to_billed(
+        db, world, lease_id=acquisition["lease_id"], amount_micro_usd=900_250
+    )
+    assert readiness == "BILLED"
+    settle_billed_lease(db, budget, lease_id=acquisition["lease_id"], context="at5 phase a")
     unfinal_adapter.final = True
     final_service = _execute_service(db, comfy, world.ids, unfinal_adapter)
     with _PatchedPolicy():

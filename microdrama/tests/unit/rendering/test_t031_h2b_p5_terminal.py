@@ -426,7 +426,20 @@ def test_at09_crash_boundaries_converge(boundary: str, db: Database, tmp_path: P
         assert last["execution_state"] == "SCREEN_REVIEW"
         counts1 = _counts(db, plan.experiment_id)
         assert counts1["acquisitions"] == counts0["acquisitions"]
-        assert counts1["charges"] >= counts0["charges"]  # canonical settlement only
+        # HC-10 (HCF): exact, never >= - the converged screen posts exactly
+        # its canonical receipts (three zero-charge prompt settlements plus
+        # the compute hold's accrual and settlement: five distinct ids, none
+        # twice, across the replayed resume loop).
+        assert counts1["charges"] == counts0["charges"] + 5
+        with db.transaction(readonly=True) as tx:
+            unique = tx.fetchval(
+                "SELECT COUNT(*) = COUNT(DISTINCT receipt_id) FROM charges c "
+                "JOIN reservations r ON r.id=c.reservation_id "
+                "JOIN benchmark_reservation_links l ON l.reservation_id=r.id "
+                "WHERE l.experiment_id=%s",
+                (plan.experiment_id,),
+            )
+        assert unique is True  # no receipt id appears twice
         assert len(comfy.server.submissions) == 3  # one prompt per screen sample
         return
 

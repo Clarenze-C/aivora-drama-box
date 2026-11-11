@@ -68,7 +68,13 @@ def _bill_lease_to_billed(
             (lease["provider"], lease["pod_id"], lease["owner_episode_id"]),
         ):
             end = max(end, own["valid_until"] or lease["terminate_verified_at"])
-        assert start is not None and end is not None and end > start
+        assert start is not None and end is not None and end >= start
+        # HB-13/HC-10 (HCF): a sub-second liability window (a pod adopted and
+        # terminated inside one clock tick) is billed as the provider model's
+        # finest bucket - one whole second, which covers the whole liability.
+        bucket_end = end
+        if (end - start).total_seconds() < 1:
+            bucket_end = start + timedelta(seconds=1)
         account_ref = lease["provider_account_ref"]
         episode_id = lease["owner_episode_id"]
     ref = account_ref or "acct:runpod-hcf"
@@ -93,7 +99,7 @@ def _bill_lease_to_billed(
     query, bucket = closed_bucket(
         pod_id=lease["pod_id"],
         start=start,
-        end=end,
+        end=bucket_end,
         gpu=amount_micro_usd,
         cpu=0,
         disk=0,
@@ -119,7 +125,7 @@ def _bill_lease_to_billed(
         provider_account_ref=ref,
         pod_id=lease["pod_id"],
         period_start=start,
-        period_end=end,
+        period_end=bucket_end,
         amount_micro_usd=amount_micro_usd,
         currency="USD",
         evidence_sha256=sha256(f"hcf-f3:{lease['pod_id']}".encode()).hexdigest(),

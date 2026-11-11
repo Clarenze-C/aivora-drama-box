@@ -111,6 +111,24 @@ def _emit(result: Any, output: str | None) -> None:
     temporary.replace(target)
 
 
+def _sha_argument_blocker(value: Any) -> str | None:
+    """HC-11 (T031 HCF): an unusable ``--authorization-sha256`` argument
+    (non-ASCII, wrong length, non-hex) must become an admission blocker on
+    the recovered status - never a ``TypeError`` out of ``hmac.compare_digest``
+    before the durable recovery has run (the outer CLI handler does not catch
+    it, so recovery-first ordering was violated by the crash)."""
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or not value.isascii()
+        or len(value) != 64
+        or any(c not in "0123456789abcdef" for c in value.lower())
+    ):
+        return "authorization SHA-256 argument is not a 64-character hex ASCII string"
+    return None
+
+
 def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = None) -> int:
     args = _parser().parse_args(argv)
     injection = _injection or {}
@@ -162,7 +180,17 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                 if not soft_validation:
                     raise
                 argument_blockers.append(f"authorization file unreadable ({exc.errno})")
-        if (
+        # HC-11: an unusable SHA argument is a blocker (or, for the strict
+        # commands, a clean refusal) - it never reaches compare_digest, whose
+        # TypeError on non-ASCII would otherwise crash the resume BEFORE its
+        # durable recovery runs.
+        sha_blocker = _sha_argument_blocker(args.authorization_sha256)
+        if sha_blocker is not None:
+            if not soft_validation:
+                raise SchemaInvalid(sha_blocker)
+            argument_blockers.append(sha_blocker)
+            args.authorization_sha256 = None
+        elif (
             args.authorization
             and args.authorization_sha256
             and not hmac.compare_digest(digest or "", args.authorization_sha256)

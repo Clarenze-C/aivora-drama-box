@@ -467,6 +467,58 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
     return items
 
 
+def contradiction_incidents(tx: Tx, experiment_id: UUID) -> list[dict[str, Any]]:
+    """HC-12 (T031 HCF): the durable §6.4 contradiction incident record.
+
+    The actor/evidence detail must not live only in a transient U5
+    description (U5 disappears at finalization): the attestation, actor,
+    evidence, contradicted pod and the reopened liability's CURRENT finality
+    are derived from the canonical rows - resolution, lease, storage
+    ownership and invoice evidence - so ``status()`` and ``export()`` keep
+    the distinction between uninterrupted protection and liability reopened
+    after an attestation, including after closure."""
+    incidents: list[dict[str, Any]] = []
+    rows = tx.fetchall(
+        "SELECT a.acquisition_id, a.lease_id, a.generation, r.contradicted_at, "
+        "r.contradicted_pod_id, r.actor_ref, r.evidence_sha256, "
+        "l.terminate_verified_at FROM runpod_podless_create_resolutions r "
+        "JOIN benchmark_acquisitions a ON a.lease_id = r.lease_id "
+        "LEFT JOIN pod_leases l ON l.id = r.lease_id "
+        "WHERE a.experiment_id = %s AND r.contradicted_at IS NOT NULL "
+        "ORDER BY a.generation",
+        (experiment_id,),
+    )
+    for row in rows:
+        ownership_open = tx.fetchval(
+            "SELECT 1 FROM pod_storage_ownership WHERE pod_id=%s AND valid_until IS NULL",
+            (row["contradicted_pod_id"],),
+        )
+        # The same finality the U5 gate requires (HC-1): canonical invoice
+        # finality of the DISCOVERED resource, never the pre-contradiction
+        # zero settlement.
+        billing_final = False
+        if row["terminate_verified_at"] is not None and not ownership_open:
+            lease_row = tx.fetchone("SELECT * FROM pod_leases WHERE id=%s", (row["lease_id"],))
+            if lease_row is not None and lease_row["pod_id"] is not None:
+                billing_final = discovered_resource_billing_final(tx, lease_row)
+        incidents.append(
+            {
+                "kind": "CONTRADICTED_NO_CREATE_ATTESTATION",
+                "acquisition_id": str(row["acquisition_id"]),
+                "generation": row["generation"],
+                "attestation": "NO_CREATE_PROVEN",
+                "actor_ref": row["actor_ref"],
+                "evidence_sha256": row["evidence_sha256"],
+                "contradicted_at": row["contradicted_at"],
+                "pod_id": row["contradicted_pod_id"],
+                "terminate_verified": row["terminate_verified_at"] is not None,
+                "ownership_open": bool(ownership_open),
+                "reopened_liability_final": billing_final,
+            }
+        )
+    return incidents
+
+
 def document(value: Any) -> dict[str, Any]:
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)
 
@@ -1015,6 +1067,11 @@ class BenchmarkRepository:
                 (experiment_id,),
             )
             exp["exposure"] = exposure(tx, experiment_id)
+            # HC-12 (T031 HCF): the durable contradiction incident record -
+            # attestation, actor, evidence and the reopened liability's
+            # current finality - reported with the status including AFTER
+            # closure (U5's transient description is gone by then).
+            exp["incidents"] = contradiction_incidents(tx, experiment_id)
             exp["gpu_ms"] = gpu_ms(tx, experiment_id, self.clock.now())
             exp["seal"] = decode_seal(
                 tx.fetchone(

@@ -2023,7 +2023,15 @@ class BenchmarkService:
                         except Conflict:
                             pass  # already terminal - a replay converges
                 tx.execute(
-                    "UPDATE benchmark_acquisitions SET compute_window_end=COALESCE(compute_window_end,%s),state=%s WHERE acquisition_id=%s",
+                    # HC-4 monotonicity for acquisitions (HC-10/HB-13 exposure):
+                    # a replayed cleanup on an ALREADY-CLOSED (or proven) acquisition
+                    # never demotes it back to CLEANUP_PENDING - the demotion would
+                    # re-enter the partial unique index and collide with a newer
+                    # generation's row (DuplicateSemanticKey) while the replay's
+                    # receipt honestly re-reports pending billing.
+                    "UPDATE benchmark_acquisitions SET compute_window_end=COALESCE(compute_window_end,%s),"
+                    "state=CASE WHEN state IN ('CLOSED','NO_CREATE_PROVEN') THEN state ELSE %s END "
+                    "WHERE acquisition_id=%s",
                     (
                         receipt["compute_window_end"],
                         "UNKNOWN"
@@ -3015,6 +3023,10 @@ class BenchmarkService:
             "cleanup_state": status["cleanup_state"],
             "billing_state": status["billing_state"],
             "gpu_ms": status["gpu_ms"],
+            # HC-12 (T031 HCF): the durable contradiction incident record
+            # (attestation, actor, evidence, reopened-liability finality)
+            # survives closure in the export too.
+            "incidents": status["incidents"],
             "costs": status["exposure"],
             "billed_micro_usd": status["exposure"]["settled"]
             + status["exposure"]["unreserved_settled"]

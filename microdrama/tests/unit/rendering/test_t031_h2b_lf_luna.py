@@ -412,6 +412,95 @@ def test_l1_l2_shot_scoped_costume_change_stages_and_binds(
     assert first["execution_state"] != "FAILED"  # L-1/L-2 failed the run at HEAD
     last = _at17_resume(harness)
     assert last is not None and last["execution_state"] != "FAILED"
+    # HC-10 (HCF): S08 is a FULL-phase shot - to ACTUALLY BIND it with the
+    # changed costume the drive must pass the screen and dispatch it.
+    for _ in range(24):
+        if last["execution_state"] == "SCREEN_REVIEW":
+            break
+        last = harness.service.resume(
+            plan.experiment_id,
+            authorization=harness.authorization,
+            quote=harness.quote,
+            expected_sha256=harness.authorization.authorization_sha256,
+            phase="screen",
+        )
+        harness.clock.advance(seconds=1)
+    assert last["execution_state"] == "SCREEN_REVIEW", last["execution_state"]
+    with db.transaction(readonly=True) as tx:
+        exp = tx.fetchone(
+            "SELECT * FROM benchmark_experiments WHERE experiment_id=%s", (plan.experiment_id,)
+        )
+        screen_hashes = {
+            row["sample_id"]: (row["output"] or {}).get("sha256")
+            for row in tx.fetchall(
+                "SELECT sample_id, output FROM benchmark_samples WHERE experiment_id=%s "
+                "AND sample_id IN ('S01-R1','S03-R1','S07-R1')",
+                (plan.experiment_id,),
+            )
+        }
+    assert all(screen_hashes.values()), screen_hashes
+    harness.service.record_screening(
+        plan.experiment_id,
+        {
+            "sealed_sha256": exp["sealed_sha256"],
+            "actor_ref": "lf-harness",
+            "decision": "PASS",
+            "rubric_version": "lf-1",
+            "output_hashes": screen_hashes,
+            "coverage": {"screen": "PASS"},
+        },
+    )
+    from test_t031_hcf_f3_finality import _bill_lease_to_billed
+
+    for _ in range(48):
+        with db.transaction(readonly=True) as tx:
+            s08 = tx.fetchone(
+                "SELECT s.reservation_id FROM benchmark_samples s WHERE "
+                "s.experiment_id=%s AND s.sample_id='S08-R1' "
+                "AND s.reservation_id IS NOT NULL",
+                (plan.experiment_id,),
+            )
+        if s08 is not None:
+            break
+        _r = harness.service.resume(
+            plan.experiment_id,
+            authorization=harness.authorization,
+            quote=harness.quote,
+            expected_sha256=harness.authorization.authorization_sha256,
+            phase="full",
+        )
+        blockers = (_r.get("admission") or {}).get("blockers") or []
+        if any("cleanup pending" in blocker for blocker in blockers):
+            # HC-10/HB-13 (HCF): storage finality now requires canonical
+            # FINANCIAL finality, so the screen generation's pod invoice tail
+            # completes before cleanup finalizes the acquisition and the full
+            # phase may acquire its own generation (the AT-06 two-phase shape).
+            with db.transaction(readonly=True) as tx:
+                pending = tx.fetchone(
+                    "SELECT a.lease_id FROM benchmark_acquisitions a "
+                    "WHERE a.experiment_id=%s AND a.state='CLEANUP_PENDING' "
+                    "AND a.lease_id IS NOT NULL ORDER BY a.generation LIMIT 1",
+                    (plan.experiment_id,),
+                )
+            if pending is not None:
+                readiness = _bill_lease_to_billed(
+                    db,
+                    harness,
+                    lease_id=pending["lease_id"],
+                    amount_micro_usd=900_250,
+                )
+                assert readiness == "BILLED"
+                harness.service.sweep(plan.experiment_id)
+                # HB-13 (§9.1): the cleaned-up generation's pod took its
+                # pod-side ComfyUI with it; the full phase's NEW pod boots a
+                # fresh one (no prompt or output state survives; the POST
+                # ledger stays monotonic).
+                harness.server.alive = True
+                harness.server.inputs.clear()
+                harness.server.outputs.clear()
+                harness.server.prompts.clear()
+        harness.clock.advance(seconds=1)
+    assert s08 is not None, "the full phase never dispatched S08"
     with db.transaction(readonly=True) as tx:
         operation = tx.fetchone(
             "SELECT o.state FROM provider_operations o JOIN benchmark_samples s "
@@ -431,7 +520,10 @@ def test_l1_l2_shot_scoped_costume_change_stages_and_binds(
         harness.asset_shas["outfit_b"],
     }
     assert all(row["state"] == "VERIFIED" for row in uploads)
-    assert harness.comfy.upload_posts == 5  # one POST per asset, exactly once
+    # HC-10 (HCF): the full phase's NEW acquisition legitimately re-stages the
+    # five assets on its own pod - one POST per asset PER ACQUISITION, exactly
+    # once each (never per shot, never repeated for a retry).
+    assert harness.comfy.upload_posts == 10
 
     # L-1: the bound manifests carry the right costume per shot - S01-S07 wear
     # outfit A, S08 wears outfit B (through _SealedNativeInputs.manifest, the
@@ -455,6 +547,57 @@ def test_l1_l2_shot_scoped_costume_change_stages_and_binds(
         manifest, _, _, _ = world._native.manifest(sample)
         outfits = [b for b in manifest.bindings if b.role.value == "outfit"]
         assert [b.asset_sha256 for b in outfits] == [harness.asset_shas[expected_outfit]], shot_id
+
+    # L-1/L-2 (HC-10, HCF round): the REAL binder (``_SealedNativeInputs.bind``,
+    # the same bind dispatch drives) actually BINDS the changed costume - S08
+    # binds outfit B, S01 binds outfit A - and each bound workflow carries its
+    # OWN outfit's asset, never the other shot's (the collapsed single receipt
+    # the pre-Luna lookup produced). manifest() alone proves only the
+    # derivation, not the bind.
+    import json as _json
+
+    # The real bind attests the schema against the pod's endpoint; dispatch
+    # binds it on the client first (experimental_world.py), so the replay does
+    # the same through the world's own pieces.
+    with db.transaction(readonly=True) as tx:
+        pod_id = tx.fetchval(
+            "SELECT l.pod_id FROM pod_leases l JOIN benchmark_acquisitions a "
+            "ON a.lease_id=l.id WHERE a.experiment_id=%s AND l.pod_id IS NOT NULL "
+            "ORDER BY l.id LIMIT 1",
+            (plan.experiment_id,),
+        )
+    assert pod_id is not None, "the screen never acquired a pod"
+    pod = world.leases._manager.get(pod_id)
+    world.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
+
+    with db.transaction(readonly=True) as tx:
+        # The LF screen's samples carry no per-sample acquisition link; the
+        # staged, verified uploads name the acquisition dispatch binds under.
+        acquisition = tx.fetchone(
+            "SELECT a.* FROM benchmark_acquisitions a "
+            "JOIN benchmark_uploads u ON u.acquisition_id=a.acquisition_id "
+            "WHERE a.experiment_id=%s AND u.state='VERIFIED' LIMIT 1",
+            (plan.experiment_id,),
+        )
+    assert acquisition is not None, "no acquisition staged the verified inputs"
+    for shot_id, expected, other in (
+        ("S01", "outfit_a", "outfit_b"),
+        ("S08", "outfit_b", "outfit_a"),
+    ):
+        with db.transaction(readonly=True) as tx:
+            sample = tx.fetchone(
+                "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id=%s",
+                (plan.experiment_id, f"{shot_id}-R1"),
+            )
+        request = world._native.request(sample, acquisition, sample["reservation_id"])
+        bound = world._native.bind(sample, acquisition, request)
+        if hasattr(bound, "model_dump"):
+            payload = bound.model_dump(mode="json")
+        else:
+            payload = bound
+        serialized = _json.dumps(payload, default=str)
+        assert harness.asset_shas[expected] in serialized, shot_id
+        assert harness.asset_shas[other] not in serialized, shot_id
 
 
 # ---------------------------------------------------------------------------

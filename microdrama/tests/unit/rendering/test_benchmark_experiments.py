@@ -300,7 +300,11 @@ class _OfflineFinalityWorld:
                 if terminated and not result.billing_pending
                 else "PENDING_PROVIDER_FINALITY"
             ),
-            "storage_final": terminated,
+            # HC-10/HB-13 (T031 HCF): storage finality requires CANONICAL
+            # FINANCIAL finality - a verified termination with the provider
+            # invoice still pending is not a storage-final receipt (the same
+            # conjunction the production adapter requires).
+            "storage_final": terminated and not result.billing_pending,
         }
 
 
