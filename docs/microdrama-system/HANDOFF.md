@@ -1,9 +1,121 @@
-# Drama Box microdrama handoff — updated 4 November 2026 UTC
+# Drama Box microdrama handoff — updated 11 November 2026 UTC
+
+## CURRENT — read this first (11 Nov 2026, Opus orchestrator session 21694f19; refreshed before 19:00Z)
+
+Everything below this section is history. This section is the live state.
+
+### T031 / H-2 (benchmark recovery): build DONE, verification running
+
+- **Build:** [h2-build-REPORT.md](T031-fix-round/h2-build-REPORT.md) is marked `H2-BUILD: ALL PACKAGES
+  DONE`. Branch `feat/t031-fix3`, tip **`0e34630`** (P5), in worktree `.scratch/t031-fix3-worktree`.
+- **Full offline gate:**
+  - **First run at `0e34630`: FAILED at lint.** `ruff format --check` flagged 2 files.
+  - Orchestrator fix: **`4e28514`**, formatting only; the new branch tip.
+  - **Rerun:** pinned checkout `.scratch/t031-gate-h2b` (detached at `4e28514`), unit
+    `t031-h2-offline-gates-b`. Receipts are in `.scratch/t031-gate-h2b/.scratch/gate/` (`check.exit`,
+    `pilot.exit`, `overall.exit`, logs).
+  - `.scratch/t031-gate-h2` (at `0e34630`) is the checkout Codex reviews.
+- **Codex review** of `45e4f2a...0e34630` (P4, HBF, LF, P5): [brief](T031-fix-round/codex-review-h2-p4p5-brief.md)
+  → `T031-fix-round/codex-review-h2-p4p5.md`. It is round 1 for P4/P5/LF and round 2 for HB-1..14.
+- **After both pass:**
+  - fast-forward `feat/t031-pika-flex-native` to the accepted tip (local only, never pushed);
+  - A0-D then branches from that tip.
+  - **The paid T031 run still needs the operator:** the $8 sign-off, the image, the weights, reference
+    assets, and Botnoi voices for 2 test characters.
+
+### v3 series workflow: specs DONE, builds started
+
+| Doc | State |
+|-----|-------|
+| [SPEC-v3.md](v3-workflow/SPEC-v3.md) master | **v0.4.2 BINDING** (Codex ×2 + Goldfish applied; v0.4.2 = the LLM-call wording) |
+| [phase-A0-spec.md](v3-workflow/phase-A0-spec.md) (LLM gateway) | **v0.4 READY FOR BUILD**: Codex ×3; the 3rd round was operator-approved and scoped. The build review must verify A0S-1/2 |
+| [phase-A-spec.md](v3-workflow/phase-A-spec.md) (Foundations) | **v0.3**: Codex ×2. The operator chose no 3rd round; the A1, A2, A3 and A6b design notes are Codex-critiqued **before code** |
+
+**Build order:**
+1. **A0-R1**, the ai-route `dramabox-llm` role, in a claude-configs worktree:
+   - [brief](v3-workflow/a0r1-build-brief.md);
+   - running as tag `dramabox:a0r1-build`;
+   - report `v3-workflow/a0r1-build-REPORT.md`.
+
+   Then a Codex review, then the orchestrator merges into `/root/.claude` (with the snapshot proof that
+   existing roles are unchanged).
+2. **A0-D**, the drama-box half (gateway, `LlmStep`, migration 0027):
+   - **its brief is not written yet**: write it against the accepted T031 tip;
+   - the operator installs the systemd unit, group 64010 and directories;
+   - the live qualification (≤5 calls) needs the operator's OK.
+3. **Phase A**, packages A1 → A2 → A3 → A4 → A5 → A6a → A6b → A6c.
+   - **A1 note** being drafted by GLM: [brief](v3-workflow/a1-note-brief.md) →
+     `v3-workflow/A1-design-note.md`.
+   - Next: a Codex critique of the note, then the A1 build.
+
+### Operator to-dos
+
+- Fill `v3-workflow/botnoi-v4-voices.csv`.
+- Rotate the Dramabox Bot token before go-live.
+- DNS for dramabox.aivora.agency.
+- Approve commits of the v3 docs. **They are uncommitted in the drama-box repo.**
+
+### Routing rules in force
+
+- Opus orchestrates and specs; GLM builds (`ai-route build`); Codex critiques and reviews (`ai-route
+  critique|review`).
+- At most 2 Codex jobs at once.
+- **Two review rounds, then ask the operator.**
+- No polling: background watchers only.
+
+---
 
 Read `/root/.claude/CLAUDE.md`, this file, [SPEC.md](SPEC.md),
 [task_breakdown.md](task_breakdown.md) and [task_status.csv](task_status.csv)
 before work. This handoff records the current checkout; chat history is not a
 deployment receipt.
+
+## Current gate result — verified 7 November 2026
+
+Full `make check` has finished with exit2: unit2879passed, contract462passed;
+integration258passed,8failed,4setup errors. `make pilot` was NOT_RUN.
+Failures include hardcoded migration-tail expectations after adding0026 and actual
+missing delete/truncate/non-integer safeguards on new benchmark tables. These are
+open failures, not acceptance. Diagnose/fix them narrowly before rerunning affected
+checks; do not rent a Pod or treat the image/124-test receipt as live readiness.
+
+## Routing — 9 November 2026 (supersedes the 6 Nov override below)
+
+Operator, 9 Nov: an Opus session orchestrates and routes through `ai-route`. GLM builds;
+Codex reviews code it did not write; GLM reviews the Codex-written native harness. The
+native harness's 81 files are now committed as WIP `048cc05` on
+`feat/t031-pika-flex-native` (local only). [Fix round 1](T031-fix-round/fix1-REPORT.md)
+DONE `c6e19e0`+`2ceb341` (the 12 integration failures; focused files green, full gate
+not yet rerun). [Codex review of `13da3e2..0851374`](T031-fix-round/codex-review-canary-night.md)
+= FIX-REQUIRED, 3 BLOCKING (billing rounding, duplicate pod create, unredacted
+diagnostics) + 3 SHOULD-FIX; [rulings](T031-fix-round/rulings-canary-night.md).
+[Fix round 2](T031-fix-round/fix2-REPORT.md) DONE `9197c52..d971435` (CN-1..CN-6,
+focused suites green). Full `make check`+`make pilot` at `d971435` still running (unit `t031-fix2-offline-gates`, receipts in worktree `.scratch/gates-fix2/`). [Codex re-review round 2](T031-fix-round/codex-rereview-fix2.md) = FIX-REQUIRED (CN2-1/2 BLOCKING, CN2-3/4 SHOULD-FIX); [GLM harness review](T031-fix-round/glm-review-harness-REPORT.md) = FIX-REQUIRED (H-1 live-path bind crash, H-2 no UNKNOWN reconciler; 4 SHOULD-FIX, 3 NIT). Full gate at `d971435`: [2,924 unit / 462 contract / 274 of 275 integration](T031-fix-round/gate-d971435.md); the one failure is the repair-media-chain ffmpeg test timing out under host load (passes in 304 s alone), not a regression. Operator approved a bundled round 3 (10 Nov): [fix3](T031-fix-round/fix3-brief.md) in worktree `.scratch/t031-fix3-worktree` (branch `feat/t031-fix3` from `d971435`; fast-forward `feat/t031-pika-flex-native` to it after acceptance). GLM committed CN2-1..4, H-1, H-2 (`726a56e..628fe5b`); at z.ai 81% it was stopped and [Luna](T031-fix-round/fix3-luna-brief.md) took H-3..H-9. Review split: Codex round 3 on the GLM commits, GLM review on the Luna commits. Then one full gate at the fix3 tip, run while the host is quiet. **10 Nov update:** [Codex round 3](T031-fix-round/codex-rereview-r3.md) CLOSED CN2-1..4 and H-1; H-2 PARTIAL with 3 BLOCKING (CN3-1..3, verified; CN3-3 can release protection for an existing pod). Luna's H-3..H-9 are committed by the orchestrator as WIP `82135d4` (UNVERIFIED: no red baselines; its sandbox could not commit or open DB sockets). **Operator decision: full H-2 spec first** (Opus spec, then Codex critique, then GLM build, then Codex review) before any paid run. Code map done ([h2-codemap.md](T031-fix-round/h2-codemap.md)); **spec drafted: [T031-H2-recovery-spec.md](T031-H2-recovery-spec.md)** (RECOVERY world mode, one unresolved-items gate, recover-before-destroy, single-transaction create resolution, replayable sample resolution, AT-1..AT-12). Codex critique of v1 = [REWORK](T031-fix-round/codex-h2-spec-critique.md) (SC-1..SC-14, all accepted); **spec v2 written** (canonical-derived U1–U6, durable recovery deadline, shared lock order incl. billing wrapper, storage released only at sweep finality, contradiction incident path, fail-fast kept, AT-0..AT-26). Codex re-critique of v2 (round 2 of 2) = [REWORK with exact wording](T031-fix-round/codex-h2-spec-recritique.md) (R1–R8, SC2-1..3); operator chose: fold wording into **v3 and build** (no 3rd critique; Codex reviews the build vs v3). **H-2 build (10 Nov 16:40Z): P1 `0bad31b`, P2 `67500b6`, P3 `2ec18f8`+`3a5710d`+`45e4f2a` committed; orchestrator re-ran P1–P3 part 1 = 151 passed. r3 loop (systemd `t031-h2-resume-loop`) now on P4. In parallel: [Codex review of P1–P3](T031-fix-round/codex-review-h2-p1p3-brief.md) (pinned checkout `.scratch/t031-verify-h2b` @ `45e4f2a`) and [GLM review of Luna `82135d4`](T031-fix-round/glm-review-luna-brief.md). Orchestrator = session aivora-69; aivora-cf is holding.** Original: [GLM xhigh H-2 build](T031-fix-round/h2-build-brief.md) in `.scratch/t031-fix3-worktree`, packages P1–P5, progress + "Resume here" in `T031-fix-round/h2-build-REPORT.md`. Deferred: GLM review of Luna `82135d4` (z.ai budget). Queued for the z.ai reset at 05:14Z: [GLM review of Luna `82135d4`](T031-fix-round/glm-review-luna-brief.md). Luna probe: 215 passed (green only).
+Codex's own 9 Nov summary of what is still needed before a paid run: a pullable image,
+about 42 GB of weights, verified reference assets, an approved configuration and cap,
+then the controller runs three screening clips before the remaining 21.
+
+## Operator routing override — 6 November 2026 (historical)
+
+Use native Codex for all T031 Goldfish/build/review work, no ai-route. Native EGM
+review completed; R1/R2 code fixes were independently accepted. Runtime image and
+native binding/runner code are built in `.scratch/t031-native-worktree`, branch
+`feat/t031-pika-flex-native`, base0851374; uncommitted/unmerged and **NEEDS REVIEW**.
+Latest focused group:124passed. Full offline checks/pilot are running under the
+CPU-limited durable unit documented in [resume](T031-STEPS-1-3-RESUME.md).
+Native reviewer/world/runner workers hit a usage limit; interrupted review is NOT
+acceptance. Paid provider effects, model downloads, pushes and publishing remain
+unauthorized. Old GLM routing below is historical for this work.
+
+
+**11 Nov ~04:45Z, operator: "Run goldfish before the H2."** The H-2 resume loop (systemd `t031-h2-resume-loop`) was **stopped**. Its P5 work-in-progress is left uncommitted in `.scratch/t031-fix3-worktree`, and the resume brief handles it. Goldfish on SPEC v0.2.x auto-starts at the z.ai reset (06:22Z). After Goldfish, aivora-69 relaunches the H-2 resume (tag `dramabox:t031-h2-build-r3`, brief `T031-fix-round/h2-build-resume-brief.md`).
+
+
+**11 Nov, 07:30Z: v3 MASTER SPEC v0.4 is BINDING** ([SPEC-v3.md](v3-workflow/SPEC-v3.md); v0.3 archived). Goldfish findings are applied (reuse of JobService/ProviderOperation/UsageReceipt instead of new systems; a single obligation ledger; all 68 R-IDs and AT-1..34 assigned once, verified by script). Next: phase specs A0 + A (Opus), then a critique each, then GLM builds after H-2. H-2 resumes by systemd timer `t031-h2-resume-loop2` at 11:25Z (operator: start at the z.ai reset).
+
+## Drama Box v3 workflow spec — started 11 Nov 2026
+
+The operator defined a 10-step series workflow (Script Maker → LOCK → bible → all-episode builder → STORY LOCK → character bible with picks, voices, props, locations and wardrobe → CAST LOCK → shotcaller directing → Pika H3 Flex render with the voice reference → edit with background music, SFX and transitions → metadata drafts → Gate 2 → teaser), with a UI at dramabox.aivora.agency. Decisions and the source of truth: [v3-workflow/DECISIONS.md](v3-workflow/DECISIONS.md). Fact-gathering is running (Codex): `v3-workflow/factmap.md` and `v3-workflow/joey-digest.md`. Requirements + operator answers done ([REQUIREMENTS.md](v3-workflow/REQUIREMENTS.md)); **spec drafted: [SPEC-v3.md](v3-workflow/SPEC-v3.md)** (phases A–G, V3-AT-1..17, LLM subscription-first pilot P0–P2). Codex critique of v0.1 = [REWORK, 34 findings, all accepted](v3-workflow/codex-spec-critique.md); **SPEC v0.2** (master spec + per-phase specs A0, A–G; §19 maps every finding). Queued: Goldfish review of v0.2 (auto-starts when z.ai < 45%; reports in `v3-workflow/goldfish/`), then Codex re-critique (round 2 of 2). Operator purchases pending: a paid ElevenLabs plan (free tier now), a Dramabox Bot token (BotFather). Joey's skills (markdown only, no licence stated) are kept at the orchestrator scratchpad `keep/joey-skills/`.
 
 ## Who orchestrates (from 3 November 2026)
 
@@ -32,32 +144,36 @@ apply:
 
 ## Checkout and safety
 
-- Repo: `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`, **pushed level
-  with the remote** (operator-approved 2026-11-04; local and remote both at
-  `d8604ea`).
-- The working tree is clean. Contract package **2.15.0** (V2 payload schema
-  version 2.0; V1 payloads remain readable). Migrations 0019–0025 are present;
-  0025 (T045) was edited in place during the fix round — no persistent database
-  has it. Contract source and generated artifacts are guardian-owned.
-- No real Runpod Pod, paid model request, platform post, account test or
-  public action has been performed. OFFLINE_MOCK remains the only composed
-  mode; the staging deployment refuses all others. T031–T035 are not
-  qualified by local tests.
-- `/tmp/claude-0`, `/tmp/claude-0/-root-AIVORA` and `/tmp/pytest-of-root` are
-  all 0700; nothing currently widens them (O-2 + CR-1 landed).
+- Repo `/root/AIVORA/drama-box`, branch `feat/microdrama-m0-m4`, HEAD
+  `0851374`. At this inspection it is 24 commits ahead of the locally recorded
+  remote ref and zero behind. No remote fetch or push was performed.
+- Existing untracked `.scratch/` and `microdrama/evidence/provider-qualification/`
+  are preserved. The live qualification JSONs are not tracked; pushing code alone
+  does not back them up. Contract package remains **2.15.0**; contract/generated
+  artifacts are guardian-owned.
+- A real RunPod lifecycle canary completed on 5 November using a **stub sampler**.
+  Its invoice was recorded MATCHED and its lease BILLED. This is not real model,
+  Thai-quality, actual-episode or publication qualification. Last recorded pod
+  cleanup was successful; this inspection did not query the current provider fleet.
+- T046 staging remains OFFLINE_MOCK only. T032–T035 have not been qualified.
+- Current preparation is docs/research only; no paid calls, pod creation, production
+  database writes, publishing or pushes are authorized by the benchmark draft.
 
-## Board state
+## Board state and verification
 
-**All offline software is COMPLETE.** T001–T030 accepted; T036–T048 DONE
-(evidence under `microdrama/evidence/`, receipts in the ledger). **T045 moved
-to DONE on 2026-11-04** after its fix round closed. T031–T035 are the live
-qualification gates and have not started.
+T001–T030 accepted; T036–T048 recorded DONE. T045's 4 November independent
+acceptance remains valid for its reviewed scope. **T031 is IN_PROGRESS:** lifecycle
+canary complete; real Pika H3 Flex/Thai/rights/cost qualification remains open.
+T032–T035 are TODO. The later canary-night code delta needs a separate independent
+review receipt; do not extend the earlier ACCEPT to cover it.
 
-The **last full green** receipt is the orchestrator's own run at final T045
-HEAD `1ce71cb` (4 Nov, under CPUQuota=45%): `make check` — **all offline
-checks passed**, unit **2,770** / contract **462** / integration **268**; ruff
-clean; `git diff --check` clean; `make pilot` exit 0 — W01–W12, exactly two
-HUMAN gates, 16 exports, 303,000 **synthetic** micro-USD.
+The latest inspected historical full-check log `.scratch/makecheck-final3.log`
+ends **all offline checks passed**, EXIT=0: **2,781 unit / 462 contract / 270
+integration**, lint/format passed. This predates `9b133f1`'s invoice-window fix;
+no later full-suite receipt was located. No test suite was rerun during the
+6 November documentation preparation. The last recorded `make pilot` is the
+4 November T045 receipt below (synthetic only). The reported order-sensitive
+repair-media-chain test remains a separate follow-up.
 
 ## T045 close-out record (2026-11-04)
 
@@ -81,47 +197,57 @@ The full record (reviews, rulings, briefs, reports) is
   ([T045-live-provider-runbook.md](T045-live-provider-runbook.md)); the T031
   packet §1/§5 now carries the exact command lines.
 
-## Open operator decisions
+## T031 canary close-out
 
-1. ~~Push the T045 commits~~ **DONE 2026-11-04**: the operator approved and the
-   branch is pushed (`f7f135b..d8604ea` → aivora-drama-box
-   `feat/microdrama-m0-m4`). Remote and local are level.
-2. **T031 canary — FLOWN and BILLED 2026-11-05 (run 14; invoice MATCHED,
-   lease settled BILLED at 35,174 µ at 15:45Z).** Full live
-   lifecycle COMPLETE: rent → image pull → endpoint → `/object_info` MATCH →
-   two test videos rendered, fetched, checksummed and durably stored (sha256s
-   in [T031-preparation.md](../../microdrama/evidence/T031-preparation.md)) →
-   automatic verified shutdown, zero pods left. Spend ~$0.9 of the $5 cap.
-   The night found **eight shipped defects in the T045 live path**, each fixed
-   tests-first and committed (error masking ×3, GPU alias, price equality,
-   warmup-as-conflict, endpoint-from-declared-port, pod-id durability) — see
-   the evidence file's run log. **Remaining:** one `sweep` (billing ingest),
-   the period-invoice verification when RunPod bills (operator console → §5
-   `invoice` command) to settle the lease BILLED, then this record is T031's
-   canary evidence. The FULL benchmark (8 shots × 3, Thai quality) needs its
-   own authorization per the packet. Commits `3e16485..c65089a` are local,
-   unpushed, and **gate-clean**: final `make check` on the frozen tree passed
-   everything (unit / contract 462 / integration 270, EXIT=0, 2026-11-05
-   ~13:30Z). Known follow-up, not a blocker: the repair-media-chain test is
-   order-flaky under the full suite (failed in two batch runs, passes alone)
-   — pre-existing, queued for its own investigation.
+Run 14 completed 5 November: reserve → owned pod → endpoint → schema MATCH →
+two stub test videos fetched/checksummed → verified termination. The later
+console invoice matched and the final sweep settled the lease BILLED at 15:45 UTC.
+Run-14 pod cost: **35,753 micro-USD = 35,174 GPU + 579 disk**; the lease settlement
+is 35,174 micro-USD. All-night spend is still approximately $0.9 in the narrative,
+not an exact reconciled total. Do not rerun completed billing steps or rewrite the
+original pending-billing completion JSON.
+
+[Close-out and review coverage](T031-canary-closeout.md) records source hashes,
+limits, the prior test receipt and the later review gap. The older
+[T031-preparation.md](../../microdrama/evidence/T031-preparation.md) contains the
+historical attempt log. Its earlier preparation/open-defect paragraphs are
+superseded by the dated close-out, not current blockers.
+
+## Steps1–3 native implementation status
+
+[Resume and exact next work](T031-STEPS-1-3-RESUME.md) is the current execution
+front door. [Receipt](t031-benchmark/native-build/current-receipt.json) records
+81-file snapshot, image ID,124-test result and running full-gate unit.
+
+The code-only image exposes16 real native CPU node schemas without weights.
+Contract package is2.16.0 in the isolated worktree; main checkout remains2.15.0.
+The24-sample connected offline fixture uses canonical jobs/holds/leases/recovery,
+not real H3 quality. Native binding/world/runner/CLI review and full gates remain
+outstanding; no new milestone or live qualification has been accepted.
 
 ## What remains, in order
 
-1. **T045 acceptance: DONE 2026-11-04** (see the close-out record above). The
-   branch push is the open piece of it.
-2. **T031 real-provider qualification.** Needs explicit operator
-   authorization: rights route, credentials (rotated), current quote, and
-   time/storage/spend caps. Do not launch a canary without the signed packet.
-   T047's asset/rights gates are the dispatch-boundary suppliers that T045's
-   live path consumes. The official Runpod billing endpoint returns time
-   buckets, not per-second lease receipts; never relabel estimates as billed
-   cost.
-3. T032 controlled real account tests, T033 first actual episode, T034 ten
-   episodes + seven-day management windows, T035 final handoff — separate
-   live gates, unchanged.
-4. Optional, operator-decided: the domain runbook for
-   `dramabox.aivora.agency` (`deployment/staging/DOMAIN-RUNBOOK.md`).
+1. **Pika H3 Flex native-audio preparation:** operator-selected model on
+   6 November; no default external TTS or model substitution. The
+   [benchmark packet](T031-benchmark-packet.md) contains official source/workflow
+   pins, eight Thai shot scripts × three seeds, proposed quality criteria and an
+   **unsigned $8 new-exposure envelope** for one Ref2VA 480p configuration.
+2. Close the preparation gaps before requesting paid-run approval: independent
+   review of `13da3e2..0851374`, compatible real-model image/binder, A40 fit,
+   rights/access and reference/voice evidence, evaluator coverage and a durable
+   shared-budget execution path for 24 samples. The existing canary permits only
+   three attempts globally and is not that execution path.
+3. Reconcile prior spend and remaining account allowance, refresh the actual quote,
+   pin runtime image/schema/prompts/references and hard stops, then request approval
+   of the exact executable run. The historical $5 canary approval does not authorize
+   the benchmark. Pika Flex uses the H3 community weight license; intended global
+   release rights remain unresolved and must be recorded honestly.
+4. T032 controlled real account tests → T033 first actual episode through existing
+   Gate 1/Gate 2 → T034 ten qualifying episodes plus seven-day windows → T035 final
+   operational handoff. These remain separate live gates.
+5. Optional operator-decided domain setup: `deployment/staging/DOMAIN-RUNBOOK.md`.
 
-Do not treat a local mock, schema, adapter fixture, staging drill or manual
-Pod sample as real provider, publishing, domain or ten-episode qualification.
+The earlier T045 push through `13da3e2` is complete. Later canary-night changes are
+local according to the stored remote ref; no new push is performed or approved here.
+A benchmark preparation packet, source pins and a stub canary are not live quality
+or production acceptance.

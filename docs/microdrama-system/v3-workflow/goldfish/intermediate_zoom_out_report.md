@@ -1,0 +1,72 @@
+# Stage 8 — Intermediate Zoom Out Review
+
+- **Target:** /root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/SPEC-v3.md (v0.3, full file, lines 1–857, re-audited end to end)
+- **Reviewer:** egm-zoom-out (Skeptical Architect), standard: zoom-out-standard.md (second pass, with Stages 5–7 reports in context)
+- **Mode:** REVIEW, headless (uninterrupted preset)
+- **Date:** 2026-11-11
+
+---
+
+Stage 8 — Intermediate Zoom-Out Review (second pass)
+
+Target: /root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/SPEC-v3.md (v0.3, full file, lines 1–857, re-audited end to end).
+Reviewer: egm-zoom-out (Skeptical Architect), standard: zoom-out-standard.md. Prior stages re-read in full; codebase reuse claims re-verified against /root/AIVORA/drama-box/microdrama/src/microdrama/core/jobs.py (JobService, line 285; outcome union Succeeded|WaitExternal|RetryLater|Failed|NeedsReconciliation, line 88), contracts/cost.py (UsageReceipt, line 194), contracts/providers.py (LLMProvider 152, GenerationProvider 188, ASRProvider 340, MediaReviewProvider 369), budget/reports.py (per-episode cost views over receipts+reservations), analytics/snapshots.py (H24/H72/D7 windows). Context sufficiency (Standard §0) passes; no Blockers of my own.
+
+=====================================================================
+(a) Verdicts on prior-stage findings
+=====================================================================
+
+STAGE 5 (initial zoom-out)
+
+1. Parallel durable queue vs JobService — CONFIRMED, unmitigated. A grep for "JobService|core.jobs|receipt|UsageReceipt|GenerationProvider" across all 857 lines returns zero matches; the spec never once acknowledges the existing durable jobs table. §10.1's LlmService contract and §4.4's generation-unit statuses (queued/running/succeeded/retryable/unknown/failed, reconcile-before-resubmit, bounded retries, resume without regenerating successes, lines 309–316) restate jobs.py's guarantees almost name-for-name, and §15 A0 still commissions "the shared GenerationUnit and UsageRecord backend contracts and persistence" as greenfield. One nuance for fairness: LlmService adds deadline/cancellation/process-cleanup and quota-admission semantics the jobs table may lack, so reuse is not zero-code — but the finding's ask (bind persistence/recovery to the existing table, add only the new semantics) stands unchanged.
+
+2. Parallel UsageRecord ledger vs UsageReceipt — CONFIRMED, unmitigated and slightly worse than reported: §15 phase A builds a "Costs page over UsageRecord" while budget/reports.py already renders per-episode receipt/category/amount/basis views (summary_for_episode, cost_view_for_episode). The spec plans a second ledger and a second cost UI with no stated relationship to either existing artifact, against its own "allocated, never double-counted" rule (§11, line 668).
+
+3. New provider protocol names vs existing protocols — CONFIRMED, unmitigated. §10.3 (lines 639–643) still introduces ImageGenProvider/SfxProvider/MusicProvider/ClipQaProvider with no sentence binding them to the existing GenerationProvider/ASRProvider/MediaReviewProvider protocols, whose submit/status/reconcile/fetch_output + reservation_id shape already covers them.
+
+4. Nit, three LLM adapters in A0 — CONFIRMED. §15 A0 still includes "subscription/API/OpenAI-compatible adapters (fake first)" while O-5 says "Subscription for the pilot only" and §11's route comparison stays conditional.
+
+5. Nit, runbook detail at master altitude — CONFIRMED. §3.3 still carries token file paths, 0600, rotation, chat-id file, "test message delivered" (lines 167–169); §4.4 step 4 still carries the zip naming example (line 340) and step 3 the V4 tag example mappings (lines 336–337).
+
+6. Nit, §14 stale reuse pointer — CONFIRMED. v0.1 §14 (SPEC-v3-v0.1.md line 568) still lists "ElevenLabs voice design" in phase C (replaced by manual Botnoi V4 intake), no SFX resellers, no LlmService/A0, no Nano Banana lock — a fully superseded table that remains the spec's only reuse artifact. The snapshots.py windows reuse suggestion also remains open (§3.2 "Extension" screen).
+
+STAGE 6 (comprehension)
+
+1–3 (Majors: undefined T031/T032/T045/H-2; unidentified ARISA; undefined "binder") — all three CONFIRMED unmitigated: line 53 still hard-codes "as hardened in T045 and the H-2 spec" with no gloss or link to the task ledger; §9/O-4/§15-F still gate behavior on bare "T032"; §10.2 still makes cross-system commitments over "both ARISA and Drama Box" with the ARISA identity only in factmap/DECISIONS Q8; "the T031 binder"/"the binder's byte validator" (lines 355–357) still has no inline definition.
+Nits 4–12 — CONFIRMED on spot-check (header status contradiction at lines 3–4; "guardian" at line 733; O-11/O-12 transposition at lines 799–801 still present; §15 column header mislabel noted under my new finding 2 below).
+
+STAGE 7 (critic)
+
+- Style Blocker (self-contradictory status header) — CONFIRMED still present: line 3 "the final master after Codex round 2 ... every V3R item is applied" vs line 4 "Status: for Goldfish review, then Codex re-critique (round 2 of 2)"; DECISIONS.md line 147 declares the master final at v0.3, so the Status line is stale.
+- Design 1 / Structural 1 (no Alternatives section) — CONFIRMED: no such section exists in lines 1–857; load-bearing single-path commitments (two-track model, in-app LlmService queue, calendar authority, pinned Pika H3, stepper UI) still carry only provenance tags, not rejection rationale.
+- Design 2 (budget-cap enforcement ledger) — CONFIRMED and corroborated: §12.3 still says only "sub-budgets inside it ... hold before effect"; §15 assigns AT-21 ("Concurrent workers cannot exceed step, episode or season caps") to phase A without the master-level rule saying which ledger each cap binds or whether allocated shared-setup shares count against episode caps. Nothing in §15/§16/§18 answers it.
+- Design 3 (Nano Banana lock sizing) — CONFIRMED, not overstated: §10.2 delegates only inode/lifetime/crash-release/queue-policy to phase C; the C-phase obligations (AT-5/6/7/15/22/23/28) include lock crash/restart (AT-28) but no sizing, wall-clock projection or ARISA fairness requirement; §16's only throughput item is A40 render+QA; P0 step 4 remains reduced (2 characters/2 locations). The demand-list forecast input exists (line 265) but §4.4's "forecast before generation" (line 396) is cost-only — the fix remains cheap and unclaimed.
+- Design 4 (no derived throughput SLO) — CONFIRMED: "measured ... throughput" (§16) is still unbounded; the 1/day + 3-day-buffer + alert-below-2 numbers are never converted into a required production or catch-up rate.
+- Design 5 (no mixed-emotion fallback) — CONFIRMED: §6's neutral fallback is still limited to "an emotion explicitly unsupported in the season set"; the pilot observation (line 370) still covers only tag-vocalisation leakage; no P1 exit criterion or recorded V3R-3-original fallback exists anywhere.
+- Structural 2 (§4.4 dumping ground / misplaced generation-unit contract) — CONFIRMED and compounded from my altitude: the generation-unit contract's misplacement is a symptom of the reuse gap — it re-states the existing jobs contract inline (finding 1) instead of referencing it, which is exactly why it reads as a step-local concern while A0 must build it.
+- Structural 3 (baseline absent from the precedence ladder) — CONFIRMED: lines 16–19 still list only operator → DECISIONS → REQUIREMENTS; the pinned baseline (lines 28–31) still has no rank.
+- Style Majors 2–4 and the remaining Nits — CONFIRMED on spot-check (featured-vs-all-speakers at lines 227–233; "cheaper route" at line 641 vs §7 "cheapest eligible route", with O-9 line 798 drifting the same way; the three referents of "step"; DOMAIN-RUNBOOK bare at line 128; SFX rule stated three times §7/§10.3/O-9).
+
+No prior finding is wrong; none is materially overstated. The document has not been revised since any of the three reports.
+
+=====================================================================
+(b) New findings (missed by prior stages)
+=====================================================================
+
+1. Severity: Major — Affected Scope: §4.4 (lines 306–316), §2.2 (lines 114–117), §15 rows A0/A/C, vs /root/AIVORA/drama-box/microdrama/src/microdrama/core/jobs.py — One paid-work lifecycle, four state vocabularies. The spec defines pick-item states (QUEUED→GENERATING→READY→VOTED→(GENERATE_NEXT)→DERIVED_READY→ACCEPTED plus REROLL_REQUESTED/FAILED_RETRYABLE/UNKNOWN/FAILED), generation-unit statuses (queued/running/succeeded/retryable/unknown/failed), and common side states (WAITING_QUOTA/WAITING_PROVIDER/BLOCKED/CANCELLED) — three new vocabularies for one underlying work item, on top of the codebase's existing job outcome union, with no mapping table and no statement of which is authoritative. FAILED_RETRYABLE↔retryable↔RetryLater and UNKNOWN↔unknown↔NeedsReconciliation are near-synonyms across layers. Simplicity rationale: phase C will have to invent the cross-mappings the master never fixed, and each unmapped pair is a future reconciliation bug in the money path. Fix at master altitude: declare the generation unit (ideally the existing jobs table) the single persisted lifecycle; reduce pick-item states to vote/UI states; map the side states onto the job outcome vocabulary.
+
+2. Severity: Major — Affected Scope: §15 (lines 742–768) — Two parallel obligation ledgers in one section, already disagreeing. The phases table's obligation column and the "Acceptance ownership" table diverge exactly where the recritique moved things: D's row still lists AT-25 (line 748) while the ownership table (line 763) makes E accountable ("D supplies the binding evidence") — the change codex-spec-recritique.md V3R-8 (lines 110–114) explicitly ordered; F's row (line 750) omits AT-30 though F owns the amendment/publication race (line 764); G's row carries "LIVE AT" with no IDs while ownership G holds AT-14/17/32 plus the end-to-end test. Combined with the column header that mislabels obligations as "Phase spec must define" (Stage 6 Nit 10), a phase-spec author reading row E or F receives the wrong obligation set — precisely the obligations-disappearing-between-phases failure V3R-8 was written to prevent. Simplicity rationale: duplicate bookkeeping with observed drift; keep one ledger (the ownership table) and reduce the phases table to a pointer.
+
+3. Severity: Major — Affected Scope: §16 LIVE (line 776), §9 (line 564), §18 O-4 (line 793), §15 row F — LIVE acceptance is coupled to an unbounded external task with no partial-qualification path. §16 makes "caption and disclosure delivery verified through T032-controlled publication" a LIVE acceptance criterion, §9/O-4 hold unsupported slots "until T032 qualifies them", and T032 is a TODO task in the ledger (undefined even as an object, per Stage 6). Slot behavior under a stall is defined (HELD), but the final acceptance gate has no stated per-destination decomposition or fallback — the entire program's LIVE sign-off can be held indefinitely by a sibling task's non-progress, with no sentence saying LIVE may be granted per destination while unqualified destinations stay HELD. Simplicity rationale: an architectural dead-end keyed to work outside this spec's control; one sentence of degradation semantics removes it.
+
+4. Severity: Nit — Affected Scope: §17 (lines 781–784) — Requirement-trace stub duplicates §16. §17's two sentences restate §16's third bullet (per-R-ID trace tables) and point at §15; it adds only the "(R-1.1–R-12.13 table)" tag. Same defect pattern as the §8 stub the style critic flagged, but outside their range. Fold into §16.
+
+5. Severity: Nit — Affected Scope: §6 (line 513) — "or use a qualified composite" names a mechanism that appears exactly once in the document set, is owned by no phase (§15 row D lists the reference schema and mandatory/optional selection; AT-24 says "preserve ... or block", never composite), and carries no contract. A one-word escape hatch at the binding-validation decision point is how unspecified machinery leaks into phase specs. Either give compositing an owner and contract in phase D, or delete the parenthetical.
+
+=====================================================================
+(c) Overall altitude assessment
+=====================================================================
+
+The document still holds its altitude as a master spec — its contracts, invariants, gate model, phase boundaries and traceability machinery are genuinely master-level, it delegates schemas and numeric limits to phase specs with rare exceptions, and every operator decision and both critique rounds resolve traceably rather than by argument. But this second pass confirms that the document is frozen mid-fix rather than finished: the self-contradictory status header (a prior Blocker) is untouched, none of the three prior stages' Major findings has a counter-word added anywhere in the 857 lines, and the spec's one systematic weakness — asymmetric reuse discipline, naming exact existing components for story/review/render while never once mentioning the jobs table, the receipt ledger or the provider protocols its own new infrastructure duplicates — now shows a second symptom in the four parallel state vocabularies and a third in §15's drifted dual obligation ledgers, i.e., the reuse gap is not cosmetic but is actively generating structural redundancy in the traceability and lifecycle sections that were added to close V3R-8. The cheapest path to the bar the spec sets itself: a short reuse paragraph binding LlmService/GenerationUnit/UsageRecord/provider adapters to the existing jobs table, receipt ledger and protocols; one state-authority sentence; one ledger in §15; one LIVE-degradation sentence; and the header status correction. None of that requires descending into weeds — it is exactly the master's job.
+
+Key files: /root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/SPEC-v3.md (target); prior reports at /root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/goldfish/{zoom_out_report.md, comprehension_report.md, critic_report.md}; grounding in /root/AIVORA/drama-box/microdrama/src/microdrama/core/jobs.py, .../contracts/cost.py, .../contracts/providers.py, .../budget/reports.py, .../analytics/snapshots.py, and /root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/{SPEC-v3-v0.1.md, DECISIONS.md, codex-spec-critique.md, codex-spec-recritique.md}.
