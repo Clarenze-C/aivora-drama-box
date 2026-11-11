@@ -60,8 +60,17 @@ Everything below this section is history. This section is the live state.
      load-sensitive failure, not a regression.
    - Two policy entries are `UNCONFIRMED` (the remote-settings cache path, the built-in extension
      inventory), so the role **fails closed** until the §7 live qualification.
-   - **The Codex review is running:** [brief](v3-workflow/codex-review-a0r1-brief.md) →
-     `v3-workflow/codex-review-a0r1.md`, tag `dramabox:a0r1-review`.
+   - **Codex review round 1 = FIX-REQUIRED:** [RR-1..15](v3-workflow/codex-review-a0r1.md).
+     - 6 BLOCKING: dedupe overwrites and races, nonzero exits bypassing the isolation check, error
+       results classed `SUCCEEDED`, unbounded waits, executable credential helpers allowed in policy.
+     - 9 SHOULD-FIX.
+   - **Fix round 1** ([brief](v3-workflow/a0r1-fix1-brief.md), every RR accepted, with rulings):
+     - scheduled as systemd timer **`a0r1-fix1-after-hcf` (16:31Z)**;
+     - it waits until the HCF resume loop is no longer active (one Drama Box GLM build at a time), then
+       runs once (tag `dramabox:a0r1-fix1`);
+     - script `scratchpad/keep/a0r1-fix1-after-hcf.sh` (session 21694f19);
+     - marker `A0-R1 FIX1: ALL DONE` in the report.
+     - **Then a Codex re-review (round 2 of 2).**
    - After ACCEPT: merge into `/root/.claude` `main`, staging only `scripts/ai_route.py`, `models.json`
      and `scripts/tests/ai_route/`. Never `git add -A` there (auto-logger churn).
 2. **A0-D**, the drama-box half (gateway, `LlmStep`, migration 0027):
