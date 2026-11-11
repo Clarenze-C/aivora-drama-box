@@ -818,6 +818,10 @@ def test_operator_resolves_an_unfindable_prompt_and_frees_the_slot(
         actor_ref="operator-console",
         reason="provider console shows no prompt and no charge for this attempt",
         evidence_sha256="e" * 64,
+        # P5/§7.3 (R7): the live pod's history never shows the prompt -
+        # reachable-but-unrecoverable, so the resolution carries the recorded
+        # force override.
+        force_unrecoverable=True,
         world=adapter,
     )
     sample = {s["sample_id"]: s["state"] for s in resolved["samples"]}[slot["sample_id"]]

@@ -79,7 +79,7 @@ from microdrama.contracts.infra import Clock, IdGenerator, ObjectStore
 from microdrama.contracts.media import AssetDescriptor
 from microdrama.contracts.providers import ComfyClient, ComfyOutputFile, ComfyProgressEvent
 from microdrama.contracts.v2 import PromptManifest, verify_v2_record_hash
-from microdrama.core.events import append_event
+from microdrama.core.events import append_event, list_events
 from microdrama.core.provider_ops import begin, needs_reconcile, record_result
 from microdrama.persistence.db import Database, Tx
 from microdrama.rendering.comfy_assets import persist_output, prepare_output
@@ -1071,6 +1071,12 @@ class ComfyRenderService:
                 )
         return self.poll(operation_id)
 
+    def settle_terminal(self, operation_id: UUID) -> int:
+        """§7.1: complete the canonical settlement/release for a terminal
+        operation's reservation, from durable state alone (network-free,
+        idempotent - the deterministic receipt keys make replays no-ops)."""
+        return self._settle_if_needed(self._load_row(operation_id))
+
     def resolve_unknown_operation(
         self,
         operation_id: UUID,
@@ -1078,15 +1084,23 @@ class ComfyRenderService:
         actor_ref: str,
         reason: str,
         evidence_sha256: str,
+        forced: bool = False,
     ) -> ComfyAttemptStatus:
-        """H-2: the audited OPERATOR resolution for an UNKNOWN render operation.
+        """§7.3 (spec v3): the audited OPERATOR resolution for an UNKNOWN
+        render operation.
 
-        Mirrors the canary's resolve_podless_create validation (nonempty actor and
-        reason, a sha256 evidence hash): the operator attests the provider console
-        evidence that fixes the prompt's terminal outcome. Records FAILED (the
-        conservative outcome: no output is adopted), appends the append-only
-        resolution event, and settles the attempt exactly like a provider-reported
-        failure. The sample then leaves the dispatch slot.
+        Replay before anything else: an already-terminal operation carrying an
+        operator resolution with the IDENTICAL actor, reason and evidence SHA
+        is a successful replay (a crash between the resolution commit and the
+        finalization converges here). A terminal operation WITHOUT an operator
+        audit is a Conflict (terminal provenance - reconcile replays it
+        terminally); a DIFFERENT attestation is a Conflict.
+
+        A first resolution records the audit event and the terminal FAILED
+        transition in ONE transaction under the operation lock (the transition
+        commits BEFORE financial finalization, R5), then settles exactly like
+        a provider-reported failure. ``forced`` records the R7 override in the
+        audit (the caller proves the live-source matrix demanded it).
         """
         if not str(actor_ref or "").strip():
             raise SchemaInvalid("an UNKNOWN-operation resolution requires an actor")
@@ -1099,13 +1113,57 @@ class ComfyRenderService:
         ):
             raise SchemaInvalid("an UNKNOWN-operation resolution requires a sha256 evidence hash")
         row = self._load_row(operation_id)
-        if ProviderOperationState(row["state"]) is not ProviderOperationState.UNKNOWN:
+        state = ProviderOperationState(row["state"])
+        if state in _TERMINAL:
+            # §7.3 replay: identical operator attestation replays; anything
+            # else on a terminal operation is a terminal-provenance conflict.
+            with self._db.transaction(readonly=True) as tx:
+                events = [
+                    event
+                    for event in list_events(tx, operation_id)
+                    if event.event_type == "provider_operation.operator_resolved"
+                ]
+            for event in events:
+                payload = event.payload or {}
+                if (
+                    payload.get("actor_ref") == actor_ref.strip()
+                    and payload.get("reason") == reason.strip()
+                    and payload.get("evidence_sha256") == evidence_sha256
+                ):
+                    return self._status(row)
+            if events:
+                raise Conflict(
+                    "a different attestation already resolved this operation",
+                    operation_id=str(operation_id),
+                )
+            raise Conflict(
+                "the operation is terminal without an operator resolution; "
+                "reconcile replays its terminal outcome",
+                operation_id=str(operation_id),
+                state=row["state"],
+            )
+        if state is not ProviderOperationState.UNKNOWN:
             raise Conflict(
                 "only an UNKNOWN operation can be operator-resolved",
                 operation_id=str(operation_id),
                 state=row["state"],
             )
+        # The audit event and the terminal transition commit together under
+        # the operation lock (§7.3 atomicity); the settlement runs after the
+        # commit (R5: operator terminal transitions precede financial
+        # finalization).
         with self._db.transaction() as tx:
+            current = tx.fetchone(
+                "SELECT * FROM provider_operations WHERE id = %s FOR UPDATE", (operation_id,)
+            )
+            if current is None:
+                raise NotFound("comfy operation not found", operation_id=str(operation_id))
+            if ProviderOperationState(current["state"]) is not ProviderOperationState.UNKNOWN:
+                raise Conflict(
+                    "only an UNKNOWN operation can be operator-resolved",
+                    operation_id=str(operation_id),
+                    state=current["state"],
+                )
             append_event(
                 tx,
                 aggregate_type="provider_operation",
@@ -1115,12 +1173,24 @@ class ComfyRenderService:
                     "actor_ref": actor_ref.strip(),
                     "reason": reason.strip(),
                     "evidence_sha256": evidence_sha256,
+                    "forced_unrecoverable": bool(forced),
                 },
-                correlation_id=row["reservation_id"],
+                correlation_id=current["reservation_id"],
                 occurred_at=self._now(),
             )
+            record_result(
+                tx,
+                operation_id,
+                self._result(
+                    operation_id,
+                    ProviderOperationState.FAILED,
+                    external_id=current["external_id"],
+                    error_code="OPERATOR_RESOLVED_UNKNOWN",
+                ),
+                now=self._now(),
+            )
         return self._finish_failure(
-            row,
+            self._load_row(operation_id),
             error_code="OPERATOR_RESOLVED_UNKNOWN",
             detail=reason.strip(),
         )

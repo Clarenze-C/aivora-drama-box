@@ -309,6 +309,12 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
             if terminal and (not projected or slot_held or not settled or output_missing):
                 # U4 - terminal operation whose settlement/release, projection
                 # or dispatch slot is not final yet (§7.1 finalize_terminal).
+                # The terminal operation's id names the finalization target.
+                terminal_operation_id = next(
+                    operation["id"]
+                    for operation in ops
+                    if operation["state"] in TERMINAL_OPERATION_STATES
+                )
                 items.append(
                     UnresolvedItem(
                         kind="U4",
@@ -316,6 +322,7 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
                         acquisition_id=sample["acquisition_id"],
                         sample_id=sample["sample_id"],
                         reservation_id=sample["reservation_id"],
+                        operation_id=terminal_operation_id,
                         detail="terminal operation not fully finalized/projected",
                     )
                 )

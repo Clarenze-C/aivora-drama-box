@@ -1193,9 +1193,20 @@ class BenchmarkService:
             output = document(asset)
             if not output.get("sha256"):
                 raise Conflict("durable output hash is missing")
-        if state in ("FAILED", "CANCELLED"):
+        # §7.2 mapping: FAILED, CANCELLED and NOT_FOUND all project FAILED with
+        # the original reason kept; NOT_FOUND never enables resubmission.
+        # Nonterminal observations project as observed (mid-flight states).
+        if state in ("FAILED", "CANCELLED", "NOT_FOUND"):
             output = {"error_code": getattr(result, "error_code", None) or "UNKNOWN_FAILURE"}
+            projected = "FAILED"
+        else:
+            projected = state
         with self.db.transaction() as tx:
+            # §6.1: E first - this transaction's R6 write updates the
+            # experiment row (outcome/fail-fast), so its lock is taken before
+            # any later-order row (an E write after D/S could deadlock against
+            # the admission gate, which locks E -> ... -> D).
+            experiment_row(tx, experiment_id, lock=True)
             # §6.1: D before S - the dispatch slot is locked (and its token
             # re-checked) before any sample projection writes.
             tx.fetchone(
@@ -1212,10 +1223,23 @@ class BenchmarkService:
                 self._assert_coordination(
                     tx, experiment_id, sample.get("acquisition_id"), coordinator_token
                 )
+            # §7.2 monotonic projection: a stale nonterminal observation never
+            # overwrites a terminal sample.
+            current = tx.fetchone(
+                "SELECT state FROM benchmark_samples WHERE experiment_id=%s "
+                "AND sample_id=%s FOR UPDATE",
+                (experiment_id, sample["sample_id"]),
+            )
+            if (
+                current is not None
+                and current["state"] in ("SUCCEEDED", "FAILED")
+                and (state not in ("SUCCEEDED", "FAILED", "CANCELLED", "NOT_FOUND"))
+            ):
+                return
             tx.execute(
                 "UPDATE benchmark_samples SET state=%s,operation_id=%s,output=COALESCE(%s,output),coverage=COALESCE(coverage,%s) WHERE experiment_id=%s AND sample_id=%s",
                 (
-                    state,
+                    projected,
                     result.operation_id,
                     jsonb(output) if output else None,
                     jsonb({"quality": "UNKNOWN"}),
@@ -1223,10 +1247,22 @@ class BenchmarkService:
                     sample["sample_id"],
                 ),
             )
-            if state in ("SUCCEEDED", "FAILED", "CANCELLED"):
+            if projected in ("SUCCEEDED", "FAILED"):
                 tx.execute(
                     "UPDATE benchmark_dispatch_slots SET sample_id=NULL,revision=revision+1 WHERE experiment_id=%s AND sample_id=%s",
                     (experiment_id, sample["sample_id"]),
+                )
+            if projected == "FAILED":
+                # §7.4 fail-fast: however the failure was observed (normal
+                # polling included), the outcome is set once and generation
+                # stops - in the same transaction as the projection (R6).
+                tx.execute(
+                    "UPDATE benchmark_experiments SET "
+                    "execution_outcome=COALESCE(execution_outcome,'FAILED'),"
+                    "execution_state=CASE WHEN execution_outcome IS NULL THEN 'FAILED' "
+                    "ELSE execution_state END,revision=revision+1,updated_at=%s "
+                    "WHERE experiment_id=%s",
+                    (self.clock.now(), experiment_id),
                 )
 
     def _finish_phase(self, experiment_id: UUID, world: Any, phase: str):
@@ -1913,6 +1949,36 @@ class BenchmarkService:
                     acquisition_id=slot_acquisition,
                 )
             self._reconcile_slot_sample(experiment_id, per)
+        # §7.1: reconcile runs finalize_terminal for every U4 item - a terminal
+        # operation whose settlement/projection/slot work is incomplete (a
+        # crash between the terminal commit and the finalization). Network-free
+        # and idempotent: a replay repairs the same outcome.
+        with self.db.transaction(readonly=True) as tx:
+            u4_items = [
+                item
+                for item in unresolved_items(tx, experiment_id, now=self.clock.now())
+                if item.kind == "U4" and item.operation_id is not None
+            ]
+        u4_worlds: dict[UUID | None, Any] = {}
+        for item in u4_items:
+            per = world
+            if per is None:
+                # HB-3 (§3.1): a RECOVERY world NAMES the acquisition whose
+                # durable records it recovers - an acquisition-less recovery
+                # world refuses when acquisitions exist. One world per
+                # acquisition (the comfy client never rebinds), reused across
+                # that acquisition's U4 items.
+                per = u4_worlds.get(item.acquisition_id)
+                if per is None:
+                    per = self._world(
+                        experiment_id,
+                        authorization,
+                        quote,
+                        mode="RECOVERY",
+                        acquisition_id=item.acquisition_id,
+                    )
+                    u4_worlds[item.acquisition_id] = per
+            self.finalize_terminal(item.operation_id, world=per)
         # HB-5 (§5.4): cleanup STARTS at the deadline even when intermediate
         # recovery reads failed - an exhausted deadline with an unresolved
         # ambiguity is an owed U2, and reconcile routes it through the sweep's
@@ -2379,6 +2445,113 @@ class BenchmarkService:
             # zero blocking items under the lock.
         return self.status(experiment_id)
 
+    def finalize_terminal(self, operation_id: UUID, *, world: Any = None) -> None:
+        """§7.1 + R6 (spec v3 §7): network-free, idempotent terminal finalization.
+
+        1. Complete the canonical settlement/release for the operation's
+           reservation (deterministic receipts; a replay is a no-op).
+        2. Load the existing durable outputs (nothing is fetched - only results
+           already persisted on the operation row count).
+        3+4. Project the sample and clear the matching dispatch slot in ONE
+           transaction, D before S, monotonically (a stale nonterminal
+           observation never overwrites a terminal sample). R6: projecting an
+           eligible failed fixed sample sets ``execution_outcome=FAILED`` if
+           unset and stops generation in the SAME transaction.
+        """
+        with self.db.transaction(readonly=True) as tx:
+            operation = tx.fetchone(
+                "SELECT o.*, s.experiment_id, s.sample_id, s.acquisition_id "
+                "FROM provider_operations o "
+                "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
+                "WHERE o.id=%s",
+                (operation_id,),
+            )
+        if operation is None or operation["state"] not in (
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "NOT_FOUND",
+        ):
+            return
+        experiment_id = operation["experiment_id"]
+        if world is None:
+            # HB-3 (§3.1): the recovery world names the acquisition whose
+            # operation is being finalized.
+            world = self._world(
+                experiment_id, mode="RECOVERY", acquisition_id=operation["acquisition_id"]
+            )
+        # 1. Financial finalization first, from durable state alone.
+        world.comfy.settle_terminal(operation_id)
+        # 2. The durable outputs recorded with the terminal result.
+        output = None
+        if operation["state"] == "SUCCEEDED":
+            outputs = (operation["last_result"] or {}).get("outputs") or []
+            if outputs:
+                first = outputs[0]
+                output = {
+                    "object_key": first.get("provider_ref"),
+                    "sha256": first.get("sha256"),
+                    "media_type": first.get("media_type"),
+                    "size_bytes": first.get("size_bytes"),
+                }
+        sample_state = "SUCCEEDED" if operation["state"] == "SUCCEEDED" else "FAILED"
+        if sample_state == "FAILED":
+            # §7.2: the original reason is kept - FAILED, CANCELLED and
+            # NOT_FOUND all project FAILED with the recorded error code.
+            output = {
+                "error_code": (operation["last_result"] or {}).get("error_code")
+                or "UNKNOWN_FAILURE"
+            }
+        # 3+4. Projection and slot clear in one transaction (D before S),
+        # monotonic; R6's outcome write rides the same transaction.
+        with self.db.transaction() as tx:
+            exp = experiment_row(tx, experiment_id)
+            lock_account(tx, exp["account_id"])
+            lock_categories(tx, exp["account_id"])
+            experiment_row(tx, experiment_id, lock=True)
+            slot = tx.fetchone(
+                "SELECT sample_id FROM benchmark_dispatch_slots WHERE experiment_id=%s FOR UPDATE",
+                (experiment_id,),
+            )
+            current = tx.fetchone(
+                "SELECT state FROM benchmark_samples WHERE experiment_id=%s "
+                "AND sample_id=%s FOR UPDATE",
+                (experiment_id, operation["sample_id"]),
+            )
+            if current is None or current["state"] in ("SUCCEEDED", "FAILED"):
+                # Monotonic projection: a terminal sample is never overwritten.
+                return
+            tx.execute(
+                "UPDATE benchmark_samples SET state=%s,operation_id=%s,"
+                "output=COALESCE(%s,output),coverage=COALESCE(coverage,%s) "
+                "WHERE experiment_id=%s AND sample_id=%s",
+                (
+                    sample_state,
+                    operation_id,
+                    jsonb(output) if output else None,
+                    jsonb({"quality": "UNKNOWN"}),
+                    experiment_id,
+                    operation["sample_id"],
+                ),
+            )
+            if slot is not None and slot["sample_id"] == operation["sample_id"]:
+                tx.execute(
+                    "UPDATE benchmark_dispatch_slots SET sample_id=NULL,revision=revision+1 "
+                    "WHERE experiment_id=%s AND sample_id=%s",
+                    (experiment_id, operation["sample_id"]),
+                )
+            if sample_state == "FAILED":
+                # R6 atomic fail-fast: the outcome is set once, generation
+                # stops, in the same transaction as the projection.
+                tx.execute(
+                    "UPDATE benchmark_experiments SET "
+                    "execution_outcome=COALESCE(execution_outcome,'FAILED'),"
+                    "execution_state=CASE WHEN execution_outcome IS NULL THEN 'FAILED' "
+                    "ELSE execution_state END,revision=revision+1,updated_at=%s "
+                    "WHERE experiment_id=%s",
+                    (self.clock.now(), experiment_id),
+                )
+
     def resolve_sample(
         self,
         experiment_id: UUID,
@@ -2388,14 +2561,22 @@ class BenchmarkService:
         reason: str,
         evidence_sha256: str,
         world: Any = None,
+        force_unrecoverable: bool = False,
     ):
-        """H-2: the audited OPERATOR resolution for a sample's UNKNOWN operation.
+        """§7.3 (spec v3): the audited OPERATOR resolution for a sample's
+        UNKNOWN operation, with the R7 live-source matrix.
 
-        Records the terminal FAILED outcome (no output is adopted), settles the
-        attempt exactly like a provider-reported failure, and frees the dispatch
-        slot so the experiment can continue with the next sample. Runs in a
-        cleanup-only world: an operator resolution is recovery, never new work.
+        Replay first: an identical attestation replays successfully before any
+        live-source check. Ordinary resolution requires
+        ``bind_for_recovery == VERIFIED_SOURCE_GONE``. BOUND with positively
+        recoverable work or usable output refuses EVEN WITH force
+        (reconciliation owns it); reachable-but-unrecoverable and INDETERMINATE
+        sources require ``force_unrecoverable`` (recorded in the audit). The
+        audit and the terminal transition commit together; financial
+        finalization, slot clearing and the §7.4 fail-fast follow through
+        ``finalize_terminal``.
         """
+
         with self.db.transaction(readonly=True) as tx:
             sample = tx.fetchone(
                 "SELECT * FROM benchmark_samples WHERE experiment_id=%s AND sample_id=%s",
@@ -2416,19 +2597,62 @@ class BenchmarkService:
         world = world or self._world(
             experiment_id, mode="CLEANUP", acquisition_id=sample["acquisition_id"]
         )
-        status = world.comfy.resolve_unknown_operation(
+        # §7.3 replay BEFORE any live-source check: the identical attestation
+        # on an already-terminal operation succeeds idempotently.
+        with self.db.transaction(readonly=True) as tx:
+            terminal = tx.fetchval(
+                "SELECT state FROM provider_operations WHERE id=%s", (operation_id,)
+            )
+        if terminal in ("SUCCEEDED", "FAILED", "CANCELLED", "NOT_FOUND"):
+            world.comfy.resolve_unknown_operation(
+                operation_id,
+                actor_ref=actor_ref,
+                reason=reason,
+                evidence_sha256=evidence_sha256,
+            )
+            self.finalize_terminal(operation_id, world=world)
+            return self.status(experiment_id)
+        # R7 live-source matrix (only a first resolution reaches here).
+        binding = None
+        if sample["acquisition_id"] is not None and hasattr(world, "bind_for_recovery"):
+            try:
+                binding = world.bind_for_recovery(sample["acquisition_id"])
+            except Exception:  # noqa: BLE001 - binding failures are INDETERMINATE
+                binding = "INDETERMINATE"
+        if binding == "BOUND":
+            # Positively recoverable work or usable output belongs to
+            # reconciliation - never to an operator attestation, even forced.
+            try:
+                polled = world.comfy.poll(operation_id)
+                polled_state = getattr(polled.state, "value", polled.state)
+            except Exception:  # noqa: BLE001 - unreachable/ambiguous history
+                polled_state = None
+            if polled_state is not None:
+                raise Conflict(
+                    "a bound source with recoverable work requires reconciliation, "
+                    "not an operator resolution (R7)",
+                    operation_id=str(operation_id),
+                    polled_state=polled_state,
+                )
+            if not force_unrecoverable:
+                raise PolicyDenied(
+                    "the source is reachable but unrecoverable; resolving it "
+                    "requires --force-unrecoverable with the recorded attestation (R7)"
+                )
+        elif binding != "VERIFIED_SOURCE_GONE":
+            if not force_unrecoverable:
+                raise PolicyDenied(
+                    "the source is indeterminate; resolving it requires "
+                    "--force-unrecoverable with the recorded attestation (R7)"
+                )
+        world.comfy.resolve_unknown_operation(
             operation_id,
             actor_ref=actor_ref,
             reason=reason,
             evidence_sha256=evidence_sha256,
+            forced=force_unrecoverable,
         )
-        self._observe(experiment_id, sample, status)
-        state = getattr(status.state, "value", status.state)
-        if state != "SUCCEEDED":
-            # §7.4 fail-fast: an eligible fixed sample finalised FAILED (an
-            # audited resolution is one of the ways the failure is observed)
-            # sets the experiment outcome once and stops new generation.
-            self.repo.outcome(experiment_id, "FAILED")
+        self.finalize_terminal(operation_id, world=world)
         return self.status(experiment_id)
 
     def export(self, experiment_id: UUID):

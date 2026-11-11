@@ -58,6 +58,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--actor-ref")
     parser.add_argument("--reason")
     parser.add_argument("--evidence-sha256")
+    parser.add_argument(
+        "--force-unrecoverable",
+        action="store_true",
+        help="resolve --sample-id against a reachable-but-unrecoverable or "
+        "indeterminate source (R7); the override is recorded in the audit",
+    )
     parser.add_argument("--output")
     return parser
 
@@ -286,6 +292,7 @@ def main(argv: list[str] | None = None, *, _injection: dict[str, Any] | None = N
                     actor_ref=args.actor_ref,
                     reason=args.reason,
                     evidence_sha256=args.evidence_sha256,
+                    force_unrecoverable=args.force_unrecoverable,
                 )
         elif args.command == "record-screening":
             if not args.decision:

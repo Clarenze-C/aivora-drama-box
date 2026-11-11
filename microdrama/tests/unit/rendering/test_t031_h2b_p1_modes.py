@@ -587,6 +587,9 @@ def test_at20_expired_liability_retained_readable_and_settled(db: Database, tmp_
         actor_ref="operator-console",
         reason="provider console evidence for the expired hold",
         evidence_sha256="f" * 64,
+        # P5/§7.3 (R7): the live pod's empty history is reachable-but-
+        # unrecoverable, so the resolution carries the recorded override.
+        force_unrecoverable=True,
         world=adapter,
     )
     assert {s["sample_id"]: s["state"] for s in resolved["samples"]}[slot["sample_id"]] == (

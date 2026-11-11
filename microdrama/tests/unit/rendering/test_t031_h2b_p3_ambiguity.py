@@ -242,13 +242,15 @@ def test_at15_pending_submit_takeover_moves_to_unknown_and_never_resubmits(
     assert len(comfy.server.submissions) == 0  # no resubmit, no invented prompt
 
     # (a) stays UNKNOWN without visible evidence: only the audited operator
-    # resolution closes it (§7.3 via resolve_sample is P5; here: it persists).
+    # resolution closes it. The live pod's empty history is
+    # reachable-but-unrecoverable, so R7 demands --force-unrecoverable.
     resolved = takeover.resolve_sample(
         plan.experiment_id,
         sample_id=slot["sample_id"],
         actor_ref="operator-console",
         reason="queue and history show no prompt for the deterministic client id",
         evidence_sha256="a" * 64,
+        force_unrecoverable=True,
         world=adapter,
     )
     states = {s["sample_id"]: s["state"] for s in resolved["samples"]}
@@ -972,13 +974,16 @@ def test_at02_deadline_expiry_terminates_pod_and_resolution_fails_experiment(
 
     # The audited operator resolution closes the UNKNOWN: sample FAILED,
     # experiment FAILED once (§7.4), financial finalization and cleanup reach
-    # closure, and nothing is ever dispatched again.
+    # closure, and nothing is ever dispatched again. The stopped-but-not-
+    # terminated pod leaves an ambiguous source (R7): force is required and
+    # recorded.
     resolved = fresh.resolve_sample(
         plan.experiment_id,
         sample_id="S01-R1",
         actor_ref="operator-console",
         reason="queue and history show no prompt for the deterministic client id",
         evidence_sha256="b" * 64,
+        force_unrecoverable=True,
         world=adapter,
     )
     assert {s["sample_id"]: s["state"] for s in resolved["samples"]}["S01-R1"] == "FAILED"
