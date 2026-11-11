@@ -1,6 +1,6 @@
 # Drama Box v3 — series production workflow: MASTER SPEC
 
-**Version 0.4.2, 11 Nov 2026.** Author: Opus orchestrator. (v0.4.2 changes only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
+**Version 0.4.3, 11 Nov 2026.** Author: Opus orchestrator. (v0.4.3 changes only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
 
 **Status: BINDING MASTER.**
 - Codex critique rounds 1–2 are applied: [codex-spec-critique.md](codex-spec-critique.md) (V3C-1..34) and
@@ -355,10 +355,20 @@ has V4.
 1. **Expressions needed:** the closed set per speaking character, from the packs' emotion tags.
    `neutral` is always included.
 2. **Base-voice shortlist (V3R-11):**
-   - The system ranks the **operator-curated Botnoi V4 voice catalogue** against the voice descriptor and
-     shows **2–3 suggestions with reasons**. No audio is generated.
-   - The catalogue is a data file: `voice_name, gender, age_range, style_notes, has_v4, last_verified`.
-     The `last_verified` field addresses freshness (N13); entries older than 90 days are flagged.
+   - The system ranks the **Botnoi voice catalogue** against the voice descriptor and shows **2–3
+     suggestions with reasons**. No audio is generated.
+   - **The catalogue has two sources (amendment v0.4.3; DECISIONS "D2 update", 11 Nov):**
+     - (a) auto-imported from Botnoi's public speaker-list endpoints (`get_speaker_data`,
+       `get_speaker_data_v2`; no token): gender, age group, voice style including regional accent,
+       speech style, sample WAV;
+     - (b) operator additions in `botnoi-v4-voices.csv` for marketplace and Studio voices the API lacks
+       (elderly, monk, …).
+   - The fields are `source, voice_name, speaker_id?, gender, age_group, accent, style_notes, has_v4,
+     voice_kind (cast | api | community), last_verified`.
+     - `has_v4` is operator-confirmed in Studio, because V4 is not in the API. An unconfirmed voice is
+       flagged.
+     - **Community voices need per-voice operator approval** in their rights record.
+     - `last_verified` addresses freshness (N13); entries older than 90 days are flagged.
    - The operator auditions the shortlist in Botnoi and records the pick (or "other", with a reason).
 3. **Casting sheet:** per expression, a 10–15 s Thai script from the character's own lines, with
    suggested V4 inline tags. The rule: **one V4 voice per character for every expression**.

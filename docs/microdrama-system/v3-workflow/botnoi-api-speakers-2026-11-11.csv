@@ -1,0 +1,444 @@
+source,speaker_id,eng_name,thai_name,language,gender,age_style,voice_style,speech_style,speed,price,sample_audio
+api_v1,1,Ava,เอวา,TH,Female,Teens,Cute,Storytelling; News Reading,Slow,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ava/sound_ava.wav
+api_v1,2,Bow,โบ,TH,Female,Child,Cute,Storytelling,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/bow/sound_1_bow.wav
+api_v1,3,Ngam,คุณงาม,TH,Female,Adult,Confident,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ngam/sound_ngam.wav
+api_v1,4,Max,แม็กซ์,TH,Male,Adult,Trustworthy,Storytelling; News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/max/sound_max.wav
+api_v1,5,Alan,อลัน,TH,Male,Adult,Exciting,Storytelling; News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/alan/sound_alan.wav
+api_v1,6,Siren,ไซเรน,TH,Female,Teens,Exciting,Storytelling; News Reading,Fast,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/siren/sound_1_siren.wav
+api_v1,7,Alisa,อลิสา,TH,Female,Teens,Cute,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/alisa/sound_alisa.wav
+api_v1,8,Leo,เลโอ,TH,Male,Adult,Exciting,News Reading; Documentary,Fast,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/leo/sound_1_leo.wav
+api_v1,11,Vanilla,วนิลา,TH,Female,Teens,Cute,Storytelling; Documentary,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vanilla/sound_vanilla.wav
+api_v1,13,Ananda,อนันดา,TH,Male,Child,Cute,Novel; Anime,Slow,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/ananda/sound_1_ananda.wav
+api_v1,14,Ileen,ไอลีน,TH,Female,Teens,Cute,Narrating; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/ileen/sound_1_ileen.wav
+api_v1,15,Hiro,ฮิโระ,TH,Male,Teens,Cute,Storytelling; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/hiro/sound_1_hiro.wav
+api_v1,16,Kru D Dee,ครูดีดี๊,TH,Female,Adult,Trustworthy,Storytelling; Narrating,Slow,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/kru d dee/sound_kru d dee.wav
+api_v1,17,Jao Nerd,เจ้าเนิร์ด,TH,Female,Teens,Serious,Storytelling; Narrating,Slow,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/jao nerd/sound_jao nerd.wav
+api_v1,18,Oto,โอโตะ,TH,Male,Teens,Sweet,Storytelling; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/oto/sound_1_oto.wav
+api_v1,19,Uncle Warm,อาวอร์ม,TH,Male,Adult,Warm,Storytelling; Narrating,Slow,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/uncle warm/sound_uncle warm.wav
+api_v1,26,YingAiko,หญิงไอโกะ,TH,Female,Teens,Sweet,Storytelling; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/yingaiko/sound_1_yingaiko.wav
+api_v1,27,Aunty Grace,น้าเกรซ,TH,Female,Adult,Warm,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/aunty grace/sound_aunty grace.wav
+api_v1,28,Ajarn Lin,อาจารย์หลิน,TH,Female,Adult,Warm,Narrating; Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ajarn lin/sound_ajarn lin.wav
+api_v1,29,Smoke,สโม๊ค,TH,Male,Teens,Playful,Storytelling; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/smoke/sound_1_smoke.wav
+api_v1,30,Toto,โตโต้,TH,Male,Adult,Soothing,Storytelling; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/toto/sound_toABO5.wav
+api_v1,31,Mr.Bread,นายเบรด,TH,Male,Teens,Playful,Storytelling; News Reading,Fast,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/bread/sound_1_bread.wav
+api_v1,32,Neo,เนโอ,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/neo/sound_neo.wav
+api_v1,33,Sali,สาลี,TH,Female,Teens,Gentle,Storytelling; Narrating,Slow,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sali/sound_sali.wav
+api_v1,34,Bamboo,แบมบู,TH,Female,Teens,Soothing,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/bamboo/sound_1_bamboo.wav
+api_v1,37,Poo-Yai Lee,ผู้ใหญ่ลี (สุพรรณ),TH,Male,Adult,Regional accent,Storytelling; Local,Normal,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/lee/sound_1_lee.wav
+api_v1,38,Teddy,เท็ดดี้,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/teddy/sound_teddy.wav
+api_v1,39,tee,ตี๋,TH,Male,Adult,Confident,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tee/sound_tee.wav
+api_v1,42,meow,เหมียว,TH,Female,Adult,Confident,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/meow/sound_meow.wav
+api_v1,45,Touch,ทัช,TH,Male,Adult,Confident,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/touch/sound_touch.wav
+api_v1,46,Ben,เบน,TH,Male,Adult,Soothing,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ben/sound_ben.wav
+api_v1,47,Know,น้องโนว์,TH,Male,Teens,Gentle and tender,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/know/sound_1_know.wav
+api_v1,48,Top,ท็อป,TH,Male,Teens,Deep,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/top/sound_top.wav
+api_v1,52,Mani,มานี,TH,Female,Adult,Cute,Storytelling; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/mani/sound_1_mani.wav
+api_v1,55,JaiDee,ใจดี,TH,Male,Adult,Trustworthy,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nut/sound_nut.wav
+api_v1,56,Nick,นิค,TH,Male,Adult,Confident,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/nick/sound_1_nick.wav
+api_v1,85,Nora (South),โนรา (ใต้),TH,Female,Teens,Southtern accent,Storytelling; Local,Fast,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/nora/sound_1_nora.wav
+api_v1,87,AiThoen (North),อ้ายเถิน (เหนือ),TH,Male,Teens,Northern accent; Northern accent,Storytelling; Local,Normal,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/aithoen/sound_1_aithoen.wav
+api_v1,88,Fommy,ฟอมมี่,TH,Female,Adult,Confident,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/fommy/sound_1_fommy.wav
+api_v1,89,Kaew (Northeast),คำแก้ว (อีสาน),TH,Female,Adult,Northeastern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/kaew/sound_kaew.wav
+api_v1,90,Aekkarat V1,คุณเอกรัฐ V1,TH,Male,Adult,Soothing,,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tu/sound_tu.wav
+api_v1,160,Lynn,ริณณ์,TH,Female,Adult,Confident,Storytelling; Narrating,Normal,1,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lynn/sound_lynn.wav
+api_v1,162,Daonapha,ดาวนภา,TH,Female,Adult,Calm,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/daonapha/sound_daonapha.wav
+api_v1,226,Bint Seller,พ่อค้าบิณฑ์,TH,Male,Adult,Trustworthy,Storytelling; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/kittiphan/sound_kittiphan.wav
+api_v1,292,sompan (Trang),ส้มแป้น (ตรัง),TH,Female,Adult,Southtern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_aonkaew/sound_south_aonkaew.wav
+api_v1,293,Tawan (Phatthalung),ตะวัน (พัทลุง),TH,Male,Adult,Southtern accent,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_dodo/sound_south_dodo.wav
+api_v1,294,Fon (Trang),ฝน (ตรัง),TH,Female,Adult,Southtern accent,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_jah/sound_south_jah.wav
+api_v1,295,Pin Teacher (Phatthalung),ครูปิ่น (พัทลุง),TH,Female,Adult,Southtern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_jan/sound_south_jan.wav
+api_v1,296,Dao Seller (Phatthalung),แม่ค้าดาว (พัทลุง),TH,Female,Adult,Southtern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_jane/sound_south_jane.wav
+api_v1,297,Winsong (Phatthalung),วินซง (พัทลุง),TH,Male,Adult,Southtern accent,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_max/sound_south_max.wav
+api_v1,298,Nuknik Teacher (Songkhla),ครูนุกนิก (สงขลา),TH,Female,Adult,Southtern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_may/sound_south_may.wav
+api_v1,299,Homjun Teacher (Trang),ครูหอมจันทน์ (ตรัง),TH,Female,Adult,Southtern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_nungning/sound_south_nungning.wav
+api_v1,300,Pinky Seller (Trang),แม่ค้าพิงค์กี้ (ตรัง),TH,Female,Adult,Southtern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_pin/sound_south_pin.wav
+api_v1,301,Rainy (Songkhla),เรนนี่ (สงขลา),TH,Male,Adult,Southtern accent,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_pingping/sound_south_pingping.wav
+api_v1,302,Ploy (Songkhla),พลอย (สงขลา),TH,Female,Adult,Southtern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_pinky/sound_south_pinky.wav
+api_v1,303,Tle (Phuket),เติ้ล (ภูเก็ต),TH,Female,Adult,Southtern accent,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_praew/sound_south_praew.wav
+api_v1,304,Nuth (Songkhla),นัทธ์ (สงขลา),TH,Male,Adult,Southtern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_san/sound_south_san.wav
+api_v1,305,Nokkud (Songkhla),นกคูด (สงขลา),TH,Female,Adult,Southtern accent,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_sany/sound_south_sany.wav
+api_v1,306,Nui (Songkhla),นุ้ย (สงขลา),TH,Male,Adult,Southtern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_shi/sound_south_shi.wav
+api_v1,307,Pang Seller (Nakhon Si Thammarat),แม่ค้าแป้ง (นครศรีธรรมราช),TH,Female,Adult,Southtern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/south_sun/sound_south_sun.wav
+api_v1,309,Saijai Teacher (Chiang Rai),ครูสายใจ (เชียงราย),TH,Female,Adult,Northern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_aom/sound_north_aom.wav
+api_v1,310,Professor Kan (Phrae),อาจารย์กาญจน์ (แพร่),TH,Male,Adult,Northern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_aun/sound_north_aun.wav
+api_v1,311,Best (Chiang Mai),เบส (เชียงใหม่),TH,Female,Adult,Northern accent,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_bb/sound_north_bb.wav
+api_v1,312,krubee (Chiang Mai),ครูบี (เชียงใหม่),TH,Female,Adult,Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_bee/sound_north_bee.wav
+api_v1,313,Professor Kae (Lampang),อาจารย์แข (ลำปาง),TH,Female,Adult,Northern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_beer/sound_north_beer.wav
+api_v1,314,Bonita (Phrae),โบนิต้า (แพร่),TH,Female,Adult,Northern accent,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_chompoo_1/sound_north_chompoo_1.wav
+api_v1,315,KhunLamai (Chiang Mai),คุณละไม (เชียงใหม่),TH,Female,Adult,Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_chompoo_2/sound_north_chompoo_2.wav
+api_v1,316,Su (Chiang Mai),สุ (เชียงใหม่),TH,Male,Adult,Northern accent,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_do/sound_north_do.wav
+api_v1,317,Munkaew Seller (Phayao),แม่ค้ามันแกว (พะเยา),TH,Female,Adult,Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_gift/sound_north_gift.wav
+api_v1,318,Aommy Seller (Chiang Mai),แม่ค้าออมมี่ (เชียงใหม่),TH,Female,Adult,Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_hi/sound_north_hi.wav
+api_v1,319,Khaojao (Chiang Mai),ข้าวจ้าว (เชียงใหม่),TH,Female,Adult,Northern accent,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_jah/sound_north_jah.wav
+api_v1,320,Mok Teacher (North),ครูหมอก (เหนือ),TH,Female,Adult,Trustworthy; Northern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_mekk/sound_north_mekk.wav
+api_v1,321,Imm (North),อิ๋ม (เหนือ),TH,Female,Adult,Gentle and tender; Northern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_momay/sound_north_momay.wav
+api_v1,322,Ta-oh Teacher (North),แม่ค้าต๊ะโอ๋ (เหนือ),TH,Female,Adult,Confident; Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_muk/sound_north_muk.wav
+api_v1,323,Kwanjai (North),ขวัญใจ (เหนือ),TH,Female,Adult,Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_new/sound_north_new.wav
+api_v1,324,Wiangphan (North),กุหลาบเวียงพาน (เหนือ),TH,Female,Adult,Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_pleng/sound_north_pleng.wav
+api_v1,325,KhunPut (North),คุณพัฒ (เหนือ),TH,Female,Adult,Confident; Northern accent,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_putcharee/sound_north_putcharee.wav
+api_v1,326,Mine (North),มาย (เหนือ),TH,Male,Adult,Serious; Northern accent,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_ruz/sound_north_ruz.wav
+api_v1,327,Boonpun (North),บุญปั๋น (เหนือ),TH,Male,Adult,Confident; Northern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_tongkham/sound_north_tongkham.wav
+api_v1,328,Peach Seller (North),แม่ค้าพีช (เหนือ),TH,Female,Adult,Confident; Northern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/north_wan/sound_north_wan.wav
+api_v1,329,Sripun (NorthEast),ศรีพรรณ (อีสาน),TH,Female,Adult,Northeastern accent; Mellow,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_aum/sound_isan_aum.wav
+api_v1,331,Harley (NorthEast),ฮาร์เลย์ (อีสาน),TH,Female,Adult,Clear; Northeastern accent,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_benz/sound_isan_benz.wav
+api_v1,332,Tonhon Teacher (NorthEast),ครูต้นหน (อีสาน),TH,Female,Adult,Trustworthy; Northeastern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_chompoo/sound_isan_chompoo.wav
+api_v1,333,Iliah (NorthEast),อิหล่า (อีสาน),TH,Female,Adult,Clear; Northeastern accent,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_fah/sound_isan_fah.wav
+api_v1,334,Sorn Professor (NorthEast),อาจารย์ศร (อีสาน),TH,Male,Adult,Trustworthy; Northeastern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_gus/sound_isan_gus.wav
+api_v1,335,GuyKai (NorthEast),กายไก่ (อีสาน),TH,Male,Adult,Exciting; Northeastern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_guy/sound_isan_guy.wav
+api_v1,336,June (NorthEast),จูน (อีสาน),TH,Female,Adult,Northeastern accent; Mellow,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_jib/sound_isan_jib.wav
+api_v1,337,SinSroi (NorthEast),สินสร้อย (อีสาน),TH,Female,Adult,Sweet; Northeastern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_job/sound_isan_job.wav
+api_v1,338,Pongpon (NorthEast),ปองพล (อีสาน),TH,Male,Adult,Confident; Northeastern accent,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_kob/sound_isan_kob.wav
+api_v1,339,I-Kueng (NorthEast),อิเกิ้ง (อีสาน),TH,Female,Adult,Confident; Northeastern accent,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_miww/sound_isan_miww.wav
+api_v1,340,Zoe (NorthEast),โซอี้ (อีสาน),TH,Female,Adult,Calm; Northeastern accent,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_nene/sound_isan_nene.wav
+api_v1,341,Sumlee (NorthEast),สำลี (อีสาน),TH,Female,Adult,Serious; Northeastern accent,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_net/sound_isan_net.wav
+api_v1,342,Jingjai Teacher (NorthEast),ครูจริงใจ (อีสาน),TH,Female,Adult,Calm; Northeastern accent,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_ploy/sound_isan_ploy.wav
+api_v1,343,Tonsay (Khon Kaen),ต้นเซ (ขอนแก่น),TH,Male,Adult,,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/isan_tonsay/sound_isan_tonsay.wav
+api_v1,520,Oya,ออย่า,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sale_oil/sound_sale_oil.wav
+api_v1,522,mint,มินท์,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sale_prang/sound_sale_prang.wav
+api_v1,523,Bio,ไบโอ,TH,Female,Adult,Cute,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_bio/sound_callcenter_bio.wav
+api_v1,524,Prae,แพร,TH,Female,Adult,,Storytelling; Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_yin/sound_callcenter_yin.wav
+api_v1,525,Ton,ต้น,TH,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_oat/sound_callcenter_oat.wav
+api_v1,537,Praewan,แพรหวาน,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/serie_yin/sound_serie_yin.wav
+api_v1,538,Torpong,ต่อพงษ์,TH,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/inspire_oat/sound_inspire_oat.wav
+api_v1,540,Aorr,น้องอ้อ,TH,Female,Adult,,,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_air/sound_callcenter_air.wav
+api_v1,541,Baby,เบบี้,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_bua/sound_callcenter_bua.wav
+api_v1,542,Flora,ฟลอร่า,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_fah/sound_callcenter_fah.wav
+api_v1,543,Nattakarn,ณัฐกานต์,TH,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_north/sound_callcenter_north.wav
+api_v1,574,Nemo,น้องเนโม่,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_ctb_nong_nemo/sound_vc_ctb_nong_nemo.wav
+api_v1,575,Cream,น้องครีม,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_ctb_nong_cream/sound_vc_ctb_nong_cream.wav
+api_v1,576,Care,น้องแคร์,TH,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_ctb_nong_care/sound_vc_ctb_nong_care.wav
+api_v1,582,Dhammanit,ธรรมนิตย์,TH,Male,Adult,,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_ctb_monk_paradon/sound_vc_ctb_monk_paradon.wav
+api_v1,583,Namo,นะโม,TH,Male,Adult,Serious,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_ctb_monk_sommha/sound_vc_ctb_monk_sommha.wav
+api_v1,584,Udom,อุดม,TH,Male,Adult,,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_th_ctb_donaudom/sound_vc_th_ctb_donaudom.wav
+api_v1,585,Donnaphon,ดลนพล,TH,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_th_ctb_donnaphon/sound_vc_th_ctb_donnaphon.wav
+api_v1,586,Naphapan,นภาพรรณ,TH,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_th_ctb_naphapan/sound_vc_th_ctb_naphapan.wav
+api_v1,587,Sainipa,สายณิภา,TH,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_th_ctb_sainipa/sound_vc_th_ctb_sainipa.wav
+api_v1,588,Thana,ธนา,TH,Male,Adult,Northeastern accent,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_th_ctb_thana/sound_vc_th_ctb_thana.wav
+api_v1,589,Nuna,หนูนา,TH,Female,Child,Cute,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_th_ctb_rabbit/sound_vc_th_ctb_rabbit.wav
+api_v2,4,Smoke V2,สโม๊ค V2,TH,Male,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/smoke/sound_kong_v2.wav
+api_v2,8,Ava V2,เอวา V2,TH,Female,Adult,,Storytelling,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ava/sound_tonkhaow_v2.wav
+api_v2,9,Leo V2,เลโอ V2,TH,Male,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/leo v2/sound_max_v2.wav
+api_v2,13,Neo V2,เนโอ V2,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/neo v2/sound_naototok_v2.wav
+api_v2,23,Bow V2,โบ V2,TH,Female,Child,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/bow v2/sound_meena_v2.wav
+api_v2,27,Alan V2,อลัน V2,TH,Male,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/alan/sound_nopchai_v2.wav
+api_v2,29,YingAiko V2,หญิงไอโกะ V2,TH,Female,Teens,Sweet,Storytelling; Anime,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/yingaiko v2/sound_ying_v2.wav
+api_v2,32,Aunty Grace V2,น้าเกรซ V2,TH,Female,Adult,Warm,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/aunty grace v2/sound_ple_v2.wav
+api_v2,37,Nick V2,นิค V2,TH,Male,Adult,Confident,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nick v2/sound_nid_v2.wav
+api_v2,41,Siren V2,ไซเรน V2,TH,Female,Teens,Exciting,Storytelling; News Reading,Fast,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/siren v2/sound_pla_v2.wav
+api_v2,43,JaiDee V2,ใจดี V2,TH,Male,Adult,,,Normal,5.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nut/sound_nut.wav
+api_v2,46,Alisa V2,อลิสา V2,TH,Female,Teens,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/alisa v2/sound_ati_v2.wav
+api_v2,48,Bamboo V2,แบมบู V2,TH,Female,Teens,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/bamboo v2/sound_boo_v2.wav
+api_v2,49,Oto V2,โอโตะ V2,TH,Male,Teens,Sweet,Storytelling; Anime,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/oto v2/sound_bung_v2.wav
+api_v2,50,Kru D Dee V2,ครูดีดี๊ V2,TH,Female,Adult,Trustworthy,Storytelling; Narrating,Slow,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/kru d dee v2/sound_care_v2.wav
+api_v2,52,Hiro V2,ฮิโระ V2,TH,Male,Teens,Cute,Storytelling; Anime,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/hiro v2/sound_fern_v2.wav
+api_v2,53,Ben V2,เบน V2,TH,Male,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ben v2/sound_flower_v2.wav
+api_v2,54,Sali V2,สาลี V2,TH,Female,Teens,,,Slow,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sali v2/sound_gift_v2.wav
+api_v2,55,Mr.Bread V2,นายเบรด V2,TH,Male,Teens,Playful,Storytelling; News Reading,Fast,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/mr.bread v2/sound_johny_v2.wav
+api_v2,57,Vanilla V2,วนิลา V2,TH,Female,Teens,Cute,Documentary; Storytelling,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vanilla v2/sound_kook_v2.wav
+api_v2,59,Ileen V2,ไอลีน V2,TH,Female,Teens,Cute,Narrating; Anime,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ileen v2/sound_leen_v2.wav
+api_v2,60,meow V2,เหมียว V2,TH,Female,Adult,Confident,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/meow v2/sound_milk_v2.wav
+api_v2,61,Jao Nerd V2,เจ้าเนิร์ด V2,TH,Female,Teens,Serious,Storytelling; Narrating,Slow,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/jao nerd v2/sound_ming_v2.wav
+api_v2,63,Neo V2,เนโอ V2,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/neo v2/sound_naototok_v2.wav
+api_v2,64,Teddy V2,เท็ดดี้ V2,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/teddy v2/sound_natthapong_v2.wav
+api_v2,65,Ngam V2,คุณงาม V2,TH,Female,Adult,Confident,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ngam v2/sound_ngam_v2.wav
+api_v2,67,Top V2,ท็อป V2,TH,Male,Teens,Soothing,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/top v2/sound_perce_v2.wav
+api_v2,68,Mani V2,มานี V2,TH,Female,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/mani v2/sound_ploy_v2.wav
+api_v2,70,Ananda V2,อนันดา V2,TH,Male,Child,,,Slow,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ananda v2/sound_radar_v2.wav
+api_v2,71,Know V2,น้องโนว์ V2,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/know v2/sound_ro_v2.wav
+api_v2,72,Fommy V2,ฟอมมี่ V2,TH,Female,Adult,Confident,Documentary; News Reading,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fommy v2/sound_rungthida_v2.wav
+api_v2,73,Kaew (Northeast) V2,คำแก้ว (อีสาน) V2,TH,Female,Adult,Northeastern accent,Storytelling; Local,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/kaew (northeast) v2/sound_somsamai_v2.wav
+api_v2,74,Uncle Warm V2,อาวอร์ม V2,TH,Male,Adult,Warm,Storytelling; Narrating,Slow,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/uncle warm v2/sound_tanong_v2.wav
+api_v2,76,tee V2,ตี๋ V2,TH,Male,Adult,Confident,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tee v2/sound_terapat_v2.wav
+api_v2,78,Toto V2,โตโต้ V2,TH,Male,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/toto v2/sound_to_v2.wav
+api_v2,79,Aekkarat V2,คุณเอกรัฐ V2,TH,Male,Adult,,,Normal,5.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tu/sound_tu.wav
+api_v2,95,Bio V2,ไบโอ V2,TH,Female,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/callcenter_bio/sound_callcenter_bio_v2.wav
+api_v2,212,nampueng_v3,nampueng_v3,TH,Female,Teens,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nampueng_v3/sound_nampueng_v3_v2.wav
+api_v2,326,Amb,น้องแอมบ์,TH,Male,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_kid_vc_ctb_nong_amb/sound_vc_kid_vc_ctb_nong_amb_v2.wav
+api_v2,327,Aonnie,น้องออนนี่,TH,Male,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/aonnie/sound_vc_kid_vc_ctb_nong_aonnie_v2.wav
+api_v2,328,Applepie,น้องแอปเปิ้ลพาย,TH,Female,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/applepie/sound_vc_kid_vc_ctb_nong_applepie_v2.wav
+api_v2,329,Care,น้องแคร์,TH,Female,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_kid_vc_ctb_nong_care/sound_vc_kid_vc_ctb_nong_care_v2.wav
+api_v2,330,Cream,น้องครีม,TH,Female,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_kid_vc_ctb_nong_cream/sound_vc_kid_vc_ctb_nong_cream_v2.wav
+api_v2,331,Naii,น้องนาย,TH,Male,Teens,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_kid_vc_ctb_nong_naii/sound_vc_kid_vc_ctb_nong_naii_v2.wav
+api_v2,332,Nemo,น้องเนโม่,TH,Male,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_kid_vc_ctb_nong_nemo/sound_vc_kid_vc_ctb_nong_nemo_v2.wav
+api_v2,333,Nin,น้องนิน,TH,Male,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_kid_vc_ctb_nong_nin/sound_vc_kid_vc_ctb_nong_nin_v2.wav
+api_v1,9,Nadia,นาเดียร์,EN,Female,Teens,,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nadia/sound_nadia.wav
+api_v1,20,Peter,ปีเตอร์,EN,Male,Adult,Trustworthy,Storytelling; News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/peter/sound_peter.wav
+api_v1,40,Matt,แม็ท,EN,Male,Teens,Sweet,Storytelling; News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/matt/sound_1_matt.wav
+api_v1,41,Ellie,เอลลี่,EN,Female,Teens,Confident,Storytelling; News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/ellie/sound_1_ellie.wav
+api_v1,59,Juan,เจวียน,ZH,Female,Teens,Sweet,Storytelling; Narrating,Slow,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/juan/sound_1_juan.wav
+api_v1,60,Xin Seller,แม่ค้าซิน,ZH,Female,Adult,Clear,News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/xin/sound_1_xin.wav
+api_v1,61,Jie Seller,พ่อค้าหวัง,ZH,Male,Teens,Clear,News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/jie/sound_1_jie.wav
+api_v1,62,Qing,ชิง,ZH,Female,Adult,Calm,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/qing/sound_qing.wav
+api_v1,63,Kanna Teacher ,ครูคันนะ,JA,Female,Teens,Clear,Narrating; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/kanna/sound_1_kanna.wav
+api_v1,64,Sae,ซาเอะ,JA,Female,Adult,Calm,News Reading; Storytelling,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/sae/sound_1_sae.wav
+api_v1,65,Dia,เดีย,ID,Female,Teens,Calm,Storytelling; News Reading,Normal,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/dia/sound_1_dia.wav
+api_v1,66,Taufik,เทาฟิก,ID,Male,Adult,Soothing,Storytelling; News Reading,Fast,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/taufik/sound_1_taufik.wav
+api_v1,67,Tedi,เทดี้,ID,Male,Teens,Confident,Storytelling; Documentary,Fast,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/tedi/sound_1_tedi.wav
+api_v1,68,Zamira Teacher ,ครูซามีระ,ID,Female,Adult,Calm,Storytelling; Teaching,Fast,0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/zamira/sound_1_zamira.wav
+api_v1,69,Dang,ดั่ง,VI,Male,Adult,Calm,Storytelling; Documentary,Slow,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/dang/sound_1_dang.wav
+api_v1,70,Hung,ฮง,VI,Male,Adult,Calm,Storytelling; Narrating,Slow,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/hung/sound_1_hung.wav
+api_v1,71,Thanh,ถั่ญ,VI,Female,Adult,Clear,Storytelling; News Reading,Fast,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/thanh/sound_1_thanh.wav
+api_v1,72,Diep,เซียบ,VI,Female,Adult,Calm,Storytelling; Narrating,Fast,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/diep/sound_1_diep.wav
+api_v1,73,Phuong,เฟื่อง,VI,Female,Adult,Confident,Documentary; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/phuong/sound_1_phuong.wav
+api_v1,74,Johnny,จอห์นนี่,VI,Male,Teens,Confident,Narrating; Anime,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/johnny/sound_1_johnny.wav
+api_v1,77,Phorn,พร,LO,Female,Adult,Gentle and tender,Narrating; Documentary,Slow,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/phorn/sound_1_phorn.wav
+api_v1,78,Sorn,ศร,LO,Male,Teens,Sweet,Storytelling; News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/sorn/sound_1_sorn.wav
+api_v1,79,Waris Teacher,ครูวริศ,LO,Female,Teens,Sweet,Narrating; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/waris/sound_1_waris.wav
+api_v1,80,BunYang,บุนยัง,LO,Male,Teens,Calm,Storytelling; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/bunyang/sound_1_bunyang.wav
+api_v1,81,Yati Teacher,ครูยาตี,MY,Female,Adult,Exciting,News Reading; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/yati/sound_1_yati.wav
+api_v1,82,Heyma,เฮย์มา,MY,Female,Adult,Gentle and tender,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/heyma/sound_1_heyma.wav
+api_v1,83,Gawa,กาว่า,MY,Female,Adult,Confident,Storytelling; Narrating,Fast,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/gawa/sound_gawa.wav
+api_v1,84,Cetan,ซีตาน,MY,Male,Teens,Calm,News Reading; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/cetan/sound_1_cetan.wav
+api_v1,94,Tola,โทลา,KM,Male,Teens,Clear,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/thanaw/sound_1_thanaw.wav
+api_v1,95,Mala,มาลา,KM,Female,Teens,Confident,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/mala/sound_1_mala.wav
+api_v1,96,Olivia,โอลิเวีย,EN,Female,Adult,Clear,News Reading; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/olivia/sound_1_olivia.wav
+api_v1,97,shawn,ฌอน,EN,Male,Adult,Trustworthy,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/shawn/sound_1_shawn.wav
+api_v1,98,Bobby Teacher ,อาจารย์บ็อบบี้,EN,Male,Adult,Clear,Narrating; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/bobby/sound_1_bobby.wav
+api_v1,99,Polly,พอลลี่,EN,Female,Adult,Confident,News Reading; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/polly/sound_1_polly.wav
+api_v1,100,Irene,ไอรีน,EN,Female,Adult,Sweet,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/irene/sound_1_irene.wav
+api_v1,101,Nelson,เนลสัน,EN,Male,Adult,Clear,Storytelling; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/nelson/sound_1_nelson.wav
+api_v1,102,Paul,พอล,EN,Male,Adult,Confident,News Reading; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/paul/sound_1_paul.wav
+api_v1,103,Alvin,เอลวิน,EN,Male,Adult,Gentle and tender,News Reading; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/alvin/sound_1_alvin.wav
+api_v1,104,Judy,จูดี้,EN,Female,Adult,Confident,Storytelling; News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/judy/sound_1_judy.wav
+api_v1,107,Kara,คาร่า,EN,Female,Adult,Clear,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/kara/sound_1_kara.wav
+api_v1,114,Janice,เจนิส,EN,Female,Adult,Calm,Storytelling; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/janice/sound_1_janice.wav
+api_v1,115,Ruby Teacher,ครูรูบี้,EN,Female,Adult,Clear,Narrating; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/ruby/sound_1_ruby.wav
+api_v1,119,Kubo,คุโบ,JA,Male,Adult,Soothing,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/kubo/sound_1_kubo.wav
+api_v1,139,Sreymum,ศรีมัม,KM,Male,Adult,Calm,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/sreymum/sound_1_sreymum.wav
+api_v1,140,Chai,ชัย,KM,Female,Adult,Calm,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/chai/sound_1_chai.wav
+api_v1,141,Samai,สมัย,KM,Male,Adult,Clear,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/samai/sound_1_samai.wav
+api_v1,142,Kosal Teacher,อาจารย์โกศล,KM,Male,Adult,Confident,News Reading; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/kosal/sound_1_kosal.wav
+api_v1,143,Sopheap,โซฟีป,KM,Female,Adult,Confident,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/sopheap/sound_1_sopheap.wav
+api_v1,144,Sokhim,โสคิม,KM,Male,Adult,Confident,News Reading; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/sokhim/sound_1_sokhim.wav
+api_v1,145,Rathaa Teacher,ครูรฐา,KM,Female,Adult,Confident,Narrating; Teaching,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/ratha/sound_1_ratha.wav
+api_v1,146,Kriza,กรีซ่า,FIL,Female,Adult,Clear,Storytelling; Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/kriza/sound_1_kriza.wav
+api_v1,147,Mickyla Seller,แม่ค้ามิคเคล่า,FIL,Female,Adult,Sweet,Narrating,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/mickyla/sound_1_mickyla.wav
+api_v1,148,Shuncey,ชานซี,FIL,Male,Adult,Confident,Storytelling; News Reading,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/shuncey/sound_1_shuncey.wav
+api_v1,154,Tiffani,ทิฟฟานี่,EN,Female,Adult,Trustworthy,Storytelling; News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tiffani/sound_tiffani.wav
+api_v1,163,Ari,อาลี,ID,Male,Adult,Gentle and tender,Storytelling; Documentary,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ari/sound_ari.wav
+api_v1,198,fr_4,fr_4,FR,Male,Adult,Soothing,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fr_4/sound_fr_4.wav
+api_v1,208,Andy,แอนดี้,EN,Male,Adult,Trustworthy; Calm,Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/andy/sound_1_andy.wav
+api_v1,209,Lara Reed,ลาร่า รีด,EN,Female,Adult,Clear; Calm,Narrating; Documentary,Normal,1.0,https://bn-voice-pics.s3.ap-southeast-1.amazonaws.com/picture/lara/sound_1_lara.wav
+api_v1,214,Dewi,เดวี,ID,Female,Adult,Mellow,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_annevalerina/sound_id_annevalerina.wav
+api_v1,215,sari Seller,แม่ค้าซารี,ID,Female,Adult,Clear,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_keyzaaluna/sound_id_keyzaaluna.wav
+api_v1,216,Rizky Teacher,ครูริซกี,ID,Male,Adult,Clear; Calm,Teaching,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_raka/sound_id_raka.wav
+api_v1,217,Andi,แอนดิ,ID,Male,Adult,Exciting,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_wangga/sound_id_wangga.wav
+api_v1,218,Intan Seller,แม่ค้าอินทาน,ID,Female,Adult,Trustworthy; Clear,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_annisa_mery/sound_id_annisa_mery.wav
+api_v1,220,Ayu,อายู,ID,Female,Adult,Serious,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_nazira/sound_id_nazira.wav
+api_v1,221,Rina Teacher,ครูรินา ,ID,Female,Adult,Trustworthy; Serious,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_amelia/sound_id_amelia.wav
+api_v1,222,Lina Seller,แม่ค้าลินา,ID,Female,Adult,Calm,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_refanita/sound_id_refanita.wav
+api_v1,223,Nina,นีนา,ID,Female,Adult,Gentle and tender,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_haniffa/sound_id_haniffa.wav
+api_v1,224,Maya,มาญา,ID,Female,Adult,Mellow,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_rifana/sound_id_rifana.wav
+api_v1,225,Annisa,อันนิสา,ID,Female,Adult,Mellow,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_nadia/sound_id_nadia.wav
+api_v1,247,fil_G0005,fil_G0005,FIL,Male,Adult,Mellow,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_g0005/sound_fil_g0005.wav
+api_v1,253,fil_G3001,fil_G3001,FIL,Male,Adult,Calm,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_g3001/sound_fil_g3001.wav
+api_v1,257,Sara,ซาร่า,SG,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sg_imda_nsc_007_en_sara/sound_sg_imda_nsc_007_en_sara.wav
+api_v1,258,Ashley,แอชลี่,SG,Female,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sg_imda_nsc_009_en_ashley/sound_sg_imda_nsc_009_en_ashley.wav
+api_v1,259,sg_imda_nsc_010_en_Guy,sg_imda_nsc_010_en_Guy,SG,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sg_imda_nsc_010_en_guy/sound_sg_imda_nsc_010_en_guy.wav
+api_v1,260,sg_imda_nsc_011_en_Jacob,sg_imda_nsc_011_en_Jacob,SG,Male,Adult,,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/sg_imda_nsc_011_en_jacob/sound_sg_imda_nsc_011_en_jacob.wav
+api_v1,262,Sara Seller,แม่ค้าซารา,AR,Female,Adult,Trustworthy; Gentle and tender,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ar_james_en_ashley/sound_ar_james_en_ashley.wav
+api_v1,263,Omar,โอมาร์,AR,Male,Adult,Trustworthy; Calm,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ar_matilda_en_jacob/sound_ar_matilda_en_jacob.wav
+api_v1,264,Ahmed Gamer,อาเหม็ด,AR,Male,Adult,Exciting; Clear,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ar_newar_en_guy/sound_ar_newar_en_guy.wav
+api_v1,265,Nora Seller,แม่ค้าโนรา,AR,Female,Adult,Clear; Calm,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ar_sam_en_sara/sound_ar_sam_en_sara.wav
+api_v1,271,Sofia Seller,แม่ค้าโซเฟีย,ES,Female,Adult,Trustworthy,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/es_demarzo_en_ashley/sound_es_demarzo_en_ashley.wav
+api_v1,272,Gavi Teacher,ครูกาบี,ES,Male,Adult,Mellow,Narrating; Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/es_demarzo_en_jason/sound_es_demarzo_en_jason.wav
+api_v1,273,Pedri,เปดรี,ES,Male,Adult,Exciting,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/es_karen_savage_en_jacob/sound_es_karen_savage_en_jacob.wav
+api_v1,274,Bianca Teacher,ครูบิอันกา,ES,Female,Adult,Trustworthy; Gentle and tender,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/es_karen_savage_en_sara/sound_es_karen_savage_en_sara.wav
+api_v1,275,Elise Seller,แม่ค้าเอลิเซ,FR,Female,Adult,Clear,News Reading; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fr_giovanni_en_sara/sound_fr_giovanni_en_sara.wav
+api_v1,278,Park Gamer,ปาร์ค,KO,Male,Adult,Exciting,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ko_kss2_en_alex/sound_ko_kss2_en_alex.wav
+api_v1,279,Silvia,ซิลเวีย,DE,Female,Adult,Clear; Serious,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/de_clyde_en_bella1/sound_de_clyde_en_bella1.wav
+api_v1,280,Eva Teacher,ครูเอฟา,DE,Female,Adult,Trustworthy; Clear,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/de_dorothy_en_vanessa1/sound_de_dorothy_en_vanessa1.wav
+api_v1,281,Thomas,โธมัส,DE,Male,Adult,Trustworthy; Exciting,Narrating; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/de_harry_en_guy/sound_de_harry_en_guy.wav
+api_v1,282,Stephan,สเตฟาน,DE,Male,Adult,Calm; Soothing,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/de_mimi_en_alex/sound_de_mimi_en_alex.wav
+api_v1,288,Johan,โยฮัน,NL,Male,Adult,Exciting,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nl_mijlen_en_arnold/sound_nl_mijlen_en_arnold.wav
+api_v1,345,Alex,อเล็กซ์ ,RU,Male,Adult,Confident,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ru_ruslan_en_adam/sound_ru_ruslan_en_adam.wav
+api_v1,346,Nastya,นาสตยา,RU,Female,Adult,Clear,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ru_ruslan_en_bella1/sound_ru_ruslan_en_bella1.wav
+api_v1,347,Sasha Seller,แม่ค้าซาชา,RU,Female,Adult,Clear,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ru_ruslan_en_gigi/sound_ru_ruslan_en_gigi.wav
+api_v1,348,Nikita Professor,อาจารย์นิกิตา,RU,Male,Adult,Serious,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ru_ruslan_en_michael/sound_ru_ruslan_en_michael.wav
+api_v1,349,Min-jun Seller,พ่อค้ามินจุน,KO,Male,Adult,Trustworthy,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ko_kss2_en_alex/sound_ko_kss2_en_alex.wav
+api_v1,350, Ji-a,จีอา,KO,Female,Adult,Sweet,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ko_kss2_th_ngam/sound_ko_kss2_th_ngam.wav
+api_v1,351,Su-a Professor,อาจารย์ซูอา,KO,Female,Adult,Serious,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ko_kss2_th_tao/sound_ko_kss2_th_tao.wav
+api_v1,352,Maria,มาเรีย,PT-BR,Female,Adult,Confident,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/pt-br_en_elli/sound_pt-br_en_elli.wav
+api_v1,353,Ana,อานา,PT-BR,Female,Adult,Confident,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/pt-br_en_matilda/sound_pt-br_en_matilda.wav
+api_v1,354,Hugo Gamer,ฮูโก้ ,PT-BR,Male,Adult,Playful,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/pt-br_en_ryan/sound_pt-br_en_ryan.wav
+api_v1,355,Lucas,ลูคัส,PT-BR,Male,Adult,Playful,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/pt-br_th_nadech/sound_pt-br_th_nadech.wav
+api_v1,356,Izan,อิซาน,MS,Male,Adult,Confident,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ms_osman_en_alex/sound_ms_osman_en_alex.wav
+api_v1,357,Ira,อิรา,MS,Female,Adult,Exciting,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ms_osman_en_freya/sound_ms_osman_en_freya.wav
+api_v1,358,Dhia Seller,แม่ค้าดียา,MS,Female,Adult,Playful,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ms_osman_en_gigi/sound_ms_osman_en_gigi.wav
+api_v1,359,Faiz,ฟาอิซ,MS,Male,Adult,Serious,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ms_osman_th_jay/sound_ms_osman_th_jay.wav
+api_v1,363,Usha,อูชา,HI,Female,Adult,Clear,News Reading; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/hi_usha/sound_hi_usha.wav
+api_v1,364,Ram,ราม,HI,Male,Adult,Mellow,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/hi_ram/sound_hi_ram.wav
+api_v1,365,Preeti,ปรีติ,HI,Female,Teens,Clear,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/hi_preeti/sound_hi_preeti.wav
+api_v1,366,Andrea,แอนเดรีย,FIL,Female,Adult,Mellow,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_andrea/sound_fil_andrea.wav
+api_v1,367,Isa Professor,อาจารย์อีซา,FIL,Female,Adult,Trustworthy,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_isa/sound_fil_isa.wav
+api_v1,368,Kristine Seller,แม่ค้าคริสติน,FIL,Female,Teens,Playful,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_kristine/sound_fil_kristine.wav
+api_v1,369,Christina,คริสติน่า,FIL,Female,Teens,Clear,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_christina/sound_fil_christina.wav
+api_v1,370,Maria,มาเรีย,FIL,Female,Teens,Cute,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_maria/sound_fil_maria.wav
+api_v1,371,Ayani,อายานี,FIL,Male,Adult,Confident,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_ayani/sound_fil_ayani.wav
+api_v1,372,Sofia,โซเฟีย,FIL,Female,Teens,Trustworthy,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/fil_sofia/sound_fil_sofia.wav
+api_v1,373,Cristiana,คริสเทียน่า,IT,Female,Adult,Clear,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/cristiana/sound_cristiana.wav
+api_v1,374,Leone,ลีโอเน่,IT,Female,Adult,Trustworthy,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/leone/sound_leone.wav
+api_v1,375,Alfeo,อัลเฟโอ,IT,Male,Adult,Serious,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/alfeo/sound_alfeo.wav
+api_v1,376,Rosalia Professor,อาจารย์โรซาลี,IT,Male,Adult,Clear,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/rosalia/sound_rosalia.wav
+api_v1,377,Lauren,ลอเรน,EN,Female,Adult,Clear,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_lauren/sound_en_lauren.wav
+api_v1,378,Blaze,เบลซ,EN,Male,Adult,Confident,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_blaze/sound_en_blaze.wav
+api_v1,379,Kelvin Teacher,ครูเคลวิน,EN,Male,Adult,Serious,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_kelvin/sound_en_kelvin.wav
+api_v1,380,Kassidy,แคสซิดี้,EN,Female,Adult,Confident,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_kassidy/sound_en_kassidy.wav
+api_v1,381,Nia,เนีย,EN,Female,Adult,Gentle and tender,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_nia/sound_en_nia.wav
+api_v1,382,Camron,คาเมรอน,EN,Male,Adult,Trustworthy,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_camron/sound_en_camron.wav
+api_v1,383,Spike,สไปค์,EN,Male,Teens,Exciting,Documentary; Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_spike/sound_en_spike.wav
+api_v1,384,Allan,อลัน,EN,Male,Adult,Soothing,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_allan/sound_en_allan.wav
+api_v1,385,Danni Seller,แม่ค้าเดนนี่,EN,Female,Teens,Clear,Storytelling,Fast,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_danni/sound_en_danni.wav
+api_v1,386,Danny Gamer,แดนนี่ ,EN,Male,Adult,Exciting,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_danny/sound_en_danny.wav
+api_v1,387,Clark,คลาร์ก,EN,Male,Adult,Trustworthy,News Reading,Fast,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_clark/sound_en_clark.wav
+api_v1,388,Flossie,โฟลซี่,EN,Female,Teens,Exciting,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_flossie/sound_en_flossie.wav
+api_v1,389,Wade Professor,อาจารย์วาดี้,EN,Male,Adult,Soothing,Teaching,Fast,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_wade/sound_en_wade.wav
+api_v1,390,Dina Professor,อาจารย์ไดน่า,EN,Female,Adult,Clear,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_dina/sound_en_dina.wav
+api_v1,391,Bonnie,บอนนี่,EN,Female,Child,Cute,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_bonnie/sound_en_bonnie.wav
+api_v1,392,Jordan,จอแดน,EN,Male,Adult,Clear,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_jordan/sound_en_jordan.wav
+api_v1,393,Alesia,อเลเซีย,EN,Female,Adult,Confident,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_alesia/sound_en_alesia.wav
+api_v1,394,Larry,ลาร์รี่,EN,Male,Adult,Soothing,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_larry/sound_en_larry.wav
+api_v1,395,Jen,เจน,EN,Female,Teens,Playful,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_jen/sound_en_jen.wav
+api_v1,396,Shelley,เชลลีย์,EN,Female,Adult,Trustworthy,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_ellie/sound_en_ellie.wav
+api_v1,397,Hendrix,เฮนดริก,EN,Male,Adult,Mellow,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_hendrix/sound_en_hendrix.wav
+api_v1,398,Mary Seller,แม่ค้าแมรี่,EN,Female,Teens,Exciting,Storytelling,Fast,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_mary/sound_en_mary.wav
+api_v1,399,Serina,เซรีน่า,EN,Female,Teens,Playful,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/en_serina/sound_en_serina.wav
+api_v1,400,Wen,เวน,ZH,Female,Adult,Mellow,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_wen/sound_zh_wen.wav
+api_v1,401,Tao Teacher,ครูเต๋า,ZH,Male,Adult,Serious,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_tao/sound_zh_tao.wav
+api_v1,402,Ling,หลิง,ZH,Female,Adult,Cute,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_ling/sound_zh_ling.wav
+api_v1,403,Kai,ไคล์,ZH,Male,Adult,Clear,News Reading; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_kai/sound_zh_kai.wav
+api_v1,404,Jia Teacher,ครูเจีย,ZH,Female,Adult,Cute,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_jia/sound_zh_jia.wav
+api_v1,405,Min,มิน,ZH,Female,Teens,Cute,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_min/sound_zh_min.wav
+api_v1,406,Mei Seller,แม่ค้าเม่ย,ZH,Female,Adult,Serious,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_mei/sound_zh_mei.wav
+api_v1,407,Chen,เฉิน,ZH,Male,Adult,Trustworthy,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_chen/sound_zh_chen.wav
+api_v1,408,Shu,ซู,ZH,Female,Adult,Serious,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/zh_shu/sound_zh_shu.wav
+api_v1,409,Yuuta,ยูตะ,JA,Male,Adult,Exciting,News Reading; Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ja_yuuta/sound_ja_yuuta.wav
+api_v1,410,Suzume,สึซุเมะ,JA,Female,Adult,Clear,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ja_suzume/sound_ja_suzume.wav
+api_v1,411,Masaru,มาซารุ,JA,Male,Adult,Confident,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ja_masaru/sound_ja_masaru.wav
+api_v1,412,Kaito, ไคโตะ,JA,Male,Adult,Confident,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/ja_kaito/sound_ja_kaito.wav
+api_v1,413,Anan,อนัน,LO,Male,Adult,Confident,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_anan/sound_lo_anan.wav
+api_v1,414,Anny,แอนนี่,LO,Female,Adult,Mellow,Storytelling; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_anny/sound_lo_anny.wav
+api_v1,415,Aon,ออน,LO,Female,Adult,Mellow,Storytelling; Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_aon/sound_lo_aon.wav
+api_v1,416,Aoy,ออย,LO,Female,Adult,Confident,Storytelling; Narrating; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_aoy/sound_lo_aoy.wav
+api_v1,417,Athit,อาทิตย์,LO,Male,Adult,Trustworthy,News Reading; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_athit/sound_lo_athit.wav
+api_v1,418,Teacher Bo ,อาจารย์โบ,LO,Female,Adult,Trustworthy,Narrating; Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_bo/sound_lo_bo.wav
+api_v1,419,Bouaban,บัวบาน,LO,Female,Adult,Mellow,News Reading; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_bouaban/sound_lo_bouaban.wav
+api_v1,420,Chinda,จินดา,LO,Female,Adult,Clear,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_chinda/sound_lo_chinda.wav
+api_v1,421,Damdy,แดมมี่,LO,Female,Adult,Cute,News Reading; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_damdy/sound_lo_damdy.wav
+api_v1,422,Dokmai,ดอกไม้,LO,Female,Adult,Cute,Storytelling; Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_dokmai/sound_lo_dokmai.wav
+api_v1,423,Gampha,กัมพา,LO,Male,Adult,Clear,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_gampha/sound_lo_gampha.wav
+api_v1,424,Happynight,แฮปปี้ไนท์,LO,Male,Adult,Confident,Storytelling; News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_happynight/sound_lo_happynight.wav
+api_v1,425,Hom,หอม,LO,Female,Adult,Calm,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_hom/sound_lo_hom.wav
+api_v1,426,Inpaeng,อินแปง,LO,Male,Adult,Calm,Storytelling; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_inpaeng/sound_lo_inpaeng.wav
+api_v1,427,Ju,จู,LO,Male,Adult,Cute,Storytelling; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_ju/sound_lo_ju.wav
+api_v1,428,Kaysone,ไกสอน,LO,Female,Adult,Confident; Clear,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_kaysone/sound_lo_kaysone.wav
+api_v1,429,Khamhou,คำอ่อน,LO,Male,Adult,Clear,News Reading; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_khamhou/sound_lo_khamhou.wav
+api_v1,430,Khamkeo,คำเค,LO,Male,Child,Cute,Anime; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_khamkeo/sound_lo_khamkeo.wav
+api_v1,431,Khamlar Gamer,คำร่า ,LO,Male,Adult,Exciting,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_khamlar/sound_lo_khamlar.wav
+api_v1,432,Kinoy,คิโนย,LO,Male,Adult,Exciting; Soothing,,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_kinoy/sound_lo_kinoy.wav
+api_v1,433,Koung,ก้อง,LO,Male,Child,Cute,Storytelling; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_koung/sound_lo_koung.wav
+api_v1,434,Larsoy,ลาร์ซอย,LO,Female,Adult,Cute; Confident,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_larsoy/sound_lo_larsoy.wav
+api_v1,435,Manee,มณี,LO,Female,Adult,Calm,Narrating; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_manee/sound_lo_manee.wav
+api_v1,436,Teacher Mao,ครูเหมา,LO,Female,Teens,Clear,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_mao/sound_lo_mao.wav
+api_v1,437,Matthana,มัณฑนา,LO,Female,Adult,Cute; Sweet,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_matthana/sound_lo_matthana.wav
+api_v1,438,May Seller,แม่ค้าเมย์,LO,Female,Adult,Clear,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_may/sound_lo_may.wav
+api_v1,439,Teacher Min,อาจารย์มิน,LO,Female,Adult,Trustworthy,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_min/sound_lo_min.wav
+api_v1,440,Nalee,นารี,LO,Female,Adult,Sweet,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_nalee/sound_lo_nalee.wav
+api_v1,441,Nalika,นาลิกา,LO,Female,Adult,Calm,Narrating; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_nalika/sound_lo_nalika.wav
+api_v1,442,Teacher Namwan,ครูน้ำหวาน,LO,Female,Adult,Cute; Sweet,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_namwan/sound_lo_namwan.wav
+api_v1,443,Nong,น้อง,LO,Female,Child,Sweet; Calm,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_nong/sound_lo_nong.wav
+api_v1,444,Nun,นุ่น,LO,Female,Adult,Cute; Confident,Storytelling,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_nun/sound_lo_nun.wav
+api_v1,445,Teacher Nut,อาจารย์นัท,LO,Female,Adult,Trustworthy,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_nut/sound_lo_nut.wav
+api_v1,446,Phana Gamer,ภนา ,LO,Male,Adult,Exciting,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_phana/sound_lo_phana.wav
+api_v1,447,Teacher Phim,อาจารย์พิม,LO,Female,Adult,Confident,News Reading; Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_phim/sound_lo_phim.wav
+api_v1,448,Phone,โฟน,LO,Female,Adult,Cute; Calm,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_phone/sound_lo_phone.wav
+api_v1,449,Piw Gamer,ปิว ,LO,Female,Adult,Exciting,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_piw/sound_lo_piw.wav
+api_v1,450,Pong,พงศ์,LO,Male,Adult,Confident; Clear,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_pong/sound_lo_pong.wav
+api_v1,451,Sakone,สาคอน,LO,Male,Adult,Calm,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_sakone/sound_lo_sakone.wav
+api_v1,452,Setha,เศรษฐา,LO,Male,Adult,Mellow,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_setha/sound_lo_setha.wav
+api_v1,453,Sinxay,สินชัย,LO,Male,Adult,Clear,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_sinxay/sound_lo_sinxay.wav
+api_v1,454,Som-o,ส้มโอ,LO,Female,Adult,Cute; Sweet,Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_som-o/sound_lo_som-o.wav
+api_v1,455,Sompong,สมปอง,LO,Female,Adult,Cute,Anime; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_sompong/sound_lo_sompong.wav
+api_v1,456,Somsy seller,แม่ค้าสมศรี,LO,Female,Adult,Confident; Clear,,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_somsy/sound_lo_somsy.wav
+api_v1,457,Teacher Thida,อาจารย์ธิดา,LO,Female,Adult,Calm,Documentary; Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_thida/sound_lo_thida.wav
+api_v1,458,Thiw,ทิว,LO,Male,Adult,Calm,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_thiw/sound_lo_thiw.wav
+api_v1,459,Toukta,ตุ๊กตา,LO,Female,Adult,Calm,Narrating; Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_toukta/sound_lo_toukta.wav
+api_v1,460,Yoy, โย,LO,Male,Adult,Calm; Soothing,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lo_yoy/sound_lo_yoy.wav
+api_v1,461,Ada,อะดา,TR,Female,Adult,Sweet,Storytelling; News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_ada/sound_tr_ada.wav
+api_v1,462,Ahmet,อาห์เม็ท,TR,Male,Adult,Calm; Soothing,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_ahmet/sound_tr_ahmet.wav
+api_v1,463,Aslan,อัสลัน,TR,Male,Adult,Exciting,News Reading; Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_aslan/sound_tr_aslan.wav
+api_v1,464,Azra,อัซรา,TR,Female,Adult,Cute,Storytelling; Anime,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_azra/sound_tr_azra.wav
+api_v1,465,Professor Burak,อาจารย์บูรัค,TR,Male,Adult,Trustworthy; Clear,Teaching,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_burak/sound_tr_burak.wav
+api_v1,466,Ceylan,เจย์ลัน,TR,Male,Adult,Confident; Sweet,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_ceylan/sound_tr_ceylan.wav
+api_v1,467,Professor Derya,อาจารย์เดรีย,TR,Female,Adult,Calm,Teaching; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_derya/sound_tr_derya.wav
+api_v1,468,Ela,เอลา,TR,Female,Adult,Cute; Calm,News Reading,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_ela/sound_tr_ela.wav
+api_v1,469,Faruk,ฟารุก,TR,Male,Adult,Clear; Calm,Narrating,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_faruk/sound_tr_faruk.wav
+api_v1,470,Kerim,เคริม,TR,Male,Adult,Serious; Calm,Documentary,Normal,1.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_kerim/sound_tr_kerim.wav
+api_v1,471,Melik,เมลิก,TR,Male,Adult,Soothing,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/tr_melik/sound_tr_melik.wav
+api_v1,472,Aili,ไอลี,ID,Female,Adult,Cute,Storytelling; Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_aili/sound_id_aili.wav
+api_v1,473,Alina_a,อาลินา,ID,Female,Adult,Cute; Sweet,Anime,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_alina_a/sound_id_alina_a.wav
+api_v1,474,Alvia_meilina,อัลเวีย เมลินา,ID,Female,Adult,Exciting,Anime; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_alvia_meilina/sound_id_alvia_meilina.wav
+api_v1,475,Ando,อันโด,ID,Male,Adult,Exciting,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_ando/sound_id_ando.wav
+api_v1,476,Ayu,อายุ,ID,Female,Adult,Exciting,Storytelling; News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_ayu/sound_id_ayu.wav
+api_v1,477, Teacher Betcy,ครูเบทซี,ID,Female,Adult,Trustworthy; Clear,Teaching,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_betcy/sound_id_betcy.wav
+api_v1,478,Christa_a,คริสตา,ID,Female,Adult,Soothing,News Reading; Documentary,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_christa_a/sound_id_christa_a.wav
+api_v1,479,Cut_j,คัท เจ,ID,Male,Adult,Cute; Calm,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_cut_j/sound_id_cut_j.wav
+api_v1,480,Dania,ดาเนีย,ID,Female,Adult,Clear; Calm,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_dania/sound_id_dania.wav
+api_v1,481,Della,เดลลา,ID,Female,Adult,Cute; Sweet,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_della/sound_id_della.wav
+api_v1,482,Dwi,ดวี,ID,Female,Child,Cute,Anime,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_dwi/sound_id_dwi.wav
+api_v1,483,Dwi_rumi,ดวี รูมิ,ID,Female,Adult,Calm,Narrating; Documentary,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_dwi_rumi/sound_id_dwi_rumi.wav
+api_v1,484,Eka_a,เอกา,ID,Male,Adult,Calm; Soothing,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_eka_a/sound_id_eka_a.wav
+api_v1,485,Eni seller,แม่ค้าเอไน,ID,Female,Adult,Confident,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_eni/sound_id_eni.wav
+api_v1,486,Fransesco seller,พ่อค้าฟรานเชสโก,ID,Male,Adult,Trustworthy; Confident,,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_fransesco/sound_id_fransesco.wav
+api_v1,487,Gina,จีน่า,ID,Female,Adult,Calm,Narrating; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_gina/sound_id_gina.wav
+api_v1,488,Irly seller,แม่ค้าอิรลี,ID,Female,Adult,Trustworthy,Documentary,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_irly/sound_id_irly.wav
+api_v1,489,Irvan,อีร์วาน,ID,Male,Adult,Clear; Calm,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_irvan/sound_id_irvan.wav
+api_v1,490,Lilis,ลีลิส,ID,Female,Adult,Calm,Documentary; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_lilis/sound_id_lilis.wav
+api_v1,491,Mely,เมลี,ID,Female,Adult,Sweet,News Reading; Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_mely/sound_id_mely.wav
+api_v1,492,Mona,โมนา,ID,Female,Adult,Confident; Sweet,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_mona/sound_id_mona.wav
+api_v1,493,Muhammad_iqbal,มูฮัมมัด อิกบาล,ID,Male,Adult,Exciting; Soothing,,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_muhammad_iqbal/sound_id_muhammad_iqbal.wav
+api_v1,494,Teacher Nahri_s,ครูนาห์รี,ID,Female,Adult,Confident; Clear,Teaching,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_nahri_s/sound_id_nahri_s.wav
+api_v1,495,Nawra,นาวรา,ID,Female,Adult,Confident; Clear,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_nawra/sound_id_nawra.wav
+api_v1,496,Neni_rizka,เนนี่ ริซกา,ID,Female,Adult,Cute; Sweet,Anime,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_neni_rizka/sound_id_neni_rizka.wav
+api_v1,497,Nizarea_frey,นิเซอรา ฟรี่,ID,Female,Adult,Clear; Calm,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_nizarea_frey/sound_id_nizarea_frey.wav
+api_v1,498,Ovy,โอวี่,ID,Female,Adult,Sweet; Calm,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_ovy/sound_id_ovy.wav
+api_v1,499,Paula,พอลา,ID,Female,Adult,Calm; Mellow,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_paula/sound_id_paula.wav
+api_v1,500,Praptiwi,พรัปติวี,ID,Female,Adult,Cute; Sweet,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_praptiwi/sound_id_praptiwi.wav
+api_v1,501,Rihad,ริฮาด,ID,Male,Adult,Soothing; Warm,Documentary,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_rihad/sound_id_rihad.wav
+api_v1,502,Rina seller,แม่ค้ารีนา,ID,Female,Adult,Confident; Clear,,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_rina/sound_id_rina.wav
+api_v1,503,Rini_rinjani,รีนี รินจานี,ID,Female,Adult,Calm; Mellow,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_rini_rinjani/sound_id_rini_rinjani.wav
+api_v1,504,Ruby,รูบี้,ID,Female,Adult,Sweet; Calm,Storytelling,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_ruby/sound_id_ruby.wav
+api_v1,505,Ryan,ริยาน,ID,Male,Adult,,Documentary,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_ryan/sound_id_ryan.wav
+api_v1,506,Professor Sayid,อาจารย์ซายิด,ID,Male,Adult,Trustworthy,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_sayid/sound_id_sayid.wav
+api_v1,507,Shabrina,ชาบรีน่า,ID,Female,Adult,Cute,Narrating; Anime,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_shabrina/sound_id_shabrina.wav
+api_v1,508,Professor Sheva_david_h,อาจารย์เชวา ดาเวิด เฮช,ID,Female,Adult,Clear,Narrating; Teaching,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_sheva_david_h/sound_id_sheva_david_h.wav
+api_v1,509,Siti_q,ซิติ คิว,ID,Female,Adult,Cute; Confident,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_siti_q/sound_id_siti_q.wav
+api_v1,510,Titin,ติติน,ID,Female,Adult,Calm; Mellow,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_titin/sound_id_titin.wav
+api_v1,511,Umi,อูมิ,ID,Female,Adult,Cute; Calm,Narrating,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_umi/sound_id_umi.wav
+api_v1,512,Widha,วีดา,ID,Female,Adult,Sweet; Calm,Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_widha/sound_id_widha.wav
+api_v1,513,Zaipan,สายปาน,ID,Male,Adult,,News Reading,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_zaipan/sound_id_zaipan.wav
+api_v1,514,Zizi,ซีซี,ID,Female,Adult,Confident,News Reading; Local,Normal,0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/id_zizi/sound_id_zizi.wav
+api_v2,12,Nadia V2,นาเดียร์ V2,EN,Female,Teens,Confident,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/nadia v2/sound_helen_v2.wav
+api_v2,83,Lara Reed V2,ลาร่า รีด V2,EN,Female,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/lara reed v2/sound_en_michi_v2.wav
+api_v2,84,Andy V2,แอนดี้ V2,EN,Male,Adult,,,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/andy v2/sound_en_amith_v2.wav
+api_v2,191,Timmy V2,ทิมมี่ V2,EN,Male,Child,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_kidexplore/sound_vc_en_kidexplore_v2.wav
+api_v2,192,Emma V2,เอมม่า V2,EN,Female,Teens,Sweet,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_henred/sound_vc_en_henred_v2.wav
+api_v2,193,Chris,คริส,EN,Male,Adult,Gentle,Storytelling; Narrating,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ballen/sound_vc_en_ballen_v2.wav
+api_v2,225,Michael V2,ไมเคิล V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_faelan/sound_vc_en_ctb_mr_faelan_v2.wav
+api_v2,226,Albert V2,อัลเบิร์ด V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_faron/sound_vc_en_ctb_mr_faron_v2.wav
+api_v2,227,James V2,เจมส์ V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_faustino/sound_vc_en_ctb_mr_faustino_v2.wav
+api_v2,228,John V2,จอห์น V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_fenwick/sound_vc_en_ctb_mr_fenwick_v2.wav
+api_v2,229,Joseph V2,โจเซฟ V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_ferris/sound_vc_en_ctb_mr_ferris_v2.wav
+api_v2,230,Rowan V2,โรแวน V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_filbert/sound_vc_en_ctb_mr_filbert_v2.wav
+api_v2,231,Orion V2,โอไรออน V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_fintan/sound_vc_en_ctb_mr_fintan_v2.wav
+api_v2,232,Tristan V2,ทริสตัน V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_fiorenzo/sound_vc_en_ctb_mr_fiorenzo_v2.wav
+api_v2,233,William V2,วิลเลี่ยม V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_flavian/sound_vc_en_ctb_mr_flavian_v2.wav
+api_v2,234,Andrew V2,แอนดรูว์ V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_mr_florent/sound_vc_en_ctb_mr_florent_v2.wav
+api_v2,235,Morgan V2,มอร์แกน V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_farahani/sound_vc_en_ctb_ms_farahani_v2.wav
+api_v2,236,Remy V2,เรมี่ V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_faustina/sound_vc_en_ctb_ms_faustina_v2.wav
+api_v2,237,Fiona V2,ฟิโอนา V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_felina/sound_vc_en_ctb_ms_felina_v2.wav
+api_v2,239,Amanda V2,อแมนดา V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_fionnuala/sound_vc_en_ctb_ms_fionnuala_v2.wav
+api_v2,240,Amber V2,แอมเบอร์ V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_fiora/sound_vc_en_ctb_ms_fiora_v2.wav
+api_v2,241,Christa V2,คริสต้า V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_fiorella/sound_vc_en_ctb_ms_fiorella_v2.wav
+api_v2,242,Noelle V2,โนเอล V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_flavia/sound_vc_en_ctb_ms_flavia_v2.wav
+api_v2,244,Jules V2,จูลส์ V2,EN,Male,Teens,เสียงนุ่มนวล,สไตล์เล่าเรื่อง; สไตล์บรรยาย,Normal,2.0,https://botnoi-voice.s3.ap-southeast-1.amazonaws.com/picture/vc_en_ctb_ms_francina/sound_vc_en_ctb_ms_francina_v2.wav

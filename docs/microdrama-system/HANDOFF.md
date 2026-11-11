@@ -50,10 +50,16 @@ Everything below this section is history. This section is the live state.
 
 ### Operator to-dos
 
-- Fill `v3-workflow/botnoi-v4-voices.csv`.
+- **Botnoi catalogue:** add only the marketplace/Studio voices the public API lacks (elderly, monk, other
+  archetypes) to `v3-workflow/botnoi-v4-voices.csv`.
+  - The API voices are auto-imported (snapshot: `v3-workflow/botnoi-api-speakers-2026-11-11.csv`, 443
+    voices, 162 Thai).
+  - **Confirm the orchestrator's default:** community voices need per-voice approval (DECISIONS "D2
+    update").
 - Rotate the Dramabox Bot token before go-live.
-- DNS for dramabox.aivora.agency.
-- Approve commits of the v3 docs. **They are uncommitted in the drama-box repo.**
+- ~~DNS for dramabox.aivora.agency~~: **done** (Cloudflare, resolves to proxied A records). The app route
+  (Coolify/Traefik) comes with phase A6c.
+- ~~Commit the v3 docs~~: **done**, `5d79ae8` on `feat/microdrama-m0-m4` (local; not pushed).
 
 ### Routing rules in force
 

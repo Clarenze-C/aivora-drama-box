@@ -140,9 +140,54 @@ shot).
   - A missing or unapproved variant blocks dispatch.
 - **V3R-11, base voices:** "I need the system to suggest and shortlist the 2–3 voices first (no need to
   generate). I will then generate the neutral and the type of expressions."
-  - Spec: the system ranks an **operator-curated Botnoi V4 voice catalogue** (Botnoi has no voice-list API)
+  - Spec: the system ranks an **operator-curated Botnoi V4 voice catalogue** (superseded 11 Nov: see "D2 update: Botnoi voice catalogue sources" below; public speaker-list endpoints exist)
     against each voice descriptor, and shows 2–3 suggestions with reasons.
   - The operator auditions them in Botnoi, records the pick, then generates and uploads the neutral and the
     expressions.
 - The master spec is final at **v0.3** after two Codex critique rounds. The v0.1 baseline is pinned
   (`SPEC-v3-v0.1.md`, sha256 0a2677c9…).
+
+## D2 update: Botnoi voice catalogue sources (operator + orchestrator, 11 Nov, ~13:00Z)
+
+### What the operator said
+
+- Speaker IDs are listed at https://voice.botnoi.ai/llms.txt.
+- The marketplace (https://voice.botnoi.ai/marketplace/selectvoice) has **1,373 voices: 748 Botnoi Cast
+  and 491 community voices**.
+- Web Studio has character archetypes: grandma/grandpa voices, monk voices, and so on.
+
+### What the orchestrator checked
+
+- **Public speaker-list endpoints exist**, and need no token:
+  - `GET https://api-voice.botnoi.ai/openapi/v1/get_speaker_data`: 373 voices, 116 Thai;
+  - `GET https://api-voice.botnoi.ai/openapi/v1/get_speaker_data_v2`: 70 voices, 46 Thai.
+- **The metadata per voice:**
+  - gender;
+  - age group (`Child` / `Teens` / `Adult`);
+  - voice style, including **regional accents** (Northern 22, Southern 17, Northeastern 15 among the
+    Thai V1 voices);
+  - speech style, speed, a price tier and a sample WAV URL.
+- A snapshot is in `botnoi-api-speakers-2026-11-11.csv` (443 rows, 162 Thai).
+- **The API lists contain no elderly or monk voices.** Those archetypes exist only in the marketplace
+  and Studio.
+- **V4 is Studio-only:** "not in the public API yet: the API serves V1 and V2". V4 costs 2 points per
+  character, charged when the voice is created; downloads are free.
+- llms.txt says nothing about licences; it says to check the website terms.
+
+### Rulings
+
+**This supersedes the earlier "Botnoi has no voice-list API" note under V3R-11.**
+
+1. **The catalogue has two sources.**
+   - **(a) Auto-imported** from the two public endpoints by a phase C importer, which refreshes it and
+     stamps `last_verified`.
+   - **(b) Operator additions** in `botnoi-v4-voices.csv`: marketplace and Studio voices that the API
+     doesn't list, especially the archetypes (elderly, monk, …).
+2. **`has_v4`** is confirmed by the operator in Studio. A voice with unconfirmed V4 may be shortlisted,
+   but is flagged "confirm V4 in Studio".
+3. **The shortlist matches on** gender, age group, accent (a regional Thai accent is a casting asset for
+   Isan, Northern and Southern characters) and voice/speech style.
+4. **Community voices: orchestrator default, pending operator confirmation.** Community voices may carry
+   their creators' own terms. **Shortlists default to Botnoi Cast and API voices.** A community voice
+   needs the operator's explicit per-voice approval, recorded in its rights record, since the O-11
+   attestation covers Botnoi's own voices.
