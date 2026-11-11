@@ -836,9 +836,15 @@ class _SealedNativeInputs:
             lease = tx.fetchone(
                 "SELECT pod_id FROM pod_leases WHERE id=%s", (acquisition["lease_id"],)
             )
-        by_key = {(r["role"], r["subject_id"]): r for r in rows}
-        ports = []
-        uploads = []
+        # L-2 (GLM Luna review): the upload lookup keys the FULL slot identity
+        # stage uses (role, subject, asset bytes, media kind) - the same
+        # (role, subject) may legitimately bind different assets in different
+        # shots (a same-subject costume change), and a collapsed lookup bound
+        # the wrong receipt after pod acquisition.
+        by_key = {
+            (r["role"], r["subject_id"], r["asset_sha256"], r["media_kind"]): r for r in rows
+        }
+        staged = []
         for item in self.seal.port_map:
             if item.get("shot_id") not in (None, sample["shot_id"]):
                 continue
@@ -851,28 +857,47 @@ class _SealedNativeInputs:
                 media_kind=item["media_kind"],
                 destination_slot=item["destination_slot"],
             )
-            row = by_key.get((port.role.value, port.subject_id))
+            row = by_key.get(
+                (port.role.value, port.subject_id, port.asset_sha256, port.media_kind)
+            )
             if row is None or row["state"] != "VERIFIED":
                 raise NeedsReconciliation("native prompt has unverified acquisition input")
-            ports.append(port)
-            uploads.append(
-                PikaUploadReceipt(
-                    experiment_id=self.plan.experiment_id,
-                    acquisition_id=acquisition["acquisition_id"],
-                    pod_id=lease["pod_id"],
-                    asset_sha256=row["asset_sha256"],
-                    media_kind=row["media_kind"],
-                    role=port.role,
-                    subject_id=port.subject_id,
-                    # The durable source upload is acquisition-scoped; the exact
-                    # destination is shot-scoped and comes from the immutable seal.
-                    destination_slot=port.destination_slot,
-                    upload_key=row["upload_key"],
-                    locator=row["locator"]["locator"],
-                    state=row["state"],
-                    verified_readback_sha256=row["verified_readback_sha256"],
+            staged.append(
+                (
+                    port,
+                    PikaUploadReceipt(
+                        experiment_id=self.plan.experiment_id,
+                        acquisition_id=acquisition["acquisition_id"],
+                        pod_id=lease["pod_id"],
+                        asset_sha256=row["asset_sha256"],
+                        media_kind=row["media_kind"],
+                        role=port.role,
+                        subject_id=port.subject_id,
+                        # The durable source upload is acquisition-scoped; the exact
+                        # destination is shot-scoped and comes from the immutable seal.
+                        destination_slot=port.destination_slot,
+                        upload_key=row["upload_key"],
+                        locator=row["locator"]["locator"],
+                        state=row["state"],
+                        verified_readback_sha256=row["verified_readback_sha256"],
+                    ),
                 )
             )
+
+        # L-1 (GLM Luna review): the binder counts per-media-kind ordinals in
+        # list order while the seal validator only requires the per-shot
+        # destination SET to be contiguous - present the shot's ports per media
+        # kind in destination-ordinal order so every validator-legal seal binds.
+        def _destination_ordinal(pair):
+            port = pair[0]
+            return (
+                0 if port.role is ReferenceRole.VOICE else 1,
+                int(port.destination_slot.rsplit("_", 1)[1]),
+            )
+
+        staged.sort(key=_destination_ordinal)
+        ports = [port for port, _ in staged]
+        uploads = [receipt for _, receipt in staged]
         context = PikaBindingContext(
             experiment_id=self.plan.experiment_id,
             acquisition_id=acquisition["acquisition_id"],
