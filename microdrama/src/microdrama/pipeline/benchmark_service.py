@@ -2975,15 +2975,60 @@ class BenchmarkService:
             # A factory-less service (local preparation) cannot compose the
             # RECOVERY world; its caller-supplied world is the recovery path
             # it has (production always wires the factory).
-            recovery_probe = (
-                self._world(experiment_id, mode="RECOVERY", acquisition_id=sample["acquisition_id"])
-                if self.world_factory is not None
-                else world
-            )
+            #
+            # HD-1 (T031 HCF R4): the newly composed RECOVERY world is BOUND
+            # to the owning acquisition BEFORE any probe runs. A local
+            # composition or binding failure of the probe itself - or a live
+            # read the composition refuses (EffectDenied) - is a fact about
+            # the probe, never evidence that the work is unrecoverable, so
+            # it refuses the resolution EVEN WITH force. R7 lets only the
+            # source's own state reach the force path: reachable but
+            # unrecoverable history, or an INDETERMINATE source.
+            try:
+                recovery_probe = (
+                    self._world(
+                        experiment_id, mode="RECOVERY", acquisition_id=sample["acquisition_id"]
+                    )
+                    if self.world_factory is not None
+                    else world
+                )
+            except Exception as exc:  # noqa: BLE001 - local composition failure
+                raise Conflict(
+                    "the RECOVERY probe could not be composed; a local probe "
+                    "failure is not evidence the work is unrecoverable (R7)",
+                    operation_id=str(operation_id),
+                ) from exc
+            probe_binding = None
+            if hasattr(recovery_probe, "bind_for_recovery"):
+                try:
+                    probe_binding = recovery_probe.bind_for_recovery(sample["acquisition_id"])
+                except Exception as exc:  # noqa: BLE001 - local binding failure
+                    raise Conflict(
+                        "the RECOVERY probe could not be bound to the owning "
+                        "acquisition; a local probe failure is not evidence the "
+                        "work is unrecoverable (R7)",
+                        operation_id=str(operation_id),
+                    ) from exc
+            if probe_binding != "BOUND":
+                raise Conflict(
+                    "the RECOVERY probe did not bind to the owning acquisition; "
+                    "without a bound probe the work's recoverability is unknown "
+                    "and no attestation may resolve it (R7)",
+                    operation_id=str(operation_id),
+                    probe_binding=probe_binding,
+                )
             probed_state = None
             try:
                 probed = recovery_probe.comfy.reconcile_unknown(operation_id)
                 probed_state = getattr(probed.state, "value", probed.state)
+            except EffectDenied as exc:
+                # The composition itself refused the live read - a local probe
+                # failure, never evidence about the source (HD-1).
+                raise Conflict(
+                    "the RECOVERY probe's live read was denied; a local probe "
+                    "failure is not evidence the work is unrecoverable (R7)",
+                    operation_id=str(operation_id),
+                ) from exc
             except Exception:  # noqa: BLE001 - unreachable/ambiguous history
                 probed_state = None
             if probed_state is not None:
