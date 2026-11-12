@@ -168,7 +168,20 @@ shot).
     Thai V1 voices);
   - speech style, speed, a price tier and a sample WAV URL.
 - A snapshot is in `botnoi-api-speakers-2026-11-11.csv` (443 rows, 162 Thai).
-- **The API lists contain no elderly or monk voices.** Those archetypes exist only in the marketplace
+- **Correction (orchestrator, 12 Nov):** the API list **does** contain monk voices, but nothing in their
+  names or style fields says so:
+  - `582` Dhammanit (ธรรมนิตย์) and `583` Namo (นะโม) are labelled only "Male, Adult, Storytelling;
+    Narrating";
+  - their sample files are `vc_ctb_monk_paradon` and `vc_ctb_monk_sommha`;
+  - the operator searched for "monk", found nothing, and then found it in Studio.
+
+  The API's Thai `age_style` has only Child (12), Teens (38) and Adult (112), with no elderly category.
+  Older-sounding voices sit under Adult (for example `19` Uncle Warm and `27` Aunty Grace).
+
+  So the phase C importer can't infer archetypes from the API fields. Archetype labels (monk, elderly, …)
+  come from operator additions or Studio. `ctb` in a sample filename **may** mark a contributed/community
+  voice. That is unconfirmed, so the operator checks in Studio before using one (rule 4).
+- *(Original 11 Nov text, superseded by the correction above:)* **The API lists contain no elderly or monk voices.** Those archetypes exist only in the marketplace
   and Studio.
 - **V4 is Studio-only:** "not in the public API yet: the API serves V1 and V2". V4 costs 2 points per
   character, charged when the voice is created; downloads are free.

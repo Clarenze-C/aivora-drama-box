@@ -1,6 +1,6 @@
 # Phase B: Story (Script Maker → LOCK → bible → episode packs → STORY LOCK)
 
-**Version 0.1, 11 Nov 2026.** Author: Opus orchestrator.
+**Version 0.2, 12 Nov 2026** (v0.1 11 Nov; v0.2 records the operator's answers to O-B1..O-B6). Author: Opus orchestrator.
 
 **Status: DRAFT for Codex critique (round 1),** after the Codex week resets (13 Nov 10:30Z).
 
@@ -150,8 +150,8 @@ Those are bound later, in C (cast) or measured in D/E (durations).
 | Distinct speakers per episode | ≤5, counting off-screen speakers | MA19, O-12 |
 | Speakers per beat | ≤2 | §1.6 |
 | Main cast briefs per proposal | 3–6 | v0.1 §4.1 |
-| Active locations per episode | **open: O-B1** (default 3) | — |
-| `emotion` | `NEUTRAL`, `HAPPY`, `SAD`, `ANGRY`, `FEARFUL`, `SURPRISED`: **open: O-B3** | DECISIONS D2 revised (e.g. neutral, happy, sad, angry) |
+| Active locations per episode | **3** (O-B1, decided 12 Nov) | — |
+| `emotion` | `NEUTRAL`, `HAPPY`, `SAD`, `ANGRY`, `FEARFUL`, `SURPRISED` (O-B3, decided 12 Nov) | DECISIONS D2 revised (e.g. neutral, happy, sad, angry) |
 
 Each line's `emotion` drives a voice demand (§4). Every distinct (speaker, emotion) pair becomes one
 **manual Botnoi V4 upload** by the operator (DECISIONS "D2 refined"), so the vocabulary size is a labour
@@ -518,7 +518,9 @@ are never edited.**
 | B-T11 | `create_extension` eligibility (refused without `RELEASING`/`COMPLETE` or without the `SEASON` amendment); the extension builder plans new packs from a synthetic published canon without touching prior packs or approvals |
 | B-T12 | Tabs 1–3 with real routes and templates: each state in §9, one primary action per tab, a disabled Mode A with its reason |
 
-## 12. Open questions (each with a recommendation)
+## 12. Open questions: RESOLVED 12 Nov 2026
+
+**Operator, 12 Nov: "B: all recs".** Every recommendation below is adopted as the decision.
 
 | # | Question | Recommendation |
 |---|----------|----------------|
