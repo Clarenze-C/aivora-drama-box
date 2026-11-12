@@ -69,3 +69,16 @@ AssetManager signature, without modifying any upstream runtime code.
 - `schema_smoke.py`: `6fb6ffb439ba07d0127965b9ffbd328e8364f1d66d847a3fb7e13ae6bb05454c`.
 - `source.json`: `4d016efdaed16a39d0f539e304e31b7b328585126d98cffd78df9b4aaad6c145`.
 - `test_provision.py`: `4ad7160cc0e9d287ed358520f4ae742dd2bdecbc692bc28a70ffe8bc10c8e564`.
+
+## Rebuild, 12 November 2026 UTC (orchestrator, session e4e3c05c)
+
+- The 6 Nov image (`773f4df5…`) was no longer in the local Docker store. It also predated CN-5's gateway.
+- `build.sh` could not build the CN-5 recipe because `canary_gateway.py` was not staged. Fixed in `304ea77`,
+  with the guard test `tests/unit/rendering/test_pika_image_recipe.py`.
+- Rebuilt with the documented command (flock, CPUQuota=45%, timeout 1200):
+  - local tag `drama-pika-h3-flex:t031-native`;
+  - **image ID `sha256:abd32e9e511e40ed364eb0d6e6cce8621cfde8139e06296533c15bf1e73b4933`**, 9.54 GB;
+  - same base digest, ComfyUI revision/archive SHA256 and `runtime.lock`.
+- Schema smoke ran inside the image with `--network none`. Result: **`1a6023e24ad38cd4ef41e1d3b1c727550a52cba9cd055be2ede8373e487a4c89`**,
+  16 mapped nodes, **byte-identical** to `schema-attestation.cpu.json`.
+- Still code-only, no weights, GPU/weights unqualified. Nothing was pushed. Disk after the build: 86% (28 GB free).
