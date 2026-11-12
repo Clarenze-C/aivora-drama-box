@@ -8,6 +8,11 @@ Everything below this section is history. This section is the live state.
 
 - **HCF finished:** `H2-HCF: ALL FIXES DONE`, tip **`7060e02`** (F5).
   - The full gate is running there now: unit `t031-hcf-offline-gates`, checkout `.scratch/t031-gate-hcf`.
+  - **Gate at `7060e02` (pre-R4 baseline): GREEN, 12 Nov 01:37Z.** 3,062 unit / 462 contract / 275
+    integration passed, `make check: all offline checks passed`, `make pilot` exit 0. Receipts in
+    `.scratch/t031-gate-hcf/.scratch/gate/`. Run 1 (no `/usr/sbin` on PATH, 2,181 setup errors) is kept
+    as `check-run1-missing-usr-sbin.log`. Note: `run.sh` doesn't reset `overall.exit` at start, so read
+    `check.exit`/`pilot.exit` while a run is in progress.
   - **The final Codex review (round 3) = FIX-REQUIRED** ([result](T031-fix-round/codex-review-hcf-final.md)):
     - **HD-1** BLOCKING: an unbound RECOVERY probe lets a forced resolution discard recoverable work;
     - **HD-3** BLOCKING: race tests accept translated deadlocks;
