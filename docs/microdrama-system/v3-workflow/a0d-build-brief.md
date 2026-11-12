@@ -26,7 +26,19 @@ test and explain it.
 | **T031 accepted** | The accepted `feat/t031-fix3` tip, after its final review; it has migration 0026 | A0 = **0027** |
 | **T031 parked** | `feat/microdrama-m0-m4` (migration tail 0025) | A0 takes **0026**. Renumber every reference in your report. T031 renumbers when it merges later |
 
-Work in your own worktree (ai-route `-w a0d-gateway` from the base). Commit on top; never amend.
+Work in your own worktree, which starts at the base (see below). Commit on top; never amend.
+
+**Settled 12 Nov 05:35Z: T031 ACCEPTED.**
+- **Base: `0cda424`** (the R4 tip of `feat/t031-fix3`; `feat/t031-pika-flex-native` was fast-forwarded to
+  it). A0 takes migration **0027**.
+- Verification: `T031-fix-round/h2-r4-orchestrator-verify.md`. Gate at `0cda424`: 3,068 unit, 462
+  contract and 275 integration passed, pilot OK.
+- **Your worktree (your cwd) was created by the orchestrator:** `/root/AIVORA/drama-box/.scratch/a0d-gateway`,
+  branch `feat/a0d-gateway`, starting at `0cda424`. Don't create another one. `microdrama/.venv` is a symlink:
+  never stage it.
+
+**If `a0d-build-REPORT.md` already exists, you are resuming:** read it, continue from its "Resume here",
+and don't redo committed packages.
 
 ## Packages, in order
 
@@ -59,6 +71,12 @@ Work in your own worktree (ai-route `-w a0d-gateway` from the base). Commit on t
 - No pushes, no merges, no service restarts other than your own test units.
 - Run pytest under `systemd-run --scope -p CPUQuota=45% --quiet` with `--basetemp=/tmp/a0d-basetemp`.
   Keep each command under 10 minutes. Run **`make lint` before every commit.**
+  - **Put `/usr/sbin` on PATH** (`env PATH="/usr/sbin:$PATH" …`). The test PostgreSQL fixture calls
+    `runuser`; without it every DB test errors at setup.
+  - Export `MICRODRAMA_EXECUTION_MODE=OFFLINE_MOCK MICRODRAMA_PAID_REQUESTS_ENABLED=false
+    MICRODRAMA_CLOUD_RESOURCES_ENABLED=false MICRODRAMA_PUBLIC_ACTIONS_ENABLED=false`.
+  - For red runs, never stash: use a temporary WIP commit on a scratch branch, or restore committed file
+    versions with `git show <rev>:<path> > <path>`.
 - Never print environment variables, keys or tokens.
 - No deletion commands (`rm`, `git rm`, `git clean`, `git reset`, `find -delete`). **Never leave work only
   in a stash.**

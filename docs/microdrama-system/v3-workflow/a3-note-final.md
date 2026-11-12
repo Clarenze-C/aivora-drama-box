@@ -1,0 +1,14 @@
+**Note written:** `/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/A3-design-note.md` (442 lines, v1.0)
+
+Summary:
+
+1. **Migration:** one file, `0035_v3_fence_quarantine.sql` (A2 ends at 0034); applied bytes never edited; no lease columns and no queue-CHECK changes needed — phase A adds no lanes.
+2. **DDL:** `expected_content_revision` stays in `jobs.input` (where A1's `track_waits` already reads it) with a new `jobs_v3_fence_input` CHECK (old vs new shown); append-only `stale_artifacts` (job, operation, artifact/receipt refs, expected vs actual, unique per job+operation) with full catalog guards; `EXPECTED_TABLES` + v3 contract updates.
+3. **Fence:** one helper in `S/core/v3_tracks.py` — `fence()` takes the track row FOR SHARE as the *first* lock of every canonical-mutation transaction; scope resolution extension > episode > season (A1's COALESCE order); call-site table covers enqueue (all continuation seams route through `JobService.enqueue`), claim admission, submit/`begin`, collectors, acceptance, reconciliation adoption.
+4. **Admission is a plain read** (stale QUEUED/RETRY_WAIT jobs self-cancel as `CANCELLED`/`STALE_CONTENT`; WAITING_EXTERNAL still leases because polling is reconciliation) — a SHARE there would order job-before-track, the exact §6 inversion, and deadlock amendments; correctness is anchored at the mutation fence.
+5. **Stale results:** outputs register + `stale_artifacts` row, installation/acceptance/continuation skipped, settlement and receipts post normally, exposure retained until reconciliation.
+6. **`cancel_in(tx, …)`:** `cancel()` becomes a wrapper; `_move` clears the lease so a stale worker stops at its next `lease_guard`/`finish` (`Conflict`); NEEDS_RECONCILIATION stays uncancellable; external operations left to A0 §5.3 / existing paid-kind reconciliation; LLM cancel-forwarding shared with A0 §5.4.
+7. **Per-queue workers:** `api/worker.py --queues … [--name …]`, default = today's behaviour; one process per lane in the production set; the four-item lane checklist for later phases.
+8. **Commands:** `cancel_season`, `cancel_episode` (human session + CSRF, revision-matched, terminal), `rewind_for_amendment` (coordinator-internal, fences via `cancel_in` sweep) — AR-6 activation from A3.
+9. **Lock audit:** A1 §9's handed-over worker-completion inversion is dissolved structurally (no A3 path takes job-then-track); `resolve_reconciliation` gains fence-before-`_lock`; five competing-transaction tests listed.
+10. **Tests:** `test_runtime_lanes.py` (real per-queue subprocesses, 60 s handler vs publication), `test_fence.py` (A-T12a races, quarantine, cancelled-op reconciliation), `test_paid_unit_recovery.py` (A-T18 crash at intent/submit/result/receipt with `os._exit` and SIGKILL child deaths), plus A-T16/contracts rows; 8 open questions with recommendations.

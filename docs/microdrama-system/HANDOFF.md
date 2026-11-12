@@ -4,6 +4,35 @@
 
 Everything below this section is history. This section is the live state.
 
+### Update, 12 Nov 05:40Z (Opus session e4e3c05c): T031 ACCEPTED; A0-D queued
+
+- **T031 H-2 ACCEPTED at `0cda424`** (R4: R1 `92f7b51`, R2 `621e49e`, R3 `0cda424`). Record:
+  [h2-r4-orchestrator-verify.md](T031-fix-round/h2-r4-orchestrator-verify.md).
+  - The orchestrator re-ran all 4 red claims in fresh worktrees; each reproduced with the same count and
+    defect.
+  - R1 was read against R7 and R3 was read for the money path.
+  - Full gate at `0cda424`: GREEN (3,068 unit / 462 contract / 275 integration passed; pilot OK).
+  - `feat/t031-pika-flex-native` was fast-forwarded to `0cda424` (local, not pushed).
+  - Known limits for phase D: HC-6, HC-9, HC-11, HB-13 (broad), and the R1 residual: a bound probe whose
+    read fails for another reason still reaches force plus attestation.
+  - A paid T031 run is still operator-gated: the $8 sign-off, image, weights, references and voices.
+- **A0-D queued:** unit `a0d-build-loop` (script `scratchpad/keep/a0d-build-loop.sh`, tag
+  `dramabox:a0d-build`).
+  - Worktree `.scratch/a0d-gateway`, branch `feat/a0d-gateway` from `0cda424`, migration 0027.
+  - The brief's base section is now filled in, with the `/usr/sbin` PATH note and a resume clause added.
+  - It waits for z.ai 5h < 50% (reset 07:35Z) and resumes across windows until
+    `A0-D: ALL PACKAGES DONE`, for at most 4 runs.
+  - The orchestrator then runs the gate. The Codex review (A0S-1/A0S-2) follows after the 13 Nov 10:30Z
+    reset.
+- **A0-R1 fix1 DONE 04:17Z** (`a0r1-fix1-final.md`). The Codex re-review (round 2) is still held until
+  the Codex reset.
+- **v3 notes:**
+  - `A2-design-note.md` (04:07Z) and `A3-design-note.md` (04:25Z) are drafted;
+  - A6b waits for z.ai < 50% (`v3-a-notes-chain`);
+  - Codex critiques follow after the reset.
+- Cleanup later via `git worktree remove`: `.scratch/t031-gate-hcf`, `t031-gate-r4`, `t031-r4v-prod7060`
+  (has deliberate uncommitted src reverts), `t031-r4v-oldproof`, `t031-r4v-oldorder`.
+
 ### Update, 11 Nov 23:50Z (Opus session e4e3c05c): T031 round 4; v3 notes and phase B queued
 
 - **HCF finished:** `H2-HCF: ALL FIXES DONE`, tip **`7060e02`** (F5).
