@@ -4,6 +4,26 @@
 
 Everything below this section is history. This section is the live state.
 
+### Update, 12 Nov 14:50Z (Opus session e4e3c05c): T031 paid-run inputs done; run-readiness (R5) spec
+
+- **Operator inputs, all recorded in DECISIONS:**
+  - rights for the private benchmark confirmed;
+  - Thai listener available;
+  - references picked A2/B2, generated with Nano Banana `gemini-nano-banana-2.1` on ARISA's Vertex project;
+    manifests in `t031-benchmark/references-r{1,2}-manifest.jsonl`;
+  - voices A = tee, B = meow, neutral Studio V4 clips (`voices-manifest.json`).
+- **Voices, decided:** one neutral reference per speaker, emotion via prompt (master SPEC v0.4.5, phase B v0.3).
+- **Image:** `build.sh` fixed (`304ea77`). The image was rebuilt, and its CPU schema is byte-identical to the attestation.
+  The operator pushed it and made it public: `ghcr.io/clarenze-c/drama-pika-h3-flex@sha256:e4ccc004…`.
+  R5a needs a rebuild and re-push.
+- **Paid run NOT signable yet:** the [fact map](t031-benchmark/paid-run-factmap.md) found no weight provisioning, no ready
+  gate, no live-schema path, no run-assembly tool and no timings.
+  - Operator approved building [run-readiness](T031-run-readiness-spec.md) v0.1; any capture cost counts inside the $8.
+  - Goldfish is scheduled for 13 Nov 03:40Z (unit `t031-r5-goldfish`). Then the orchestrator resolves its findings,
+    then the Codex critique after the 10:30Z reset, then the GLM build.
+- **GLM queue:** the operator's SFW job takes the 17:37Z window alone. A0-D (D1 `365bff9`, D2 `2352e73` done; D3 left)
+  was moved to timer `a0d-build-loop-r2` at 22:40Z.
+
 ### Update, 12 Nov 05:40Z (Opus session e4e3c05c): T031 ACCEPTED; A0-D queued
 
 - **T031 H-2 ACCEPTED at `0cda424`** (R4: R1 `92f7b51`, R2 `621e49e`, R3 `0cda424`). Record:
