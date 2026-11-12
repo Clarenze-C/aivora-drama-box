@@ -82,10 +82,16 @@ def test_hc6_gate_serialises_with_l_only_adoption(db: Database, tmp_path) -> Non
     shared-order helper the gate BLOCKS behind the adoption lock, then
     evaluates the items (U1 refuses this admission).
     """
-    from test_t031_h2b_p4_resolution import _service
+    from test_t031_h2b_p4_resolution import _bounded_worker_locks, _service
 
     fixed = _at6_context(db, tmp_path)
     plan = fixed["plan"]
+    # HC-10 (HCF R4): the holder's lock_timeout alone proves nothing about the
+    # worker - the WORKER connection gets the bounded session setting too
+    # (every currently pooled connection, plus the database default for any
+    # the pool opens later), so an unexpected lock wedge FAILS the test
+    # instead of hanging it.
+    _bounded_worker_locks(db)
     holder = _race_connection(db)
     holder.execute("BEGIN")
     holder.execute("SELECT 1 FROM pod_leases WHERE id=%s FOR UPDATE", (str(fixed["lease_id"]),))

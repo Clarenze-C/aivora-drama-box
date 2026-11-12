@@ -527,25 +527,117 @@ def test_at09_crash_boundaries_converge(boundary: str, db: Database, tmp_path: P
         assert _counts(db, plan.experiment_id)["acquisitions"] == counts0["acquisitions"]
         return
 
-    # sweep_finalization_mid: the resolution committed, the lease is still
-    # live, the storage still held - the sweep finishes idempotently.
+    # sweep_finalization_mid (HC-10/HCF R4): a REAL subprocess crash between
+    # the sweep's finalization stages. The child resolves the podless create
+    # (stage R committed), then sweeps; the death lands AFTER the lease-close
+    # stage committed and BEFORE the storage-release transaction - the next
+    # sweep completes every remaining stage exactly once.
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from test_t031_h2b_p2_gate import RENDERING_TESTS, SRC_ROOT, UNIT_TESTS, _adapter_for
     from test_t031_h2b_p4_resolution import _at6_context, _hold_states
 
-    fixed = _at6_context(db, tmp_path)
-    plan = fixed["plan"]
-    service = _service_for(fixed)
-    service.resolve_create(
-        plan.experiment_id,
-        acquisition_id=fixed["acquisition_id"],
-        actor_ref="operator-console",
-        reason="no pod",
-        evidence_sha256="9" * 64,
+    marker = tmp_path / "at9-sweep-mid.marker"
+    identity = tmp_path / "at9-sweep-mid-identity.json"
+
+    script = (
+        "import sys; sys.argv=['child']; "
+        f"sys.path[:0] = [{str(SRC_ROOT)!r}, {str(UNIT_TESTS)!r}, {str(RENDERING_TESTS)!r}]; "
+        "from test_t031_h2b_p5_terminal import _at9_sweep_mid_child as run; "
+        f"run({db.dsn!r}, {str(tmp_path / 'at9-child-out')!r}, {str(marker)!r}, {str(identity)!r})"
     )
-    counts0 = _counts(db, plan.experiment_id)
-    service.sweep(plan.experiment_id)
-    service.sweep(plan.experiment_id)  # the replay converges, nothing doubles
-    assert _counts(db, plan.experiment_id) == counts0
-    assert _hold_states(db, fixed["acquisition_id"])["STORAGE"] != "ACTIVE"
+    env = dict(os.environ)
+    env.update(
+        {
+            "MICRODRAMA_EXECUTION_MODE": "OFFLINE_MOCK",
+            "MICRODRAMA_PAID_REQUESTS_ENABLED": "false",
+            "MICRODRAMA_CLOUD_RESOURCES_ENABLED": "false",
+            "MICRODRAMA_PUBLIC_ACTIONS_ENABLED": "false",
+        }
+    )
+    child = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=str(RENDERING_TESTS),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert marker.exists(), child.stderr[-2000:]
+    assert child.returncode == 86, child.stderr[-2000:]
+    ids = json.loads(identity.read_text(encoding="utf-8"))
+    experiment_id = UUID(ids["experiment_id"])
+    acquisition_id = UUID(ids["acquisition_id"])
+    lease_id = UUID(ids["lease_id"])
+
+    # The durable state the mid-finalization crash leaves: the resolution and
+    # the lease close committed (stages 1-2), the storage release never ran.
+    with db.transaction(readonly=True) as tx:
+        acquisition = tx.fetchone(
+            "SELECT state FROM benchmark_acquisitions WHERE acquisition_id=%s", (acquisition_id,)
+        )
+        lease = tx.fetchone("SELECT lease_state FROM pod_leases WHERE id=%s", (lease_id,))
+    assert acquisition["state"] == "NO_CREATE_PROVEN"
+    assert lease["lease_state"] == "RELEASED", "the child's sweep closed the lease before dying"
+    assert _hold_states(db, acquisition_id)["STORAGE"] == "ACTIVE", (
+        "the crash must land BEFORE the storage-release stage"
+    )
+    counts_mid = _counts(db, experiment_id)
+
+    # The parent process builds its own world from the durable provenance and
+    # completes the finalization with ONE sweep; a second sweep changes
+    # nothing (every stage exactly once).
+    from dataclasses import replace as _replace
+
+    from comfy_support import ComfyWorld
+    from rendering_support import RenderWorld
+
+    from microdrama.rendering.comfy_jobs import ComfyRenderConfig
+
+    world = RenderWorld(db)
+    comfy = ComfyWorld(
+        db,
+        tmp_path / "at9-parent-out",
+        config=_replace(ComfyRenderConfig.for_mock(), lease_covered=True),
+        execution_ms=0,
+    )
+    with db.transaction(readonly=True) as tx:
+        experiment = tx.fetchone(
+            "SELECT * FROM benchmark_experiments WHERE experiment_id=%s", (experiment_id,)
+        )
+    adapter, _budget = _adapter_for(db, world, comfy, experiment, experiment_id)
+    comfy.clock.set(experiment["updated_at"] or experiment["created_at"])
+    parent_service = BenchmarkService(
+        db,
+        _paid_settings(),
+        clock=comfy.clock,
+        ids=world.ids,
+        world_factory=lambda **_kwargs: adapter,
+    )
+    parent_service.sweep(experiment_id, world=adapter)
+    assert _hold_states(db, acquisition_id)["STORAGE"] == "RELEASED"
+    counts_done = _counts(db, experiment_id)
+    assert counts_done["acquisitions"] == counts_mid["acquisitions"] == 1
+    assert counts_done["operator_audits"] == counts_mid["operator_audits"] == 0
+    assert counts_done["operations"] == counts_mid["operations"] == 0
+    # The storage release is a pure release (no new charge receipt): the
+    # completed finalization posts NOTHING beyond what the crash left - the
+    # exactly-once proof is the hold's own state transition plus these exact
+    # counts.
+    assert counts_done == counts_mid
+    with db.transaction(readonly=True) as tx:
+        resolution_rows = tx.fetchall(
+            "SELECT * FROM runpod_podless_create_resolutions WHERE lease_id=%s", (lease_id,)
+        )
+    assert len(resolution_rows) == 1
+    # The replay sweep completes nothing new.
+    parent_service.sweep(experiment_id, world=adapter)
+    assert _counts(db, experiment_id) == counts_done
+    assert _hold_states(db, acquisition_id)["STORAGE"] != "ACTIVE"
+    return
 
 
 # ---------------------------------------------------------------------------
@@ -871,3 +963,71 @@ def test_at09b_r6_failfast_projection(terminal_state: str, db: Database, tmp_pat
     assert after["output"]["error_code"] == f"SEEDED_{terminal_state}"  # original reason
     assert outcome["execution_outcome"] == "FAILED"  # R6: set once
     assert slot["sample_id"] is None  # the dispatch slot cleared
+
+
+# ---------------------------------------------------------------------------
+# AT-9 sweep_finalization_mid — the §9.3 death harness for the sweep's
+# finalization stages (HC-10/HCF R4: a REAL crash between the stages, not two
+# completed sweeps).
+# ---------------------------------------------------------------------------
+
+
+class _DeathAfterLeaseClose:
+    """Kills the sweep worker AFTER the lease-close stage committed and BEFORE
+    the storage-release transaction - between the sweep's finalization stages
+    (§9.3: ``os._exit`` bypasses every exception cleanup path; the marker file
+    and the database are the only state that survives the killed process)."""
+
+    def __init__(self, inner, marker: Path) -> None:
+        self.inner = inner
+        self.marker = marker
+
+    def shutdown(self, lease_id, *, reason=None, **kwargs):
+        self.inner.shutdown(lease_id, reason=reason, **kwargs)
+        self.marker.write_text("lease-closed", encoding="utf-8")
+        import os
+
+        os._exit(86)  # §9.3: bypasses every exception cleanup path
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def _at9_sweep_mid_child(dsn: str, output_dir: str, marker: str, identity: str) -> None:
+    """Runs INSIDE the subprocess: the real composed resolution, then the real
+    sweep until death between its finalization stages. The caller's script
+    prefix has already put SRC_ROOT/UNIT_TESTS/RENDERING_TESTS on sys.path."""
+    import json
+    from pathlib import Path
+
+    from test_t031_h2b_p1_modes import _execute_service
+    from test_t031_h2b_p4_resolution import _at6_context
+
+    from microdrama.persistence import Database
+
+    db = Database(dsn).open()
+    fixed = _at6_context(db, Path(output_dir))
+    plan = fixed["plan"]
+    service = _execute_service(
+        fixed["world"].db, fixed["comfy"], fixed["world"].ids, fixed["adapter"]
+    )
+    service.resolve_create(
+        plan.experiment_id,
+        acquisition_id=fixed["acquisition_id"],
+        actor_ref="operator-console",
+        reason="no pod",
+        evidence_sha256="9" * 64,
+    )
+    # The death wrapper: the sweep dies right after the lease close commits.
+    fixed["adapter"].leases = _DeathAfterLeaseClose(fixed["adapter"].leases, Path(marker))
+    Path(identity).write_text(
+        json.dumps(
+            {
+                "experiment_id": str(plan.experiment_id),
+                "acquisition_id": str(fixed["acquisition_id"]),
+                "lease_id": str(fixed["lease_id"]),
+            }
+        ),
+        encoding="utf-8",
+    )
+    service.sweep(plan.experiment_id)

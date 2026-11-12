@@ -28,7 +28,7 @@ from test_t031_h2b_p2_gate import (
     _item_kinds,
 )
 
-from microdrama.contracts.errors import Conflict
+from microdrama.contracts.errors import Conflict, ServiceUnavailable
 from microdrama.persistence import Database
 
 pytestmark = pytest.mark.db
@@ -572,21 +572,72 @@ def _bounded_worker_locks(db: Database, *, seconds: str = "2500ms") -> None:
 
 
 def _deadlocks(exc: BaseException) -> bool:
+    """HD-3 (HCF R4): a deadlock or lock timeout fails the race proof in BOTH
+    shapes - the raw psycopg error (SQLSTATE 40P01 / 55P03) and the
+    ``ServiceUnavailable`` the production translator (persistence/db.py
+    ``translate_db_error``) turns it into on every worker path that runs
+    through ``Database.transaction``."""
     import psycopg
 
-    return isinstance(exc, psycopg.errors.DeadlockDetected)
+    if isinstance(exc, psycopg.errors.DeadlockDetected | psycopg.errors.LockNotAvailable):
+        return True
+    return isinstance(exc, ServiceUnavailable)
+
+
+def _expected_race_refusals() -> tuple[type, ...]:
+    """HD-3 (HCF R4): the ONLY error classes the three-way race may record -
+    precise admission/reconciliation refusals. ``ServiceUnavailable``
+    (including every translated SQLSTATE 40P01/55P03) is deliberately absent:
+    the old ``all(isinstance(exc, MicrodramaError))`` whitelist accepted a
+    translated worker deadlock, so the proof passed despite the defect it
+    claimed to exclude."""
+    from microdrama.contracts.errors import NeedsReconciliation, PolicyDenied
+    from microdrama.pipeline.benchmark_service import AdmissionBlocked
+
+    return (AdmissionBlocked, NeedsReconciliation, PolicyDenied, Conflict)
+
+
+def test_at21_race_proof_rejects_translated_deadlock_and_lock_timeout():
+    """HD-3: prove the proof works. The production translator turns SQLSTATE
+    40P01 (DeadlockDetected) and 55P03 (LockNotAvailable) into
+    ``ServiceUnavailable``; each translated failure is injected into the
+    recorded-error list and EVERY strengthened race assertion must FAIL on it
+    (before R4 the deadlock check missed both shapes and the blanket
+    ``MicrodramaError`` whitelist accepted them)."""
+    import psycopg
+
+    from microdrama.persistence.db import translate_db_error
+
+    for sqlstate in ("40P01", "55P03"):
+        raw = psycopg.errors.lookup(sqlstate)("race proof injection")
+        raw.sqlstate = sqlstate
+        translated = translate_db_error(raw)
+        assert isinstance(translated, ServiceUnavailable), repr(translated)
+        errors = [translated]
+        with pytest.raises(AssertionError):
+            assert not any(_deadlocks(exc) for exc in errors), [repr(e) for e in errors]
+        with pytest.raises(AssertionError):
+            assert all(not isinstance(exc, ServiceUnavailable) for exc in errors), [
+                repr(e) for e in errors
+            ]
+        with pytest.raises(AssertionError):
+            assert all(isinstance(exc, _expected_race_refusals()) for exc in errors), [
+                repr(e) for e in errors
+            ]
 
 
 def test_at21_billing_wrapper_vs_resolve_create_never_deadlocks(db: Database, tmp_path: Path):
-    """HC-10 (HCF): the REAL canonical billing wrapper
+    """HC-10 (HCF R4): the REAL canonical billing wrapper
     (``billing.resolve_podless_create``: account->categories->advisory->L) and
-    the benchmark resolution (same shared order, locks 1-5) contend on the
-    account row behind a third holder: both block, then serialise - the first
-    posts the resolution, the second replays the IDENTICAL attestation - with
-    no deadlock (SQLSTATE 40P01), exactly one resolution row and no unsafe
-    release. With the pre-P4 wrapper order (advisory+L first) this
-    interleaving deadlocks; a manual account lock here would prove nothing
-    about the wrapper itself."""
+    the benchmark resolution (the same shared order) cannot deadlock - and the
+    proof now catches the historical inversion. A lease-row (L) holder parks
+    the wrapper INSIDE its lock sequence while the resolver holds the account
+    rows: with the pre-P4 wrapper order (advisory+L BEFORE account) that
+    closes a real ABBA cycle the moment the L holder commits - PostgreSQL
+    breaks it with SQLSTATE 40P01 and this test fails (proven on a scratch
+    branch that restores the old order). Queuing the wrapper first behind an
+    ACCOUNT holder (the pre-R4 shape) completed orderly even with the
+    inversion, because the resolver held nothing while it waited."""
     import threading
 
     from microdrama.budget.billing import BillingRepository
@@ -596,11 +647,7 @@ def test_at21_billing_wrapper_vs_resolve_create_never_deadlocks(db: Database, tm
     _bounded_worker_locks(db)
     helper = _race_connection(db)
     helper.execute("BEGIN")
-    helper.execute(
-        "SELECT * FROM budget_accounts WHERE id=(SELECT account_id FROM "
-        "benchmark_experiments WHERE experiment_id=%s) FOR UPDATE",
-        (str(plan.experiment_id),),
-    )
+    helper.execute("SELECT 1 FROM pod_leases WHERE id=%s FOR UPDATE", (str(fixed["lease_id"]),))
     outcome: dict[str, object] = {}
 
     def wrapper_call():
@@ -632,14 +679,19 @@ def test_at21_billing_wrapper_vs_resolve_create_never_deadlocks(db: Database, tm
     wrapper_thread = threading.Thread(target=wrapper_call)
     wrapper_thread.start()
     wrapper_thread.join(timeout=1.0)
-    assert wrapper_thread.is_alive()  # blocked on the account row INSIDE the wrapper
+    # The wrapper is parked inside its lock sequence on the lease row (L),
+    # holding whatever its order takes before L.
+    assert wrapper_thread.is_alive()
     resolver_thread = threading.Thread(target=resolver)
     resolver_thread.start()
     resolver_thread.join(timeout=1.0)
-    assert resolver_thread.is_alive()  # queued behind the same account row
+    # The resolver holds the account rows and waits for what the wrapper
+    # holds (the billing advisory under the old order; nothing under the
+    # shared order, because the wrapper already holds the account rows).
+    assert resolver_thread.is_alive()
     helper.execute("COMMIT")
-    wrapper_thread.join(timeout=10.0)
-    resolver_thread.join(timeout=10.0)
+    wrapper_thread.join(timeout=15.0)
+    resolver_thread.join(timeout=15.0)
     helper.close()
     assert not wrapper_thread.is_alive() and not resolver_thread.is_alive()
     assert "wrapper_error" not in outcome, repr(outcome.get("wrapper_error"))
@@ -717,12 +769,16 @@ def test_at21_ambiguity_vs_admission_vs_sweep_ordered(db: Database, tmp_path: Pa
     for thread in threads:
         thread.join(timeout=15)
     assert not any(_deadlocks(exc) for exc in errors), [repr(e) for e in errors]
-    # HC-10 (HCF): no swallowed exceptions - any recorded error must be a
-    # precise microdrama refusal (AdmissionBlocked/NeedsReconciliation/
-    # PolicyDenied/...). A deadlock, a driver error or a bug surfaces here.
-    from microdrama.contracts.errors import MicrodramaError
-
-    assert all(isinstance(exc, MicrodramaError) for exc in errors), [repr(e) for e in errors]
+    # HC-10 (HCF) + HD-3 (HCF R4): no swallowed exceptions and no blanket
+    # MicrodramaError acceptance - any recorded error must be one of the
+    # SPECIFIC expected admission/reconciliation refusals. A translated
+    # deadlock or lock timeout (ServiceUnavailable, SQLSTATE 40P01/55P03), a
+    # driver error or a bug surfaces here; the pre-R4 whitelist accepted
+    # every MicrodramaError and let a worker deadlock pass the proof.
+    assert all(not isinstance(exc, ServiceUnavailable) for exc in errors), [repr(e) for e in errors]
+    assert all(isinstance(exc, _expected_race_refusals()) for exc in errors), [
+        repr(e) for e in errors
+    ]
     assert all(not thread.is_alive() for thread in threads)
     # Nothing was dispatched while U1 held (I3 held under the race).
     with db.transaction(readonly=True) as tx:
