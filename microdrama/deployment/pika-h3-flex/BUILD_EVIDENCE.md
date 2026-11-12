@@ -82,3 +82,7 @@ AssetManager signature, without modifying any upstream runtime code.
 - Schema smoke ran inside the image with `--network none`. Result: **`1a6023e24ad38cd4ef41e1d3b1c727550a52cba9cd055be2ede8373e487a4c89`**,
   16 mapped nodes, **byte-identical** to `schema-attestation.cpu.json`.
 - Still code-only, no weights, GPU/weights unqualified. Nothing was pushed. Disk after the build: 86% (28 GB free).
+- **Pushed by the operator, 12 Nov** (their own shell, `gh` token with `write:packages`). The package was then made public:
+  - `ghcr.io/clarenze-c/drama-pika-h3-flex:t031-native`;
+  - **pinned reference `ghcr.io/clarenze-c/drama-pika-h3-flex@sha256:e4ccc00404ca11a7a1e3baba7ce591413c0ea3c9d64a8089b6f46703b3354b39`**;
+  - verified: an anonymous GHCR token pull of the manifest returns HTTP 200 with that digest, and the local image ID is still `abd32e9e…`.
