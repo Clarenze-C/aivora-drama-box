@@ -11,8 +11,10 @@
     "sample_rate": 24000,
     "channels": 1,
     "source": "Botnoi Studio V4 (operator, 12 Nov)",
-    "voice_name": null,
-    "rights_basis": "OPERATOR_ATTESTED (O-11)"
+    "voice_name": "tee (ตี๋)",
+    "rights_basis": "OPERATOR_ATTESTED (O-11)",
+    "botnoi_api_ids": "V1 39 / V2 76",
+    "voice_kind": "Botnoi own voice (not community)"
   },
   {
     "ref_id": "B-NEUTRAL",
@@ -26,7 +28,10 @@
     "sample_rate": 24000,
     "channels": 1,
     "source": "Botnoi Studio V4 (operator, 12 Nov)",
-    "voice_name": null,
-    "rights_basis": "OPERATOR_ATTESTED (O-11)"
+    "voice_name": "meow (เหมียว)",
+    "rights_basis": "OPERATOR_ATTESTED (O-11)",
+    "botnoi_api_ids": "V1 42 / V2 60",
+    "voice_kind": "Botnoi own voice (not community)",
+    "operator_wrote": "mewow"
   }
 ]

@@ -251,4 +251,5 @@ shot).
 - **T031 voice references (operator, 12 Nov):** both made in Studio, so V4:
   - `media/samples/drama-box-t031-refs/voices/A-NEUTRAL.wav`: 5.96 s, 24 kHz mono, sha256 `87fc4c40…`;
   - `B-NEUTRAL.wav`: 8.60 s, sha256 `b11a0101…`.
-  - The voice names/IDs are pending, for the rights record.
+  - **Voices (operator): A = tee (ตี๋; API V1 39 / V2 76), B = meow (เหมียว; V1 42 / V2 60; the operator
+    wrote "mewow").** Both are Botnoi's own voices, so the O-11 `OPERATOR_ATTESTED` basis covers them.
