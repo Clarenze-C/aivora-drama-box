@@ -223,3 +223,6 @@ shot).
   boy) and Bow (little girl)**. None is API speaker 582 or 583, so those two are additional API monk
   voices. All of these are Studio-only additions for `botnoi-v4-voices.csv`, entered with their Studio
   names when a season casts them. The T031 benchmark needs none of them.
+- **Reference picks (operator, 12 Nov): A = A2, B = B2.** Files: `media/samples/drama-box-t031-refs/2026-11-12-r1/A2.png`
+  and `B2.png`, with their sha256 in `t031-benchmark/references-r1-manifest.jsonl`. A-home (S08) is an edit
+  of A2.
