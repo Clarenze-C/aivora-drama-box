@@ -204,3 +204,22 @@ shot).
    their creators' own terms. **Shortlists default to Botnoi Cast and API voices.** A community voice
    needs the operator's explicit per-voice approval, recorded in its rights record, since the O-11
    attestation covers Botnoi's own voices.
+
+## T031 benchmark inputs (operator, 12 Nov)
+
+- **Rights route for the private benchmark: CONFIRMED.** The benchmark runs under the MiniMax H3 Community
+  License (Pika H3 Flex adapters); outputs are viewed privately from Singapore/Thailand only. Recorded as
+  the operator's attestation.
+- **Release-territory question:** the operator declined vendor contact. Their words: "No worries as many
+  microdramas are already made with Pika and Minimax H3." Release rights stay T032/T033 evidence; this
+  attestation covers the private benchmark only.
+- **Thai listener for one-time calibration: available** (operator: "Yes"). Name and access are recorded
+  at sign-off.
+- **Reference images: GO.** Nano Banana Pro, two original adult fictional characters:
+  - A (male, about 30) and B ("May", female, about 28);
+  - candidates first, operator picks;
+  - then A's home outfit (S08), the office and home sets, and envelope-01.
+- **Botnoi Studio archetypes (operator):** Studio has **7 monk voices, 2 grandpa, 2 grandma, Ananda (little
+  boy) and Bow (little girl)**. None is API speaker 582 or 583, so those two are additional API monk
+  voices. All of these are Studio-only additions for `botnoi-v4-voices.csv`, entered with their Studio
+  names when a season casts them. The T031 benchmark needs none of them.
