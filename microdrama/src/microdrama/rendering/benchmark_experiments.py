@@ -898,6 +898,50 @@ class ExperimentBudgetService(BudgetService):
                 )
         return super().record_usage(receipt)
 
+    def _late_interval_identity(self, receipt: Any) -> Any:
+        """HD-2 (HCF R4): the interval's receipt identity is chosen ONCE, under
+        the account lock - serialized with posting and closure.
+
+        An interval already posted under its original (pre-close) ACCRUAL
+        identity keeps that identity on every replay: the reservation closing
+        between the interval post and the ``accrued_until`` advance must never
+        re-identify the same interval as a ``late:`` ADJUSTMENT (a different
+        receipt UUID and provider key), which the canonical replay lookup then
+        misses only to die on the interval-overlap Conflict - the accrual
+        cursor could never advance. Only genuinely new late cost on a closed
+        hold takes the reserved late identity.
+        """
+        from uuid import uuid5
+
+        from microdrama.budget.ledger import lock_account, reservation_account_id
+        from microdrama.contracts.cost import ReceiptKind
+        from microdrama.rendering.leases import RENDERING_NAMESPACE
+
+        with self._db.transaction() as tx:
+            # The account lock is the same lock posting and closure take, so
+            # the reservation state and the already-posted charges are decided
+            # at one serialized point - never between the two.
+            account_id = reservation_account_id(tx, receipt.reservation_id)
+            lock_account(tx, account_id)
+            state = tx.fetchval(
+                "SELECT state FROM reservations WHERE id=%s", (receipt.reservation_id,)
+            )
+            if state not in ("SETTLED", "RELEASED"):
+                return receipt
+            already_posted = tx.fetchval(
+                "SELECT 1 FROM charges WHERE receipt_id=%s AND reservation_id=%s",
+                (receipt.receipt_id, receipt.reservation_id),
+            )
+        if already_posted:
+            return receipt  # immutable: the posted identity IS the replay identity
+        return receipt.model_copy(
+            update={
+                "receipt_id": uuid5(RENDERING_NAMESPACE, f"late:{receipt.receipt_id}"),
+                "provider_receipt_id": f"late:{receipt.provider_receipt_id}",
+                "kind": ReceiptKind.ADJUSTMENT,
+            }
+        )
+
     def record_gpu_interval(
         self,
         *,
@@ -917,27 +961,17 @@ class ExperimentBudgetService(BudgetService):
         never depends on when the receipt was presented, so a crash between the
         interval post and the ``accrued_until`` advance replays identically,
         and a pre-close ACCRUAL and a post-close late ADJUSTMENT for the same
-        interval can never collide on one receipt key.
+        interval can never collide on one receipt key. An interval already
+        posted while the hold was ACTIVE keeps its original identity (HD-2).
         """
-        from uuid import uuid5
-
         from microdrama.contracts.cost import ReceiptKind
-        from microdrama.rendering.leases import RENDERING_NAMESPACE
 
-        if (
-            receipt.kind is ReceiptKind.ACCRUAL
-            and receipt.reservation_id is not None
-            and self._reservation_closed(receipt.reservation_id)
-        ):
-            receipt = receipt.model_copy(
-                update={
-                    "receipt_id": uuid5(RENDERING_NAMESPACE, f"late:{receipt.receipt_id}"),
-                    "provider_receipt_id": f"late:{receipt.provider_receipt_id}",
-                    "kind": ReceiptKind.ADJUSTMENT,
-                }
-            )
-            # The canonical accrual loop attributes non-ACCRUAL usage as IDLE.
-            basis = "IDLE"
+        if receipt.kind is ReceiptKind.ACCRUAL and receipt.reservation_id is not None:
+            normalized = self._late_interval_identity(receipt)
+            if normalized is not receipt:
+                receipt = normalized
+                # The canonical accrual loop attributes non-ACCRUAL usage as IDLE.
+                basis = "IDLE"
         return super().record_gpu_interval(
             lease_id=lease_id,
             provider=provider,

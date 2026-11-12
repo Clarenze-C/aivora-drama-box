@@ -264,6 +264,77 @@ def test_hc2_late_interval_crash_before_accrued_until_replays_cleanly(
     assert advanced == T0 + timedelta(seconds=1200)
 
 
+def test_hd2_interval_posted_active_replays_same_receipt_after_close(
+    db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HD-2: an interval posted while the hold was ACTIVE keeps its IMMUTABLE
+    identity across the reservation's closure. The worker dies after the
+    interval post but before ``accrued_until`` advances; the settlement closes
+    the hold; the recovery replay of that same interval is accepted as the
+    SAME receipt - same UUID, same provider receipt key, still an ACCRUAL,
+    never re-identified as a ``late:`` ADJUSTMENT - and advances
+    ``accrued_until``. (The normaliser used to choose the identity from the
+    reservation's CURRENT state, so this replay minted a ``late:`` identity
+    the canonical replay lookup missed and died on the interval-overlap
+    Conflict.)"""
+    world, budget, lease, reservation, _episode = _elapsed_lease(db)
+
+    # The interval posts while the hold is ACTIVE, then the worker dies before
+    # the accrued_until advance.
+    from microdrama.rendering import leases as leases_module
+
+    original = leases_module.update_with_revision
+
+    def dying_advance(tx, table, row_id, revision, values, **kwargs):
+        if table == "pod_leases" and "accrued_until" in values:
+            raise RuntimeError("died after the interval post, before accrued_until")
+        return original(tx, table, row_id, revision, values, **kwargs)
+
+    monkeypatch.setattr(leases_module, "update_with_revision", dying_advance)
+    with pytest.raises(RuntimeError):
+        accrue_lease_usage(
+            db, budget, world.manager, lease_id=lease, until=T0 + timedelta(seconds=600)
+        )
+    monkeypatch.undo()
+
+    # The durable crash state: the ACCRUAL charge exists, the cursor never moved.
+    with db.transaction(readonly=True) as tx:
+        posted = tx.fetchone(
+            "SELECT receipt_id, provider_receipt_id FROM charges "
+            "WHERE reservation_id=%s AND kind='ACCRUAL'",
+            (reservation,),
+        )
+        cursor = tx.fetchval("SELECT accrued_until FROM pod_leases WHERE id=%s", (lease,))
+    assert posted is not None
+    assert not posted["provider_receipt_id"].startswith("late:")
+    assert cursor is None
+
+    # The settlement closes the reservation (a normal sweep tail).
+    settle_from_recorded_usage(db, budget, world.settings, lease_id=lease, context="hd2")
+    with db.transaction(readonly=True) as tx:
+        state = tx.fetchval("SELECT state FROM reservations WHERE id=%s", (reservation,))
+    assert state == "SETTLED"
+
+    # The recovery replay: the same interval arrives with the same
+    # deterministic receipt while the hold is now closed.
+    accrue_lease_usage(db, budget, world.manager, lease_id=lease, until=T0 + timedelta(seconds=600))
+
+    with db.transaction(readonly=True) as tx:
+        advanced = tx.fetchval("SELECT accrued_until FROM pod_leases WHERE id=%s", (lease,))
+        rows = tx.fetchall(
+            "SELECT receipt_id, kind, provider_receipt_id FROM charges WHERE reservation_id=%s",
+            (reservation,),
+        )
+    accruals = [row for row in rows if row["kind"] == "ACCRUAL"]
+    assert advanced == T0 + timedelta(seconds=600), "the replay must advance the cursor"
+    assert len(accruals) == 1, "the interval is charged exactly once"
+    assert accruals[0]["receipt_id"] == posted["receipt_id"]  # the SAME receipt UUID
+    assert accruals[0]["provider_receipt_id"] == posted["provider_receipt_id"]  # same key
+    assert not any(row["provider_receipt_id"].startswith("late:") for row in rows), (
+        "an already-posted interval is never re-identified as late billing"
+    )
+
+
 def test_hc2_incident_path_bills_discovered_pod_once_as_adjustments(db: Database, tmp_path) -> None:
     """The §6.4 incident path's late billing, end to end: the discovered pod's
     cost lands as exactly one ADJUSTMENT per interval on the closed hold, the
