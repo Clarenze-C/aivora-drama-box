@@ -65,6 +65,11 @@ Everything below this section is history. This section is the live state.
   with the A1 note re-critique. Neither is on the T031/A0-D critical path: A0-D tests use a fake
   ai-route shim.
 - The A0-R1 fix1 build (`a0r1-fix1-after-hcf`) still starts by itself when the HCF loop ends.
+  - **Superseded 12 Nov 01:35Z:** that unit was stopped (it had only been retrying exit 75; no build ran)
+    and replaced by **`a0r1-fix1-after-r4`** (script `scratchpad/keep/a0r1-fix1-after-r4.sh`, session
+    e4e3c05c). The new unit waits until `t031-r4-loop` has ended and z.ai 5h < 50%, then runs the same
+    build, tag `dramabox:a0r1-fix1`. Reason: R4 is the critical path and gets the 02:31Z window alone;
+    the A0-R1 re-review is held until the Codex reset anyway. Check: `journalctl -u a0r1-fix1-after-r4 -o cat`.
 
 ### T031 / H-2 (benchmark recovery): build DONE, verification running
 
