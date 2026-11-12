@@ -253,3 +253,15 @@ shot).
   - `B-NEUTRAL.wav`: 8.60 s, sha256 `b11a0101…`.
   - **Voices (operator): A = tee (ตี๋; API V1 39 / V2 76), B = meow (เหมียว; V1 42 / V2 60; the operator
     wrote "mewow").** Both are Botnoi's own voices, so the O-11 `OPERATOR_ATTESTED` basis covers them.
+
+## T031 run-readiness (operator, 12 Nov 14:30Z)
+
+- The orchestrator's paid-run fact map (`t031-benchmark/paid-run-factmap.md`) found the paid path can't run a real
+  model yet:
+  - no weight provisioning on the pod;
+  - no live `/object_info` capture for the seal;
+  - no authoring tools for run documents and registry rows;
+  - no timing capture.
+- **Operator: "1. Yes" (build a run-readiness package now; spec tonight) and "2. Approved"** (the one short live-capture
+  pod's cost is counted **inside the $8 benchmark envelope**; total new exposure stays ≤ $8).
+- This is not the sign-off of the paid run: that remains a separate explicit approval of the concrete authorization.
