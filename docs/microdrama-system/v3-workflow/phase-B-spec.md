@@ -1,6 +1,6 @@
 # Phase B: Story (Script Maker → LOCK → bible → episode packs → STORY LOCK)
 
-**Version 0.2, 12 Nov 2026** (v0.1 11 Nov; v0.2 records the operator's answers to O-B1..O-B6). Author: Opus orchestrator.
+**Version 0.3, 12 Nov 2026** (v0.1 11 Nov; v0.2 records the operator's answers to O-B1..O-B6; v0.3: one neutral voice reference per speaker, master v0.4.5 §6). Author: Opus orchestrator.
 
 **Status: DRAFT for Codex critique (round 1),** after the Codex week resets (13 Nov 10:30Z).
 
@@ -153,9 +153,10 @@ Those are bound later, in C (cast) or measured in D/E (durations).
 | Active locations per episode | **3** (O-B1, decided 12 Nov) | — |
 | `emotion` | `NEUTRAL`, `HAPPY`, `SAD`, `ANGRY`, `FEARFUL`, `SURPRISED` (O-B3, decided 12 Nov) | DECISIONS D2 revised (e.g. neutral, happy, sad, angry) |
 
-Each line's `emotion` drives a voice demand (§4). Every distinct (speaker, emotion) pair becomes one
-**manual Botnoi V4 upload** by the operator (DECISIONS "D2 refined"), so the vocabulary size is a labour
-decision.
+Each line's `emotion` drives the **prompt's expression text** (master v0.4.5 §6), not a voice reference.
+**Each speaker needs exactly one neutral voice reference** (DECISIONS "D2 revised again", 12 Nov). It
+supersedes the per-(speaker, emotion) uploads of "D2 refined", so the vocabulary size is no longer a
+labour decision. The demand list (§4) carries one voice demand per speaker.
 
 ### 2.3 Field mapping, readers and the consumer order (V3C-5)
 
@@ -285,7 +286,7 @@ Derived from the bible + all packs after the season critic passes. One `LogicalD
 | `PROP` | `prop_key` (+ `state_key`) | holders by scene; proof-prop flag |
 | `LOCATION` | `location_key` + `light_state` | the local times used |
 | `EXTRAS_ROLE` | `role_key` | framing |
-| `VOICE` | `character_key` | **the set of emotions its lines use** (§2.2) |
+| `VOICE` | `character_key` | one neutral reference; the set of emotions its lines use is informational (it drives prompts, §2.2) |
 
 - `demand_id = uuid5(STORY_V3_NS, "demand:<planning_scope_id>:<kind>:<logical key>")`, so it is **stable
   across revisions**. A Revise that keeps an item keeps its ID, which `CastBinding` (C) relies on.
@@ -526,7 +527,7 @@ are never edited.**
 |---|----------|----------------|
 | O-B1 | Active locations per episode: V1 caps 2 (`ProductionLimits`), for 3–5-minute episodes | **3** per episode. Cost is governed by the demand list and the forecast (C), not by this cap |
 | O-B2 | Default requested episode count | **24** (AT-3's season); the operator may choose 20–30 at intake and LOCK |
-| O-B3 | Emotion vocabulary: each (speaker, emotion) pair is one manual Botnoi V4 upload | **6 values** (§2.2). The demand list shows the upload count per character before CAST LOCK |
+| O-B3 | Emotion vocabulary (the prompt's expression text; since 12 Nov, one neutral voice reference per speaker, not one per emotion) | **6 values** (§2.2) |
 | O-B4 | Role for the proposal call (master §10.1 lists Opus for bible/builder/critic, not the proposal) | **Opus** |
 | O-B5 | LLM critics per episode, as well as per season, during the pilot (subscription quota) | **Season critic always; episode critic off by default**, switchable; the deterministic critics always run |
 | O-B6 | Should the B1 note keep V3 documents out of `v2_contract_documents` entirely? | **Yes** (§2): a new table avoids widening the V2 allowlist and its `schema_version = '2.0'` CHECK |

@@ -1,0 +1,32 @@
+[
+  {
+    "ref_id": "A-NEUTRAL",
+    "role": "voice:A",
+    "emotion": "NEUTRAL",
+    "file": "/root/AIVORA/media/samples/drama-box-t031-refs/voices/A-NEUTRAL.wav",
+    "bytes": 286158,
+    "sha256": "87fc4c401980d410613612e4f9424a80cc0269a4f8ccd13a95988fbe7dbfc1b1",
+    "duration_s": 5.96,
+    "codec": "pcm_s16le",
+    "sample_rate": 24000,
+    "channels": 1,
+    "source": "Botnoi Studio V4 (operator, 12 Nov)",
+    "voice_name": null,
+    "rights_basis": "OPERATOR_ATTESTED (O-11)"
+  },
+  {
+    "ref_id": "B-NEUTRAL",
+    "role": "voice:B",
+    "emotion": "NEUTRAL",
+    "file": "/root/AIVORA/media/samples/drama-box-t031-refs/voices/B-NEUTRAL.wav",
+    "bytes": 412878,
+    "sha256": "b11a01015a2a55394c5427023367e3571fdfd03b78fafabbe41c2784688a1b2a",
+    "duration_s": 8.6,
+    "codec": "pcm_s16le",
+    "sample_rate": 24000,
+    "channels": 1,
+    "source": "Botnoi Studio V4 (operator, 12 Nov)",
+    "voice_name": null,
+    "rights_basis": "OPERATOR_ATTESTED (O-11)"
+  }
+]

@@ -1,5 +1,9 @@
 # T031 benchmark: Botnoi voice shortlist and the 4 clips to make (12 Nov 2026)
 
+> **Superseded the same day:** Studio has no usable emotion control (operator), so the benchmark uses
+> **two neutral clips only** (`A-NEUTRAL.wav`, `B-NEUTRAL.wav`). The prompt carries S05's grief and S06's
+> anger. See DECISIONS "D2 revised again" and `voices-manifest.json`.
+
 Speaker **A** is a man, about 30 (S01, S03–S05, S07, S08; grief in S05). Speaker **B** is "May", a
 woman, about 28 (S02–S04, S06; restrained anger in S06). The clips are the Pika Ref2VA **voice
 references**, one per (speaker, emotion) the matrix uses.

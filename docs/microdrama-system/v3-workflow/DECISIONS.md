@@ -226,3 +226,29 @@ shot).
 - **Reference picks (operator, 12 Nov): A = A2, B = B2.** Files: `media/samples/drama-box-t031-refs/2026-11-12-r1/A2.png`
   and `B2.png`, with their sha256 in `t031-benchmark/references-r1-manifest.jsonl`. A-home (S08) is an edit
   of A2.
+
+## D2 revised again: one neutral voice reference per speaker (operator, 12 Nov)
+
+- **Operator:** "Expressions dont really work in Studio. I have to add in the tags in the middle of the
+  sentences. And there are limited: sigh, breath, exhale, sniff, cough, sneeze, ahem, stuggle, sleep,
+  laughter, surprise "wow!", surprise "Ah! / Opps", Surprise "Oh!", Greeting "Yo!", Displeased "Hmph!",
+  Confirm "Hmm", Agree "Uh-Huh", Ask "Ah?", Ask "Oh?", Ask Eh?", Ask "Um?". […] I suggest we just
+  generate the neutral one using API, then let the prompt do the expressions."
+- **Adopted:**
+  - each speaker has **one neutral Botnoi reference**;
+  - the Pika prompt carries each line's expression and delivery;
+  - this supersedes "D2 revised"'s per-emotion variants and V3R-3's variant selection.
+  - Master SPEC v0.4.5 §6, phase B v0.3 §2.2/§4/O-B3.
+- **Evidence:** T031's S05 (grief) and S06 (anger) now run from the neutral references, so they test this
+  approach directly. MA12's ≥80% pilot criterion and its split-coverage contingency are unchanged.
+- **Open, API vs Studio:** the public API serves only V1/V2. V4 is Studio-only (11 Nov facts). "Generate
+  via the API" therefore means V2 voices, generated automatically; Studio means V4, by hand, but only
+  once per speaker now.
+  - Orchestrator recommendation: have the Thai listener compare one voice's V2 (API) and V4 (Studio)
+    neutral clip.
+  - Automate with the API if V2 is good enough; otherwise keep the one manual Studio upload per speaker.
+  - Decide before phase C.
+- **T031 voice references (operator, 12 Nov):** both made in Studio, so V4:
+  - `media/samples/drama-box-t031-refs/voices/A-NEUTRAL.wav`: 5.96 s, 24 kHz mono, sha256 `87fc4c40…`;
+  - `B-NEUTRAL.wav`: 8.60 s, sha256 `b11a0101…`.
+  - The voice names/IDs are pending, for the rights record.

@@ -1,6 +1,6 @@
 # Drama Box v3 — series production workflow: MASTER SPEC
 
-**Version 0.4.4, 11 Nov 2026.** Author: Opus orchestrator. (v0.4.4 changes only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.3 changed only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
+**Version 0.4.5, 12 Nov 2026.** Author: Opus orchestrator. (v0.4.5 changes only the §6 "Voice by emotion" rule: one neutral voice reference per speaker, emotion carried by the prompt; DECISIONS "D2 revised again". v0.4.4 changed only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.4 changes only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.3 changed only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
 
 **Status: BINDING MASTER.**
 - Codex critique rounds 1–2 are applied: [codex-spec-critique.md](codex-spec-critique.md) (V3C-1..34) and
@@ -533,18 +533,20 @@ has V4.
   - the necessary location plate.
 - **Over budget:** drop optional bindings only, with reasons. Otherwise block and send the shot back to
   directing to simplify or split. (The v0.1 "qualified composite" option is **removed**; N32.)
-- **Voice by emotion (operator decision on V3R-3):**
-  - One CAST-locked variant per speaker per shot, chosen by the emotion tag.
-  - **Mixed emotions:** use the **dominant** emotion's variant. Dominant = the line with the longest
-    estimated spoken duration; a tie goes to the earlier line.
-  - **The prompt states each line's expression and delivery explicitly.** The choice is persisted.
-  - The `neutral` fallback applies only to an emotion explicitly unsupported in the season set. **A
-    missing, corrupt or unapproved required variant blocks dispatch.**
-  - **Pilot exit criterion (MA12):** P1 must show mixed-emotion shots rendering the intended change in at
-    least **80%** of cases, judged by the recorded Gate 2 human assessment. Below that, the **pre-agreed
-    contingency** is the round-2 alternative: split coverage at speech-safe boundaries so each shot
-    carries one expression. Switching to it needs an operator decision, shown with its projected
-    clip/cost impact.
+- **Voice and emotion (operator, 12 Nov; supersedes the V3R-3 per-emotion variants):**
+  - **One CAST-locked neutral voice reference per speaker** (Botnoi). Botnoi Studio offers no usable
+    emotion control, only inline non-speech tags (sigh, breath, sniff, laughter, …), so per-emotion
+    variants are not produced.
+  - **The prompt carries the emotion:** it states each line's expression and delivery explicitly (V3R-3
+    kept). The shot's emotion tag (the dominant emotion: the line with the longest estimated spoken
+    duration; a tie goes to the earlier line) is persisted and drives that prompt text, never a reference
+    swap.
+  - **A missing, corrupt or unapproved neutral reference blocks dispatch.**
+  - **Pilot exit criterion (MA12):** P1 must show emotional and mixed-emotion shots rendering the intended
+    expression in at least **80%** of cases, judged by the recorded Gate 2 human assessment. T031's S05
+    (grief) and S06 (anger), both run from neutral references, are the first evidence. Below that, the
+    **pre-agreed contingency** is to split coverage at speech-safe boundaries so each shot carries one
+    expression. Switching to it needs an operator decision, shown with its projected clip/cost impact.
 
 ## 7. Audio providers (single normative home for voice, SFX and music sources; MA20)
 
