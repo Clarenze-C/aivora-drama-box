@@ -1,9 +1,11 @@
 # Phase B: Story (Script Maker → LOCK → bible → episode packs → STORY LOCK)
 
-**Version 0.4, 13 Nov 2026** (v0.1 11 Nov; v0.2 records the operator's answers to O-B1..O-B6; v0.3: one
-neutral voice reference per speaker, master v0.4.5 §6; **v0.4 applies the Goldfish rulings
-(`phase-b-goldfish-rulings.md`)** — every ruling and review Action; finding map in §17). Author: Opus
-orchestrator; v0.4 applied by GLM. **Status: DRAFT for Codex critique (round 1).**
+**Version 0.5, 13 Nov 2026** (v0.1 11 Nov; v0.2 records the operator's answers to O-B1..O-B6; v0.3: one
+neutral voice reference per speaker, master v0.4.5 §6; v0.4 applies the Goldfish rulings
+(`phase-b-goldfish-rulings.md`) — finding map in §17; **v0.5 applies the Codex round-1 critique per
+`phase-b-critique-rulings.md`** — all sixteen findings accepted, PB-11 as the first option; finding map
+in §18). Author: Opus orchestrator; v0.4 and v0.5 applied by GLM. **Status: DRAFT for Codex critique
+(round 2).**
 
 **Master:** [SPEC-v3.md](SPEC-v3.md) v0.4.6. **Depends on:** [phase-A0-spec.md](phase-A0-spec.md) v0.4
 (`LlmStep`, the gateway, quota admission); [phase-A-spec.md](phase-A-spec.md) v0.3 (gates, tracks, the
@@ -91,35 +93,48 @@ keeps the ID**, the V2 convention (`S/story/script_maker.py:69`). **Versions vs 
 per-intake counter that resets to 1 on a fresh intake after a Reject, so that intake's round-1 content
 lands as version k+1 on the same append-only record.
 
+**Generation-round identity (PB-2).** Beside the displayed per-intake `round`, B persists a
+**monotonically increasing generation-round identity per scope** — never reset; storage and symbolic
+migration `B-…` pinned in the B1 note. It exists because round keys alone cannot implement recovery:
+re-enqueueing a terminal failed job under the same round key returns that failed job instead of retrying
+it, and a displayed-round reset after Reject would reuse proposal IDs across intakes. Binding on every
+flow below: (1) a **terminal-failure retry creates a replacement job** with a fresh execution-attempt
+key (the semantic key including the generation-round identity) and an **unchanged `logical_work_id`**;
+successful members of the failed round are retained (§5.2); (2) **transport recovery retains the
+existing call identity** (§7.4); (3) **proposal identities include the generation-round identity**, so
+IDs never repeat across intakes or retries.
+
 | Record | Key | Content |
 |--------|-----|---------|
 | `ConceptIntakeV3` | `intake` | `mode` (`TITLE` only; `TREND` refused, §3.1), `idea_line` (1–300 chars), optional genre/tone hints, `requested_episode_count` (20–30, default 24), `language = "th"`, `original_fiction = true` |
 | `ProposalRoundV3` | `proposals` (versions = all rounds, §2 Identity) | `round` (per intake, resets after Reject), 2–3 `SeasonProposalV3`, the revision-note refs that produced the round (none for round 1) |
-| `SeasonProposalV3` (embedded) | `proposal_id = uuid5(STORY_V3_NS, "proposal:<scope>:<round>:<slot>")`, stable within its round | the master §4.1 fields: title TH/EN, logline, premise, thesis question, genre/tone, `episode_count` (20–30), `target_length_ms = 120_000`, main cast briefs (3–6), season promise, escalation shape, ending, **extension seam sketch**, why it would trend, originality and rights notes |
+| `SeasonProposalV3` (embedded) | `proposal_id = uuid5(STORY_V3_NS, "proposal:<scope>:<generation-round>:<slot>")` (PB-2), stable within its round | the master §4.1 fields: title TH/EN, logline, premise, thesis question, genre/tone, `episode_count` (20–30), `target_length_ms = 120_000`, main cast briefs (3–6), season promise, escalation shape, ending, **extension seam sketch**, why it would trend, originality and rights notes |
 | `SeasonBibleV3` | `bible` | **wraps the existing `SeasonBible` (`S/story/models.py:63`) and `RichBible` (`S/story/script_maker.py:206`) for the sections they already cover, plus the new V3 sections — master §4.2 honoured, no deviation (C-M11)**; the Joey sections **in order**; the camera package, palette, lighting language, pacing rule; `characters[]`; `extras_roles[]`; the ledgers; `initial_continuity` (the seed `ContinuityStateV3` for episode 1, C-N1); `tbd[]` (field path + reason) |
 | `CharacterProfile` (embedded) | `character_key` | `tier`; narrative function; visual lock (text); backstory; psychology by story state; speech (register, texture, cadence, Thai politeness and pronouns, code-switching); movement; stillness; drift exclusions; goal, strategy, flaw, secrets; **voice descriptor** (gender, age band, pitch, timbre, pace, accent/dialect, emotional baseline), required when the character speaks |
 | `EpisodePackV3` | `episode:<n>` | §2.1 |
 | `ContinuityStateV3` | `continuity:<n>` | the state **after** episode *n*: per character, outfit + appearance states + location + known secrets + end psychology; per prop, holder + state; the story clock; **the wardrobe history by story day** |
 | `CriticReportV3` | `critic:<episode n \| season>` | findings with severity, rule ID, the target (pack/scene/beat/line) and evidence; per-episode and season reports |
 | `SeasonDemandListV3` | `demands` | §4 |
-| `ExtensionSeamV3` | `seam` | threads: `thread_id`, description, the open payoffs it may grow, constraints that must hold to keep the ending, **`status` (`OPEN`/`RESOLVED`; a thread becomes `RESOLVED` when a pack resolves its last open payoff — C-M9)**; built with the bible and **bound at STORY LOCK** |
+| `ExtensionSeamV3` | `seam` | threads: `thread_id`, description, the open payoffs it may grow (by stable `debt_id`), constraints that must hold to keep the ending, **`reserves_growth` (explicit bool — PB-12)**, and **`status` (`OPEN`/`RESOLVED`)** — status is **derived from typed payoff-settlement effects** (§2.1): a thread becomes `RESOLVED` when a pack's settlement effect resolves its last open payoff (C-M9, PB-12); built with the bible and **bound at STORY LOCK** |
 | `StoryLockBindingV3` | `story-lock:<content_revision>` | the hashed set STORY LOCK approves (§5.4) |
 
 **Reused shapes:** the secret and season ledgers reuse the V2 shapes `SecretEntry`
 (`S/contracts/v2.py:276`), `PayoffDebt` (`:206`) and `SeasonEscalation` (`:213`), embedded as V3 models
-with the same validators; `validate_season_story_ledger` (`:242`) gets a V3 sibling that binds the ledger
-to the bible, the packs and the LOCK authority.
+with the same validators — except that the V3 `PayoffDebt` sibling adds a **stable `debt_id`** (the V2
+field is free text, which typed effects cannot reference — PB-12); `validate_season_story_ledger`
+(`:242`) gets a V3 sibling that binds the ledger to the bible and the LOCK authority at bible time, and
+to the packs once they exist (PB-13: pack cross-validation runs after planning, §4.1/§5.2).
 
 ### 2.1 `EpisodePackV3`
 
 | Field | Rule |
 |-------|------|
-| `planning_scope_id`, `episode_number` | identity before rows exist; `episode_id` is bound only at STORY LOCK (§5.4) |
+| `planning_scope_id`, `episode_number` | identity before rows exist; `episode_id` is linked at STORY LOCK only through `v3_episode_story_bindings` (§5.4) — **approval never reseals or modifies the approved pack to add its episode ID (PB-10)** |
 | `lock_authority` | the approved proposal's `content_sha256` + the LOCK approval event ID (V3C-4) |
 | `titles` TH/EN; `synopsis` | required |
 | `recap_plan` | the beats recalled from the previous episode, with `estimated_ms ≤ 10_000`; **empty for episode 1** |
 | `scenes[]` | each: `scene_id`; `story_time` (reusing `StoryTime`, `S/contracts/v2.py:284`: story day, local time `HH:MM`, setting — C-N10); `location` (demand ID + **light state**); `visible_cast[]` (character demand ID or extras-role demand ID, with framing `RECOGNISABLE` or `BACKGROUND`); `props[]` (prop demand ID + holder character ID or none + state ID); `wardrobe[]` (for **every** visible character: outfit demand ID + appearance-state IDs); `beats[]` |
-| `beats[]` | each: `beat_id`, text, `planned_hold_ms` (non-dialogue screen time), `line_ids[]`, `reveals[]` (secret IDs), **≤2 distinct speakers** (§1.6) |
+| `beats[]` | each: `beat_id`, text, `planned_hold_ms` (non-dialogue screen time), `line_ids[]`, `reveals[]` (secret IDs), **`effects[]` — typed beat effects (PB-12): a `WARDROBE_CHANGE` effect (stable subject character ID + target outfit demand ID) authorizes an outfit change within a scene; a `PAYOFF_SETTLEMENT` effect (stable `debt_id` + the resolving action) settles a ledger debt**, **≤2 distinct speakers** (§1.6) |
 | `cliffhanger_beat_id` | a beat of the last scene |
 | `lines[]` | each: `line_id`, `beat_id`, `speaker` (**a character or an extras-role demand ID** — C-M13b), `off_screen` (bool), `text_th`, `text_en`, `text_zh`, **`emotion`** (closed enum, §2.2), `delivery_note` (≤200 chars), `estimated_ms` (from `estimate_line_ms`, `S/story/prompts.py:367`), `critical_terms[]` (the V1 shape) |
 | `cta` | an intent line, `estimated_ms ≤ 5_000`. No `template_id`: no template registry exists in any phase, and the CTA copy is resolved in E/F from the calendar revision it depends on (master §4.7; C-N1) |
@@ -199,6 +214,7 @@ note re-audits the tail before allocating). Every B identifier crossing an A-pha
 | D2 | Decision-target kinds `PROPOSAL`, `EPISODE_PLAN` (by episode number, before STORY LOCK), `BIBLE_SECTION`, `SEAM`, `TIER` | A1's `RevisionTargetKind` and its validators (A1 note §4, new `S/contracts/v3.py`); `V3DecisionCommand` | **B1 owns a migration in B's range**: contract code + regenerated v3 schemas (note targets are jsonb validated in Python, not a SQL CHECK — A1 note §2.3; the enforced vocabulary is the StrEnum + validators). `V3DecisionCommand` gains an optional typed `target`, **absent for A1's existing gates** — A1's behaviour unchanged, its note and build **not** reopened; the delta lands in B1 after A1 is accepted. Target IDs reuse §2's uuid5 convention: `PROPOSAL` → the slot's `proposal_id`; `EPISODE_PLAN` → the pack `record_id` (`uuid5(STORY_V3_NS, "episode:<scope>:<n>")`); `SEAM` → the seam record ID; `BIBLE_SECTION`/`TIER` → `uuid5(STORY_V3_NS, …)` over the section path / `character_key` (exact derivations pinned in the B1 note) |
 | D3 | `edit_tier` command-table row | A1 note §6 command format | §9; ships in B5 (C-M3) |
 | D4 | Citation convention | — | header; swept in v0.4 |
+| D5 | **B's caller-transaction completion seam (PB-1)** | A1/A3's job lifecycle and lock order: the runtime calls the handler first and finishes the job afterward (`S/workers/runtime.py:245`; `finish` at `S/core/jobs.py:676`); A3 retains job-only `finish`; the track-before-jobs order (A1 note §9) | **B1 registers the delta; the seam ships with B's first fan-out (B4/B5, §7.1):** the completing handler takes the scope track FOR UPDATE **before** job locks, validates fence and lease, persists outputs and successful completion, and evaluates the join over the **persisted** required members — finalization requires every required member's current successful output; continuation/gate creation commits atomically; **the runtime does not finish the job again** |
 
 **Standing rule (C-B1):** any B identifier that crosses an A-phase contract is checked against that
 contract's *enforced* vocabulary (enum, CHECK, validator) **before the B1 note is accepted**. Applied in
@@ -216,7 +232,8 @@ ties a replacement link to **one `logical_work_id`** (A1 note §2.4) — so the 
   key. The route accepts a `mode` field; **only `TITLE` is admitted** — `TREND` is refused with
   `MODE_UNAVAILABLE` before any write (C-N12). Steps: call `create_v3_season` (A2; `NOT_AVAILABLE` until
   A2 ships); write `ConceptIntakeV3`; enqueue `story_v3.propose` round 1; advance planning
-  `IDEA → PROPOSED` when the round is written (§3.2).
+  `IDEA → PROPOSED` when the round is written (§3.2). **A fresh intake on an existing (rejected) scope
+  goes through `replace_v3_intake` (§9), never through `create_v3_season` again (PB-14).**
 - **Mode A:** the intake form shows **Trend research: disabled** with the reason (master §4.1, V3C-32);
   the research code (`S/research/service.py:313`) stays V1-only behind the `require_workflow` guards
   (A1 note §7). The V1 wizard (`S/review/intake.py:676`) is unchanged and creates only V1 seasons.
@@ -227,23 +244,39 @@ ties a replacement link to **one `logical_work_id`** (A1 note §2.4) — so the 
   `SeasonProposalV3`; round *k* > 1 carries the revision notes.
 - **Validation:** schema, then the V3 limits (including **`episode_count == requested_episode_count`**,
   C-M15), then originality and rights notes present, then the name screen.
-- **Name screening, stated plainly (C-M6):** B enforces "no real people, brands or celebrities" only
-  through **prompt constraints plus originality-vs-corpus screening** (`screen_concept`,
-  `S/research/originality.py:179`) — a resemblance screener with **no person/brand list**. The
-  real-person/brand/likeness check is phase C's output inspection (master §12.2); residual risk §15.
+- **Name screening, stated plainly (C-M6, PB-16):** B enforces "no real people, brands or celebrities"
+  only through **prompt constraints plus originality-vs-corpus screening** — a resemblance screener with
+  **no person/brand list**. The V1 `screen_concept` (`S/research/originality.py:179`) takes a legacy
+  `ConceptDraft.scope: SeasonScope` and reads legacy arc/character fields, so **B2 defines a V3
+  screening projection/sibling over the existing pure token-comparison helpers**, with an explicit
+  proposal-field mapping and BLOCKED/FLAGGED/UNKNOWN behaviour; it **never manufactures a legacy
+  `SeasonScope`** (whose frozen duration and required-field contracts would then govern V3 content).
+  The real-person/brand/likeness check is phase C's output inspection (master §12.2); residual risk
+  §15.
 - **Invalid output:** a repair round with a new `logical_call_id` — **1 initial + 2 repair rounds = 3
   content attempts** (C-N9), then the job fails → `BLOCKED (failed)`.
-- **On success, in one transaction:** write the `ProposalRoundV3` version;
+- **On success, in one transaction (PB-3 ordering):** write the `ProposalRoundV3` version; **complete
+  the planning transition and its revision changes before the activation opens** —
+  `advance_planning(PROPOSED)` (round 1 only) first, then
   `open_gate(SEASON_CONCEPT, season, binding = canonical_hash({round record_id, version,
-  content_sha256}))`; `advance_planning(PROPOSED)` (round 1 only).
+  content_sha256}))` **stamped with the final revisions** (A1 note §5's three-way comparison reads the
+  activation against post-transition authority, so no later transition bump can stale it).
 
 ### 3.3 LOCK decisions (the B handler for V3 `SEASON_CONCEPT`)
 
-| Action | Conditions (evaluated in the A1 decision transaction, A1 note §5) | Effect in the same transaction |
+| Action | Conditions — common prerequisites only (`conditions(tx, binding)`; A1 decision transaction, A1 note §5) | Effect in the same transaction |
 |--------|-------------------------------------------------------|--------------------------------|
-| **Approve** `target = {kind: PROPOSAL, id: proposal_id}` — carried by `V3DecisionCommand.target` (§2.4 D2) and validated against the bound round's slots | the target is in the bound round; `episode_count` is 20–30 and equals the requested count | record the approval; **LOCK authority** = the proposal's `content_sha256` + the event ID; `PROPOSED → LOCKED`; enqueue `story_v3.bible` |
+| **Approve** `target = {kind: PROPOSAL, id: proposal_id}` — carried by `V3DecisionCommand.target` (§2.4 D2) and validated against the bound round's slots | the activation is open (the resolver's checks) | **Approve-callback blockers, checked at the start of the callback in the same rollback transaction (PB-11):** the target is in the bound round; `episode_count` is 20–30 and equals the requested count. Then: record the approval; **LOCK authority** = the proposal's `content_sha256` + the event ID; `PROPOSED → LOCKED`; enqueue `story_v3.bible` |
 | **Revise** + notes (`season_revision_notes`, ≥1; targets: the round, or specific proposals as prompt guidance) | the activation is open | the activation closes; enqueue `story_v3.propose` round *k*+1. **The whole round regenerates** (2–3 fresh proposals; every note passed to the prompt) — master §4.1's note model is a new proposal revision; no slot-level byte-identical carry (C-N3; §16). Planning stays `PROPOSED`; the job opens the next activation |
-| **Reject** | — | A1 note §6: no concept authority; planning stays `PROPOSED`, and the operator may submit a new intake (round counter resets, §2 Identity) or Revise later. **The season is never cancelled by a Reject** |
+| **Reject** | — | A1 note §6: no concept authority; planning stays `PROPOSED`, and the operator re-enters through the §9 commands — **`reopen_v3_gate` to Revise later, or `replace_v3_intake` for a fresh intake** (displayed round resets, §2 Identity; the generation-round identity never repeats an ID — PB-14/PB-2). **The season is never cancelled by a Reject** |
+
+**(PB-11) Where blockers live.** A1 invokes `conditions(tx, binding)` before **every** decision and passes
+it no action, so it holds **common decision prerequisites only** — putting CRITICAL findings or
+budget-attach blockers there would disable Revise and Reject and defeat the deliberately open gate. Every
+Approve-specific blocker (the cells above) is checked **at the start of the Approve callback**, inside
+the same rollback transaction: an open CRITICAL or a failing prerequisite disables Approve while Revise
+and Reject stay usable (the CRITICAL case is B-T10's). B registers **no** action-aware protocol delta
+(the operator-ruled first option).
 
 The handler is **registered only in compositions where phase B has shipped.** Before that, V3 LOCK
 returns `NOT_AVAILABLE` (A1 note §12 OQ-5).
@@ -255,8 +288,10 @@ returns `NOT_AVAILABLE` (A1 note §12 OQ-5).
 1. **One `LlmStep` (Opus)** writes `SeasonBibleV3` + `ExtensionSeamV3`, given the LOCK authority, the
    approved proposal and the Joey method digest (`joey-digest.md`; internal method only, no
    redistribution: master §18).
-2. **The deterministic bible critic** (§6.1 bible rules); then **one LLM critic pass** (Opus, O-B5) for
-   drift, thesis coherence and density.
+2. **The deterministic bible critic** (§6.1 bible rules) — over the **available** bible, ledger and LOCK
+   authority (PB-13: no pack exists yet, so no ledger-to-pack binding is demanded at bible time; that
+   binding runs after planning, §5.2); then **one LLM critic pass** (Opus, O-B5) for drift, thesis
+   coherence and density.
 3. **Repair:** 1 initial + 2 repair rounds (C-N9), each carrying the critic findings. A `[TBD]` in a
    render-required field (the camera package; a speaking character's visual lock or voice descriptor; the
    locations' light language) is **CRITICAL**. **Success:** `LOCKED → BIBLE`; enqueue
@@ -284,16 +319,25 @@ one generation job plus one critic pass.
   `StoryLockBindingV3` (§5.4) hashes the profiles at finalization.
 - **Operator tier edits at STORY LOCK — `edit_tier(character_key, tier)`** (human session + CSRF; command
   row §9; the tab-3 tier controls invoke it; ships in **B5** with everything it re-runs — C-M3). The
-  single name for its re-check is **tier revalidation**: it supersedes the open STORY LOCK activation
-  (`supersede_gate`) and opens a new one (`open_gate`; A1 note §6), re-running promotion validation,
-  demand derivation and the season critic's deterministic checks. **Overrides never waive** speaker
-  counting, the voice requirement or identity coverage (V3R-4): a demotion that would leave a speaker
-  without a voice demand, or a recognisable character without an identity demand, is refused (B-T9).
+  single name for its re-check is **tier revalidation**, implemented once as a **shared internal
+  tier-update/revalidation operation (PB-5)** with two entries: (a) the **standalone `edit_tier`
+  command** — requires an open STORY LOCK activation, supersedes it (`supersede_gate`) and opens a new
+  one (`open_gate`; A1 note §6); (b) **a tier-targeted STORY LOCK Revise** — invokes the same internal
+  operation **under the existing decision context**; it neither requires nor supersedes the activation
+  that the decision just closed (A1 note §5 step 7 closes every activation before `on_decision`), and
+  finalization opens the successor activation after the deciding transaction's revision advance. Both
+  entries re-run promotion validation, demand derivation and the season critic's deterministic checks.
+  **Overrides never waive** speaker counting, the voice requirement or identity coverage (V3R-4): a
+  demotion that would leave a speaker without a voice demand, or a recognisable character without an
+  identity demand, is refused (B-T9; the Revise entry is exercised through the real decision route in
+  B-T10).
 
 ### 4.3 The demand list (`SeasonDemandListV3`, deterministic)
 
-Derived from the bible + all packs **after the season critic runs**, regardless of remaining findings
-(C-M13d; the gate may open with CRITICALs, §5.2). One `LogicalDemand` per item:
+Derived from the bible + all packs **after finalization's post-promotion re-validation** (PB-13:
+promotions complete, the deterministic checks re-run against the effective profiles and tiers, and only
+then are demands derived — §5.2 step 4), regardless of remaining findings (C-M13d; the gate may open
+with CRITICALs, §5.2). One `LogicalDemand` per item:
 
 | Kind | Logical key | Carries |
 |------|-------------|---------|
@@ -331,8 +375,11 @@ Derived from the bible + all packs **after the season critic runs**, regardless 
   `plan_episode` dispatch**; B-T6 covers default-off and toggled-on.
 - **Repair:** 1 initial + 2 repair rounds (C-N9), carrying the findings, then the job fails →
   `BLOCKED (failed)`.
-- **On success:** write the pack version and `ContinuityStateV3(n)`; enqueue `plan_episode(n+1)`, or,
-  after the last episode, `story_v3.season_critic` (§7).
+- **On success:** write the pack version and `ContinuityStateV3(n)`; the continuation follows **the
+  round's authorized episode membership** (PB-4, §5.2) — enqueue the next member `plan_episode(n+1)`
+  within the round's persisted set; after the round's last member, `story_v3.season_critic` (§7).
+  **Episode continuation never unconditionally proceeds to *n+1* outside the persisted membership** — a
+  scoped repair's stopping point is authoritative.
 - **Progress (R-3.6):** *n*/N episodes planned, then the critic checks. **Crash and replay:** a frozen
   call is resumed by its `logical_call_id` (A0), so a crash never calls the model twice for one attempt;
   a completed episode is never re-planned by replay — the semantic key is
@@ -344,31 +391,49 @@ Derived from the bible + all packs **after the season critic runs**, regardless 
 1. **The deterministic season checks** (§6.2).
 2. **One LLM season critic (Opus):** character drift against the drift exclusions, psychology resets, a
    weak escalation, payoff timing.
-3. **Repair rounds, bounded (C-M2):** for findings that name packs, at most 2 rounds. A repair round
-   re-plans the **earliest** named episode and every later episode whose continuity input changed (§5.5),
-   **at most 6 episodes per round**. A round that would exceed 6 stops: the finding is recorded with an
-   **impact preview** (the episodes that would re-plan) and the flow continues to finalization — the gate
-   opens with the finding and the preview, Approve stays blocked while the CRITICAL is open, and the
-   operator decides (Revise, the scoped revision authority of master §2.1). While a repair round runs,
-   tab 3's season-critic wait state shows the **blast radius** (re-planning now vs deferred).
+3. **Repair rounds, bounded (C-M2, PB-4):** for findings that name packs, at most 2 rounds. Every round
+   **persists its origin (`automatic` or `human-revise`) and its authorized episode set** before any
+   re-plan starts. **Initial automatic repair** (origin `automatic`: the flow's own first pass over the
+   season critic's findings) may expand within the persisted limits — a repair round re-plans the
+   **earliest** named episode and every later episode whose continuity input changed (§5.5), **at most 6
+   episodes per round**. A round that would exceed 6 stops: the finding is recorded with an **impact
+   preview** (the episodes that would re-plan) and the flow continues to finalization — the gate opens
+   with the finding and the preview, Approve's callback blocker refuses while the CRITICAL is open
+   (Revise and Reject stay usable, PB-11), and the operator decides (Revise, the scoped revision
+   authority of master §2.1). **After a human Revise, the critic reports newly invalid dependents
+   without regenerating them** (§5.5) — automatic repair never expands a post-Revise round beyond the
+   units the operator authorized. While a repair round runs, tab 3's season-critic wait state shows the
+   **blast radius** (re-planning now vs deferred).
 4. **Then (the continuation idiom, §7):** tier promotion (§4.2); `story_v3.promote_profile` jobs — the
-   **last** one to complete runs the finalization inline; then the demand list (§4.3);
-   `StoryLockBindingV3`; `open_gate(STORY_LOCK, season, binding)`; `BIBLE → PLANNED`.
+   **last** one to complete runs the finalization inline. **Finalization (PB-13) re-runs the
+   deterministic checks against the effective profiles and tiers** (promotions may have added speakers,
+   psychology and profile fields since step 1), **then** derives the demand list (§4.3), writes
+   `StoryLockBindingV3`, and **completes the planning transition before the activation opens (PB-3)**:
+   `BIBLE → PLANNED` first, then `open_gate(STORY_LOCK, season, binding)` **stamped with the final
+   revisions**. **Re-finalization after a Revise retains `PLANNED`** and opens a fresh activation
+   without repeating the initial edge.
 
 **If CRITICAL findings remain after repair,** the gate still opens, so the operator can see and Revise,
-but **Approve's condition fails** while any CRITICAL is open. **Resume (C-M5):** **rounds are the unit of
-retry** (round-scoped semantic keys make a re-run idempotent) — the operator's retry action re-runs the
-failed round only, from its earliest failed episode. **Completed packs are kept** (stable pack and demand
-IDs make them safe), and tab 3 labels each pack's version status during a round (current / superseded /
-re-planning).
+but **Approve's callback blocker refuses** while any CRITICAL is open (PB-11). **Resume (C-M5, PB-2):**
+**rounds are the unit of retry** — the operator's retry action re-runs the failed round only, from its
+earliest failed episode, **as a replacement job with a fresh execution-attempt key (semantic key +
+generation-round identity) under the unchanged `logical_work_id`; successful members of the failed round
+are retained** and never re-planned by the retry. **A retry never resets the repair counters (PB-4)** —
+the two-round/six-episode budget is consumed per origin-tagged round, not per attempt. **Completed packs
+are kept** (stable pack and demand IDs make them safe), and tab 3 labels each pack's version status
+during a round (current / superseded / re-planning).
 
 ### 5.3 STORY LOCK decisions (the B handler for `STORY_LOCK`)
 
-| Action | Conditions | Effect in the same transaction |
+| Action | Conditions — common prerequisites only (`conditions(tx, binding)`; PB-11) | Effect in the same transaction |
 |--------|-----------|--------------------------------|
-| **Approve** | no open CRITICAL; the binding is current; the tier revalidation passed; **the STORY LOCK budget attach succeeds** (phase-A §5.1; A2 note §4: the `SEASON` account + setup attachment + episode accounts fit the base cap) | record the approval; call **`create_v3_episodes(season, N)`** (A2), which creates **all N episode rows** independently of the release cadence (AT-18); write `v3_episode_story_bindings` (§5.4); `PLANNED → STORY_LOCKED`; `content_revision` bumps (A1 note §6). Step 4 starts when phase C's handler is registered |
-| **Revise** + notes (targets: `EPISODE_PLAN` packs, `BIBLE_SECTION`s, the `SEAM`, or a `TIER` — §2.4 D2) | the activation is open | the activation closes. **Only the noted units regenerate:** noted packs via `plan_episode(n)` rounds, bible sections via a scoped `story_v3.bible` round, the seam likewise; a tier target routes to `edit_tier` (§9). Then the closure revalidation (§5.5) and the season critic round, and the gate reopens with a new binding |
-| **Reject** | — | A1 note §6: no episode-creation authority; planning stays `PLANNED` |
+| **Approve** | the activation is open (the resolver's checks) | **Approve-callback blockers, checked at the start of the callback in the same rollback transaction (PB-11):** no open CRITICAL; the binding is current; the tier revalidation passed; **the STORY LOCK budget attach succeeds** (phase-A §5.1; A2 note §4: the `SEASON` account + setup attachment + episode accounts fit the base cap). Then: record the approval; on a **season scope** call **`create_v3_episodes(season, N)`** (A2), which creates **all N episode rows** independently of the release cadence (AT-18); on an **extension scope** take the **extension-aware STORY LOCK branch (PB-7, §8)** scoped by `extension_id`; write `v3_episode_story_bindings` (§5.4); `PLANNED → STORY_LOCKED`; `content_revision` bumps (A1 note §6). Step 4 starts when phase C's handler is registered |
+| **Revise** + notes (targets: `EPISODE_PLAN` packs, `BIBLE_SECTION`s, the `SEAM`, or a `TIER` — §2.4 D2) | the activation is open | the activation closes. **Only the noted units regenerate:** noted packs via `plan_episode(n)` rounds, bible sections via a scoped `story_v3.bible` round, the seam likewise; **a tier target invokes the shared internal tier-update/revalidation operation under this decision context (PB-5, §4.2) — it neither requires nor supersedes the activation this decision just closed, and finalization opens the successor activation after this transaction's revision advance.** Then the closure revalidation (§5.5) and the season critic round (origin `human-revise`, PB-4), and the gate reopens with a new binding |
+| **Reject** | — | A1 note §6: no episode-creation authority; planning stays `PLANNED`; the operator re-enters through **`reopen_v3_gate`** (§9), which opens a fresh activation over the current binding and preserves every prior decision (PB-14) |
+
+Same PB-11 placement rule as §3.3: `conditions(tx, binding)` holds common decision prerequisites only;
+the Approve-specific blockers above live at the start of the Approve callback, in the same rollback
+transaction — an open CRITICAL disables Approve while Revise and Reject remain usable (B-T10).
 
 **The STORY LOCK screen (R-3.5):** the bible; every episode's outline (synopsis, scenes, cliffhanger,
 reveals) **with per-pack version status** (C-M5); the critic findings **and any cascade impact preview**
@@ -377,10 +442,19 @@ reveals) **with per-pack version status** (C-M5); the critic findings **and any 
 ### 5.4 Episode binding
 
 - **`v3_episode_story_bindings`:** `episode_id`, `season_id`, `episode_number`, `pack_record_id`,
-  `pack_version`, `pack_sha256`, `story_lock_approval_event_id`, `content_revision` — append-only and
-  guarded, with `UNIQUE(episode_id, content_revision)`. Later amendments (A4) add rows at the new
+  `pack_version`, `pack_sha256`, `story_lock_approval_event_id`, `content_revision`,
+  `story_lock_scope_revision` — append-only and guarded, with `UNIQUE(episode_id, content_revision)`.
+  **The two revision columns are distinct fences (PB-10):** `content_revision` is the **episode track's
+  fence value** at approval (A1's new episode tracks default to revision zero); `story_lock_scope_revision`
+  records the **originating STORY LOCK scope revision**. Later amendments (A4) add rows at the new
   `content_revision`; the current binding is the row at the episode's current `content_revision`.
-- **`StoryLockBindingV3`** hashes: the bible (record ID, version, sha); every pack in episode order; the
+  **Approval never reseals or modifies the approved pack to add its episode ID (PB-10)** — the link lives
+  only in this row — and **B-T9 immediately reads every newly created episode through the compatibility
+  reader (§2.3)**.
+- **`StoryLockBindingV3`** hashes: the bible (record ID, version, sha); every pack in episode order;
+  **every `ContinuityStateV3` (record ID, version, sha) — or a deterministic derivation from the bound
+  packs, verified at binding time (the exact derivation is pinned in the B1 note; PB-9: standalone
+  continuity records must not sit outside the hash as an unqualified "last stored" authority)**; the
   demand list; the seam; the tier table; the promoted character profiles (§4.2, C-M12); the critic
   reports. **That hash is the activation binding** (phase-A §2.5).
 - **V3 episodes keep legacy `episodes.state = PLANNED` and an empty `episodes.plan`** (phase-A §1).
@@ -388,13 +462,17 @@ reveals) **with per-pack version status** (C-M5); the critic findings **and any 
 
 ### 5.5 Closure revalidation after a Revise or repair
 
-1. Regenerate the noted units.
+1. Regenerate the noted units — and only those the round's persisted origin authorizes (PB-4): a
+   `human-revise` round regenerates exactly the noted units; an initial `automatic` repair round may
+   expand within the persisted two-round, six-episode limits (§5.2).
 2. **Re-run the deterministic continuity check forward** from the earliest regenerated episode, against
    the stored later packs. A later pack that no longer satisfies its continuity input becomes an
    **invalid dependent**: a CRITICAL finding `continuity-dependent` naming the episode.
-3. **Invalid dependents are not regenerated silently.** The STORY LOCK screen lists them with one
-   "Revise these too" action, which is the scoped revision authority of master §2.1. Approve stays blocked
-   until none remain.
+3. **Invalid dependents are never regenerated silently — and after a human Revise the critic only reports
+   them (PB-4).** The STORY LOCK screen lists newly invalid dependents with one "Revise these too"
+   action, which is the scoped revision authority of master §2.1; regenerating them requires that
+   authority, never the automatic repair path. Approve's callback blocker refuses until none remain
+   (PB-11).
 4. **Non-episode targets (C-M18):** a bible-section or seam Revise regenerates the noted section/seam,
    then runs this revalidation. **Non-invalidated packs survive** — the machinery catches continuity
    invalidation, not conceptual drift; drift beyond continuity is the operator's judgement at the reopened
@@ -413,7 +491,7 @@ post-gate regeneration has dependents, so it needs the operator's explicit "Revi
 | Rule | Severity |
 |------|----------|
 | schema; the Joey section order (master §4.2) | CRITICAL |
-| the ledgers bind to the bible, the packs and the LOCK authority (the V3 `validate_season_story_ledger` sibling, §2) | CRITICAL |
+| the ledgers bind to the bible and the LOCK authority at bible time, and to the packs after planning (the V3 `validate_season_story_ledger` sibling, §2 — PB-13: each check runs against the population that exists when it runs) | CRITICAL |
 | a `[TBD]` or `tbd[]` entry in a render-required field (camera package; a speaking character's visual lock or voice descriptor; the locations' light language) | CRITICAL |
 
 **Episode rules:**
@@ -434,17 +512,18 @@ post-gate regeneration has dependents, so it needs the operator's explicit "Revi
 
 | Rule | Severity |
 |------|----------|
-| **Impossible wardrobe day:** within a scene, an outfit change is allowed only if a beat references it; across a scene break it is always allowed, subject to the story-day rule (an outfit change within one story day without an allowing beat/scene break, or a contradiction of the wardrobe history) (C-M19) | CRITICAL |
-| a payoff debt left unpaid at the finale, and not assigned to a seam thread | CRITICAL |
-| a seam thread `RESOLVED` or closed in the finale — read from the thread's `status` field (§2; C-M9) | CRITICAL |
+| **Impossible wardrobe day:** within a scene, an outfit change is allowed only if a beat's **`WARDROBE_CHANGE` effect** (stable subject ID) authorizes it (PB-12 — a prose "reference" is not machine-checkable); across a scene break it is always allowed, subject to the story-day rule (an outfit change within one story day without an authorizing effect/scene break, or a contradiction of the wardrobe history) (C-M19) | CRITICAL |
+| a payoff debt left unpaid at the finale, and not assigned to a seam thread — debts and settlements matched by **stable `debt_id` through `PAYOFF_SETTLEMENT` effects** (PB-12) | CRITICAL |
+| a seam thread `RESOLVED` or closed in the finale — from the thread's **derived** `status` (§2), derived from settlement effects and never a hand-set label (C-M9, PB-12) | CRITICAL |
 | the episode count differs from the LOCK authority | CRITICAL |
 | an escalation step regresses | MAJOR |
 | every pack satisfies §6.1 (a re-check against the final set) | as §6.1 |
 
 **On an extension scope (C-M8), three rules are reinterpreted:** the episode-count authority is the
-approved `SEASON` amendment's count over the **cumulative** range; the §6.1 "final set" re-check covers
-**the extension's packs only**; and "seam thread resolved in the finale" is CRITICAL **only when the
-thread reserved further growth** — resolving a thread in an extension finale is a legitimate endpoint.
+**extension authorization's recorded appended range and cumulative count** (§8, PB-8 — never a count
+inferred from a monetary cap); the §6.1 "final set" re-check covers **the extension's packs only**; and
+"seam thread resolved in the finale" is CRITICAL **only when the thread's explicit `reserves_growth` is
+set (PB-12)** — resolving a thread in an extension finale is a legitimate endpoint.
 
 **A CRITICAL finding blocks STORY LOCK Approve. MAJOR and MINOR findings are shown.** The LLM critics may
 add findings at any severity but **cannot clear a deterministic finding** — the V1 principle in
@@ -462,18 +541,29 @@ Revise loop, using only A1 primitives:
   `profile:<scope>:<character_key>`, `season-critic:<scope>` (this also fixes C-N13 — the season-critic
   work ID's fourth component is the round number, not an undefined "binding inputs"). Each attempt
   carries its round number in the **`jobs.semantic_key`** — `plan`: `(scope, n, LOCK authority, bible
-  version, round)`; the others: work id + round — so a re-plan never dedupes to a no-op (semantic keys
-  are UNIQUE, `M/0001…sql:78`). A1's `replaces_job_id` validation ties a replacement link to one
-  `logical_work_id` (A1 note §2.4), so the round lives in the semantic key, not the work ID (§2.4).
+  version, round)`; the others: work id + round — and every key includes the **generation-round identity
+  (PB-2, §2)**, so a re-plan never dedupes to a no-op and **a terminal-failure retry's replacement job
+  never collides with the failed attempt's key** (semantic keys are UNIQUE, `M/0001…sql:78`). A1's
+  `replaces_job_id` validation ties a replacement link to one `logical_work_id` (A1 note §2.4), so the
+  round lives in the semantic key, not the work ID (§2.4).
 - **Re-plans chain through `replaces_job_id`:** every job that supersedes another's output names it,
   under the same logical work ID — also what clears a terminal `BLOCKED (failed)` projection when the
   replacement succeeds (A1 note §2.4 `track_waits`).
-- **The last job of a round enqueues the continuation.** "Last" is evaluated in the completing job's own
-  transaction under the scope track lock (every sibling of the round terminal, itself SUCCEEDED):
-  `plan(n)` → `plan(n+1)` or the season critic; the last repair re-plan → the next season-critic round;
+- **The completion seam (PB-1; §2.4 D5): B owns a caller-transaction completion seam.** The runtime calls
+  the handler first and finishes the job afterward (`S/workers/runtime.py:245`; `finish` at
+  `S/core/jobs.py:676`), so the join cannot live in job finishing — A3 retains job-only `finish`;
+  checking "am I last?" before finish would lose the last completion, and independently finishing while
+  holding the job lock can block. Instead the completing **handler**, inside its own caller transaction,
+  **takes the scope track FOR UPDATE before job locks, validates fence and lease, persists its outputs
+  and its own successful completion, and evaluates the join over the persisted required members** —
+  finalization requires **every required member's current successful output** (not "every sibling
+  terminal": failed or cancelled siblings never satisfy a join). Continuation/gate creation commits
+  atomically with that completion; **the runtime does not finish the job again.** The joins: `plan(n)` →
+  the next member or the season critic (§5.1); the last repair re-plan → the next season-critic round;
   the last `promote_profile` → the deterministic finalization inline (§5.2), as does the season critic
   when no promotions are pending; a Revise round's last job enqueues the season critic (§5.3). **No
-  quarantined work enqueues anything** (A3 note §3.4).
+  quarantined work enqueues anything** (A3 note §3.4). B-T6 tests concurrent completions and process
+  death at the commit boundary.
 
 ### 7.2 Job table
 
@@ -494,12 +584,18 @@ so B2's Approve can enqueue `story_v3.bible` (B3's handler) and B4's last episod
 | Prompt | Owning package |
 |--------|----------------|
 | the proposal prompt | **B2** |
-| the bible prompt and the promoted-profile prompt | **B3** |
-| the architect and translation prompts | **B4** |
-| the critic prompts (bible, episode when switched on, season) | **B5** |
+| the bible prompt, the promoted-profile prompt and **the bible critic prompt** | **B3** |
+| the architect and translation prompts and **the episode critic prompt (when switched on)** | **B4** |
+| **the season critic prompt** | **B5** |
 
-Each is registered in the `PromptManifest` (`S/contracts/v2.py:773`) and **ships with its package**.
-Acceptance: **every `FrozenLlmCall` in B's tests references a manifest-registered prompt** (§12).
+Each is registered in the **B1 LLM prompt registry (PB-6): an asset-independent registry — prompt ID,
+version, canonical text, SHA-256 — with its own storage and symbolic migration `B-…`**. The V2 render
+`PromptManifest` (`S/contracts/v2.py:773`) describes a **render shot** (episode, shot, duration, asset
+bindings; its validator requires identity/outfit/location references) and cannot register an intake or
+bible prompt before episodes or assets exist — **it and the V2 storage remain unchanged** (§1.2, B-T5,
+O-B6). Each prompt **ships with its package**; the three critic prompts route with their calls and
+acceptance cases (bible → B3, episode → B4, season → B5). Acceptance: **every `FrozenLlmCall` in B's
+tests references a registry-registered prompt** (§12).
 
 ### 7.4 Calls, fence, waits, offline
 
@@ -522,13 +618,30 @@ Acceptance: **every `FrozenLlmCall` in B's tests references a manifest-registere
 - **`ExtensionSeamV3`** is written with the bible, revised at STORY LOCK, and **bound by STORY LOCK.**
 - **`create_extension(season, range, calendar)`** activates in B (A1 note §12 OQ-1); the command row is
   §9. It checks eligibility — the season release is `RELEASING` or `COMPLETE`; the range lies beyond the
-  current count; **an approved `SEASON` amendment covers the new count** (phase-A §5.4; A2 note §5) — and
-  opens a `season_extensions` scope.
+  current count and is contiguous with it; **a qualifying approved `SEASON` amendment exists (phase-A
+  §5.4; A2 note §5)** — and in the same transaction **persists an immutable extension authorization
+  (PB-8)** linking the **exact appended episode range and the cumulative episode count** to the
+  **qualifying `SEASON` budget-amendment ID** and the **human command** (owner/session, idempotency;
+  append-only and guarded; symbolic migration `B-…`). A2's `account_cap_amendments` records money,
+  category/step deltas and human provenance — **no episode count or range** — so "the amendment's count"
+  has no enforced meaning without this row. **Extension count validation always uses the authorization;
+  it never infers an approved count from a monetary cap.** It then opens a `season_extensions` scope.
 - **On an extension scope** (`planning_scope_id = extension_id`), the same builder runs: `plan_episode`
-  for the new range, then the season critic, then STORY LOCK for the new packs only. Inputs: the prior
-  STORY LOCK's bible and seam; the **planned-terminal canon** (the last stored `ContinuityStateV3`); a
-  **published canon** input. The prior approvals and packs are never touched; the §6.2 extension
-  reinterpretations apply.
+  for the new range, then the season critic, then STORY LOCK for the new packs only. The extension scope
+  record **pins its authorities (PB-9)**: the prior STORY LOCK (and, once C has shipped, CAST LOCK)
+  approval references, the **exact planned-terminal `ContinuityStateV3` reference (record ID, version,
+  sha)** and the **exact published-canon identity** — the builder **consumes those pinned references,
+  never an unqualified "last stored" or "latest" row** (a mutable current state must not silently change
+  what a prior lock bound; B's tests exercise the STORY slot with the CAST slot recorded absent-until-C).
+  The prior approvals and packs are never touched; the §6.2 extension reinterpretations apply.
+- **Extension approval cannot reuse the initial STORY LOCK creation path unchanged (PB-7):** B5 supplies
+  an **extension-aware STORY LOCK branch**, scoped by `extension_id`. It defines the **extension
+  planning edges**, creates **only the contiguous appended episode range** and its tracks, episode
+  accounts and bindings, **reuses the existing budget hierarchy** (the `SEASON` account and its approved
+  amendment envelope; A2 note §4's initial creation path — the unique `SEASON` account, the setup
+  attach, the initial episode accounts — must not run again, and the base cap is immutable), and
+  **advances only the extension planning track**. Existing season tracks, accounts, approvals and
+  episode rows remain unchanged. B-T11 runs through extension approval, including rollback.
 - **Phase F owns** the decision screen, the viewership windows, the published-canon source and the
   calendar integration. **B tests the extension builder with a synthetic published canon.**
 
@@ -537,8 +650,10 @@ Acceptance: **every `FrozenLlmCall` in B's tests references a manifest-registere
 | Command | Actor | Scope / revision owner | Prerequisites | Effect | Events | Replay identity | Activation |
 |---|---|---|---|---|---|---|---|
 | `submit_v3_intake(mode, idea_line, hints, requested_count)` | Operator (human session + CSRF) | season / — (via `create_v3_season`) | mode `TITLE` only; `requested_count` 20–30 | `ConceptIntakeV3` (versioned); enqueue `story_v3.propose` round 1 | (A1's creation events via `create_v3_season`) | idempotency key | **B** (needs A2's `create_v3_season`) |
-| `edit_tier(character_key, tier)` | Operator (human session + CSRF) | season / `season_tracks.revision` | a STORY LOCK activation is open | supersedes the activation; runs **tier revalidation** (§4.2); refuses V3R-4-violating demotions; opens a new activation | activation supersede/reopen events | idempotency key | **B5** (C-M3) |
-| `create_extension(season, range, calendar)` | Operator (human session + CSRF) | season / `season_tracks.revision` | release `RELEASING`/`COMPLETE`; range beyond the current count; an approved `SEASON` amendment covers the new count (§8) | opens a `season_extensions` scope | (A1's scope events) | idempotency key | **B** (A1 note §12 OQ-1) |
+| `edit_tier(character_key, tier)` | Operator (human session + CSRF) | season / `season_tracks.revision` | a STORY LOCK activation is open | **(standalone entry, PB-5)** supersedes the activation; runs **tier revalidation** (§4.2 — the shared internal operation); refuses V3R-4-violating demotions; opens a new activation | activation supersede/reopen events | idempotency key | **B5** (C-M3) |
+| `create_extension(season, range, calendar)` | Operator (human session + CSRF) | season / `season_tracks.revision` | release `RELEASING`/`COMPLETE`; contiguous range beyond the current count; a qualifying approved `SEASON` amendment exists (§8) | **persists the immutable extension authorization (PB-8, §8)**; opens a `season_extensions` scope | (A1's scope events) + the authorization's provenance | idempotency key | **B** (A1 note §12 OQ-1) |
+| `replace_v3_intake(season, mode, idea_line, hints, requested_count)` | Operator (human session + CSRF) | season / `season_tracks.revision` | mode `TITLE` only; `requested_count` 20–30; expected revision matches | **appends** a new `ConceptIntakeV3` version (prior decisions preserved, PB-14); resets the displayed round and advances the generation-round identity (§2); enqueues `story_v3.propose` round 1 of the new intake | intake-replacement event | idempotency key | **B2** (PB-14) |
+| `reopen_v3_gate(gate, scope)` | Operator (human session + CSRF) | season or extension / `season_tracks.revision` | expected revision matches; the gate's phase handler is registered; no activation already open for the (gate, scope) | opens a fresh activation over the **recomputed current binding**, preserving every prior decision — the re-entry path after a Reject ("Revise later") at either gate (B-T3, B-T10) | an `open_gate` activation event (A1 note §6) | idempotency key | **B2** (the LOCK gate; the STORY LOCK gate becomes decidable with B5's handler — PB-14) |
 
 ## 10. UI (tabs 1–3, built into the phase A shell, A5)
 
@@ -563,11 +678,11 @@ migration bytes are never edited.
 
 | Package | Builds | Gate | Design note |
 |---------|--------|------|-------------|
-| **B1** | V3 records + `V3ProductionLimits` + vocabularies; `v3_story_documents` + `StoryV3Store`; `v3_episode_story_bindings`; readers + `WORKFLOW_MISMATCH` guards (one pinned guard site per consumer, §2.3); **the §2.4 contract deltas (D2's migration, `V3DecisionCommand.target`); registers all five `story_v3.*` job types (C-M20)**; contract bump (v3 schemas; V1/V2 artifacts byte-identical) | B-T1, B-T2 | **Critiqued first** — gate checklist (C-N22): the §2.4 contract-delta register, the §9 command rows, §15/§16 risks and alternatives, and the deviations-considered list (none — C-M11 honours the master) |
-| **B2** | Intake + Mode A refusal; `story_v3.propose`; the LOCK handler; **the proposal prompt (§7.3)** | B-T3 | With the diff |
-| **B3** | `story_v3.bible` + the bible critic; tiers + promotion; **the bible and promoted-profile prompts** | B-T4 | With the diff |
-| **B4** | `plan_episode` + continuity state + the episode critic + translation; **the architect and translation prompts**; **the B4 note pins the B-T5 DB-role mechanism (C-M16)** | B-T5, B-T6 | With the diff |
-| **B5** | The season critic + repair + closure revalidation; the demand list; `StoryLockBindingV3`; the STORY LOCK handler + episode rows + bindings; **`edit_tier` + tier revalidation (C-M3)**; `create_extension` + the extension builder; **the critic prompts** | B-T7..B-T11 | **Critiqued first** (the lock transaction and the closure) — same gate checklist as B1 |
+| **B1** | V3 records + `V3ProductionLimits` + vocabularies — **including the PB-added shapes: typed beat effects (§2.1), the generation-round identity store (§2), the seam's `reserves_growth` (§2), the `debt_id` ledger sibling (§2)**; `v3_story_documents` + `StoryV3Store`; `v3_episode_story_bindings` (both fence columns, §5.4); readers + `WORKFLOW_MISMATCH` guards (one pinned guard site per consumer, §2.3); **the §2.4 contract deltas (D2's migration, `V3DecisionCommand.target`; D5 registered)**; **the B1 LLM prompt registry (§7.3, PB-6)**; registers all five `story_v3.*` job types (C-M20); contract bump (v3 schemas; V1/V2 artifacts byte-identical) | B-T1, B-T2 | **Critiqued first** — gate checklist (C-N22): the §2.4 contract-delta register, the §9 command rows, §15/§16 risks and alternatives, and the deviations-considered list (none — C-M11 honours the master) |
+| **B2** | Intake + Mode A refusal; `story_v3.propose`; the LOCK handler; **the proposal prompt (§7.3)**; **the V3 screening projection (PB-16)**; **`replace_v3_intake` + `reopen_v3_gate` (PB-14, LOCK gate)** | B-T3 | With the diff |
+| **B3** | `story_v3.bible` + the bible critic; tiers + promotion; **the bible, promoted-profile and bible-critic prompts (PB-6)** | B-T4 | With the diff |
+| **B4** | `plan_episode` + continuity state + the episode critic + translation; **the architect, translation and episode-critic prompts (PB-6)**; **the completion seam's first fan-out ships here (§7.1, D5)**; **the B4 note pins the B-T5 DB-role mechanism (C-M16, strengthened PB-15)** | B-T5, B-T6 | With the diff |
+| **B5** | The season critic + repair + closure revalidation; the demand list; `StoryLockBindingV3`; the STORY LOCK handler + episode rows + bindings **(season and extension branches, PB-7)**; **`edit_tier` + tier revalidation (C-M3, PB-5)**; `create_extension` + the extension authorization + the extension builder; **the season critic prompt (PB-6)**; **`reopen_v3_gate` at the STORY LOCK gate (PB-14)** | B-T7..B-T11 | **Critiqued first** (the lock transaction and the closure) — same gate checklist as B1 |
 | **B6** | Tabs 1–3 | B-T12 | With the diff |
 
 **Routing (C-N21):** GLM builds each package through `ai-route build -w`; Codex critiques the B1/B5
@@ -580,15 +695,15 @@ notes and reviews every package diff through `ai-route review` (the workspace's 
 |------|--------|
 | **B-T1 (V3-AT-19)** | Migration upgrade on a **populated V1 + V2 database** (fixture records named in the B1 note: V1 seasons/episodes/approvals and V2 packs incl. historical 180–300 s and 1–10 values — C-N15): every V1/V2 record still validates under its own schema; recomputed hashes are byte-identical; no row is deleted or rewritten; the V1/V2 generated contracts show no drift (committed `ast.dump` fixtures assert AST-identical validator source) |
 | B-T2 | Version selection: V3 validators reject 180 s and 10-episode V3 records; V1/V2 validators unchanged (AST-identical source, as B-T1); **every guarded entry point from §2.3, enumerated through a shared fixture, refuses a V3 episode with `WORKFLOW_MISMATCH`** (C-M10) |
-| B-T3 | Mode A refused before any write; Mode B → 2–3 proposals; **a proposal whose `episode_count` ≠ `requested_episode_count` is refused CRITICAL (C-M15)**. LOCK Approve/Revise/Reject through the A1 decision transaction: a stale binding is refused; idempotent replay; **a Revise regenerates the whole round with the notes carried (C-N3)**; Reject leaves `PROPOSED` and doesn't cancel |
+| B-T3 | Mode A refused before any write; Mode B → 2–3 proposals; **a proposal whose `episode_count` ≠ `requested_episode_count` is refused CRITICAL (C-M15)**. LOCK Approve/Revise/Reject through the A1 decision transaction: a stale binding is refused; idempotent replay; **a Revise regenerates the whole round with the notes carried (C-N3)**; Reject leaves `PROPOSED` and doesn't cancel; **a failed proposal round's retry is a replacement job — fresh execution-attempt key, unchanged `logical_work_id` (PB-2)**; **Reject → `replace_v3_intake` → fresh round 1: the displayed round resets, the generation-round identity advances and proposal IDs never repeat (PB-2/PB-14)**; **Reject → `reopen_v3_gate` → Revise decides on a fresh activation with prior decisions preserved (PB-14)** |
 | B-T4 | Bible sections in Joey order; a `[TBD]` in a render-required field → CRITICAL → repair → `BLOCKED (failed)` after 1 initial + 2 repair rounds (C-N9). Tier promotion rules (≥2 episodes, any line, ≥2 recognisable scenes; off-screen speaker; an extras-role speaker) |
-| **B-T5 (V3-AT-18)** | **20 and 30 complete episodes planned with no asset, wardrobe-assignment, identity-lock or voice rows in the database.** **Mechanism (C-M16):** the test jobs run under a **restricted DB role with no privilege on the exact tables** `assets` + `asset_lineage` (`M/0004…sql:4/:41`), `voices` (`M/0002…sql:134`), `identity_locks` + `identity_lock_assets` (`M/0002…sql:254/:270`), `reference_versions` (`M/0002…sql:154`) and `v2_contract_documents` (`M/0019…sql:4`; wardrobe assignments are its `SceneWardrobeAssignment` rows, `:7`); the run **completes with no access attempted** and the families are asserted empty. The V3 writer opens no such table |
-| B-T6 | `LlmStep` behaviour per call: a crash mid-call resumes by `logical_call_id` with no second model call; invalid output → a new attempt; **a refusal with `defer_reason='QUOTA_5H'` → `WAITING_QUOTA` with `retry_at`; provider-reason refusals project `WAITING_PROVIDER` (C-N16)**; a stale fence result is quarantined; runtime band, recap and CTA limits; **the episode critic default-off, and on when `MICRODRAMA_V3_EPISODE_CRITIC` is set (C-M14)**; every `FrozenLlmCall` references a manifest-registered prompt (C-M4) |
-| **B-T7 (V3-AT-3)** | **All 24 packs fully renderable**: every scene has location + light, wardrobe for every visible character, props with holder and state; every line has TH/EN/ZH + emotion + an estimate. Defects come from **fake-LLM scenario scripts or new pack versions, never row edits into the append-only store (C-N17)**. The season critic catches each injected defect: **a premature secret, an impossible wardrobe day (both halves, C-M19), >2 speakers in a beat**; also >5 speakers in an episode, **a 4th distinct `location_key` (C-M13c)**, **an out-of-enum emotion (C-M17)**, an unpaid debt and **a seam thread `RESOLVED` in the finale (C-M9)** |
-| **B-T8 (V3-AT-4)** | **Demand-list completeness:** every character, outfit, appearance state, prop + state, location + light, extras role and voice (with its emotions) used by any scene is listed with exactly its episodes and scenes; no orphan demand; IDs stable across a Revise that keeps the item; **one promotion → exactly one `promote_profile` call (C-M12); the `EXTRAS_ROLE` demand merges into the `CHARACTER` demand and pack references resolve to it — no duplicate identity demand (C-M7)** |
-| B-T9 | STORY LOCK Approve: all N episode rows + `episode_tracks` + accounts + bindings in one transaction; a forced failure in any step rolls back everything; `content_revision` bumps; the cadence selector never creates V3 episodes; **`edit_tier` tier revalidation, incl. a refused demotion that would drop a voice or identity demand (C-M3)** |
-| B-T10 | STORY LOCK Revise on episode *k*: only *k* regenerates; a later pack invalidated by *k*'s new continuity appears as `continuity-dependent` and blocks Approve until "Revise these too"; **one bible-section Revise, one seam Revise and one tier Revise: non-invalidated packs survive, closure revalidation runs (C-M18)** |
-| B-T11 | `create_extension` eligibility (refused without `RELEASING`/`COMPLETE` or without the `SEASON` amendment); the extension builder plans new packs from a synthetic published canon without touching prior packs or approvals; **the §6.2 extension reinterpretations hold** |
+| **B-T5 (V3-AT-18)** | **20 and 30 complete episodes planned with no asset, wardrobe-assignment, identity-lock or voice rows in the database.** **Mechanism (C-M16, strengthened PB-15):** **every planning connection runs under the restricted DB role** with no privilege on the exact tables `assets` + `asset_lineage` (`M/0004…sql:4/:41`), `voices` (`M/0002…sql:134`), `identity_locks` + `identity_lock_assets` (`M/0002…sql:254/:270`), `reference_versions` (`M/0002…sql:154`) and `v2_contract_documents` (`M/0019…sql:4`; wardrobe assignments are its `SceneWardrobeAssignment` rows, `:7`). **Denial is verified with negative controls** (the role genuinely cannot read those tables); **attempted SQL is captured at the database-access boundary, including failed statements**; the run **asserts zero forbidden-table attempts during planning** — a correctly restricted role proves forbidden access cannot succeed; this proves it was never attempted (the stronger AT-18 evidence claim). **The table families are asserted empty separately, via the fixture connection** (not the restricted role). The V3 writer opens no such table |
+| B-T6 | `LlmStep` behaviour per call: a crash mid-call resumes by `logical_call_id` with no second model call; invalid output → a new attempt; **a refusal with `defer_reason='QUOTA_5H'` → `WAITING_QUOTA` with `retry_at`; provider-reason refusals project `WAITING_PROVIDER` (C-N16)**; a stale fence result is quarantined; runtime band, recap and CTA limits; **the episode critic default-off, and on when `MICRODRAMA_V3_EPISODE_CRITIC` is set (C-M14)**; every `FrozenLlmCall` references a **registry**-registered prompt (C-M4, PB-6); **the completion seam (PB-1, §7.1): two concurrent completions of the last required members → exactly one continuation; process death at the commit boundary leaves no half-finished join (recovery re-evaluates over persisted members); a failed or cancelled sibling never satisfies the join** |
+| **B-T7 (V3-AT-3)** | **All 24 packs fully renderable**: every scene has location + light, wardrobe for every visible character, props with holder and state; every line has TH/EN/ZH + emotion + an estimate. Defects come from **fake-LLM scenario scripts or new pack versions, never row edits into the append-only store (C-N17)**. The season critic catches each injected defect: **a premature secret, an impossible wardrobe day (both halves, C-M19), >2 speakers in a beat**; also >5 speakers in an episode, **a 4th distinct `location_key` (C-M13c)**, **an out-of-enum emotion (C-M17)**, an unpaid debt and **a seam thread `RESOLVED` in the finale (C-M9)** — **the wardrobe-day and RESOLVED findings fire through typed-effect derivation: an outfit change with no `WARDROBE_CHANGE` effect, and a `PAYOFF_SETTLEMENT` effect resolving a thread's last debt — never a pre-labelled status (PB-12)**; **a repair round's membership: six affected episodes re-plan, seven stops with an impact preview (PB-4)** |
+| **B-T8 (V3-AT-4)** | **Demand-list completeness:** every character, outfit, appearance state, prop + state, location + light, extras role and voice (with its emotions) used by any scene is listed with exactly its episodes and scenes; no orphan demand; IDs stable across a Revise that keeps the item; **one promotion → exactly one `promote_profile` call (C-M12); the `EXTRAS_ROLE` demand merges into the `CHARACTER` demand and pack references resolve to it — no duplicate identity demand (C-M7)**; **a newly promoted speaker with missing psychology/profile data is caught by finalization's post-promotion re-validation, not by the pre-promotion checks (PB-13)** |
+| B-T9 | STORY LOCK Approve: all N episode rows + `episode_tracks` + accounts + bindings in one transaction; a forced failure in any step rolls back everything; `content_revision` bumps; the cadence selector never creates V3 episodes; **`edit_tier` tier revalidation, incl. a refused demotion that would drop a voice or identity demand (C-M3)**; **every newly created episode is immediately read through the compatibility reader (§2.3), and the approved pack is byte-unchanged — the episode ID lives only in the binding row (PB-10)** |
+| B-T10 | STORY LOCK Revise on episode *k*: only *k* regenerates; a later pack invalidated by *k*'s new continuity appears as `continuity-dependent` and blocks Approve until "Revise these too" — **after the human Revise the critic reports newly invalid dependents without regenerating them (PB-4)**; **one bible-section Revise, one seam Revise and one tier Revise: non-invalidated packs survive, closure revalidation runs (C-M18); the tier Revise goes through the real decision route — the shared internal operation under the decision context, no activation superseded, the successor activation opened after the revision advance (PB-5)**; **an open CRITICAL disables Approve while Revise and Reject remain usable (PB-11)**; **Reject → `reopen_v3_gate` → Revise on a fresh activation, prior decisions preserved (PB-14)** |
+| B-T11 | `create_extension` eligibility (refused without `RELEASING`/`COMPLETE`, without the `SEASON` amendment, or **without the persisted extension authorization — and the count check reads the authorization, never the monetary cap (PB-8)**); the extension builder plans new packs from **pinned** prior authorities and a synthetic published canon without touching prior packs or approvals; **extension STORY LOCK approval runs the extension-aware branch — appended range, tracks/accounts/bindings only, season rows untouched — including a rollback that leaves no partial append (PB-7)**; **the §6.2 extension reinterpretations hold** |
 | B-T12 | Tabs 1–3 with real routes and templates: each state in §10, **at most one primary action per tab (tab 2's is `Next`, navigation only — C-N20)**, per-pack version status on tab 3 (C-M5), a disabled Mode A with its reason |
 
 ## 13. Open questions: RESOLVED 12 Nov 2026
@@ -700,3 +815,24 @@ Master-level risks and their owners: master §18 (Joey licence, quota terms, thr
 - C-N20 → §10 (tab 2); B-T12.
 - C-N21 → §11 (routing).
 - C-N22 → §11 (B1/B5 gate checklist).
+
+## 18. Finding map (Codex round-1 critique → v0.5)
+
+Rulings: `phase-b-critique-rulings.md` — all sixteen accepted; PB-11 first option; PB-15 strengthens B-T5.
+
+- PB-1 → §7.1 (completion seam); §2.4 D5; §11 B1/B4; B-T6.
+- PB-2 → §2 (generation-round identity); §5.2 (Resume); §7.1; B-T3, B-T7.
+- PB-3 → §3.2 (On success); §5.2 step 4.
+- PB-4 → §5.1 (continuation); §5.2 step 3 + Resume; §5.5; B-T7, B-T10.
+- PB-5 → §4.2 (two `edit_tier` entries); §5.3 Revise; §9; B-T9, B-T10.
+- PB-6 → §7.3 (registry + routing); §11 B1/B3/B4/B5; B-T6.
+- PB-7 → §5.3 Approve; §8 (extension branch); B-T11.
+- PB-8 → §8 (extension authorization); §6.2 (extension reinterpretations); §9; B-T11.
+- PB-9 → §5.4 (`StoryLockBindingV3`); §8 (pinned authorities).
+- PB-10 → §2.1; §5.4 (binding columns); B-T9.
+- PB-11 → §3.3, §5.3 (blocker placement); §5.2; §5.5; B-T10.
+- PB-12 → §2 (`ExtensionSeamV3`, reused shapes); §2.1 (`effects[]`); §6.2; B-T7.
+- PB-13 → §4.1; §4.3; §5.2 step 4; §6.1; B-T8.
+- PB-14 → §3.1; §3.3 Reject; §5.3 Reject; §9 (two commands); §11 B2/B5; B-T3, B-T10.
+- PB-15 → B-T5 (strengthened); §11 B4.
+- PB-16 → §3.2 (screening projection); §11 B2.
