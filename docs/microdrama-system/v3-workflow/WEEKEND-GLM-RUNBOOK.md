@@ -304,6 +304,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   **no round 3**; Opus decides Monday (queued). Codex now idle. GLM queue still held (z.ai ≥ 50%);
   docs queue on release: a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1 → f-spec-v04.
   Running: the gate only. **All Codex round-2 results are now in and ruled.**
+- 13 Nov 21:58Z (GLM): **Gate at `6974d5a` GREEN**: make check all offline checks passed (462
+  contract / 337 integration in the tails; unit earlier in log), `make pilot` OK (mock, 303,000 µUSD
+  fake). Receipts `.scratch/a0d-gate2/.scratch/gate/`. A0-D remains **stopped** (round-2 FIX-REQUIRED,
+  rule 7): gate green + Codex ACCEPT was the bar — Monday's decision now has both halves on the table.
+  Second GLM verification suite (`tests/integration/llm_gateway`) running. GLM docs queue still held
+  (z.ai ≥ 50%, reset 23:43Z).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
