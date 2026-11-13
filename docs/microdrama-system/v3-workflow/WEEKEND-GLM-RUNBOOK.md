@@ -310,6 +310,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   rule 7): gate green + Codex ACCEPT was the bar — Monday's decision now has both halves on the table.
   Second GLM verification suite (`tests/integration/llm_gateway`) running. GLM docs queue still held
   (z.ai ≥ 50%, reset 23:43Z).
+- 13 Nov 21:45Z (GLM): **Acceptance step 1 complete** — both builder suites re-run by GLM:
+  `tests/unit/llm` 62 passed, `tests/integration/llm_gateway` 53 passed (exact match to claims).
+  z.ai 77% — docs queue held until 23:43Z; nothing else runnable. Next actions: at reset → resume
+  docs queue (a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1 → f-spec-v04) + launch the
+  R5 build (code slot; brief ready) if z.ai < 50%.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
