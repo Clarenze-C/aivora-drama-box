@@ -251,6 +251,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   E-contract kept as declared dependencies). `phase-f-critique-rulings.md` + apply brief
   `phase-f-v03-brief.md` written. Docs queue: c-spec-v03 → b-spec-v06 → f-spec-v03 (round-2 critique
   after, F's last). Running: a0d-fix1 + a2-note-rev1; Codex free.
+- 13 Nov 20:50Z (GLM): **A3 note round 1 ruled** (6 BLOCKING + 4 SHOULD-FIX — **all 10 ACCEPTED**;
+  0035 allocation + resolver confirmed correct; CANCELLED recovery path made reachable; lock audit
+  widened to the real provider-op chains; A-T12a corrected not weakened). `a3-critique-rulings.md` +
+  `a3-note-rev1-brief.md` written. Docs queue: c-spec-v03 → b-spec-v06 → f-spec-v03 → a3-note-rev1.
+  A6b rulings remain (last Q4 item). Running: a0d-fix1 (unit sweep phase) + a2-note-rev1.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
