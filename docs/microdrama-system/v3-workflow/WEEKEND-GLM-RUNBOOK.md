@@ -299,7 +299,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   AD5-1..10: 7 BLOCKING + 1 partial-set + AD5-8/9 SHOULD-FIX; every finding has a Fix line).
   **Rule 7: two rounds done → A0-D STOPS for the weekend** → OPERATOR QUEUE. The gate at `6974d5a`
   still runs (evidence for Monday). Codex slot free (1/2). z.ai still ≥ 50% — GLM queue held.
-- 13 Nov 21:12Z (GLM): **phase F round 2 = REWORK** (9/17 closed; PF5-1..4 BLOCKING, PF5-5..7
+- 13 Nov 21:02Z (GLM): **phase F round 2 = REWORK** (9/17 closed; PF5-1..4 BLOCKING, PF5-5..7
   SHOULD-FIX). Rule 7 → all 7 ACCEPTED, applied as **v0.4** (brief `phase-f-v04-brief.md`, queued),
   **no round 3**; Opus decides Monday (queued). Codex now idle. GLM queue still held (z.ai ≥ 50%);
   docs queue on release: a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1 → f-spec-v04.
