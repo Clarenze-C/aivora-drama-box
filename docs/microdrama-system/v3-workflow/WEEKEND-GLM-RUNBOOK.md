@@ -315,6 +315,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   z.ai 77% — docs queue held until 23:43Z; nothing else runnable. Next actions: at reset → resume
   docs queue (a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1 → f-spec-v04) + launch the
   R5 build (code slot; brief ready) if z.ai < 50%.
+- 13 Nov 23:46Z (GLM): z.ai reset (1%). One GLM slot was taken by the SFW session (`sfw-v4:p5-fix2`);
+  the free slot went to the **R5 build** (`dramabox:r5-build`, R5a–R5f, cwd `.scratch/t031-r5`, base
+  `104b26b`). Docs queue (a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1 → f-spec-v04)
+  waits for the next free slot. Codex idle (5h 63%, resets 00:39Z; nothing review-ready until R5 or a
+  revision lands).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
