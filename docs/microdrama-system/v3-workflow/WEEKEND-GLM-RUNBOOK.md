@@ -101,12 +101,12 @@ Doc jobs never edit code, `SPEC-v3.md` or `DECISIONS.md`, so they can run beside
 
 | # | Item | Now | Next step(s) | Waits for |
 |---|------|-----|--------------|-----------|
-| Q1 | **A0-D** (gateway, `LlmStep`, migration 0027) | Built: D1 `365bff9`, D2 `2352e73`, D3 `c25b527`, `A0-D: ALL PACKAGES DONE` (`a0d-build-REPORT.md`); worktree `.scratch/a0d-gateway`, branch `feat/a0d-gateway` from `0cda424`. **Full gate running** (unit `a0d-offline-gates`, receipts `.scratch/a0d-gate/.scratch/gate/`, started 02:45Z) | (1) read the gate receipts; (2) Codex **review** of `0cda424..c25b527` at xhigh. Brief: copy `codex-review-a0r1-brief.md` and adapt it to `phase-A0-spec.md` v0.4 §4–§5. It **must** verify A0S-1/A0S-2 (the auto-reconciler) explicitly. (3) FIX-REQUIRED → a GLM fix brief from the findings, then round 2. ACCEPT → STATE "accepted" (no merge) | Codex reset 10:30Z |
+| Q1 | **A0-D** (gateway, `LlmStep`, migration 0027) | Gate **green at `ea1cc10`** (3,137/462/314). Codex round 1 = **FIX-REQUIRED** (`codex-review-a0d.md`: AD-1..10 BLOCKING, AD-11..13 SHOULD-FIX). Fix brief `a0d-fix1-brief.md` written; GLM build `dramabox:a0d-fix1` running in `.scratch/a0d-gateway` from 17:57Z | (1) read `a0d-fix1-REPORT.md` + `a0d-fix1-final.md`; re-run ≥2 red/green lines; (2) round-2 Codex **review** scoped to AD-1..13 (range `ea1cc10`..fix tip); (3) full gate in a **new pinned detached checkout** at the fix tip; ACCEPT only on gate green **and** Codex ACCEPT → STATE "accepted" (no merge) | fix build done |
 | Q2 | **T031 run-readiness (R5)** | Spec `../T031-run-readiness-spec.md` v0.1; Goldfish **started 03:12Z** at the operator's request (unit `t031-r5-goldfish`, ~40 min). Its reports land in its cwd, `.scratch/t031-fix3-worktree/goldfish/` (untracked: copy them to `docs/microdrama-system/T031-fix-round/r5-goldfish/`); the final message goes to `../T031-fix-round/r5-goldfish-final.md` | (1) resolve the Goldfish findings into v0.2 (skip if Opus did); (2) Codex **critique** (pattern `spec-critique-brief.md`; ask it to rule on §8 Q1, predicted schema vs a capture pod); (3) resolve, then GLM build R5a→R5e in worktree `.scratch/t031-r5` from `feat/t031-fix3` (tip `104b26b` or later); (4) Codex review; (5) gate. **The image rebuild is local only. No push, no paid run:** both wait for the operator | Goldfish; then Codex |
-| Q3 | **A1** (discriminator, gates, decision transaction; migrations 0028–0031) | Note `A1-design-note.md` v1.2. Round 1 = `codex-a1-note-critique.md`. **Round 2 not yet run** | (1) Codex re-critique, round 2 (pattern `a1-note-critique-brief.md`, scoped to the round-1 findings); (2) ACCEPT/minor → write the A1 build brief from `phase-A-spec.md` §10 + the note, then GLM build on `feat/a0d-gateway` **after Q1 is accepted**, then review and gate; BLOCKING → OPERATOR QUEUE | Codex reset; Q1 accepted (for the build) |
+| Q3 | **A1** (discriminator, gates, decision transaction; migrations 0028–0031) | Note `A1-design-note.md` v1.2. Codex round 2 = **REWORK** (`codex-a1-note-recritique.md`: N1R-1..3 BLOCKING, N1R-4..12 SHOULD-FIX, build readiness no). **Stopped per rule 7 (two rounds) → OPERATOR QUEUE** | Operator/Opus Monday: re-check the rulings, decide round 3 vs reduced note. No build this weekend | operator/Opus |
 | Q4 | **A2, A3, A6b design notes** | Drafted 12 Nov (`A2-`, `A3-`, `A6b-design-note.md`); never critiqued | Codex critique round 1 each (pattern `a1-note-critique-brief.md`) → rulings → GLM revises the note → round 2. Builds follow A1 in table order: A2 → A3 → A4/A5/A6a (no note) → A6b → A6c | Codex reset |
 | Q5 | **Phase B spec** v0.3 | Draft (`phase-B-spec.md`; operator answered O-B1..6; one neutral voice per speaker). **Goldfish started 03:22Z by Opus** (unit `phase-b-goldfish`; reports in `phase-b-review/goldfish/`; final `phase-b-goldfish-final.md`) | Goldfish done → rulings → Codex critique round 1 (pattern `spec-critique-brief.md`) → B1 and B5 design notes | z.ai < 50% |
-| Q6 | **A0-R1** (`dramabox-llm` ai-route role, `/root/.claude`) | Fix round 1 done (`a0r1-fix1-final.md`) | Codex re-review, round 2 (pattern `codex-review-a0r1-brief.md`, scoped to RR-1..15). **The merge into `/root/.claude` main waits for the operator**: a broken `ai-route` would stop every session | Codex reset |
+| Q6 | **A0-R1** (`dramabox-llm` ai-route role, `/root/.claude`) | Fix round 1 done. Codex round 2 = **FIX-REQUIRED** (`codex-review-a0r1-r2.md`: RR2-1..3 BLOCKING, RR2-4..7 SHOULD-FIX; 8/15 originals CLOSED). **Stopped per rule 7 (two rounds) → OPERATOR QUEUE** | Operator/Opus Monday: decide a fix round 3 vs shipping as-is; merge into `/root/.claude` main stays operator-gated either way | operator/Opus |
 | Q7 | **Phase C–G spec drafts** (Track S, in parallel with builds) | Not started. Master `SPEC-v3.md` v0.4.6 §4.4–§4.10, §5–§13, the §15.1 phase/AT table, §15.2 R-ID ownership | Per phase, in order **C, F, E, G, D**. D last: it depends on T031's real Pika results. (1) a swarm fact map (copy `b-factmap-brief.md`, retargeted to that phase's code); (2) `ai-route build` of a docs-only spec brief producing `phase-<X>-spec.md` v0.1, modelled on `phase-B-spec.md`: requirements, design, packages, acceptance rows mapped to that phase's V3-AT ids, open questions with recommendations; (3) Goldfish; (4) Codex critique only once A/B critiques are done. **No build of C–G this weekend** | z.ai < 50% |
 
 **Codex queue unit (set up by Opus): `dramabox-codex-queue`.** Timer at 10:31Z; script `codex-queue.sh` (copy beside this file).
@@ -163,6 +163,21 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
     (out `codex-phase-b-critique.md`).
   - GLM after handover: read the results; write the rulings or round-2 inputs.
 
+- 13 Nov 17:55Z (GLM): handover tick. The Codex queue ran clean overnight (all 7 items exit 0) and the
+  phase B v0.4 unit launched its critique. Verdicts read:
+  - **Q1 A0-D: FIX-REQUIRED** (AD-1..10 BLOCKING, AD-11..13 SHOULD-FIX; `codex-review-a0d.md`).
+  - **Q3 A1 note: REWORK** (N1R-1..12; build readiness no) → stopped, rule 7.
+  - **Q6 A0-R1: FIX-REQUIRED** (RR2-1..7; 8/15 originals closed) → stopped, rule 7.
+  - Launched: A0-D fix build `dramabox:a0d-fix1` (brief `a0d-fix1-brief.md`, GLM-5.3,
+    cwd `.scratch/a0d-gateway`, base `ea1cc10`) and phase F fact-map swarm `dramabox:f-factmap`
+    (brief `f-factmap-brief.md`).
+  - Still to process (next wakeup): T031 R5 critique (`T031-fix-round/codex-r5-critique.md`),
+    Q4 A2/A3/A6b round-1 critiques, phase B critique round 1, phase C Goldfish → v0.2.
+  - Housekeeping: two Nov-12 scopes in the a0d worktree hold only idle orphaned PG fixtures (left
+    in place); `t031-ghcr-push.service` failure dates from Wed 4 Nov and the push was denied —
+    nothing pushed, no weekend violation.
+  - Quota at tick: z.ai 5h 19% (reset 18:43Z); Codex 5h 0%, week 13%.
+
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -173,3 +188,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   - install the gateway's systemd unit, group 64010 and directories;
   - OK the live qualification (≤ 5 calls).
 - Before go-live: rotate the Dramabox Bot token.
+- A1 design note: Codex round 2 = REWORK, 3 BLOCKING remain (N1R-1 the recursive view cannot compile;
+  N1R-2 the V1 schema pin breaks frozen bytes; N1R-3 extension approvals collide with season history).
+  Stopped after two review rounds. Opus re-checks Monday; decide round 3 vs a reduced note.
+- A0-R1: Codex round 2 = FIX-REQUIRED, 3 BLOCKING remain (RR2-1 a duplicate observer can overwrite the
+  owner's terminal output; RR2-2 malformed terminal fields hide known isolation violations; RR2-3 the
+  shared deadline still does not bound the whole operation). Stopped after two review rounds. Decide
+  Monday whether one more fix round is worth it; the merge into `/root/.claude` main stays yours.
