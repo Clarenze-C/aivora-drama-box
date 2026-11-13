@@ -226,6 +226,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   Launched: `b-spec-v05` (docs slot) and **Codex critique round 1 for phase C** (`phase-c-critique`,
   brief `codex-phase-c-critique-brief.md` — first Codex job of the GLM weekend). Running:
   a0d-fix1 + b-spec-v05 + phase-c-critique. Docs queue: f-spec-v02 → a2-note-rev1.
+- 13 Nov 19:52Z (GLM): **phase C Codex round 1 ruled** (PC-1..7 BLOCKING, PC-8..16 SHOULD-FIX —
+  **all 16 ACCEPTED**; former Blockers called partially resolved, packages/tests improved; entry
+  helper fires after setup approval AND STORY LOCK; typed lock contracts grow; candidate parent
+  stamps immutable; voice preimage exact; flock safety model rewritten). `phase-c-critique-rulings.md`
+  + apply brief `phase-c-v03-brief.md` written. Docs queue: f-spec-v02 → a2-note-rev1 → c-spec-v03
+  (round-2 critique last). Running: a0d-fix1 + b-spec-v05; Codex free again.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
