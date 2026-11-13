@@ -193,6 +193,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   created (branch `feat/t031-r5` at `104b26b`, venv symlinked); build brief `T031-fix-round/r5-build-brief.md`
   written — **launches when a0d-fix1 frees the code slot**. Phase F spec draft running (`phase-f-spec`).
   Running: a0d-fix1 (code) + phase-f-spec (docs); z.ai 5h 29%.
+- 13 Nov 18:28Z (GLM): **phase F spec v0.1 drafted and committed** (`d480aec`, 567 lines; F1–F10
+  packages, acceptance F-T1…F-T13, 10 open questions with recommendations; O-8 stays the operator's).
+  Its O-F8 flags that **N43 is cited in SPEC-v3 §2.2 but defined nowhere** — master-spec gap for
+  Opus Monday, GLM cannot fix SPEC-v3. Goldfish launched (`phase-f-goldfish`, cwd `phase-f-review/`).
+  Running: a0d-fix1 (code) + phase-f-goldfish; z.ai 5h 35%.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
