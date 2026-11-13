@@ -149,7 +149,7 @@ Those are bound later, in C (cast) or measured in D/E (durations).
 | Episode length | target 120 s, band 105–135 s, including recap ≤10 s and CTA ≤5 s | master §4.1 |
 | Distinct speakers per episode | ≤5, counting off-screen speakers | MA19, O-12 |
 | Speakers per beat | ≤2 | §1.6 |
-| Main cast briefs per proposal | 3–6 | v0.1 §4.1 |
+| Main cast briefs per proposal | 3–6 | master §4.1 |
 | Active locations per episode | **3** (O-B1, decided 12 Nov) | — |
 | `emotion` | `NEUTRAL`, `HAPPY`, `SAD`, `ANGRY`, `FEARFUL`, `SURPRISED` (O-B3, decided 12 Nov) | DECISIONS D2 revised (e.g. neutral, happy, sad, angry) |
 

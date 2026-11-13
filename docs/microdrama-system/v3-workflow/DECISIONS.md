@@ -146,6 +146,8 @@ shot).
     expressions.
 - The master spec is final at **v0.3** after two Codex critique rounds. The v0.1 baseline is pinned
   (`SPEC-v3-v0.1.md`, sha256 0a2677c9…).
+  *(13 Nov: the master v0.4.6 folded its inherited v0.1 clauses and acceptance tests in; the v0.1/v0.3 snapshot
+  files were removed and remain in git at `5d79ae8`.)*
 
 ## D2 update: Botnoi voice catalogue sources (operator + orchestrator, 11 Nov, ~12:20Z)
 

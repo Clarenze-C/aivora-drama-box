@@ -1,6 +1,6 @@
 # Drama Box v3 — series production workflow: MASTER SPEC
 
-**Version 0.4.5, 12 Nov 2026.** Author: Opus orchestrator. (v0.4.5 changes only the §6 "Voice by emotion" rule: one neutral voice reference per speaker, emotion carried by the prompt; DECISIONS "D2 revised again". v0.4.4 changed only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.4 changes only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.3 changed only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
+**Version 0.4.6, 13 Nov 2026.** Author: Opus orchestrator. (v0.4.6 folds the two "as v0.1 §4.1/§4.2" clauses into §4.1/§4.2 and retires the v0.1/v0.3 snapshot files; no rule changes. v0.4.5 changed only the §6 "Voice by emotion" rule: one neutral voice reference per speaker, emotion carried by the prompt; DECISIONS "D2 revised again". v0.4.4 changed only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.4 changes only the §10.0 schema-ownership sentence, per the A1 design note §3. v0.4.3 changed only the Botnoi catalogue clause in §4, from the operator's Botnoi facts; DECISIONS "D2 update". v0.4.2 changed only how LLM calls run: §1 rule 3, §4 bible note, §10.0 rows, §10.1, §16 A0 row; see [phase-A0-spec.md](phase-A0-spec.md) v0.2 §11. v0.4.1 changed the §10.0 `LlmService` row.)
 
 **Status: BINDING MASTER.**
 - Codex critique rounds 1–2 are applied: [codex-spec-critique.md](codex-spec-critique.md) (V3C-1..34) and
@@ -8,7 +8,10 @@
 - The Goldfish review is applied: [goldfish/consolidated_review_report.md](goldfish/consolidated_review_report.md)
   (B1, MA1–25, MF1–2 and the nits); see §20.
 - Phase specs (A0, A–G) are written and critiqued against this document before each build.
-- The previous version is archived as [SPEC-v3-v0.3.md](SPEC-v3-v0.3.md) (sha256 prefix `04f0c8e9f026aa62`).
+- Earlier versions live in git history only. v0.1 (sha256 `0a2677c9…`) and v0.3 (sha256 prefix
+  `04f0c8e9f026aa62`) were committed as snapshot files in `5d79ae8`, e.g.
+  `git show 5d79ae8:docs/microdrama-system/v3-workflow/SPEC-v3-v0.1.md`. Review reports that cite their line
+  numbers refer to those revisions.
 
 ---
 
@@ -20,9 +23,7 @@
 3. [REQUIREMENTS.md](REQUIREMENTS.md): 68 R-IDs (R-1.1 … R-12.13, including R-3.7 and R-12.13 from its
    preamble).
 4. **This master spec.**
-5. The pinned v0.1 baseline, [SPEC-v3-v0.1.md](SPEC-v3-v0.1.md) (sha256
-   `0a2677c9d02e99a790ba7b3bd6f55b74c37261dcb666d9be794e9ea20c1c5dbf`). It is binding only where this
-   document says "as v0.1 §x" **and** does not list that clause as superseded in §19.2.
+5. (v0.4.6) The v0.1 baseline is no longer a source: its two inherited clauses are folded into §4.1/§4.2.
 
 **Normative words (N29).** Bold declaratives and the words *must*, *never*, *only* and *requires* are
 binding. *Should* is advice. Examples are illustrative.
@@ -219,10 +220,10 @@ Schemas are defined normatively in the phase specs. This section fixes their con
 - **Mode A (trend research)** is visibly disabled with a reason until qualified source adapters exist
   (freshness, provenance, failure behaviour, research budget). The v3 milestone stays labelled
   **partial** until then (V3C-32).
-- **Proposal fields** (as v0.1 §4.1):
+- **Proposal fields:**
   - title TH/EN, logline, premise, thesis question, genre/tone;
   - episode count and target length;
-  - main cast briefs;
+  - main cast briefs (3–6);
   - season promise, escalation shape, ending + extension seam;
   - why it would trend;
   - originality and rights notes.
@@ -235,19 +236,22 @@ Schemas are defined normatively in the phase specs. This section fixes their con
 
 ### 4.2 Step 2: Bible, and character tiers
 
-- **Bible** (as v0.1 §4.2):
+- **Bible:** a `SeasonBibleV3`, wrapping the existing `SeasonBible` and `RichBible`:
   - Joey's section order: premise → thesis → timeline → era aesthetics → world rules → locations →
     factions → characters → relationships → story engines → production rules;
-  - a season **camera package** and a **pacing rule** (average shot 4–5 s, held beats);
+  - production rules: a season **camera package** (one look: spherical or anamorphic, a lens family, a
+    movement register), palette, lighting language, and a **pacing rule** (slower, cinematic: average shot
+    4–5 s, held emotional beats, no frantic cutting);
   - the secret ledger and the season ledger.
 
   A `[TBD]` in a field needed for render fails the critic. V3 LLM calls go through `LlmStep` (§10.0);
   the existing synchronous `LLMProvider` protocol stays for offline and legacy callers only.
 - **`CharacterProfile`:**
   - narrative function, visual lock, backstory, psychology by story state;
-  - speech, movement and stillness profiles;
+  - speech (register, texture, cadence, Thai politeness and pronouns, code-switching), movement and
+    stillness profiles;
   - drift exclusions;
-  - Thai register and pronouns;
+  - goal, strategy, flaw, secrets;
   - a voice descriptor (for the Botnoi shortlist, §4.4.4).
 - **Tiers:**
 
@@ -879,8 +883,44 @@ gate (`make check` + `make pilot`; N9).
 | F | V3-AT-11, 12, 29 (**the** 30-episode release simulation), 30 (amendment vs job vs publication race), 31 |
 | G | V3-AT-14, 17, 32 (composed restore), **34** (new: the all-gate end-to-end composition test), the cross-system Nano Banana lock with real ARISA (AT-28's live half), and LIVE §16.3 |
 
-V3-AT-1..17 are defined in the pinned v0.1 baseline (§16 of that file). V3-AT-18..32 are defined in
-codex-spec-critique.md. V3-AT-33 and 34 are defined here.
+**Definitions (v0.4.6: folded in, verbatim).** V3-AT-1..17 come from the v0.1 baseline §16, V3-AT-18..32 from
+`codex-spec-critique.md`, and V3-AT-33/34 are in the phase table above. Later decisions apply where they changed a
+rule: for V3-AT-8's voice, one neutral reference per speaker (§6, v0.4.5).
+
+| ID | Proves |
+|----|--------|
+| V3-AT-1 | Stepper statuses match the durable state for every season/episode state; "waiting for you" lists exactly the open gates and pick screens |
+| V3-AT-2 | No transition passes a gate without a human approval event bound to the current hash; a stale hash is refused; Revise regenerates only the noted units |
+| V3-AT-3 | All 24 episode packs are fully renderable (no map-only packs); the season critic catches a premature secret, an impossible wardrobe day, and >2 speakers in a shot |
+| V3-AT-4 | Demand list completeness: every character, outfit, state, prop, location + light state, extras role and voice used by any scene is in the list, with the episodes it's used in |
+| V3-AT-5 | Picks: votes start no work; Re-roll requeues one item only; Lock is refused until all required items are picked; the lock hash covers every picked version |
+| V3-AT-6 | CAST LOCK attaches the identity lock to **every** episode, including ones created later (regression for R-12.1) |
+| V3-AT-7 | Wardrobe: a timed outfit change mid-scene appears in the shot references; a new story day gets a different outfit unless a reason is recorded |
+| V3-AT-8 | Reference selection: ≤9 images and ≤1 voice per speaker; deterministic choice by framing; drops are logged |
+| V3-AT-9 | Director output validates against `ShotPlanV3`; a Thai line too long for a shot is split at a phrase boundary; no cut lands mid-word |
+| V3-AT-10 | Edit uses native clip audio; recap ≤10 s from the previous accepted episode; CTA ≤5 s; loudness −14 LUFS ±1; ZH/EN tracks share the TH cue timing |
+| V3-AT-11 | Metadata drafts prefill Gate 2; the sealed manifest equals the edited drafts; a thumbnail must be picked before Approve |
+| V3-AT-12 | Teaser is scheduled 3 days before episode 1; the buffer rule blocks a start date with fewer than 5 approved episodes |
+| V3-AT-13 | Every paid call writes exactly one `UsageRecord`; the Costs page totals match; subscription calls record tokens + `total_cost_usd` + quota deltas |
+| V3-AT-14 | `dramabox-llm` refuses while Pro is off pace, and production pauses with a bot alert rather than switching providers silently |
+| V3-AT-15 | Nano Banana single-process lock: a second concurrent image job waits; ARISA SFW and Drama Box never run Nano Banana together |
+| V3-AT-16 | Bot: every event sends exactly once (deduplicated); every send has a timeout; no approval path exists via Telegram |
+| V3-AT-17 (LIVE) | P0/P1/P2 pilots complete; `PILOT-REPORT.md` has measured per-episode cost and quota per provider |
+| V3-AT-18 | Plan 20 and 30 complete episodes before any physical cast assets exist; no identity-lock prerequisite blocks writing. |
+| V3-AT-19 | Upgrade existing V1/V2 records and approvals without deletion, hash reinterpretation or rejected historical duration values. |
+| V3-AT-20 | Crash after provider acceptance and before local persistence; resume without duplicate creation, lost exposure or regenerated successful units. |
+| V3-AT-21 | Concurrent workers cannot exceed step, episode or season caps; retries, shared assets and unsettled charges reconcile once. |
+| V3-AT-22 | Face reroll invalidates its dependent outfits/views; unrelated selections survive; CAST LOCK cannot freeze stale descendants. |
+| V3-AT-23 | Wardrobe continuity spans episode boundaries; canonical setting IDs agree; timed changes work immediately before/at/after boundaries. |
+| V3-AT-24 | Over-budget reference sets preserve mandatory identity/proof assets or block; unsupported media/roles fail before dispatch. |
+| V3-AT-25 | Native zero-, one- and two-speaker clips pass the production binding path; all derivatives retain speech/audio/caption synchronization. |
+| V3-AT-26 | Correct speech/face with wrong wardrobe still produces a continuity finding; unavailable checks never become PASS. |
+| V3-AT-27 | Run the real subscription adapter against fixture CLI outcomes: success, malformed result, missing usage, cumulative cost, refusal, timeout and unreadable quota. |
+| V3-AT-28 | Competing ARISA/Drama container processes share the same lock; crash/restart cannot allow overlapping provider processes. |
+| V3-AT-29 | Simulate 30 daily releases, late teaser, rejected episode, zero buffer, partial destination failure and ambiguous publication. |
+| V3-AT-30 | Race amendment against job completion and publication; stale results and old approvals cannot release changed artifacts. |
+| V3-AT-31 | Extend during release and after completion, including changed cast; existing published hashes and authority remain intact. |
+| V3-AT-32 | Restore DB and objects together; resume scheduler/outbox/jobs without duplicate effects. Document notification ambiguity honestly. |
 
 ### 15.2 Requirement ownership: every R-ID has exactly one accountable phase
 
