@@ -245,6 +245,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED; F5 conditionally blocked on O-8 as ruled). Launched: `a2-note-rev1` (docs) and **phase F
   Codex critique round 1** (`phase-f-critique`). Running: a0d-fix1 + a2-note-rev1 + phase-f-critique
   (Codex 1/2). Docs queue: c-spec-v03 → b-spec-v06.
+- 13 Nov 20:32Z (GLM): **phase F Codex round 1 ruled** (PF-1..11 BLOCKING, PF-12..17 SHOULD-FIX
+  — **all 17 ACCEPTED**; version-selected adapters, admission comparator fix, carrier as explicit
+  crossing, season DAG, submit re-fencing, guarded rebinding, extension carry-forward; O-8/F5 and the
+  E-contract kept as declared dependencies). `phase-f-critique-rulings.md` + apply brief
+  `phase-f-v03-brief.md` written. Docs queue: c-spec-v03 → b-spec-v06 → f-spec-v03 (round-2 critique
+  after, F's last). Running: a0d-fix1 + a2-note-rev1; Codex free.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
