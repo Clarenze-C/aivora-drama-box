@@ -133,6 +133,13 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 
 - 13 Nov 03:15Z (operator): **Opus orchestrates until the operator starts the GLM run (~Fri 16:00Z = Sat 00:00 SGT)**;
   the GLM session owns everything after that. Opus leaves STATE current at handover.
+- 13 Nov 03:25Z (Opus): running now:
+  - R5 Goldfish (`t031-r5-goldfish`, from 03:12Z);
+  - phase B Goldfish (`phase-b-goldfish`, cwd `phase-b-review/`);
+  - phase C fact-map swarm (`c-factmap`, out `c-factmap.md`);
+  - A0-D gate (`a0d-offline-gates`).
+
+  Codex queue timer at 10:31Z (6 of 7 briefs written; the R5 critique brief follows the Goldfish resolution).
 
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
