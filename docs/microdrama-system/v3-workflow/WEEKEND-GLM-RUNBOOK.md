@@ -236,6 +236,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED). Launched: `f-spec-v02` (docs) and **phase B Codex round 2** (`phase-b-recritique`,
   scoped to PB-1..16, final B round). Running: a0d-fix1 + f-spec-v02 + phase-b-recritique.
   Docs queue: a2-note-rev1 → c-spec-v03.
+- 13 Nov 20:12Z (GLM): **phase B round 2 = REWORK (close)**: 11/16 CLOSED, PB-14 REGRESSED;
+  PB5-1 BLOCKING + PB5-2..5 SHOULD-FIX, all with replacements. Rule 7: no round 3 — all 5 ACCEPTED
+  and applied as **v0.6** (brief `phase-b-v06-brief.md`, queued); **Opus re-checks Monday: accept v0.6
+  vs round 3** (queued). B1/B5 design notes wait for that call. Running: a0d-fix1 + f-spec-v02;
+  Codex free. Docs queue: a2-note-rev1 → c-spec-v03 → b-spec-v06.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -259,3 +264,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - Phase F: O-8 ruling (EN/ZH caption delivery) — needed before F5 builds. Recommendation on record:
   YouTube caption tracks now (post-publish `upload_captions`); TikTok/Facebook TH-only until T032
   qualifies caption files; flip per destination. F1–F4 proceed without it.
+- Phase B spec: round 2 came back REWORK by one BLOCKING (PB5-1 re-entry lifecycle guards) after
+  11/16 closed. GLM applied all round-2 rulings as v0.6 but ran no round 3 (rule 7). Monday: Opus
+  re-checks `phase-b-recritique-rulings.md` and either accepts v0.6 or orders the round-3 critique;
+  B1/B5 design notes wait on that decision.
