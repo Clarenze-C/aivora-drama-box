@@ -150,6 +150,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   `2ceb341`; 12 passed).
   - Gate run 2 at `ea1cc10` is running (unit `a0d-offline-gates2`).
   - The Codex review brief is re-scoped to `0cda424..ea1cc10`.
+- 13 Nov 06:25Z (Opus): **A0-D gate run 2 at `ea1cc10` GREEN**: 3,137 unit / 462 contract / 314 integration passed,
+  `make check: all offline checks passed`, `make pilot` 0. Receipts in `.scratch/a0d-gate/.scratch/gate/`; run 1's log is kept.
+  A0-D now waits only for the Codex review (queue item 1).
 
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
