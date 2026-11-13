@@ -256,6 +256,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   widened to the real provider-op chains; A-T12a corrected not weakened). `a3-critique-rulings.md` +
   `a3-note-rev1-brief.md` written. Docs queue: c-spec-v03 → b-spec-v06 → f-spec-v03 → a3-note-rev1.
   A6b rulings remain (last Q4 item). Running: a0d-fix1 (unit sweep phase) + a2-note-rev1.
+- 13 Nov 20:27Z (GLM): **A2 note v1.1 committed** (`b454832`, 954 lines, 15/15 applied, none
+  BLOCKED). Launched: `c-spec-v03` (docs) and **A2 Codex round 2** (`a2-note-r2`, scoped to N2-1..15,
+  final A2 round). Running: a0d-fix1 + c-spec-v03 + a2-note-r2 (Codex 1/2). Docs queue: b-spec-v06
+  → f-spec-v03 → a3-note-rev1. A6b rulings still pending on GLM's desk.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
