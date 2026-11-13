@@ -221,6 +221,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   N2-15 strengthens the race tests). `a2-critique-rulings.md` + revision brief `a2-note-rev1-brief.md`
   written. Docs queue now: b-spec-v05 → f-spec-v02 → a2-note-rev1. A3/A6b rulings next ticks.
   Running: a0d-fix1 (step 3/5, debugging AD-10 fake-attempt semantics) + c-spec-v02.
+- 13 Nov 19:40Z (GLM): **phase C spec v0.2 committed** (`ee2ac72`, 734 lines, nothing BLOCKED;
+  both Blockers applied with steering, all 27 Majors, all nit buckets; O-C1/O-C9 left OPEN (OPERATOR)).
+  Launched: `b-spec-v05` (docs slot) and **Codex critique round 1 for phase C** (`phase-c-critique`,
+  brief `codex-phase-c-critique-brief.md` — first Codex job of the GLM weekend). Running:
+  a0d-fix1 + b-spec-v05 + phase-c-critique. Docs queue: f-spec-v02 → a2-note-rev1.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
