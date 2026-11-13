@@ -153,6 +153,15 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 13 Nov 06:25Z (Opus): **A0-D gate run 2 at `ea1cc10` GREEN**: 3,137 unit / 462 contract / 314 integration passed,
   `make check: all offline checks passed`, `make pilot` 0. Receipts in `.scratch/a0d-gate/.scratch/gate/`; run 1's log is kept.
   A0-D now waits only for the Codex review (queue item 1).
+- 13 Nov 06:50Z (Opus):
+  - **R5 spec v0.2 done** (GLM, see git log); its Codex brief is published, so queue item 2 is ready.
+  - **Phase C spec v0.1 drafted** (490 lines). Its Goldfish is queued at the 08:41Z window (unit `phase-c-goldfish`,
+    cwd `phase-c-review/`).
+  - **Phase B Goldfish done** (1 Blocker / 22 Major / 22 Nit; reports in `phase-b-review/`). Opus ruled every finding
+    (`phase-b-goldfish-rulings.md`).
+  - Unit `phase-b-v04` applies the rulings → v0.4 at 08:41Z, **then launches the Codex critique round 1 itself**
+    (out `codex-phase-b-critique.md`).
+  - GLM after handover: read the results; write the rulings or round-2 inputs.
 
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
