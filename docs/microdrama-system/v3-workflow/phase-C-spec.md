@@ -1,10 +1,12 @@
 # Phase C: Character bible → picks → wardrobe → voices → CAST LOCK
 
-**Version 0.2 DRAFT, 13 Nov 2026** (v0.1 11 Nov, GLM draft; **v0.2 applies the Goldfish rulings
-(`phase-c-goldfish-rulings.md`)** — both Blockers with steering, all 27 Majors, the grouped Nits; two
-items stay OPEN (OPERATOR)). Author: GLM (spec draft job); orchestrator Opus.
+**Version 0.3 DRAFT, 13 Nov 2026** (v0.1 11 Nov, GLM draft; v0.2 applies the Goldfish rulings
+(`phase-c-goldfish-rulings.md`); **v0.3 applies the Codex round-1 critique rulings
+(`phase-c-critique-rulings.md`)** — all 16 findings ACCEPTED, replacement wording folded into the
+sections it corrects (PC-1..PC-16); two items stay OPEN (OPERATOR)). Author: GLM (spec draft job);
+orchestrator Opus.
 
-**Status: DRAFT for Codex critique.**
+**Status: DRAFT for Codex round-2 critique.**
 
 **Master:** [SPEC-v3.md](SPEC-v3.md) v0.4.6. **Depends on:**
 - [phase-A0-spec.md](phase-A0-spec.md) v0.4 (`LlmStep`, the jobs schema incl. `defer_reason`; C consumes
@@ -24,7 +26,9 @@ swept in v0.2.
 
 **Facts:** [c-factmap.md](c-factmap.md) (13 Nov), cited `FM §n`. The orchestrator's spot-checks confirmed
 FM §1 (DDL and dead callers), §3, §5 (helpers unwired), §6–§8; v0.2 re-verified every code anchor this
-spec cites directly. Code references relative to `microdrama/src/microdrama/` (`S/`); migrations `M/`;
+spec cites directly; **v0.3 re-verifies the additional anchors its folded replacements cite**
+(`models.py:27`, `season.py:489–492`, `models.py:122–125`, `service.py:228/287/397`, `db.py:193`,
+`v2_planning.py:1067–1072`, `0002:142`). Code references relative to `microdrama/src/microdrama/` (`S/`); migrations `M/`;
 tests `X/`. Migration numbers here are **symbolic `C-1…C-n`**; real numbers are allocated in the C1 note
 after A and B land. **`C-3` is dropped in v0.2 (§2); the remaining symbolic names are unchanged.**
 
@@ -52,8 +56,8 @@ consumes its `step_04` key.
 4. **Voices:** the two-source Botnoi catalogue, the deterministic shortlist, the audition record, the
    casting sheet, the **upload intake** (trust boundary, quarantine, normalisation, `OPERATOR_ATTESTED`
    rights). One neutral reference per speaker; **no per-emotion variants**.
-5. **CAST LOCK:** the season-scoped lock contract through phase A's decision transaction, the R-12.1
-   fix, season-2 import.
+5. **CAST LOCK:** the planning-scope lock contract (season, or extension — §1.13) through phase A's
+   decision transaction, the R-12.1 fix, season-2 import.
 6. **Provenance records** (V3-AT-33) and **output inspection** (master §12.2), consumed by D and F.
 7. **SFX route qualification** and the **YuE2 music-library job** (master §7, §4.7; the libraries are
    derived assets accepted in the CAST review).
@@ -70,9 +74,15 @@ LLM adapters; the live-ARISA lock proof.
 2. **A pick is a vote only** (master §4.4.1). Votes start no work. **Generate next** and **Re-roll** are
    operator actions that enqueue jobs (N23). Pick/vote states are **UI projections** of the job lifecycle
    (master §10.0 state mapping), derived, never stored as side state (AR-4, [codex-a-critique.md](codex-a-critique.md)).
-   **The one automatic enqueue in the phase is the initial-generation batch at setup-budget approval**
-   (§4): a bounded set of ordinary `cast_v3.generate` job rows — no fourth operator verb, no batch
-   orchestrator. `derive_pick_items` is claimed by **C2**; the planning-track entry
+   **The one automatic enqueue in the phase is the initial-generation batch, fired by a common
+   idempotent entry helper that runs after setup approval and after STORY LOCK** (§4, PC-1): A2 §5
+   makes `approve_setup_budget` a one-time amendment (from `old_effective = 0`) funding steps 1–4, so
+   with paid B calls approval necessarily **precedes** STORY LOCK and finds no cast items — it can never
+   fire the batch itself, and cannot be repeated at step 4. Once **both** authorities exist the helper
+   derives the pick items and the forecast, advances the applicable planning scope (season or extension,
+   item 13) to `CASTING`, and enqueues each initial root's three jobs **exactly once** — a bounded set of
+   ordinary `cast_v3.generate` job rows; no fourth operator verb, no batch orchestrator. **Votes never
+   invoke this helper.** `derive_pick_items` is claimed by **C2**; the entry transition
    `STORY_LOCKED → CASTING` is claimed by **C4** (asserted by C-T3).
 3. **One neutral voice reference per speaker** (DECISIONS "D2 revised again", 12 Nov). Per-emotion voice
    variants are **not built**. The prompt carries emotion (B §2.2 owns the vocabulary); C supplies only
@@ -97,12 +107,17 @@ LLM adapters; the live-ARISA lock proof.
    `identity_locks` + `identity_lock_assets` and their readers; the SQL relaxes `source_episode_id` /
    `release_package_hash` to nullable **for V3 rows only** (`seasons.workflow_version`, §2 `C-7`). The
    episode-1 Gate 2 lock path never fires for V3 seasons (master §4.4.5).
-9. **R-12.1 fix (adopt-if-present):** CAST LOCK stamps **every** episode row of the season (§8 step 5);
-   V3 episodes created at STORY LOCK exist **before any lock** and are stamped by the lock transaction,
-   not at insert. `attach_identity_lock` (`S/references/service.py:285`, verified no production caller
-   today) becomes the production helper with **adopt-if-present** semantics — it stamps the season's
-   current lock when one exists and is used for **extension episodes only** (created after a lock); its
-   typed `IdentityLockRequired` error path stays for V1 callers (`service.py:294–299`).
+9. **R-12.1 fix (adopt-if-present):** CAST LOCK stamps **every** episode row of the applicable scope
+   (§8 step 5); V3 episodes created at STORY LOCK exist **before any lock** and are stamped by the lock
+   transaction, not at insert — **stamping all initial episodes at CAST LOCK remains the correct
+   counterpart** (PC-6). `attach_identity_lock` (`S/references/service.py:285`, verified no production
+   caller today) is refactored into a **transaction-owned adoption helper** with **adopt-if-present**
+   semantics: the helper takes the **creator's `tx`** and is invoked **before the episode-creation
+   transaction commits**, under A's lock order — its current pooled own-transaction shape
+   (`service.py:287`; `persistence/db.py:193`) can neither see the uncommitted episode nor keep creation
+   and adoption atomic. It resolves the applicable **effectively approved** lock (not merely the highest
+   version) and is used for **extension episodes only** (created after a lock); the existing public V1
+   wrapper and its typed `IdentityLockRequired` error path stay for V1 callers (`service.py:294–299`).
 10. **Canonical setting ID = the location demand ID** everywhere in V3 (N30). `StoryTime.setting` free
     text is never a key; the V2 compiler comparison stays V2.
 11. **C makes no LLM calls.** Shortlist ranking, casting-sheet scripts, wardrobe derivation, forecasts
@@ -113,6 +128,13 @@ LLM adapters; the live-ARISA lock proof.
     phase A's four-point checklist (queue CHECKs, `budget/policy.py` ownership, worker set, generated
     contracts). Music and SFX share the one `media` lane: each carries ~1 job/season with the same
     admission profile, so separate lanes would add CHECK and worker sprawl with no contention to manage.
+13. **Planning scope is carried explicitly (PC-14).** B scopes demands and documents by season **or
+    extension** (`planning_scope_id`, B §8). C commands, jobs, demand selection and STORY binding
+    resolution all carry the planning-scope/extension identity: the entry helper (item 2) advances the
+    **applicable** scope to `CASTING`; **initial CAST LOCK binds and stamps all initial episodes;
+    extension locking binds the extension's episodes only.** Earlier published episode bindings remain
+    unchanged; any other rebinding requires a scoped amendment authority (master §12.6, A4's
+    coordinator). This defines C's seam — **no F extension UI is implied.**
 
 ## 2. Records (contract package, guardian-owned bump; symbolic migrations `C-1…`)
 
@@ -124,12 +146,12 @@ CHECK. `record_id = uuid5(CAST_V3_NS, "<type>:<season_id>[:<key>]")`. `v2_contra
 
 | Migration | Object | Decisive columns / rules |
 |---|---|---|
-| `C-1` | **`cast_pick_items`** | `season_id`, `demand_id`, `pick_kind` (below), `item_key`, `target_ref_kind`/`target_ref_key` (nullable; maps to `reference_versions` per §2.1), `required bool` (one meaning: the item must be *resolved* before Approve — picked or bulk-accepted), `selection_mode` (`HUMAN_PICK` \| `DERIVED`), `parent_pick_id` nullable, `parent_version_at_generation` int nullable (staleness check, §4); `UNIQUE (season_id, demand_id, pick_kind, item_key)`; guarded |
+| `C-1` | **`cast_pick_items`** | `season_id`, `demand_id`, `pick_kind` (below), `item_key`, `target_ref_kind`/`target_ref_key` (nullable; maps to `reference_versions` per §2.1), `required bool` (one meaning: the item must be *resolved* before Approve — picked or bulk-accepted), `selection_mode` (`HUMAN_PICK` \| `DERIVED`), `parent_pick_id` nullable, `extension_id` nullable (the extension whose demand produced the item — B §8's scope; NULL = the season's initial scope, item 13/PC-14); `UNIQUE (season_id, demand_id, pick_kind, item_key)`; guarded. **The parent staleness stamp is per candidate, never an item column here (§4, PC-3)** |
 | `C-2` | **`cast_pick_votes`** (append-only) | `pick_id`, `candidate_kind` (`REFERENCE_VERSION` \| `CATALOG_ENTRY`), `candidate_id`, `note`, human-session ref, `created_at`; a vote records only a choice — no state mutation, no job |
 | ~~`C-3`~~ | **dropped in v0.2** (MAJ-6): dependency edges are a **computed closure** over `cast_pick_items` (`parent_pick_id` + `pick_kind` determine both edge kinds), delivered to A4's `DependencyProvider` as a function — no table, no registration path to drift. **The remaining symbolic names `C-4…C-8` are unchanged.** |
 | `C-4` | **`botnoi_voice_catalog`** (global, not season-scoped) | `source` (`api_v1` \| `api_v2` \| `operator_csv`), `voice_name`, `speaker_id` nullable, `gender`, `age_group`, `accent`, `style_notes`, `has_v4` (NULL = unconfirmed), `voice_kind` (`cast` \| `api` \| `community`), `last_verified`, `raw jsonb`; `UNIQUE NULLS NOT DISTINCT (source, voice_name, speaker_id)` (PG15+ is the deployed floor) so operator rows with NULL speaker are still deduplicated; guarded |
 | `C-5` | **`provenance_records`** (append-only) | `subject_kind` (`ASSET` \| `METHOD` \| `DETECTOR_WEIGHTS` \| `FONT` \| `VOICE` \| `SFX_ROUTE` \| `MUSIC_JOB`), `subject_ref`, `basis`, `basis_version`, `entitlement` (generation-time entitlement of the subject — what the licence lets us *generate*; plan/subscription upgrade rights are a different axis and never re-read here), `model_provider`, `prompt_hash`, `seed`, `license_hash`, `evidence jsonb`; `UNIQUE (subject_kind, subject_ref, basis_version)` |
-| `C-6` | **`voice_uploads`** (guarded) | `season_id`, `character_demand_id`, `slot` (`neutral`), `state` (`QUARANTINED` \| `REJECTED` \| `NORMALISED` \| `REGISTERED` \| `SUPERSEDED`), `idempotency_key` UNIQUE, `expected_content_revision`, `object_key` (the quarantine object-store key, §7), `source_sha256`, `normalised_sha256`, `rejection_reason`, `checks jsonb`, `attestations jsonb`, `asset_id` nullable |
+| `C-6` | **`voice_uploads`** (guarded) | `season_id`, `character_demand_id`, `slot` (`neutral`), `state` (`QUARANTINED` \| `REJECTED` \| `NORMALISED` \| `REGISTERED` \| `SUPERSEDED`), `idempotency_key` UNIQUE, `expected_content_revision`, `object_key` (the quarantine object-store key, §7), `source_sha256`, `normalised_sha256`, `rejection_reason`, `checks jsonb`, `attestations jsonb`, `asset_id` nullable, **`audition_vote_id` (the `cast_pick_votes` row this upload satisfies — the immutable audition binding, PC-4), `catalogue_entry` (the stable catalogue identity it renders: the `C-4` row for `CATALOG_ENTRY` auditions; NULL for "other" auditions, where the vote itself is the identity)** |
 | `C-7` | **`identity_locks` relaxation + version-aware CHECKs** | `ALTER COLUMN source_episode_id DROP NOT NULL`, same for `release_package_hash` (0002:258, 261 — verified); a version-aware constraint trigger keeps both **required when the lock's season has `seasons.workflow_version = 'v1'`** (join `identity_locks.season_id → seasons.workflow_version`, A1 0028's discriminator; no `schema_version` column is involved). V3 lock rows carry the table's own `schema_version = '1.0'` (the row shape is unchanged; the discriminator is the season's workflow version) and require a `CastLockV3` document ref in `body`. **The same migration grows `reference_versions.ref_kind` and `identity_lock_assets.asset_kind`** (0002:158/275) with the §2.1 values, version-aware the same way: V1 seasons keep exactly the five-kind vocabulary, V3 seasons admit the extended set. `md_forbid_mutation` stays |
 | `C-8` | queue lanes + rights/provenance CHECK plumbing | `jobs.queue` CHECK gains `image`, `voice_intake`, `media` (0001:77 today: `production/publication/community` — verified); matching reservations/charges and `budget/policy.py` ownership |
 
@@ -173,10 +195,11 @@ vocabulary **before the C1 note is accepted**:
 | # | Delta | Contract touched | Mechanism |
 |---|---|---|---|
 | CD1 | Queue lanes `image`, `voice_intake`, `media` | A0/A3's `jobs.queue` CHECK (0001:77) | `C-8` grows the CHECK; worker set + `budget/policy.py` ownership land in C3 |
-| CD2 | `identity_locks` NOT-NULL relaxation; `ref_kind`/`asset_kind` CHECK growth (§2.1) | 0002:158/258/261/275 | `C-7`'s version-aware constraint triggers keyed on `seasons.workflow_version` (A1 0028); V1 rules preserved exactly (C-T1) |
+| CD2 | `identity_locks` NOT-NULL relaxation; `ref_kind`/`asset_kind` CHECK growth (§2.1) **+ the typed Python contracts that read and write them** | 0002:158/258/261/275; `RefKind = IdentityAssetKind` (five kinds, `S/references/models.py:27`); `IdentityLock`/`LockView` requiring `source_episode_id` + `release_package_hash` (`S/contracts/season.py:489–492`; `S/references/models.py:122–125`); lock readers casting member kinds (`S/references/service.py:228,397`) | `C-7`'s version-aware constraint triggers keyed on `seasons.workflow_version` (A1 0028); V1 rules preserved exactly. **CD2 includes V3 reference-kind, lock-body and lock-view contracts plus workflow-aware readers/builders — new V3 contract types alongside the frozen ones; V1/V2 schemas and validation remain unchanged. C-T1 exercises every new kind and a V3 lock with NULL source/package fields through the actual typed paths (roundtrips through the readers/builders, not SQL alone)** (PC-2) |
 | CD3 | `RevisionTargetKind` grows `PICK = "pick"` | A1 note §4's StrEnum + validators (`S/contracts/v3.py`) | C-owned migration in C's range, mirroring B's D2; CAST Revise notes target `{kind: pick, id: cast_pick_items.id}` |
-| CD4 | `DeferReason` grows `PROVIDER_LOCK_BUSY` | A0's 0027 CHECK; A1 0031's wait-view CASE | C-owned migration; the 0031 view's CASE maps it to `WAITING_PROVIDER` (flock-busy deferrals, §5) |
+| CD4 | `DeferReason` grows `PROVIDER_LOCK_BUSY` | A0's 0027 CHECK; A1 0031's wait-view CASE **and its `defer_reason IN (...)` allowlist** (A1 §2.4 filters rows through **both** — adding only the CASE leaves `PROVIDER_LOCK_BUSY` invisible in `track_waits`) | C-owned migration; the 0031 view's CASE **and IN filter** both admit `PROVIDER_LOCK_BUSY` → `WAITING_PROVIDER` (flock-busy deferrals, §5); **C-T5 asserts the resulting row through the production wait reader** (PC-8) |
 | CD5 | B's `CharacterProfile` gains structured `visual_lock.sheet_views` (list of view names) | B's `v3_story_documents` contract (v0.4 carries visual lock as **text**) | requested as a B contract delta through this register (B owner confirms in the C2 note); C's deterministic fallback in §3 makes C2 buildable either way |
+| CD6 | `cast_v3.botnoi_refresh` runs as an approved **global-maintenance exception** outside A1's tracked-work contract | A1 0031's work-scope CHECKs (`(track IS NULL) = (logical_work_id IS NULL)`; `replaces_job_id` requires track) | the refresh runs **untracked** (`track`/`logical_work_id`/`extension_id` NULL — the CHECK passes untouched) with **its own replay identity**: a calendar-day importer-run record guards same-day rerun replacement at the application layer (§7, §10); registered here so the C1 note checks it against A1's validators (PC-12) |
 
 **Standing rule (C-B1 for C):** any further C identifier that crosses an A/B enforced contract (enum,
 CHECK, validator) is added to this register and checked before the C1 note is accepted.
@@ -237,8 +260,9 @@ demand list, never a stored flag (append-only rows are never rewritten). It neit
 enters the binding hash; its votes stay as history.
 
 **Image-volume projection** (master §10.4): projected count = Σ per item (**3 candidates** per root
-generation item — master §4.4's "2–3" pinned to 3 for forecast and metering stability — plus derived
-views) × (1 + re-roll rate). Re-roll rate and lock throughput (images/hour) are **config with measured
+generation item — master §4.4's "2–3" pinned to 3 for forecast and metering stability — **3 per OUTFIT
+dependent and 1 per derived view item: exactly the counts §4's dispatch policy generates, so forecast
+and dispatch can never disagree** (PC-9)) × (1 + re-roll rate). Re-roll rate and lock throughput (images/hour) are **config with measured
 defaults pending P0** (`UNVERIFIED` until then; the panel labels them "estimated"). Wall-clock estimate =
 count ÷ throughput, shown with the fairness batch parameters (§5).
 
@@ -256,12 +280,20 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
 
 ## 4. The picks engine (V3C-8; V3-AT-5, V3-AT-22; R-4.8)
 
-- **Initial generation (the phase's entry flow).** When the operator **approves the setup budget**
-  (A2's `approve_setup_budget` decision), the handler enqueues a bounded batch of ordinary
-  `cast_v3.generate` job rows: **exactly 3 jobs per root generation item** (`FACE`, `PROP`,
-  `LOCATION_MASTER`, `EXTRAS_LOOK` — items with no parent). One job emits **one candidate**; the fairness
-  batching in §5 bounds dispatch. No fourth operator verb, no batch-orchestrator component. Dependents
-  are never auto-generated — **generate next** is the operator action for them.
+- **Initial generation (the phase's entry flow, PC-1).** A **common idempotent entry helper** runs
+  after setup approval **and** after STORY LOCK: approval alone is too early (A2 §5's one-time amendment
+  funds steps 1–4 and necessarily precedes STORY LOCK, when no cast items exist); STORY LOCK alone is
+  unauthorized (no paid work before approval, AC-13). Once **both authorities exist**, the helper
+  derives the pick items and the forecast (§3), advances the applicable planning scope to `CASTING`
+  (item 13), and enqueues a bounded batch of ordinary `cast_v3.generate` job rows: **exactly 3 jobs per
+  root generation item** (`FACE`, `PROP`, `LOCATION_MASTER`, `EXTRAS_LOOK` — items with no parent),
+  **each root enqueued exactly once** (idempotent across rerun, replay and restart). One job emits
+  **one candidate**; the fairness batching in §5 bounds dispatch. No fourth operator verb, no
+  batch-orchestrator component. **Initial library jobs are explicitly scheduled (PC-9):** the same
+  helper enqueues the season's `cast_v3.music_lib` and `cast_v3.sfx_lib` jobs (one each per recipe,
+  §10) — libraries are derived-class items, but their generation is initial paid work, not an operator
+  action. Dependents are never auto-generated — **generate next** is the operator action for them.
+  **Votes never invoke this helper.**
 - **Candidates** are `reference_versions` rows (FM §1: multiple versions per
   `(season, ref_kind, ref_key)` are the de-facto candidate grid today; nothing records a choice). The
   item's candidate set = versions in `PROVISIONAL`/`ACCEPTED` for its `(target_ref_kind, target_ref_key)`
@@ -273,17 +305,30 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
   is a **bulk operator action that appends one session-marked `cast_pick_votes` row per derived item**
   (candidate_kind `REFERENCE_VERSION`, note "bulk acceptance", one idempotency key for the batch) — the
   same vote mechanism, the derived policy. No second state machine.
-- **`reroll(pick, note)`** — operator action; enqueues exactly **one** item's generation job — one new
-  candidate (new versions append; the selection is untouched until a new vote). Counted in the forecast's
-  re-roll metric and metered normally.
+- **`reroll(pick, note)`** — operator action; **dispatch is per pick kind (the dispatch policy,
+  PC-9):** image kinds (`FACE`, `SHEET_VIEW`, `EXPRESSION`, `OUTFIT`, `APPEARANCE_STATE`, `PROP`,
+  `LOCATION_MASTER`, `LOCATION_COVERAGE`, `EXTRAS_LOOK`) enqueue exactly **one** `cast_v3.generate` job —
+  one new candidate (new versions append; the selection is untouched until a new vote); **library kinds
+  (`MUSIC_LIB`, `SFX_LIB`) re-enqueue their corresponding media job** (`cast_v3.music_lib` /
+  `cast_v3.sfx_lib`); **voice replacement (`VOICE_NEUTRAL`) goes through intake** — a new audition vote +
+  upload (§7), never an image job. Counted in the forecast's re-roll metric and metered normally.
 - **`generate_next(parent_pick)`** — operator action (N23); enqueues the parent's dependents' jobs
-  **against the selected parent revision** (the request's `reference_asset_ids` carries it;
-  `parent_version_at_generation` is stamped on the child item).
-- **Staleness / invalidation (V3-AT-22):** a dependent is *stale* when
-  `parent_version_at_generation ≠` the parent's currently selected version — computed from stored
-  columns, never a stored flag. A stale dependent's candidates are visually marked; **its item must be
-  re-picked (re-roll + vote) before lock**; unrelated picks are untouched. A4's coordinator uses the same
-  **computed dependency closure** for post-lock amendments (master §12.6).
+  **against the selected parent revision** (the request's `reference_asset_ids` carries it; **each
+  emitted candidate records its parent binding immutably**, below). **Candidate counts per dependent
+  kind (PC-9): `OUTFIT` → 3 candidates (variants to pick from, like roots); each derived view item
+  (`SHEET_VIEW`, `EXPRESSION`, `LOCATION_COVERAGE`) → 1 candidate. Forecasts use these same counts (§3).**
+- **Staleness / invalidation (V3-AT-22, PC-3):** **each candidate immutably records its parent
+  reference/version and the invalidation generation at its creation** — a per-candidate record (the C1
+  note pins its physical home), **never an item-level stamp**: an item-level stamp updated by a later
+  sibling generation would make an old *selected* candidate look current though it still depicts the old
+  parent. **Freshness is evaluated for the selected candidate**: a dependent is *stale* when its
+  **selected candidate's** recorded parent version ≠ the parent's currently selected version — computed
+  from stored records, never a stored flag. **Parent reroll invalidates descendants without enqueueing
+  them; unrelated selections survive. Generating a fresh unselected candidate cannot freshen an older
+  selection** (a selection's staleness changes only through a new vote on a fresh candidate). A stale
+  dependent's candidates are visually marked; **its item must be re-picked (re-roll + vote) before
+  lock**; unrelated picks are untouched. A4's coordinator uses the same **computed dependency closure**
+  for post-lock amendments (master §12.6).
 - **State projection** per master §10.0: queued/leased → `QUEUED`/`GENERATING`; succeeded → `READY`;
   after a vote → `VOTED`; derived jobs done → `DERIVED_READY`; at CAST review → `ACCEPTED`; retry →
   `FAILED_RETRYABLE` (+`WAITING_PROVIDER`/`WAITING_QUOTA` by cause); unknown → `UNKNOWN`/`BLOCKED
@@ -301,11 +346,14 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
   directionless light, no baked lighting, forehead-to-upper-chest framing (master §4.4.2). Output
   inspection (§9) runs inside the job after `fetch_output`.
 - **Reuse (the adapter wrap):** C3 **wraps/extends the existing `GenerationAdapter`** scoped to
-  season/`step_04` work, reusing its `check_rights` and `build_image_request` unchanged. **Seed policy:
-  every attempt rotates the seed**, so every generation — initial candidate or byte-identical-looking
-  re-roll — derives a distinct `cache_key` input; the fake provider varies its output bytes by seed. The
-  `UNIQUE (season_id, cache_key)` constraint on `reference_versions` (FM §1) is the duplicate guard and is
-  **never weakened**.
+  season/`step_04` work, reusing its `check_rights` and `build_image_request` unchanged. **Seed policy
+  (PC-15): the seed and the immutable request inputs are persisted once per `<pick, gen_seq>`.** New
+  initial candidates and explicit re-rolls allocate new sequences/seeds; **transport retries, status
+  polling, reconciliation and restart retain them** — a request hash or cache input is never re-derived
+  from the jobs retry counter. Every generation — initial candidate or byte-identical-looking re-roll —
+  thus derives a distinct `cache_key` input; the fake provider varies its output bytes by seed. The
+  `UNIQUE (season_id, cache_key)` constraint on `reference_versions` (FM §1) is the duplicate guard and
+  is **never weakened**.
 - **Fake by default:** the composition wires `image_provider = 'fake-generation'` (the existing fake,
   FM §3). **Live switch:** per-provider config `nano_banana.enabled` + an A6 `provider_qualifications`
   row + a rights route `route-nano-banana` (evidence required; fail-closed `check_rights`, FM §7) + a
@@ -317,12 +365,25 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
   CD4; bounded backoff; **waiting is visible and holds no GPU lease**).
   **Lock-file integrity:** the acquisition `fstat`s the descriptor and compares `st_dev`/`st_ino` against
   the **pinned inode** recorded in the A6 `provider_qualifications` row for the provider (qualified and
-  re-expired on the same cadence as any other qualification); a mismatch — an ARISA deploy replaced the
-  file, breaking mutual exclusion — raises a typed **BLOCKED** with operator visibility. No watchdog: a
-  mid-hold swap can overlap at most one ≤120 s batch. A **missing or unreadable** canonical lock file is
-  a typed error (not an unhandled `FileNotFoundError`): the job defers `WAITING_PROVIDER`
+  re-expired on the same cadence as any other qualification); a mismatch — the canonical path was
+  replaced, breaking mutual exclusion — raises a typed **BLOCKED** with operator visibility.
+  **The canonical inode is not replaced while generators may run (PC-7):** an ARISA-side deploy that
+  must replace the lock file quiesces its generators first (coordinated with the ARISA owner), and
+  **the mount topology must expose canonical-path replacement to the acquisition checks** — the
+  `fstat`-vs-pinned-inode comparison above is that check, so a bind-mount topology that would keep
+  serving a stale pinned inode after a host-path replacement is a deployment error the qualification
+  record calls out; C-T6 exercises the real mount topology. A **missing or unreadable** canonical lock
+  file is a typed error (not an unhandled `FileNotFoundError`): the job defers `WAITING_PROVIDER`
   (`GATEWAY_UNAVAILABLE`) with operator visibility.
-  **Crash-safe:** the kernel releases flock on process death; a restart cannot inherit a hold.
+  **Crash and in-flight safety (PC-7):** the kernel releases flock on process death — but **flock
+  release alone does not establish safety**: a dead worker's accepted remote operation may still be
+  running, and a submit-through-final-poll span can exceed the batch seconds. **Batch limits stop new
+  submissions; they do not release protection around unfinished work** — the limit is checked before
+  submitting the next operation, never mid-operation. **Following worker death or an ambiguous
+  submission, shared recovery admission blocks new dispatch until the prior work is reconciled**
+  (operation state is re-derived through `ProviderOperation.reconcile`; only a reconciled terminal state
+  re-admits dispatch). A restart therefore cannot inherit a hold and cannot overlap a still-running
+  accepted operation.
   **Fairness:** bounded Drama batches — at most `fairness_batch_images` (default 8) or
   `fairness_batch_seconds` (default 120 s) per hold, then release and re-acquire, so ARISA's turns and
   Drama's interleave. **Hold span: submit through final poll** — the lock is held from the first submit
@@ -349,10 +410,17 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
     recorded; the validator refuses an unreasoned repeat.
   - **Timed changes:** scene-relative `StateEvent` intervals (non-empty; the frozen V2 validator rule),
     **per-episode with resolver continuity across boundaries** — the frozen V2 `StateEvent` shape stays
-    episode-scoped; no new season-level wrapper (the C5 note pre-makes the shape). A mid-scene change is
-    an **operator-planned refinement** on the wardrobe screen: it must cite a beat or scene break that
-    allows it — the same evidence B's "impossible wardrobe day" critic accepts (B §6.2, C-M19). B's pack
-    schema expresses per-scene wardrobe only — recorded as O-C2, not silently resolved.
+    episode-scoped; no new season-level wrapper (the C5 note pre-makes the shape). **The C5 note defines
+    the semantics the V2 resolver today leaves to fallback** (outside active intervals it silently falls
+    back to the assignment, `S/references/v2_planning.py:1067–1072`; PC-10): **transition versus
+    temporary-interval semantics** (a state held onward from an interval's start versus one that reverts
+    at its end), **terminal-state carry into the next scene/episode**, **explicit-reset rules**,
+    **simultaneous-state composition and precedence**, and **rejection of incompatible combinations** —
+    no continuity-by-assertion; **C-T8 verifies each through the V3 resolver and the emitted reference
+    expectations**. A mid-scene change is an **operator-planned refinement** on the wardrobe screen: it
+    must cite a beat or scene break that allows it — the same evidence B's "impossible wardrobe day"
+    critic accepts (B §6.2, C-M19). B's pack schema expresses per-scene wardrobe only — recorded as
+    O-C2, not silently resolved.
   - **Appearance states:** dedicated `AppearanceStateV3` entries (kind, story days/scenes held, asset =
     the picked `APPEARANCE_STATE` item) — today only a generic `StateEvent` exists (FM §5,
     REQUIREMENTS R-4.3).
@@ -374,7 +442,15 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
 ## 7. Voices (R-4.6 as superseded by D2 chain; V3R-1, V3R-2, V3R-11)
 
 **Catalogue (C-4).** Importer job `cast_v3.botnoi_refresh` (queue `production`; public no-token
-endpoints; offline tests use fixture responses):
+endpoints; offline tests use fixture responses). **Scope model registered explicitly (PC-12, CD6):**
+the refresh is an approved **global-maintenance exception** outside A1's tracked-work contract — the
+catalogue is global reference data, not season content, so the job runs untracked with **its own replay
+identity** (a calendar-day importer-run record; same-day rerun replacement is guarded there, §10). Its
+writes are protected by that replay guard plus the idempotent `UNIQUE (source, voice_name, speaker_id)`
+upsert — never a season content fence, and never a delete. **Casting consumes a recorded catalogue
+snapshot:** each shortlist stores the catalogue row identities it ranked (ids + `last_verified`), so a
+mid-casting refresh cannot silently change a ranked shortlist; re-ranking after a refresh is an
+explicit operator action:
 - maps `get_speaker_data` / `_v2` rows (fields verified in
   `botnoi-api-speakers-2026-11-11.csv`, whose actual header carries a leading `source` column:
   `source, speaker_id, eng_name, thai_name, language, gender, age_style, voice_style, speech_style,
@@ -390,8 +466,10 @@ endpoints; offline tests use fixture responses):
 **Shortlist (V3R-11).** Deterministic ranking of the catalogue against the `CharacterProfile` voice
 descriptor (B §2): gender must match exactly; then a **normalized tag-overlap score** over the
 descriptor's fields (age band, accent, style tokens — per-field token-set overlap normalised, weighted
-age 0.4 / accent 0.3 / style 0.3) with a **stable tie-break** (score desc, then `voice_name` asc, then
-`speaker_id` asc). Output: **top-3 suggestions with reasons, no audio generated**, stored in
+age 0.4 / accent 0.3 / style 0.3) with a **stable, total tie-break (PC-12)**: score desc, then
+`voice_name` asc, then `speaker_id` asc **with explicit NULL ordering (`NULLS LAST`)**, then the
+**unique catalogue identity** (`botnoi_voice_catalog.id`) asc — the final key is unique, so
+source-separated/operator rows that share the earlier keys can never tie. Output: **top-3 suggestions with reasons, no audio generated**, stored in
 `VoiceCastingV3`; the shortlist is **flagged "thin"** when the rank-2→3 score gap is < ε (0.05). If
 **fewer than 2** voices survive the gender-exact filter, the shortlist is flagged and **1 entry is still
 shown** (never padded, never empty when one exists). The exact formula lives in the C6 note; §1.11's
@@ -401,7 +479,11 @@ evidence); `has_v4 IS NULL` entries may appear but are flagged "confirm V4 in St
 
 **Audition.** The operator auditions in Botnoi externally and records the pick (catalog ref) or "other"
 with a reason. The audition pick is the `VOICE_NEUTRAL` item's vote (candidate_kind `CATALOG_ENTRY`) —
-it selects no asset yet.
+it selects no asset yet. **The vote is the binding anchor (PC-4):** every upload for the character binds
+immutably to the current audition vote and its stable catalogue identity (`C-6`), so a later base-voice
+change (a new vote) supersedes clips registered against the old one — a character-level REGISTERED clip
+can never silently survive a base-voice change. **An "other" pick is rights-treated as a community
+voice (PC-11):** its own rights record with explicit evidence is required before a clip can register.
 
 **Casting sheet.** One **neutral** 10–15 s Thai script per speaker, assembled deterministically from the
 character's own pack lines (longest TH lines fitting the window; a template fallback is marked if the
@@ -438,52 +520,73 @@ leading/trailing silence) + assessment of Thai speech, transcript match, single-
 consistency with the base voice — automated where a qualified detector exists, otherwise a **recorded
 human check**; **V4 origin and voice identity are operator attestations, labelled separately** from
 machine checks. The accepted clip becomes the `VOICE` reference version + a `voices` row
-(`provider = 'botnoi'`, `provider_voice_ref` = speaker id, `anchor_asset_id` = the WAV) — the table
-exists today (0002:134–151, verified). The `VOICE_NEUTRAL` item's **job lifecycle is the intake job**
-(`cast_v3.voice_intake`), not image generation.
+(`provider = 'botnoi'`, `provider_voice_ref` = a **stable provider reference**, `anchor_asset_id` = the
+WAV) — the table exists today (0002:134–151, verified; `provider_voice_ref` is **NOT NULL**, 0002:142).
+**The stable provider reference (PC-4):** the Botnoi speaker id when the catalogue entry has one; for
+operator entries without `speaker_id`, the stable catalogue identity (`botnoi-catalog:<source>:<id>`) —
+never NULL, never a mutable display name. The `VOICE_NEUTRAL` item's **job lifecycle is the intake
+job** (`cast_v3.voice_intake`), not image generation.
 
 **Rights (O-11).** A `rights_registry` route `route-botnoi-voice` (subject `VOICE`) with basis stored
 verbatim: `OPERATOR_ATTESTED (Botnoi sales-page use cases: ads/product videos, stories, audiobooks; no
-licence document found; 11 Nov 2026; territories WORLDWIDE)` + a `provenance_records` row per voice. A
-missing, corrupt or unapproved neutral reference **blocks dispatch** (the binding exposes a typed
-blocker D enforces). Changing the base voice invalidates the clip (the item goes stale); after lock,
+licence document found; 11 Nov 2026; territories WORLDWIDE)` + a `provenance_records` row per voice.
+**Rights are validated on every selection path (PC-11):** audition, intake registration, CAST approval,
+season-2 import and dispatch each validate **the selected voice's own rights record**. Community voices
+require explicit **per-voice evidence** (a `rights_registry` VOICE row with the operator's explicit
+approval); **the general O-11 attestation does not satisfy a community voice.** Botnoi-owned voices
+retain the `OPERATOR_ATTESTED` basis and the WORLDWIDE default. A missing, corrupt or unapproved
+neutral reference **blocks dispatch** (the binding exposes a typed blocker D enforces). Changing the
+base voice supersedes the clips bound to the old audition vote (the item goes stale, PC-4); after lock,
 master §12.6.
 
 ## 8. CAST LOCK (V3C-6; V3-AT-5/6; R-4.9, R-12.1, R-12.5)
 
 **The gate.** The C handler registers `CAST_LOCK` (phase-A §2 item 7: `NOT_AVAILABLE` before C ships).
 The activation opens when every required item's generation work is terminal-successful, with binding =
-canonical hash of (demand-list version, all pick items + current selections). **Approve conditions**
-(evaluated in the A1 decision transaction): the binding is current; **every required item is resolved**
-(human picks have a latest vote; derived items are accepted or re-rolled — refused with the typed list
-otherwise, V3-AT-5); **every speaker has a registered, rights-approved neutral voice clip**
-(`voice_uploads.state = REGISTERED` for the `VOICE_NEUTRAL` item + the `route-botnoi-voice` approval) —
-without this condition the lock could Approve with no voice WAVs and the hash below could not be
-computed; **no stale descendant** (V3-AT-22); the wardrobe plan validators pass; the forecast is present
-and fits (a forecast above cap — or blocked on an unknown price, §3 — is a blocker); the setup budget is
-approved. **Stale hash refused; Revise regenerates only the noted units** — notes target typed
+canonical hash of (demand-list version, all pick items + current selections, **the complete proposed
+cast membership, the exact registered voice clips, the wardrobe-plan record/version/hash, and the
+reviewed inspection records — PC-5**). **The sealed CAST contract includes the wardrobe binding and
+provenance-basis references; mutating any bound input supersedes and reopens the activation** (a stale
+binding is refused below). **Approve conditions** (evaluated in the A1 decision transaction): the
+binding is current; **every required item is resolved** (human picks have a latest vote; derived items
+are accepted or re-rolled — refused with the typed list otherwise, V3-AT-5); **every speaker has a
+registered, rights-approved neutral voice clip matching the current audition** (`voice_uploads.state =
+REGISTERED` + approval of **the selected voice's own rights record**, §7 — the `route-botnoi-voice`
+approval covers Botnoi-owned voices; a community or "other" voice additionally needs its own per-voice
+evidence, PC-11) — without this condition the lock could Approve with no voice WAVs and the hash below
+could not be computed; **no stale descendant** (V3-AT-22); the wardrobe plan validators pass; the
+forecast is present and fits (a forecast above cap — or blocked on an unknown price, §3 — is a
+blocker); the setup budget is approved. **Stale hash refused; Revise regenerates only the noted
+units** — notes target typed
 `{kind: pick, id}` (CD3's `RevisionTargetKind.PICK`), and only those items re-roll (a scoped enqueue),
 then the gate reopens with a new binding. **Reject** leaves planning at `CASTING` without cast authority
 (phase-A §2 item 2).
 
 **The lock transaction** (one transaction, phase-A §6 lock order), on Approve:
-1. write the `CastLockV3` document. **`cast_lock_hash` preimage, exactly per member class:**
+1. write the `CastLockV3` document (including **the wardrobe binding and the provenance-basis
+   references**, PC-5). **`cast_lock_hash` preimage, exactly per member class:**
    - **STORY binding hash:** read from B's `StoryLockBindingV3` (`story-lock:<content_revision>` in
      `v3_story_documents`, §5.4) — the hashed set STORY LOCK approved, named source;
    - **picks:** per pick (demand id, item id, picked `reference_versions` id + `content_sha256`) — as
      today;
    - **derived assets:** per member (`ref_kind`, `ref_key`, `reference_versions` id +
      `content_sha256`) — asset content hashes + kind;
-   - **voice WAVs:** per speaker, `voice_uploads.normalised_sha256` of the registered clip.
-   All canonical-JSON encoded with a fixed field order, then sha256 (V3-AT-5: the hash covers **every
-   picked version**);
+   - **voice clips (PC-4):** per speaker (speaker demand, catalogue identity, audition vote,
+     registered `reference_versions` id, `content_sha256`, `normalised_sha256`) of **the registered
+     clip matching the current audition** — reference picks and derived members retain their separately
+     specified tuples above;
+   - **wardrobe plan (PC-5):** the `CastWardrobePlanV3` record id + version + content hash.
+   All canonical-JSON encoded with a fixed field order, **every member array canonically ordered**, then
+   sha256 (V3-AT-5: the hash covers **every picked version**);
 2. insert the `identity_locks` row (version = next; `source_episode_id`/`release_package_hash` NULL;
    `approval_event_id` = this decision; `body` references the `CastLockV3` record);
 3. write `identity_lock_assets` members per §2.1's mapping table (`pick_kind` → `asset_kind`); the table
    and readers stay (FM §1);
 4. freeze: members → `LOCKED`, voices/characters → `LOCKED` (the existing state machines);
-5. stamp **every** episode row `identity_lock_id` (all N — the locked episode count — exist from STORY
-   LOCK);
+5. stamp **the scope's** episode rows `identity_lock_id` — **the initial lock stamps all initial
+   episodes (all N — the locked episode count — exist from STORY LOCK); an extension lock stamps the
+   extension's episodes only. Earlier published episode bindings are never restamped; any other
+   rebinding requires a scoped amendment authority (item 13, PC-14)**;
 6. `advance_planning(CASTING → CAST_LOCKED)`; the handler emits exactly **`gate.waiting`** when it opens
    the activation (before the decision) and **no** gate event after Approve (the activation is closed);
    the picks screens emit **`picks.waiting`** per category activation and the CAST review **`review.ready`**
@@ -491,11 +594,15 @@ then the gate reopens with a new binding. **Reject** leaves planning at `CASTING
 
 **R-12.1 (V3-AT-6):** the V3 episode-creation path is **adopt-if-present** (§1.9): episodes created at
 STORY LOCK carry no lock (none exists) and are stamped by step 5 above; **extension episodes created
-after a lock adopt at insert** through `attach_identity_lock` (`S/references/service.py:285`, verified no
-production caller today) — which becomes the production helper for that path. A regression test creates
-an extension episode after lock and proves attachment; the render gate's `IdentityLockRequired` hint
-(FM §1) is then unreachable for V3. **V1 carve-out (OPEN — OPERATOR, §15 O-C9):** V1 `create_episode`
-still sets no lock and the helper stays unused there; making that permanent needs the operator's nod.
+after a lock adopt at insert** through the **transaction-owned adoption helper refactored out of
+`attach_identity_lock`** (`S/references/service.py:285`, verified no production caller today) — invoked
+with the creator's `tx` **before the episode-creation transaction commits**, under A's lock order,
+resolving the applicable **effectively approved** lock (§1.9; PC-6). A regression test creates an
+extension episode after lock and proves attachment **and rollback/concurrency atomicity** (a rolled-back
+creation leaves no adoption; a concurrent lock decision serialises under the lock order — C-T13); the
+render gate's `IdentityLockRequired` hint (FM §1) is then unreachable for V3. **V1 carve-out (OPEN —
+OPERATOR, §15 O-C9):** V1 `create_episode` still sets no lock and the public V1 wrapper stays unused
+there; making that permanent needs the operator's nod.
 
 **`CastBinding` (master §13):** the per-demand binding D consumes is **read from the lock** —
 `cast_binding(tx, episode)` resolves, for every demand that episode's packs use, the locked
@@ -508,9 +615,9 @@ V1 lock creation is unchanged (master §4.4.5 "removing episode-1 lock creation 
 
 **Season-2 reuse (R-12.5):** `import_cast(source_season → new_season)` copies locked faces, outfits,
 props, locations, coverage and voices as new-season `reference_versions` with `asset_lineage`
-(`derived_from`, 0004:41–49) and carried `provenance_records` (basis noted as reuse); **rights are
-revalidated at import** (expired/unknown blocks the item); voices re-attest per season. Built in the
-trailing **C9b** package (§13), not in C9.
+(`derived_from`, 0004:41–49) and carried `provenance_records` (basis noted as reuse); **the selected
+voices' own rights records are revalidated at import** (expired/unknown blocks the item; PC-11);
+voices re-attest per season. Built in the trailing **C9b** package (§13), not in C9.
 
 ## 9. Provenance and output inspection (V3C-33, MA7; V3-AT-33; R-12.4, R-12.9)
 
@@ -526,13 +633,17 @@ trailing **C9b** package (§13), not in C9.
   typed list.
 - **Output inspection (master §12.2):** an `OutputInspectionProvider` seam runs on **every generated
   image** inside the generation job (and is reusable by D/F for thumbnails and clip-sampled frames):
-  on-frame text (OCR), branding (a maintained mark list), likeness (face-embedding similarity against
-  **the current selected candidate set** — the faces picked so far; most candidates are generated before
-  any lock). Checks without a qualified detector (O-2) — likeness **and** OCR/branding — are a **recorded
-  human check** (batched at the picks/CAST review), never an auto-PASS and **no detector plumbing is
-  built before detectors exist**. Findings are recorded on the candidate, surfaced on the pick grid and
-  the CAST review; unresolved findings follow QA/repair and Gate 2. R-12.9's "no on-frame text in
-  generated frames" is enforced here (text is added in edit).
+  on-frame text (OCR), branding (a maintained mark list), and **two separately recorded likeness
+  assessments (PC-13)**: **cast consistency** — face-embedding similarity against **the current selected
+  candidate set** (the faces picked so far; most candidates are generated before any lock) — and
+  **forbidden likeness** — master §1's "no real people … or celebrity likeness" rule, assessed against
+  the forbidden-likeness policy **independent of any selected comparison set**. **Every candidate
+  receives the forbidden-likeness assessment — root candidates included; an empty selected set never
+  produces PASS.** Checks without a qualified detector (O-2) — both likeness assessments **and**
+  OCR/branding — are a **recorded human check** (batched at the picks/CAST review), never an auto-PASS
+  and **no detector plumbing is built before detectors exist**. Findings are recorded on the candidate,
+  surfaced on the pick grid and the CAST review; unresolved findings follow QA/repair and Gate 2.
+  R-12.9's "no on-frame text in generated frames" is enforced here (text is added in edit).
 - **SFX route qualification (master §7, O-9):** compare fal.ai `fal-ai/elevenlabs/sound-effects/v2`
   ($0.002/s, commercial label — **re-verified at qualification**; `UNVERIFIED` here) vs OpenRouter
   (unverified → ineligible). The chosen route, terms and billing units are persisted
@@ -552,8 +663,8 @@ trailing **C9b** package (§13), not in C9.
 
 | Job | Queue | Provider ops | Logical work ID |
 |---|---|---|---|
-| `cast_v3.generate` (one item, **one candidate**) | `image` | 1 image op | `cast-gen:<season>:<pick>:<gen_seq>` — `gen_seq` is a per-item monotone generation counter (1–3 = the initial batch; 4+ = re-rolls); deliberately **not** named "attempt", which is the jobs system's retry vocabulary |
-| `cast_v3.botnoi_refresh` | `production` | none (public endpoints, fixture-tested) | `botnoi-refresh:<yyyy-mm-dd>` — the **calendar day** (Asia/Bangkok) at enqueue; a same-day rerun **replaces** the earlier job by `logical_work_id` (A1's `replaces_job_id` validation) |
+| `cast_v3.generate` (one item, **one candidate**) | `image` | 1 image op | `cast-gen:<scope>:<pick>:<gen_seq>` — `<scope>` is the planning-scope id (season, or extension — item 13); `gen_seq` is a per-item monotone generation counter (1–3 = the initial batch; 4+ = re-rolls); deliberately **not** named "attempt", which is the jobs system's retry vocabulary — **the seed and immutable request inputs are persisted per `<pick, gen_seq>` and retained across retries/polling/reconcile/restart (§5, PC-15)** |
+| `cast_v3.botnoi_refresh` | `production` | none (public endpoints, fixture-tested) | **untracked (CD6, PC-12):** `track`/`logical_work_id`/`extension_id` NULL — A1 0031's CHECK passes untouched; the replay identity is the job's own **calendar-day importer-run record** (`botnoi-refresh:<yyyy-mm-dd>`, Asia/Bangkok) — a same-day rerun replaces the earlier run through that guard, not through A1's tracked-job replacement |
 | `cast_v3.voice_intake` (quarantine → decode → normalise → assess) | `voice_intake` | none (local) | `voice-intake:<season>:<upload>` |
 | `cast_v3.music_lib` | `media` | YuE2 ops | `music-lib:<season>:<recipe>` |
 | `cast_v3.sfx_lib` | `media` | SFX ops | `sfx-lib:<season>:<recipe>` |
@@ -572,13 +683,13 @@ trailing **C9b** package (§13), not in C9.
 
 | Command | Actor | Prerequisites / allowed states | Effect | Events | Replay identity |
 |---|---|---|---|---|---|
-| `vote(pick, candidate, note)` | Operator (human session + CSRF) | season `CASTING`; candidate in the item's candidate set | appends one `cast_pick_votes` row; starts no work; current selection = latest vote | `picks.waiting` only if a category activation opens | idempotency key (replay returns the stored response) |
-| `reroll(pick, note)` | Operator (human session + CSRF) | season `CASTING` | enqueues **one** `cast_v3.generate` job (next `gen_seq`, rotated seed); selection untouched; counted in the re-roll metric | — | idempotency key; a **new** key is a **new** re-roll |
-| `generate_next(parent_pick)` | Operator (human session + CSRF) | season `CASTING`; parent has a current selection | enqueues the dependents' jobs against the selected parent revision; stamps `parent_version_at_generation` | — | idempotency key (replay returns the stored job list) |
-| `accept_derived(scope)` | Operator (human session + CSRF) | season `CASTING`; scoped derived items' jobs terminal-successful | bulk-appends one session-marked vote per derived item (§4) | `review.ready` when all required items are resolved | one idempotency key for the batch |
-| `edit_wardrobe(plan edits)` | Operator (human session + CSRF) | season `CASTING`; expected revision | edits `CastWardrobePlanV3` (validators run) | — | idempotency key |
-| `record_audition(character, catalog_ref or "other"+reason)` | Operator (human session + CSRF) | season `CASTING` | appends the `VOICE_NEUTRAL` item's vote (`CATALOG_ENTRY`) | — | idempotency key |
-| `upload_voice(file or zip)` | Operator (owner scope + CSRF) | season `CASTING`; `expected_content_revision`; limits §7 | creates `voice_uploads` rows (`QUARANTINED`) in the object store; enqueues `cast_v3.voice_intake` | — | idempotency key |
+| `vote(pick, candidate, note)` | Operator (human session + CSRF) | planning scope (season or extension, item 13) `CASTING`; candidate in the item's candidate set | appends one `cast_pick_votes` row; starts no work; never invokes the entry helper; current selection = latest vote | `picks.waiting` only if a category activation opens | idempotency key (replay returns the stored response) |
+| `reroll(pick, note)` | Operator (human session + CSRF) | planning scope (season or extension) `CASTING` | enqueues **one** job **per the §4 dispatch policy**: image kinds → one `cast_v3.generate` (next `gen_seq`, new persisted seed); library kinds → the corresponding media job; voice → intake (a new audition vote + upload); selection untouched; counted in the re-roll metric | — | idempotency key; a **new** key is a **new** re-roll |
+| `generate_next(parent_pick)` | Operator (human session + CSRF) | planning scope (season or extension) `CASTING`; parent has a current selection | enqueues the dependents' jobs against the selected parent revision (outfits ×3 candidates, derived views ×1, §4); **each emitted candidate records its parent binding immutably (§4)** | — | idempotency key (replay returns the stored job list) |
+| `accept_derived(scope)` | Operator (human session + CSRF) | planning scope (season or extension) `CASTING`; scoped derived items' jobs terminal-successful | bulk-appends one session-marked vote per derived item (§4) | `review.ready` when all required items are resolved | one idempotency key for the batch |
+| `edit_wardrobe(plan edits)` | Operator (human session + CSRF) | planning scope (season or extension) `CASTING`; expected revision | edits `CastWardrobePlanV3` (validators run) | — | idempotency key |
+| `record_audition(character, catalog_ref or "other"+reason)` | Operator (human session + CSRF) | planning scope (season or extension) `CASTING` | appends the `VOICE_NEUTRAL` item's vote (`CATALOG_ENTRY`) | — | idempotency key |
+| `upload_voice(file or zip)` | Operator (owner scope + CSRF) | planning scope (season or extension) `CASTING`; `expected_content_revision`; limits §7 | creates `voice_uploads` rows (`QUARANTINED`, bound to the current audition vote, `C-6`) in the object store; enqueues `cast_v3.voice_intake` | — | idempotency key |
 | `import_cast(source_season → new_season)` | Operator (human session + CSRF) | new season `CASTING`; source season `CAST_LOCKED` with a lock | season-2 copy with lineage + rights revalidation (§8); **C9b** | — | idempotency key |
 
 A-contract deltas these commands rely on are registered in §2.2 (CD3 `RevisionTargetKind.PICK` for CAST
@@ -588,7 +699,7 @@ Revise notes; CD4 `PROVIDER_LOCK_BUSY`).
 
 | Screen | Route | Primary action |
 |---|---|---|
-| Cast overview + forecast | `/v3/seasons/{id}/cast` | **Approve setup budget** (before any paid work; triggers the initial-generation batch), then the category progress bars (R-4.11) |
+| Cast overview + forecast | `/v3/seasons/{id}/cast` | **Approve setup budget** (before any paid work; the first of the two authorities the entry helper waits on — the batch fires once STORY LOCK also exists, §4), then the category progress bars (R-4.11) |
 | Picks grid per category | `/v3/seasons/{id}/cast/picks/{category}` (`category` ∈ the §2 vocabulary — constrained, nested under `/cast/picks/`, so it cannot collide with the fixed children below) | **Pick** (vote) — the one primary action; Re-roll and Generate next are secondary |
 | Wardrobe plan | `/v3/seasons/{id}/cast/wardrobe` | timed-change editor, reuse reasons |
 | Voices | `/v3/seasons/{id}/cast/voices` | shortlist → audition record → casting sheet → upload (single + zip, expected filenames shown) |
@@ -598,9 +709,10 @@ States per master §3.2 (empty/loading/running/waiting for you/waiting quota/blo
 pick screens emit `picks.waiting` (phase-A §8 item 4). The forecast panel and image-volume projection
 appear on B's STORY LOCK screen once C2 ships (filling its `NOT_AVAILABLE` panels).
 
-**Pick-screen activation lifecycle (C-T15's "once per activation"):** an activation is **season-scoped
-and per category**. It opens when the planning track enters `CASTING` (C4's transition, after C2's
-derivation) and the category has items; it closes when every item in the category is resolved and no
+**Pick-screen activation lifecycle (C-T15's "once per activation"):** an activation is **scoped to
+the planning scope (season or extension, item 13) and per category**. It opens when the planning track
+enters `CASTING` (the entry helper's transition — C4, after C2's derivation) and the category has
+items; it closes when every item in the category is resolved and no
 unresolved inspection findings remain, and finally at the CAST LOCK decision. Pick screens are **not
 `gate_activations` rows** (A1's CHECK admits the six gate types only): a category shows as **"waiting
 for you"** as a UI projection — open human-pick items with candidate sets and no current selection
@@ -614,10 +726,10 @@ re-auditing the tail. **Applied migration bytes are never edited.**
 
 | Package | Builds | Gate | Design note |
 |---|---|---|---|
-| **C1** | Records + migrations `C-1`, `C-2`, `C-4..C-8` (`C-3` dropped, §2); §2.1 mapping + §2.2 crossing register delivered; contracts bump; `CastV3Store`; V1/V2 artifact byte-identity | C-T1 | **Critiqued first** (migrations + the crossing register) |
+| **C1** | Records + migrations `C-1`, `C-2`, `C-4..C-8` (`C-3` dropped, §2); §2.1 mapping + §2.2 crossing register (incl. CD6) delivered; **V3 reference-kind/lock-body/lock-view contracts + workflow-aware readers/builders (CD2, PC-2)**; contracts bump; `CastV3Store`; V1/V2 artifact byte-identity | C-T1 | **Critiqued first** (migrations + the crossing register) |
 | **C2** | `derive_pick_items` (+ `characters` upsert, coverage second pass) + the **computed dependency closure** for A4; image-volume projection; cost forecast + setup proposal; fills B's panels | C-T2, C-T14a | With the diff |
-| **C3** | Generation runtime: lanes, `cast_v3.generate` (gen_seq, seed rotation, the `GenerationAdapter` wrap), fake-first wiring, Nano Banana adapter + live switch, **cross-system lock + fairness + inode pinning**, metering + provenance write path | C-T5, C-T6, C-T14b | **Critiqued first** (money, locks) |
-| **C4** | Picks engine: initial-generation batch at setup-budget approval, votes, bulk derived acceptance, re-roll, generate-next, staleness, state projections, **the STORY_LOCKED→CASTING transition** | C-T3, C-T4 | With the diff |
+| **C3** | Generation runtime: lanes, `cast_v3.generate` (gen_seq, per-`<pick, gen_seq>` seed persistence, the `GenerationAdapter` wrap), fake-first wiring, Nano Banana adapter + live switch, **cross-system lock + fairness + inode pinning + recovery admission (PC-7)**, metering + provenance write path | C-T5, C-T6, C-T14b | **Critiqued first** (money, locks) |
+| **C4** | Picks engine: **the entry helper (setup approval + STORY LOCK, PC-1)**, initial-generation batch + initial library jobs, votes, bulk derived acceptance, re-roll (per-kind dispatch, PC-9), generate-next, staleness (per-candidate parent bindings, PC-3), state projections, **the STORY_LOCKED→CASTING transition on the applicable scope** | C-T3, C-T4 | With the diff |
 | **C5** | Wardrobe plan + timed changes + appearance/props/locations + resolver wiring (the per-episode StateEvent shape pre-made in the note) | C-T7, C-T8 | With the diff |
 | **C6** | Botnoi catalogue + importer + shortlist (the ranking formula pinned in the note) + audition + casting sheet | C-T9 | With the diff |
 | **C7** | Voice intake: upload, quarantine storage, normalisation (the profile check of record), assessment, rights | C-T10, C-T11 | **Pre-critique, note first** (trust boundary — in C7's definition of done; N24) |
@@ -634,21 +746,21 @@ re-auditing the tail. **Applied migration bytes are never edited.**
 
 | Test | Package | Proves |
 |---|---|---|
-| C-T1 | C1 | `C-1..C-8` (minus the dropped `C-3`) apply on a populated V1+V2 database; V1 `identity_locks` rows still require `source_episode_id` + `release_package_hash` (the version-aware trigger keyed on `seasons.workflow_version = 'v1'`); V1 `ref_kind`/`asset_kind` still admit only the five kinds; no row deleted or rewritten; **generated contracts show no drift — the baseline is committed generated code: regenerate in a clean checkout and diff (V1/V2 families byte-identical; any diff fails)** |
+| C-T1 | C1 | `C-1..C-8` (minus the dropped `C-3`) apply on a populated V1+V2 database; V1 `identity_locks` rows still require `source_episode_id` + `release_package_hash` (the version-aware trigger keyed on `seasons.workflow_version = 'v1'`); V1 `ref_kind`/`asset_kind` still admit only the five kinds; no row deleted or rewritten; **every new §2.1 kind and a V3 lock with NULL source/package fields roundtrip through the actual typed readers/builders — lock-body and lock-view contracts, workflow-aware reference kinds (CD2, PC-2); V1/V2 schemas and validation unchanged**; **generated contracts show no drift — the baseline is committed generated code: regenerate in a clean checkout and diff (V1/V2 families byte-identical; any diff fails)** |
 | C-T2 | C2 | Demand→item completeness both ways against a B demand list; tier-correct packages (incl. §3.1's sheet-view ask); **the computed dependency closure is correct** (FACE→sheets/expressions/outfits/states, master→coverage — no edge table); `characters` upserted per character demand; coverage second pass idempotent |
-| C-T3 | C4 | **Votes start no work; Re-roll requeues exactly one item (one candidate, rotated seed); the initial batch enqueues exactly 3 jobs per root generation item at setup-budget approval — and nothing before it; generate-next enqueues dependents against the selected revision; the STORY_LOCKED→CASTING transition fires; staleness is computed, never stored** |
-| **C-T4 (V3-AT-22)** | C4 | **A face re-roll/stale selection invalidates its dependent outfits/views; unrelated selections survive** |
-| **C-T5 (V3-AT-15)** | C3 | **A second concurrent image job waits:** a simulated competitor holds the flock → the job defers `WAITING_PROVIDER` (`PROVIDER_LOCK_BUSY`) with `retry_after`; never two Nano Banana dispatches |
-| **C-T6 (V3-AT-28)** | C3 | Competing processes (two workers, separate connections) share the same lock inode; a killed holder releases; crash/restart cannot overlap provider processes; an inode swap (delete+recreate) raises the typed BLOCKED |
+| C-T3 | C4 | **Votes start no work and never invoke the entry helper; the entry helper (PC-1): with setup approval recorded before STORY LOCK (A2's one-time order) the batch fires at STORY LOCK — neither authority alone fires it — enqueuing exactly 3 jobs per root generation item plus the initial library jobs, each exactly once; nothing paid runs before setup approval; Re-roll dispatches per the §4 policy (image kinds → one `cast_v3.generate` with a new persisted seed; library → the media job; voice → intake); a transport retry/restart retains the persisted seed and request inputs (no new candidate); generate-next enqueues dependents against the selected revision (outfits ×3, derived views ×1); the STORY_LOCKED→CASTING transition fires on the applicable scope; staleness is computed, never stored** |
+| **C-T4 (V3-AT-22)** | C4 | **A face re-roll/stale selection invalidates its dependent outfits/views — marking them stale without enqueueing anything; unrelated selections survive; the old-selected/new-unselected case (PC-3): a selection generated against parent F1 stays stale while a newer unselected candidate generated against F2 exists — freshness reads the selected candidate's own immutable parent binding** |
+| **C-T5 (V3-AT-15)** | C3 | **A second concurrent image job waits:** a simulated competitor holds the flock → the job defers `WAITING_PROVIDER` (`PROVIDER_LOCK_BUSY`) with `retry_after`; never two Nano Banana dispatches; **the wait is visible through the production `track_waits` reader — CD4's CASE and IN filter both admit the new reason (PC-8)** |
+| **C-T6 (V3-AT-28)** | C3 | Competing processes (two workers, separate connections) share the same lock inode; **accepted-but-unfinished work across holder death (PC-7): a killed holder's accepted operation is not assumed finished — shared recovery admission blocks new dispatch until reconciliation settles it; batch limits stop new submissions and never release protection around unfinished work**; crash/restart cannot overlap provider processes; an inode swap (delete+recreate) raises the typed BLOCKED; **the suite runs across the real mount topology (the bind-mounted canonical path), not a synthetic local file only — kernel crash release alone is insufficient evidence** |
 | **C-T7 (V3-AT-7)** | C5 | A timed mid-scene outfit change appears in the resolved shot-reference expectations; a new story day gets a different outfit unless a reuse reason is recorded |
 | **C-T8 (V3-AT-23)** | C5 | Wardrobe continuity spans episode boundaries (per-episode StateEvents + resolver continuity); canonical setting IDs agree across plan/assignment/resolver; timed changes resolve immediately before/at/after boundaries |
 | C-T9 | C6 | Catalogue: two sources merge without deleting operator rows (NULL-speaker rows deduplicated); >90-day and unconfirmed-V4 flags; community voices excluded without per-voice approval, included with it; shortlist = top-3 with reasons (flagged thin on <ε gap; **fewer-than-2 → flagged, 1 shown**), **no audio generated** |
 | C-T10 (V3R-1) | C7 | Hostile uploads: traversal, absolute paths, links, duplicate slots, unknown keys, oversized requests/zips, long decodes, processing-timeout rejection — all rejected pre-extraction/post-decode as specified; **failed imports never overwrite accepted assets; QUARANTINED rows survive a restart and are re-scanned** |
-| C-T11 (V3R-2) | C7 | Only the normalised PCM WAV registers and passes **C's profile check (the validator of record, extending `references/media.py`; ffmpeg isolated)**; both hashes kept; attestations labelled separately from machine checks; a base-voice change invalidates the clip |
+| C-T11 (V3R-2) | C7 | Only the normalised PCM WAV registers and passes **C's profile check (the validator of record, extending `references/media.py`; ffmpeg isolated)**; both hashes kept; attestations labelled separately from machine checks; **uploads bind immutably to the audition vote + catalogue identity, and a base-voice change (a new vote) supersedes the clips bound to the old one (PC-4); a community/"other" voice cannot register without its own per-voice rights record — validated at audition, registration, Approve, import and dispatch (PC-11)** |
 | **C-T12 (V3-AT-33), provenance half** | C9 | **Every member asset has a complete `ProvenanceRecord` (a gap blocks lock)** |
-| **C-T12 (V3-AT-33), inspection half** | C10 | **Output inspection catches injected on-frame text, branding and likeness findings** (fixtures; likeness against the current selected candidate set; human-check fallback recorded where no detector is qualified) |
-| **C-T13 (V3-AT-5/6/22)** | C9 (+C9b) | **The lock transaction: Approve is refused until every required item is resolved (typed list) and every speaker has a registered, rights-approved neutral clip; the hash covers every picked version + derived + voice preimage (any member change alters it); stale descendants cannot freeze; every episode row is stamped; an extension episode created after lock attaches (adopt-if-present, R-12.1); C9b — import copies with lineage and revalidates rights** |
-| C-T14a | C2 | Forecast: volume from the pinned 3-candidate batch; capacity line shown; **unknown `image_price` ⇒ the panel and the CAST LOCK forecast condition read BLOCKED, no estimate**; setup proposal present before any paid work |
+| **C-T12 (V3-AT-33), inspection half** | C10 | **Output inspection catches injected on-frame text, branding and likeness findings** (fixtures; **cast-consistency against the current selected candidate set and forbidden-likeness per candidate — recorded separately; root candidates with an empty selected set still receive the forbidden-likeness check and never auto-PASS (PC-13)**; human-check fallback recorded where no detector is qualified) |
+| **C-T13 (V3-AT-5/6/22)** | C9 (+C9b) | **The lock transaction: Approve is refused until every required item is resolved (typed list) and every speaker has a registered, rights-approved neutral clip matching the current audition; the hash covers every picked version + derived + voice preimage + wardrobe binding (any member change alters it); stale descendants cannot freeze; the stale-review cases (PC-4/5): replacing a registered clip under the same audition, or editing a bound wardrobe/inspection input, supersedes the binding and reopens the activation; the forecast CAST condition (PC-16): an above-cap or price-blocked forecast refuses Approve (typed blocker); the applicable scope's episode rows are stamped (initial lock: all; extension lock: the extension's; earlier bindings untouched — PC-14); an extension episode created after lock attaches (adopt-if-present, R-12.1) with insert rollback/concurrency proved atomic under A's lock order (PC-6); C9b — import copies with lineage and revalidates the selected voices' own rights records** |
+| C-T14a | C2 | Forecast data + panel behaviour (the CAST condition itself gates at C9, C-T13 — PC-16): volume from the pinned counts (roots ×3, outfits ×3, derived views ×1 — the same counts §4 dispatches); capacity line shown; **unknown `image_price` ⇒ the panel and forecast data read BLOCKED, no estimate**; setup proposal present before any paid work |
 | C-T14b | C3 | Budget: admission through `step_04`/`SEASON_SETUP` in phase-A §5.2 order; no paid work before the setup approval; re-rolls counted |
 | C-T14c | C8 | **Unknown SFX/YuE2 terms, capability or price ⇒ ineligible and blocked** (never zero-priced); chosen route persisted; the fake adapter's unit counts match the note |
 | C-T15 | C11 | Tab 4 screens: every state in §12; one primary action per screen (**Pick** on the grid); `picks.waiting` emitted once per category activation |
@@ -706,9 +818,9 @@ the neutral binding D consumes), N13 (§7), N16 (§9), N23 (§4), N30 (§1.10, �
 
 | Risk | Limit / mitigation | Owner |
 |---|---|---|
-| Lock starvation / ARISA contention on the shared Vertex process | fairness bounds (≤8 ops or ≤120 s per hold), `retry_after` 20 s, waits visible through `track_waits`; P0 re-measures | Operator (pacing) |
+| Lock starvation / ARISA contention on the shared Vertex process | fairness bounds (≤8 ops or ≤120 s per hold — they stop new submissions, never release protection around unfinished work), `retry_after` 20 s, recovery admission after death/ambiguous submission (§5), waits visible through `track_waits`; P0 re-measures | Operator (pacing) |
 | ARISA-side lock adoption is a prerequisite for live images | offline acceptance simulates the competitor (C-T5/C-T6); live dispatch stays disabled until adoption + qualification | Operator / ARISA owner |
-| An ARISA deploy replaces the lock file (inode swap) silently breaking mutual exclusion | inode pinned in `provider_qualifications`; `fstat` on every acquisition; typed BLOCKED on mismatch (§5) | C3 builder |
+| An ARISA deploy replaces the lock file (inode swap) silently breaking mutual exclusion | inode pinned in `provider_qualifications`; `fstat` on every acquisition; typed BLOCKED on mismatch; **the canonical inode is not replaced while generators may run, and the mount topology must expose replacement to acquisition checks (§5, PC-7); C-T6 runs on the real mount** | C3 builder |
 | Botnoi catalogue drift (API fields/shape change) | importer fixture-tested against the verified header; `last_verified` flags; the operator-CSV path is independent | C6 builder |
 | Tag vocalisation leakage into Pika output | pilot observation (master §4.4.4 8); tags are options only; tag-free fallback is one decision | F (observation), C (sheet options) |
 | Hostile upload bytes (the phase's only untrusted surface) | quarantine prefix in the object store, isolated ffmpeg decode, bounded limits, C-T10 | C7 builder |
