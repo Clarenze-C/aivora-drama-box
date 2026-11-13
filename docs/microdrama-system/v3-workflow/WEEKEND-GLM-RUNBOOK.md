@@ -282,6 +282,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   reconciler trigger added). `a6b-critique-rulings.md` + `a6b-note-rev1-brief.md` written. **Q4 fully
   ruled** (A2/A3/A6b round 1 all done; revisions queued). Docs queue: a3-note-rev1 → a2-note-rev2
   → c-spec-v04 → a6b-note-rev1. Running: a0d-fix1 + f-spec-v03; Codex free.
+- 13 Nov 20:52Z (GLM): **A0-D fix1 build DONE** (2h39m): all 13 findings closed at tip `6974d5a`
+  (three commits on `ea1cc10`; report `a0d-fix1-REPORT.md`; two full-unit sweeps killed at the background
+  time limit — chunked coverage recorded; six documented deviations). Acceptance started: GLM re-running
+  `tests/unit/llm` itself; **Codex round-2 review launched** (`a0d-review-r2`, scoped to AD-1..13,
+  `--base ea1cc10`). Next: on my green line → full gate in a new pinned checkout at `6974d5a` + R5 build
+  launch (code slot free; z.ai check first). Running: f-spec-v03 + a0d-review-r2 + my verify run.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
