@@ -1,0 +1,22 @@
+**Phase B spec v0.5 — all 16 findings applied, none BLOCKED.** Commit `cb8f8b5` on `feat/microdrama-m0-m4`, 1 file, +233/−97. Final line count: **838** (from 703).
+
+Per finding:
+
+- **PB-1** — applied: §7.1 completion seam (track FOR UPDATE before job locks, join over persisted required members, runtime never finishes twice); §2.4 new delta row **D5** registered; concurrent-completion + commit-boundary-death cases in B-T6.
+- **PB-2** — applied: §2 generation-round identity (monotonic, never reset; `proposal:<scope>:<generation-round>:<slot>`); §5.2 retry = replacement job, fresh attempt key, unchanged `logical_work_id`, successful members retained; §7.1 keys carry the identity; failed-round-retry and Reject→fresh-intake cases in B-T3.
+- **PB-3** — applied: §3.2 and §5.2 step 4 — planning transition + revision changes complete before the activation opens, activation stamped with final revisions; re-finalization keeps `PLANNED`, no repeated edge.
+- **PB-4** — applied: rounds persist origin + authorized episode set (§5.2 step 3); automatic repair bounded by the persisted limits; post-Revise the critic reports dependents without regenerating (§5.5); §5.1 continuation follows membership; retry never resets counters; six-vs-seven in B-T7, post-Revise prohibition in B-T10.
+- **PB-5** — applied: §4.2 shared internal tier-update/revalidation with two entries (standalone `edit_tier` needs an open activation; tier-Revise runs under the decision context, supersedes nothing, successor activation after the revision advance); §5.3 Revise rewired; real-decision-route case in B-T10.
+- **PB-6** — applied: §7.3 B1 asset-independent prompt registry (ID, version, text, SHA-256); V2 `PromptManifest`/storage explicitly unchanged; bible critic prompt → B3, episode critic → B4, season critic stays B5 (§7.3 + §11); B-T6 says registry-registered.
+- **PB-7** — applied: §5.3 Approve + §8 extension-aware STORY LOCK branch scoped by `extension_id` (appended range only, budget hierarchy reused, only the extension track advances); B-T11 incl. rollback.
+- **PB-8** — applied: §8 immutable extension authorization row linking exact range + cumulative count to the qualifying `SEASON` amendment ID and human command; §6.2 + §9 + B-T11 read the authorization, never infer count from money.
+- **PB-9** — applied: §5.4 binding hashes continuity states (or verified deterministic derivation); §8 pins prior STORY/CAST authorities and exact planned-terminal/published-canon refs; builder consumes pinned refs only.
+- **PB-10** — applied: §5.4 `content_revision` = episode fence, `story_lock_scope_revision` stored separately; approval never reseals the pack (§2.1); B-T9 immediate compatibility-reader pass.
+- **PB-11** — applied (first option): §3.3 + §5.3 — `conditions` holds common prerequisites only; Approve blockers at the start of the Approve callback, same rollback transaction; CRITICAL-disables-Approve-only case in B-T10.
+- **PB-12** — applied: §2.1 typed beat effects (`WARDROBE_CHANGE`, `PAYOFF_SETTLEMENT`, stable IDs); §2 `reserves_growth` + derived seam status + `debt_id` ledger sibling; §6.2 rules consume the fields; B-T7 tests derivation, not labels.
+- **PB-13** — applied: §4.1 bible-time checks over available bible/ledger/LOCK; §5.2 step 4 post-promotion re-validation before demand derivation and gate; §6.1 ledger rule reworded; promoted-speaker case in B-T8.
+- **PB-14** — applied: §9 new `replace_v3_intake` + `reopen_v3_gate` rows (owner/session/CSRF, expected revision, idempotency; prior decisions preserved); Reject rows at both gates point to them; Reject→reopen→Revise covered in B-T3 and B-T10.
+- **PB-15** — applied, stronger B-T5 kept: every planning connection under the restricted role, negative controls, SQL capture at the DB-access boundary incl. failed statements, zero-attempt assertion, emptiness asserted separately via the fixture connection.
+- **PB-16** — applied: §3.2 B2 V3 screening projection/sibling over the pure token-comparison helpers, explicit field mapping, BLOCKED/FLAGGED/UNKNOWN, never a legacy `SeasonScope`.
+
+Cross-checks against phase-A v0.3, the A1/A2/A3 notes, SPEC-v3 §2.1/§4.1–4.3 and the O-B1..6 answers surfaced no contradictions; the only A-contract crossing (PB-1) is registered as D5 rather than silently assumed, and new persistence uses symbolic `B-…` migration names throughout. Header now reads v0.5 / round 2, with a new §18 PB finding map; §17 (Goldfish → v0.4) kept as history.

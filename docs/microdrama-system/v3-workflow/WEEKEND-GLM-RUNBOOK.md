@@ -232,6 +232,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   stamps immutable; voice preimage exact; flock safety model rewritten). `phase-c-critique-rulings.md`
   + apply brief `phase-c-v03-brief.md` written. Docs queue: f-spec-v02 → a2-note-rev1 → c-spec-v03
   (round-2 critique last). Running: a0d-fix1 + b-spec-v05; Codex free again.
+- 13 Nov 20:05Z (GLM): **phase B v0.5 committed** (`cb8f8b5`, 838 lines, 16/16 applied, none
+  BLOCKED). Launched: `f-spec-v02` (docs) and **phase B Codex round 2** (`phase-b-recritique`,
+  scoped to PB-1..16, final B round). Running: a0d-fix1 + f-spec-v02 + phase-b-recritique.
+  Docs queue: a2-note-rev1 → c-spec-v03.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
