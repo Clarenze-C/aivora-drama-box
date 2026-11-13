@@ -216,6 +216,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   picks engine). `phase-f-goldfish-rulings.md` + apply brief `phase-f-v02-brief.md` written.
   **O-8 added to OPERATOR QUEUE** (blocks F5 only). Launched `c-spec-v02` (docs slot freed by the
   goldfish exit). Docs queue: b-spec-v05, then f-spec-v02. Running: a0d-fix1 + c-spec-v02.
+- 13 Nov 19:30Z (GLM): **A2 note round 1 ruled** (N2-1..9 BLOCKING, N2-10..15 SHOULD-FIX —
+  **all 15 ACCEPTED**, all technical; arithmetic + migration allocation were confirmed correct;
+  N2-15 strengthens the race tests). `a2-critique-rulings.md` + revision brief `a2-note-rev1-brief.md`
+  written. Docs queue now: b-spec-v05 → f-spec-v02 → a2-note-rev1. A3/A6b rulings next ticks.
+  Running: a0d-fix1 (step 3/5, debugging AD-10 fake-attempt semantics) + c-spec-v02.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
