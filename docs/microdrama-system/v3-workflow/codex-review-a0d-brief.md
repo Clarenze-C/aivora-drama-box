@@ -1,13 +1,13 @@
 # Codex review: A0-D — the LLM gateway, `LlmStep` and migration 0027 (drama-box)
 
-Read-only. Pinned checkout `/root/AIVORA/drama-box/.scratch/a0d-gate` (detached at `c25b527`). **Scope: `git diff 0cda424..c25b527`** (D1 `365bff9`, D2 `2352e73`, D3 `c25b527`). GLM wrote it; you did not. Base `0cda424` is the accepted T031 tip.
+Read-only. Pinned checkout `/root/AIVORA/drama-box/.scratch/a0d-gate` (detached at `ea1cc10`). **Scope: `git diff 0cda424..ea1cc10`** (D1 `365bff9`, D2 `2352e73`, D3 `c25b527`, plus `ea1cc10`: the orchestrator's migration-tail test fix after its first full gate). GLM wrote it; you did not. Base `0cda424` is the accepted T031 tip.
 
 ## The requirement
 
 - `/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-A0-spec.md` **v0.4 §4 (gateway) and §5 (`LlmStep`, runtime, recovery)** and their acceptance rows; your wording in `codex-a0-critique.md`, `codex-a0-recritique.md` and `codex-a0-round3.md` is folded in and binding.
 - `A1-design-note.md` §3 (jobs-column ownership) and §12 OQ-3 (the closed `DeferReason` enum, owned by A0-D).
 - The builder's brief and report beside it: `a0d-build-brief.md`, `a0d-build-REPORT.md` (judgement calls, transaction inventory, the §4.3 recovery matrix).
-- The orchestrator's full offline gate at `c25b527`: receipts in `/root/AIVORA/drama-box/.scratch/a0d-gate/.scratch/gate/`.
+- The orchestrator's full offline gate (run 1 at `c25b527` failed only on two hard-coded migration-tail tests, fixed in `ea1cc10`; run 2 at `ea1cc10`): receipts in `/root/AIVORA/drama-box/.scratch/a0d-gate/.scratch/gate/`.
 
 ## Review
 

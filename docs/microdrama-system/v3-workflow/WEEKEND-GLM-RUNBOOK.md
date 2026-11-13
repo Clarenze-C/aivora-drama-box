@@ -145,6 +145,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   - GLM applies the rulings → spec v0.2 (unit `r5-spec-v02`, after the phase B Goldfish ends). On success it publishes
     `codex-r5-critique-brief.md`, which the Codex queue then picks up.
   - Phase C fact map done (`c-factmap.md`); phase C spec draft queued (unit `phase-c-spec`).
+- 13 Nov 04:45Z (Opus): A0-D gate run 1 at `c25b527` was RED. Unit 3,137 and contract 462 passed; integration had
+  2 failed + 4 errors, all hard-coded migration tails missing 0027. Opus fixed it in `ea1cc10` (same pattern as
+  `2ceb341`; 12 passed).
+  - Gate run 2 at `ea1cc10` is running (unit `a0d-offline-gates2`).
+  - The Codex review brief is re-scoped to `0cda424..ea1cc10`.
 
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
