@@ -241,6 +241,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   and applied as **v0.6** (brief `phase-b-v06-brief.md`, queued); **Opus re-checks Monday: accept v0.6
   vs round 3** (queued). B1/B5 design notes wait for that call. Running: a0d-fix1 + f-spec-v02;
   Codex free. Docs queue: a2-note-rev1 → c-spec-v03 → b-spec-v06.
+- 13 Nov 20:20Z (GLM): **phase F v0.2 committed** (`ef63e65`, 786 lines, 73/73 applied, none
+  BLOCKED; F5 conditionally blocked on O-8 as ruled). Launched: `a2-note-rev1` (docs) and **phase F
+  Codex critique round 1** (`phase-f-critique`). Running: a0d-fix1 + a2-note-rev1 + phase-f-critique
+  (Codex 1/2). Docs queue: c-spec-v03 → b-spec-v06.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
