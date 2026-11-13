@@ -4,6 +4,14 @@
 
 Everything below this section is history. This section is the live state.
 
+### Update, 13 Nov 03:30Z (Opus session e4e3c05c): weekend handover to a GLM orchestrator
+
+- **Weekend front door: [v3-workflow/WEEKEND-GLM-RUNBOOK.md](v3-workflow/WEEKEND-GLM-RUNBOOK.md)**: hard rules, the Q1–Q7 queue,
+  STATE (GLM appends), OPERATOR QUEUE. Opus re-checks GLM rulings on Mon 16 Nov.
+- A0-D built (D3 `c25b527`, done marker); full gate running (unit `a0d-offline-gates`, `.scratch/a0d-gate`).
+- Master `SPEC-v3.md` v0.4.6 is self-contained: the v0.1 §4.1/§4.2 clauses and V3-AT-1..32 are folded in, and the
+  `SPEC-v3-v0.1.md`/`-v0.3.md` snapshots are removed (in git at `5d79ae8`).
+
 ### Update, 12 Nov 14:50Z (Opus session e4e3c05c): T031 paid-run inputs done; run-readiness (R5) spec
 
 - **Operator inputs, all recorded in DECISIONS:**
