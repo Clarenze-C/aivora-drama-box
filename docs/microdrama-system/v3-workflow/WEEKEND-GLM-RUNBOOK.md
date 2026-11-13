@@ -260,6 +260,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED). Launched: `c-spec-v03` (docs) and **A2 Codex round 2** (`a2-note-r2`, scoped to N2-1..15,
   final A2 round). Running: a0d-fix1 + c-spec-v03 + a2-note-r2 (Codex 1/2). Docs queue: b-spec-v06
   → f-spec-v03 → a3-note-rev1. A6b rulings still pending on GLM's desk.
+- 13 Nov 20:35Z (GLM): **A2 round 2 = REWORK** (5/15 closed, N2-8 regressed; N2R2-1..7 BLOCKING,
+  N2R2-8..10 SHOULD-FIX). Rule 7 → all 10 ACCEPTED, applied as **v1.2** (brief `a2-note-rev2-brief.md`,
+  queued), **no round 3**; Opus decides Monday (queued). Running: a0d-fix1 + c-spec-v03; Codex free.
+  Docs queue: b-spec-v06 → f-spec-v03 → a3-note-rev1 → a2-note-rev2. A6b rulings still pending.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -287,3 +291,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   11/16 closed. GLM applied all round-2 rulings as v0.6 but ran no round 3 (rule 7). Monday: Opus
   re-checks `phase-b-recritique-rulings.md` and either accepts v0.6 or orders the round-3 critique;
   B1/B5 design notes wait on that decision.
+- A2 note: round 2 REWORK after 5/15 closed (7 BLOCKING remain, incl. the outer billing lock cycle).
+  GLM applied all round-2 rulings as v1.2, no round 3 (rule 7). Monday: Opus re-checks
+  `a2-recritique-rulings.md`; accept v1.2 vs round 3. A2's build waits behind A1 regardless.
