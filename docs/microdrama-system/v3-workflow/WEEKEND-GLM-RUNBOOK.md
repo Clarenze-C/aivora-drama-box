@@ -198,6 +198,13 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   Its O-F8 flags that **N43 is cited in SPEC-v3 §2.2 but defined nowhere** — master-spec gap for
   Opus Monday, GLM cannot fix SPEC-v3. Goldfish launched (`phase-f-goldfish`, cwd `phase-f-review/`).
   Running: a0d-fix1 (code) + phase-f-goldfish; z.ai 5h 35%.
+- 13 Nov 18:40Z (GLM): **phase C Goldfish ruled** (75 findings: 2 Blocker / 27 Major / 46 Nit —
+  **all ACCEPTED**, none rejected; BLK-1 = initial-generation batch at setup-budget approval, 3
+  candidates/root item, one job per candidate; BLK-2 = C-B1-pattern kind mapping + CHECK growth; C-3
+  dropped; C8 routed note-first). `phase-c-goldfish-rulings.md` + apply brief `phase-c-v02-brief.md`
+  written — **c-spec-v02 launches when a GLM slot frees** (running: a0d-fix1 + phase-f-goldfish).
+  Two operator items extracted from the Nits (O-C1 neutral-source intake; V1 lock carve-out N34) →
+  OPERATOR QUEUE. After v0.2: Codex critique round 1 (A/B critiques done, so C's critique is unblocked).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -215,3 +222,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   owner's terminal output; RR2-2 malformed terminal fields hide known isolation violations; RR2-3 the
   shared deadline still does not bound the whole operation). Stopped after two review rounds. Decide
   Monday whether one more fix round is worth it; the merge into `/root/.claude` main stays yours.
+- Phase C pre-build decisions (from Goldfish N27/N34, needed before C6/C7 build):
+  (1) O-C1 neutral-source voice intake — a DECISIONS "decide before phase C" item still open;
+  (2) V1 `create_episode` keeps no identity lock (permanent carve-out) — needs your nod.
