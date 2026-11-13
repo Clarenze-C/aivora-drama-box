@@ -1,6 +1,8 @@
 # A2 design note: budget hierarchy (accounts, steps, amendments, forecasts, costs)
 
-**Version 1.0, 12 Nov 2026. Author: GLM (design note only; one file, no code).** Requirements:
+**Version 1.1, 13 Nov 2026. Author: GLM (design note only; one file, no code). Round-1 critique
+applied per [a2-critique-rulings.md](a2-critique-rulings.md): all 15 findings (N2-1..N2-15)
+ACCEPTED and folded into the sections below; N2-15 strengthens §10.** Requirements:
 [phase-A-spec.md](phase-A-spec.md) v0.3 §0, §1, §5 (all), §6, §10 (A2 row + AR-6 activation), §11
 (A-T9..A-T11); AC-8, AC-10..AC-14 replacement wording in [codex-a-critique.md](codex-a-critique.md)
 (binding per §0) plus its reader/writer inventory; AR-1, AR-2 in
@@ -8,8 +10,9 @@
 v1.2 §1/§2/§6/§9; master [SPEC-v3.md](SPEC-v3.md) v0.4.2 §12.3, §11; [phase-A0-spec.md](phase-A0-spec.md)
 v0.4 §5.2/§5.5/§5.6 (the unmetered `llm.subscription` kind). Facts re-verified read-only on
 `feat/microdrama-m0-m4` @ `69c4096` (applied tail 0025; 0026 = T031 in `.scratch/t031-gate-h2/`,
-0027 = A0, 0028–0031 = A1 — prerequisites, not yet built). `S/` = `microdrama/src/microdrama/`,
-`M/` = `microdrama/migrations/`, `X/` = `microdrama/tests/`.
+0027 = A0, 0028–0031 = A1 — prerequisites, not yet built); v1.1 source references re-verified
+read-only @ `b15bea5`. `S/` = `microdrama/src/microdrama/`, `M/` = `microdrama/migrations/`,
+`X/` = `microdrama/tests/`.
 
 **A2 builds** the spec §10 A2 row: account kinds and hierarchy serialisation, explicit lookup, step
 budgets, the pre-STORY LOCK protocol and LOCK attach, cap amendments, forecasts, cost
@@ -26,13 +29,16 @@ never edited — the migrator hashes file bytes and rejects changed checksums (`
 
 | # | File | Purpose |
 |---|------|---------|
-| 0032 | `0032_v3_budget_accounts.sql` | Account kinds `SEASON_SETUP`/`SEASON`, `parent_account_id` hierarchy, unique indexes, replaced account CHECKs (cap bound; committed-vs-effective-cap), kind/version guard triggers |
-| 0033 | `0033_v3_budget_mutex_steps.sql` | `season_budget_mutex`, `budget_steps`, `reservations.step_key`, `charges.step_key` (+ step linkage guard) |
-| 0034 | `0034_v3_cap_amendments.sql` | `account_cap_amendments`, `md_effective_cap()`, amendment guard triggers (human session, V3-only, consistency) |
+| 0032 | `0032_v3_budget_accounts.sql` | Account kinds `SEASON_SETUP`/`SEASON`, `parent_account_id` hierarchy, unique indexes, replaced account CHECKs (cap bound; committed-vs-cap on the row's own base cap — the amendment-aware term is swapped in by 0034's function replacement), kind/version guard triggers |
+| 0033 | `0033_v3_budget_mutex_steps.sql` | `season_budget_mutex`, `budget_steps` (+ no-delete/no-truncate/integer guards), `reservations.step_key` (immutable identity + kind rules), `charges.step_key` (+ linkage guard) |
+| 0034 | `0034_v3_cap_amendments.sql` | `account_cap_amendments` (predecessor lineage, `xact_id`), `budget_accounts.amendment_revision`, `md_apply_cap_amendment()`, `md_row_effective_cap()`/`md_effective_cap()` (lineage-ordered), amendment guards (human session **+ season owner**, V3-only, AFTER ROW deferred consistency), the `md_budget_account_rules` replacement, `budget_steps_cap_amendment_only` |
 
 Ordering: 0032's version guard resolves `seasons.workflow_version` (0028); 0033's step guard reads
-`budget_accounts.scope_kind` (0032); 0034's consistency trigger reads `budget_category_allocations`
-(0003:36) and `budget_steps` (0033). A3 starts at 0035.
+`budget_accounts.scope_kind` (0032); 0034 reads `budget_category_allocations` (0003:36) and
+`budget_steps` (0033) and **replaces** 0032's `md_budget_account_rules` (CREATE OR REPLACE — same
+trigger, amendment-aware body) and adds the step-cap guard, because both reference
+`account_cap_amendments`, which only 0034 creates. Each migration's trigger bodies reference only
+objects that already exist when it applies. A3 starts at 0035.
 
 ## 2. Guarded DDL
 
@@ -52,7 +58,7 @@ Old rule beside new for every changed CHECK on `budget_accounts` (`M/0003…sql:
 | `cap_micro_usd BETWEEN 0 AND 10000000` (`:13`) | per-kind bound (constraint trigger, see below): `EPISODE`/`SEASON_RESEARCH` keep `≤ 10_000_000` verbatim; `SEASON_SETUP`/`SEASON` allow `≤ 1_000_000_000` (US$1,000 sanity ceiling; the policy limit stays in Python) |
 | `(scope_kind='EPISODE') = (episode_id IS NOT NULL)` (`:25`) | **unchanged** — it already forces `episode_id IS NULL` for the season kinds |
 | `shutdown_reserve_micro_usd <= cap_micro_usd` (`:26`) | **unchanged** (base-cap-relative; the setup/season shutdown reserve is 0) |
-| `reserved+accrued+settled <= cap_micro_usd + overrun_micro_usd` (`:27-28`, auto-name `budget_accounts_check2`) | dropped; replaced inside the `budget_accounts_rules` trigger below: `reserved+accrued+settled <= md_effective_cap(id) + overrun_micro_usd` — for rows with no amendments `md_effective_cap = cap_micro_usd`, so V1 semantics are the identical predicate |
+| `reserved+accrued+settled <= cap_micro_usd + overrun_micro_usd` (`:27-28`, auto-name `budget_accounts_check2`) | dropped; replaced inside the `budget_accounts_rules` trigger below. 0032 ships the row-local predicate `reserved+accrued+settled <= cap_micro_usd + overrun` — identical predicate to 0003:27-28; 0034 swaps the middle term for `md_row_effective_cap(NEW.id, NEW.cap_micro_usd)` once amendments exist. For rows with no amendments the two are the same number, so V1 semantics are the identical predicate throughout |
 
 ```sql
 ALTER TABLE budget_accounts DROP CONSTRAINT budget_accounts_check2;  -- DO block, fail loudly
@@ -76,8 +82,10 @@ BEGIN
   IF NEW.cap_micro_usd < 0 OR (NEW.scope_kind IN ('EPISODE','SEASON_RESEARCH')
       AND NEW.cap_micro_usd > 10000000) OR NEW.cap_micro_usd > 1000000000 THEN
     RAISE EXCEPTION 'cap out of range for scope kind' USING ERRCODE='check_violation'; END IF;
+  -- 0032 form: the row's own base cap. 0034 CREATE OR REPLACEs this function, changing only
+  -- this term to md_row_effective_cap(NEW.id, NEW.cap_micro_usd) (amendment-aware; N2-2).
   IF NEW.reserved_outstanding_micro_usd + NEW.accrued_micro_usd + NEW.settled_micro_usd
-     > md_effective_cap(NEW.id) + NEW.overrun_micro_usd THEN
+     > NEW.cap_micro_usd + NEW.overrun_micro_usd THEN
     RAISE EXCEPTION 'committed spend exceeds the effective cap unless recorded as overrun'
       USING ERRCODE='check_violation'; END IF;
   IF NEW.parent_account_id IS NOT NULL THEN
@@ -104,8 +112,20 @@ CREATE TRIGGER budget_accounts_parent_set_once BEFORE UPDATE ON budget_accounts
   FOR EACH ROW EXECUTE FUNCTION md_budget_parent_set_once();
 ```
 
+**The effective-cap dependency is available before the trigger needs it (N2-2).** Inside a BEFORE
+INSERT trigger the account row does not exist yet, so any helper that *selects* `budget_accounts`
+by `NEW.id` returns NULL, the comparison becomes NULL, and nothing raises — an overcommitted
+account INSERT that 0003:27-28 always rejected would pass. The guard therefore never selects the
+not-yet-inserted account: 0032 compares against the row's own `NEW.cap_micro_usd` (the correct
+effective cap of a fresh account — it cannot have amendments), and 0034's replacement passes the
+base cap as an **explicit fallback**: `md_row_effective_cap(id, fallback)` = the latest amendment's
+`new_effective` if one exists, else the fallback. On INSERT no amendment can reference the new id,
+so the fallback is exact; on UPDATE base caps are immutable, so `NEW.cap_micro_usd` equals the
+stored base. The original committed-cap rejection is thereby preserved on both INSERT and UPDATE,
+in V1 and V3 alike.
+
 `budget_accounts_identity_immutable` (`M/0003…sql:33-34`) keeps guarding `cap_micro_usd` — the base
-cap stays immutable in both versions; only `md_effective_cap` moves, via §5's amendments.
+cap stays immutable in both versions; only the effective cap moves, via §5's amendments.
 `parent_account_id` is deliberately absent from that trigger's list: it is set once at STORY LOCK
 by the set-once trigger above (the `md_benchmark_set_once` pattern,
 `.scratch/t031-gate-h2/M/0026…sql:100-113`).
@@ -152,9 +172,26 @@ CREATE TABLE budget_steps (
 );
 CREATE TRIGGER budget_steps_identity_immutable BEFORE UPDATE ON budget_steps
   FOR EACH ROW EXECUTE FUNCTION md_immutable_columns('season_id', 'step_key', 'created_at');
+-- counters stay updatable; rows are never deleted (the 0015 mutable-table pattern,
+-- M/0015...sql:42-46) — explicit, catalog-tested (N2-8):
+CREATE TRIGGER budget_steps_no_delete BEFORE DELETE ON budget_steps
+  FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+CREATE TRIGGER budget_steps_no_truncate BEFORE TRUNCATE ON budget_steps
+  FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+-- md_forbid_non_integer_numbers on INSERT OR UPDATE via the §2 DO loop.
+-- cap_micro_usd UPDATEs are guarded by 0034's budget_steps_cap_amendment_only (§2.3): a cap
+-- change is legal only inside the transaction that recorded an approved amendment naming it.
+-- Initial caps are INSERTs and are untouched by that guard.
 
 ALTER TABLE reservations ADD COLUMN step_key text;
 ALTER TABLE charges      ADD COLUMN step_key text;
+
+-- Reservation step identity is immutable (N2-8): 0003's trigger is recreated with its exact
+-- column list (M/0003...sql:92-93) plus step_key:
+DROP TRIGGER reservations_identity_immutable ON reservations;
+CREATE TRIGGER reservations_identity_immutable BEFORE UPDATE ON reservations
+  FOR EACH ROW EXECUTE FUNCTION md_immutable_columns(
+    <0003:93 list verbatim>, 'step_key');
 
 CREATE FUNCTION md_reservation_step_rules() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE a record; v text;
@@ -164,11 +201,14 @@ BEGIN
   IF v = 'v1' THEN
     IF NEW.step_key IS NOT NULL THEN
       RAISE EXCEPTION 'v1 reservations carry no step' USING ERRCODE='check_violation'; END IF;
-  ELSE  -- v3: only SEASON_SETUP and post-LOCK EPISODE accounts take reservations
+  ELSE  -- v3: SEASON_SETUP and post-LOCK EPISODE accounts take reservations, under their real step
     IF NEW.step_key IS NULL OR a.scope_kind NOT IN ('EPISODE','SEASON_SETUP')
        OR NOT EXISTS (SELECT 1 FROM budget_steps s
                        WHERE s.season_id = a.season_id AND s.step_key = NEW.step_key)
-       OR (NEW.step_key = 'episode_production') <> (a.scope_kind = 'EPISODE') THEN
+       OR (a.scope_kind = 'EPISODE' AND NEW.step_key NOT IN
+           ('step_05','step_06','step_07','step_08','step_09'))
+       OR (a.scope_kind = 'SEASON_SETUP' AND NEW.step_key NOT IN
+           ('step_01','step_02','step_03','step_04','step_10','launch')) THEN
       RAISE EXCEPTION 'v3 reservations must name a budgeted step of their account kind'
         USING ERRCODE='check_violation';
     END IF;
@@ -177,21 +217,69 @@ BEGIN
 END $$;
 CREATE TRIGGER reservations_step_rules BEFORE INSERT OR UPDATE ON reservations
   FOR EACH ROW EXECUTE FUNCTION md_reservation_step_rules();
+
+CREATE FUNCTION md_charge_step_rules() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE a record; r record;
+BEGIN
+  SELECT scope_kind, season_id INTO a FROM budget_accounts WHERE id = NEW.account_id;
+  IF (SELECT workflow_version FROM seasons WHERE id = a.season_id) = 'v1' THEN
+    IF NEW.step_key IS NOT NULL THEN
+      RAISE EXCEPTION 'v1 charges carry no step' USING ERRCODE='check_violation'; END IF;
+  ELSIF NEW.reservation_id IS NOT NULL THEN
+    SELECT step_key INTO r FROM reservations WHERE id = NEW.reservation_id;
+    IF NEW.step_key IS DISTINCT FROM r.step_key THEN
+      RAISE EXCEPTION 'a charge carries its reservation''s step' USING ERRCODE='check_violation';
+    END IF;
+  ELSE  -- unreserved V3 receipt: the caller's step, validated like a reservation (N2-8)
+    IF NOT EXISTS (SELECT 1 FROM budget_steps s
+                    WHERE s.season_id = a.season_id AND s.step_key = NEW.step_key
+                      AND ((a.scope_kind = 'EPISODE' AND s.step_key IN
+                            ('step_05','step_06','step_07','step_08','step_09'))
+                        OR (a.scope_kind = 'SEASON_SETUP' AND s.step_key IN
+                            ('step_01','step_02','step_03','step_04','step_10','launch')))) THEN
+      RAISE EXCEPTION 'unreserved v3 charges must name a budgeted step of their account kind'
+        USING ERRCODE='check_violation';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER charges_step_rules BEFORE INSERT ON charges
+  FOR EACH ROW EXECUTE FUNCTION md_charge_step_rules();
 ```
+
+(`charges` is append-only, `M/0003…sql:128-129`, so its linkage guard is BEFORE INSERT only; the
+reservation branch's `SELECT` joins the reservation the charge's `reservation_id` already
+references, `M/0003…sql:104`.)
 
 Step-key mapping (settled here; OQ-2): `step_01..step_04`, the teaser `step_10` and `launch` are
 **setup scope** — they reserve against the `SEASON_SETUP` account (master §12.3: setup binds steps
-1–4, music/SFX libraries, teaser). Steps 5–9 are per-episode production; their reservations carry
-`step_key='episode_production'` against the episode's `EPISODE` account. `charges.step_key` is
-copied from the reservation at post time (`S/budget/service.py:1167-1191`); unreserved V3 receipts
-carry the caller's step (validated against `budget_steps`), V1 charges stay NULL.
+1–4, music/SFX libraries, teaser). Steps 5–9 are per-episode production and **keep their real
+master-step identities** (N2-7): their reservations carry `step_key='step_05'..'step_09'` — the
+actual step, never folded into a production alias — against the episode's `EPISODE` account, and
+each step's approved cap is enforced at admission; unused capacity in one production step can
+never fund another without an amendment (AC-13's no-spill rule holds between all step rows).
+`episode_production` is the derived **production envelope**: a `budget_steps` row per season whose
+cap is `episode count × per_episode_base_cap` (the LOCK plan guard, §4 step 6) and whose counters
+are maintained as the mirror of `step_05..step_09` — every production reservation/charge moves its
+real step row *and* the envelope row by the same delta, so the counter identities hold by
+construction: `Σ setup-step counters = setup account counters` and
+`Σ(step_05..step_09 counters) = envelope counters = Σ episode-account counters`. The envelope's
+relation to the step caps is exact and validated at LOCK and on every amendment:
+**`Σ(step_05..step_09 caps) ≤ episode_production cap`** — a step-cap raise that would break it
+refuses unless the envelope rises first (a `SEASON` effective-cap amendment, §5). No reservation
+or charge ever carries `episode_production`. `charges.step_key` is copied from the reservation at
+post time (`S/budget/service.py:1167-1191`); unreserved V3 receipts carry the caller's step on the
+contract — `UsageReceipt.step_key` (§2.4), validated by `md_charge_step_rules` above — and V1
+charges stay NULL. Every posting path passes the field through: `record_usage` →
+`_receipt_account_id` → `_post_charge` → the charge insert (§2.4; N2-8).
 
 Why step counters and no SQL sum backstop: every commitment move on a V3 account applies the
-identical delta to its `budget_steps` row, so `Σ step counters = account counters` holds by
-construction (tested; §10). Step caps are **plan guards** (AC-13: no spill between steps without an
-amendment), enforced at admission under the §6 locks; the hard money backstops stay the account and
-`SEASON` committed-vs-effective-cap triggers, because a step's *actual late billing* must be
-recordable beyond its cap (§3.3) — a step-sum CHECK would refuse that write.
+identical delta to its `budget_steps` row (production moves also touch the envelope mirror), so
+the two counter identities above hold by construction (tested; §10). Step caps are **plan
+guards** (AC-13: no spill between steps without an amendment), enforced at admission under the §6
+locks; the hard money backstops stay the account and `SEASON` committed-vs-effective-cap
+triggers, because a step's *actual late billing* must be recordable beyond its cap (§3.3) — a
+step-sum CHECK would refuse that write.
 
 ### 2.3 Migration 0034 — cap amendments and the effective cap
 
@@ -199,7 +287,8 @@ recordable beyond its cap (§3.3) — a step-sum CHECK would refuse that write.
 CREATE TABLE account_cap_amendments (
   id                      uuid PRIMARY KEY,
   account_id              uuid NOT NULL REFERENCES budget_accounts(id),
-  account_revision        integer NOT NULL CHECK (account_revision >= 0),
+  predecessor_id          uuid REFERENCES account_cap_amendments(id),
+  account_revision        integer NOT NULL CHECK (account_revision >= 1),
   old_effective_micro_usd bigint NOT NULL CHECK (old_effective_micro_usd >= 0),
   new_effective_micro_usd bigint NOT NULL CHECK (new_effective_micro_usd >= 0),
   category_deltas         jsonb NOT NULL,   -- {category: delta int}; must sum to new-old
@@ -208,56 +297,143 @@ CREATE TABLE account_cap_amendments (
   actor_session_id        uuid NOT NULL REFERENCES human_sessions(id),
   reason                  text NOT NULL CHECK (length(trim(reason)) BETWEEN 1 AND 500),
   idempotency_key         text NOT NULL UNIQUE,
-  approved_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
-  created_at              timestamptz NOT NULL DEFAULT now()
+  approved_at             timestamptz NOT NULL DEFAULT clock_timestamp(),  -- audit metadata only
+  created_at              timestamptz NOT NULL DEFAULT now(),
+  xact_id                 xid8 NOT NULL DEFAULT pg_current_xact_id(),
+  UNIQUE (account_id, account_revision),   -- one strict chain per account (N2-4)
+  UNIQUE (predecessor_id)                  -- a predecessor has at most one successor: no forks
 );
 CREATE TRIGGER account_cap_amendments_append_only BEFORE UPDATE OR DELETE ON account_cap_amendments
   FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 
-CREATE FUNCTION md_effective_cap(p_account_id uuid) RETURNS bigint LANGUAGE sql STABLE AS $$
+ALTER TABLE budget_accounts
+  ADD COLUMN amendment_revision integer NOT NULL DEFAULT 0 CHECK (amendment_revision >= 0);
+
+CREATE FUNCTION md_row_effective_cap(p_account_id uuid, p_fallback bigint)
+  RETURNS bigint LANGUAGE sql STABLE AS $$
   SELECT COALESCE(
     (SELECT a.new_effective_micro_usd FROM account_cap_amendments a
       WHERE a.account_id = p_account_id
-      ORDER BY a.approved_at DESC, a.created_at DESC, a.id DESC LIMIT 1),
+      ORDER BY a.account_revision DESC LIMIT 1),   -- serialized lineage order, never timestamps
+    p_fallback) $$;
+CREATE FUNCTION md_effective_cap(p_account_id uuid) RETURNS bigint LANGUAGE sql STABLE AS $$
+  SELECT md_row_effective_cap(p_account_id,
     (SELECT b.cap_micro_usd FROM budget_accounts b WHERE b.id = p_account_id)) $$;
+
+-- 0034 replaces 0032's committed-cap term (N2-2): CREATE OR REPLACE FUNCTION
+-- md_budget_account_rules() with the middle term md_row_effective_cap(NEW.id,
+-- NEW.cap_micro_usd); the budget_accounts_rules trigger itself is untouched.
 ```
 
-Three guards, each a BEFORE INSERT trigger (the 0007 `md_approval_requires_human_session` pattern,
-`M/0007…sql:5-21`):
+The lineage — not the clock — orders the amendments (N2-4): `md_row_effective_cap` derives the
+effective cap from `account_revision DESC` (the serialized chain order, enforced by the two
+UNIQUE constraints), so the last *serialized* amendment always wins;
+`approved_at`/`created_at`/`id` are audit metadata and never enter the derivation.
 
-1. **`md_cap_amendment_requires_human_session`** — live session, owner match, server clock
-   (`approved_at := clock_timestamp()`). This is the "direct mutation refused by a guard trigger"
-   backstop: a fabricated amendment row without a live human session cannot commit, and
-   `cap_micro_usd` itself is immutable (`M/0003…sql:33-34`).
-2. **`md_cap_amendment_v3_only`** — the account's season must be `workflow_version='v3'`
-   (V1 accounts can never be amended, AC-11/A-T9).
-3. **`md_cap_amendment_consistent`** — a DEFERRABLE constraint trigger validating against the
-   account: `old_effective = md_effective_cap` as of before this row (latest prior amendment's
-   `new_effective`, else base — re-derived in SQL, the backstop behind §5's lock chain);
-   `new_effective ≥ 0` (the ≥-committed check runs in Python under the locks). For spending
-   accounts (`SEASON_SETUP`, `EPISODE`): `Σ category_deltas = new − old`, every category named
-   exactly once with an integer delta, and `Σ(current allocated + delta) = new_effective` (the
-   CostPolicy "allocation sums to the cap" invariant, `S/contracts/season.py:117-118`, on effective
-   caps). For the aggregate `SEASON` account: `category_deltas = '{}'` (allocations stay 0 — no
-   reservation ever lands there). `step_deltas` values are the new step caps, written to
-   `budget_steps` by the command in the same transaction.
+Two BEFORE INSERT guards stamp and validate human authority; an **AFTER ROW constraint trigger**
+validates the amendment's final transaction state (N2-3 — PostgreSQL constraint triggers are
+necessarily AFTER ROW, which is why the consistency guard is not a BEFORE trigger):
 
-`md_effective_cap` is the **one** deterministic effective cap used by the SQL guards (0032's
-committed trigger) **and** by Python ledger loading: `lock_account` (`S/budget/ledger.py:198-202`)
-selects `*, md_effective_cap(id) AS effective_cap_micro_usd ... FOR UPDATE`, and `AccountRow` gains
-`effective_cap` (reports' plain reads use the same expression; `account_from_row`,
-`S/budget/ledger.py:116-132`). All cap math moves to `effective_cap`; `cap` remains the immutable
-base the US$10 episode rule binds (master §12.3; amendments may raise an episode's *effective* cap).
+1. **`md_cap_amendment_requires_human_session`** (BEFORE INSERT; the 0007
+   `md_approval_requires_human_session` pattern, `M/0007…sql:5-21`) — live session, owner match,
+   server clock (`approved_at := clock_timestamp()`), **and the actor owns the account's season**
+   (N2-9): `EXISTS (SELECT 1 FROM season_owners WHERE season_id = <the account's season> AND
+   owner_id = NEW.actor_owner_id)`. A live session proves authentication; the `season_owners` row
+   proves account-scope authorization — an authenticated owner of a *different* season cannot
+   fabricate an amendment here. This is the "direct mutation refused by a guard trigger"
+   backstop, and `cap_micro_usd` itself is immutable (`M/0003…sql:33-34`).
+2. **`md_cap_amendment_v3_only`** (BEFORE INSERT) — the account's season must be
+   `workflow_version='v3'` (V1 accounts can never be amended, AC-11/A-T9).
+3. **`md_cap_amendment_consistent`** — `CREATE CONSTRAINT TRIGGER … AFTER INSERT ON
+   account_cap_amendments DEFERRABLE INITIALLY DEFERRED FOR EACH ROW`, validated at commit against
+   the **final** table state (category and step changes have been applied exactly once by then;
+   reading final rows is what makes "current allocated + delta" unambiguous — N2-3):
+   - lineage: `predecessor_id` is the current tip (`NULL` only when the account has no
+     amendment) and `account_revision = tip.account_revision + 1` — the UNIQUE constraints make
+     any fork impossible at insert time, so a direct INSERT cannot create a parallel lineage;
+   - `old_effective = COALESCE(tip.new_effective, base cap)` — re-derived in SQL from the
+     lineage, not from timestamps or UUIDs;
+   - **commitment floor** (SQL-side, not Python-only — N2-4): `new_effective ≥ account.committed`
+     (`reserved+accrued+settled`);
+   - **ancestor limit** for child accounts (`SEASON_SETUP`, `EPISODE`):
+     `new_effective ≤ md_effective_cap(parent) − (parent.committed − account.committed)` (the §5
+     rule, SQL-enforced);
+   - spending accounts: `Σ category_deltas = new − old`, every category named exactly once with
+     an integer delta, and `(SELECT SUM(allocated_micro_usd) FROM budget_category_allocations
+     WHERE account_id = …) = new_effective` — the CostPolicy "allocation sums to the cap"
+     invariant (`S/contracts/season.py:117-118`) on effective caps, checked on the
+     post-application rows: an inserter that applied the deltas twice, or not at all, fails this
+     equality (deltas validated once, never added twice);
+   - the aggregate `SEASON` account: `category_deltas = '{}'` and its allocations remain 0 (no
+     reservation ever lands there).
+
+The sanctioned write path is one SQL function, so the serialisation is not caller-dependent
+(N2-4). `md_apply_cap_amendment(p_account_id, p_predecessor_id, p_old_effective, p_new_effective,
+p_category_deltas, p_step_deltas, p_actor_owner_id, p_actor_session_id, p_reason,
+p_idempotency_key, p_amendment_id) RETURNS integer`, called by the §5 command inside its
+transaction:
+
+```sql
+-- §6-#7 order throughout: mutex → SEASON (child amendments) → account → amendment tip
+PERFORM 1 FROM season_budget_mutex   WHERE season_id = v_season FOR UPDATE;
+IF v_parent IS NOT NULL THEN
+  PERFORM 1 FROM budget_accounts WHERE id = v_parent FOR UPDATE; END IF;
+SELECT * INTO v_account FROM budget_accounts WHERE id = p_account_id FOR UPDATE;
+SELECT * INTO v_tip FROM account_cap_amendments WHERE account_id = p_account_id
+  ORDER BY account_revision DESC LIMIT 1 FOR UPDATE;
+-- validate: predecessor = tip (else NULL only when no tip); old_effective = tip.new_effective
+-- else base (the caller surfaces StaleRevision); commitment floor; ancestor limit;
+-- INSERT the amendment row; advance the account revision atomically with the insert:
+UPDATE budget_accounts SET amendment_revision = v_rev  -- = COALESCE(tip.account_revision,0) + 1
+  WHERE id = p_account_id;
+-- lock the affected budget_steps rows and category rows (§6-#7 tail), then apply category
+-- deltas and step_deltas ONCE (one UPDATE per named key — the step UPDATE passes 0034's
+-- budget_steps_cap_amendment_only because the amendment row of THIS transaction names it);
+RETURN v_rev;
+```
+
+0034 also creates **`budget_steps_cap_amendment_only`** (BEFORE UPDATE ON `budget_steps`,
+`FOR EACH ROW`): `cap_micro_usd` may change only when an amendment row naming that `step_key`
+(`step_deltas ? NEW.step_key`) was inserted **by the same transaction**
+(`xact_id = pg_current_xact_id()`) for a budget account of this step's season — so
+`budget_steps.cap_micro_usd` can never be updated without an approved amendment (N2-8); initial
+caps are INSERTs and are untouched by the guard.
+
+**Direct INSERTs** (the fabricated-row backstop): guards 1–2 refuse anything without a live human
+session owning the account's season; guard 3 refuses rows that did not apply the category/step
+changes exactly once, or that break the floor, ancestor limit or lineage. A direct INSERT carrying
+a valid session therefore still cannot change the effective cap without the full, validated state
+change — the money backstop is SQL-side (N2-4).
+
+`md_effective_cap` is the **one** deterministic effective cap used by the SQL guards
+(0034's replaced committed trigger) **and** by Python ledger loading. Every `AccountRow`
+constructor/query is inventoried and provides the field consistently (N2-11): `account_from_row`
+(`S/budget/ledger.py:116-132`, the only constructor) is fed by `lock_account`
+(`S/budget/ledger.py:198-202`, `SELECT *, md_effective_cap(id) AS effective_cap_micro_usd … FOR
+UPDATE`), the report reads (`S/budget/reports.py:52`, `:62`) and the §6 route's account queries —
+each gains the same alias, so `AccountRow.effective_cap` is always populated and no reader
+silently falls back to the base cap. The id-only lookups (`S/budget/ledger.py:180`/`:190`,
+`S/review/intake.py:936`, `S/review/service.py:325`, `S/story/service.py:1117`) select no cap and
+need no alias; the account factories' re-open comparisons (`S/budget/service.py:245`/`:282`)
+compare the immutable **base** cap at creation and stay on `cap_micro_usd`. All cap math moves to
+`effective_cap`; `cap` remains the immutable base the US$10 episode rule binds (master §12.3;
+amendments may raise an episode's *effective* cap). Readers whose queries match account **kinds**
+shared by both workflow versions get explicit `seasons.workflow_version` guards (§9:
+`S/analytics/cost.py`) — account kind alone does not discriminate workflow version (N2-11).
 
 ### 2.4 Catalog and contract updates
 
 `EXPECTED_TABLES` (`X/integration/persistence/test_migrations.py:32`, asserted at `:117`) gains
 `season_budget_mutex`, `budget_steps`, `account_cap_amendments`. All three tables get the standard
-no-TRUNCATE + integer-numbers DO loop (§2 preamble). Generated contracts change and are regenerated
+no-TRUNCATE + integer-numbers DO loop (§2 preamble; `budget_steps`' explicit no-delete trigger is
+§2.2). Generated contracts change and are regenerated
 (`microdrama/Makefile:33` drift check): `BudgetScopeKind += SEASON_SETUP`
 (`S/contracts/enums.py:200-202`), `BudgetReservationRequest.step_key` + `_scope_and_bound`
 (`S/contracts/cost.py:160-191`) setup-scope rule (names `season_id`, no `episode_id`), the new
-`UNSUPPORTED_SCOPE` error, the amendment command contract, the `SeasonCostsV3` response (§6) and the
+`UNSUPPORTED_SCOPE` error, the amendment command contract, **`UsageReceipt.step_key`**
+(`S/contracts/cost.py:194-219` gains the optional field — the unreserved-receipt step contract;
+`None` for V1, the caller's validated step for V3; every posting path carries it to the charge
+insert, N2-8), the `SeasonCostsV3` response with its split panels (§6) and the
 `budget.cap_amended` event schema (dotted name valid: `S/contracts/events.py:21`, `M/0001…sql:118`).
 
 ## 3. Lookup and admission
@@ -298,26 +474,43 @@ policy ownership) are covered by §3, §5, §7 and §9.
 One helper, called before any child lock in every commitment-changing path (§8 audits each):
 
 ```python
-def lock_budget_hierarchy(tx: Tx, account_id: UUID) -> None:
+def lock_budget_hierarchy(tx: Tx, account_id: UUID) -> AccountRow | None:
     """§6-#7 order: season_budget_mutex → SEASON → (caller locks the child next).
-    No-op for V1 accounts and for the SEASON account itself."""
-    row = tx.fetchone(
-        "SELECT a.season_id, a.parent_account_id, s.workflow_version FROM budget_accounts a "
+    Mutex-first (N2-1): only immutable identity is read before the mutex; attachment is
+    re-read under it. Returns None for V1 accounts, the SEASON account itself, and
+    pre-LOCK setup accounts. Returns the locked parent row for admission and mirroring."""
+    ident = tx.fetchone(
+        "SELECT a.season_id, s.workflow_version FROM budget_accounts a "
         "JOIN seasons s ON s.id = a.season_id WHERE a.id = %s", (account_id,))
-    if row is None or row["workflow_version"] != "v3":
-        return
+    if ident is None or ident["workflow_version"] != "v3":
+        return None
     tx.execute("SELECT 1 FROM season_budget_mutex WHERE season_id = %s FOR UPDATE",
-               (row["season_id"],))
-    if row["parent_account_id"] is not None:
-        lock_account(tx, row["parent_account_id"])   # already-held locks are no-ops in one tx
+               (ident["season_id"],))                    # the mutex BEFORE any attachment read
+    parent_id = tx.fetchone(                             # attachment re-read UNDER the mutex
+        "SELECT parent_account_id FROM budget_accounts WHERE id = %s",
+        (account_id,))["parent_account_id"]
+    if parent_id is None:
+        attached = tx.fetchone(                          # attachment probe, under the mutex
+            "SELECT 1 FROM budget_accounts WHERE season_id = %s AND scope_kind = 'SEASON'",
+            (ident["season_id"],))
+        if attached is not None:
+            raise Conflict("budget hierarchy detached")
+        return None                                      # pre-LOCK setup: no parent yet
+    return lock_account(tx, parent_id)                   # the locked parent (idempotent in-tx)
 ```
 
-`parent_account_id` is read without a lock: set once at STORY LOCK, immutable after
-(`md_budget_parent_set_once`, §2.1), so the plain read is stable. **A missing parent after LOCK is
-an error:** a V3 child mutation that finds `parent_account_id IS NULL` while the season's planning
-track is at `STORY_LOCKED` (read under the mutex) raises `Conflict("budget hierarchy detached")` —
-the attach is atomic (§4), so this only fires on corruption. Pre-LOCK setup mutations take mutex →
-setup account (no parent) — exactly AR-2's protocol.
+Nothing mutable is read before the mutex (N2-1): `season_id`/`workflow_version` are immutable
+identity, but `parent_account_id` **is re-read under the mutex** — a setup mutation that read
+`NULL`, queued behind the STORY LOCK transaction and then acquired the mutex now re-reads the
+post-LOCK attachment and locks the existing parent instead of skipping it (set-once immutability
+does not make a pre-mutex NULL read stable). Parent absence is an error **once hierarchy
+attachment has occurred**, detected without enumerating planning states: the probe asks whether
+the season's `SEASON` account exists (created only inside the LOCK attach, §4, and never deleted),
+so the rule holds in `STORY_LOCKED` and **every later planning state**; the raise is
+`Conflict("budget hierarchy detached")`, reachable only on corruption because the attach is
+atomic. The helper returns the locked parent row — §3.3's aggregate check and ledger mirroring use
+the row they serialised on, not a second read. Pre-LOCK setup mutations get `None` (mutex → setup
+account, no parent) — exactly AR-2's protocol.
 
 ### 3.3 Admission, in order (AC-13/AC-12; spec §5.2)
 
@@ -329,40 +522,60 @@ def reserve(self, request):                                   # service.py:322
     policy.check_queue_may_reserve(request.queue, request.category)   # policy.py:42 (unchanged)
     policy.check_price_admissible(request, self._settings)            # policy.py:94  — 1. unit price/ceiling
     cleanup = policy.shutdown_grant(...)                              # policy.py:65 (unchanged)
+    cleanup_exempt = v3 and cleanup     # authorized V3 cleanup only (prose below); V1 is never exempt
     with self._db.transaction() as tx:
         account_id = resolve_reservation_account(tx, request)         # §3.1 (replaces :372-375)
-        lock_budget_hierarchy(tx, account_id)                         # §3.2 — mutex → SEASON
+        parent = lock_budget_hierarchy(tx, account_id)                # §3.2 — mutex → SEASON; N2-1
         acct = lock_account(tx, account_id)                           # ledger.py:198 (child)
         step  = lock_step(tx, acct.season_id, request.step_key)       # 0033 row (V3 only)
         cats  = lock_categories(tx, account_id)                       # ledger.py:205
-        ledger = self._ledger(tx, acct, cats, step=step, parent=parent_row_or_None)
+        ledger = self._ledger(tx, acct, cats, step=step, parent=parent)
         # blocked/replay/expiry/scope checks unchanged (:381-402); V3 adds: parent blocked → refuse
-        if v3 and parent is not None and parent.blocked and not cleanup:
+        if v3 and parent is not None and parent.blocked and not cleanup_exempt:
             raise BudgetExhausted("season overrun")                    # 3.3 truthfulness
         # 2. step cap — no spill between steps (refuse, never borrow):
-        if v3 and step.committed + worst > step.cap:
+        if v3 and step.committed + worst > step.cap and not cleanup_exempt:
             raise BudgetExhausted("step budget exhausted", step_key=...)
         # 3. child account (cap + category) — today's checks on effective_cap:
         floor = 0 if cleanup else acct.shutdown_reserve
-        if acct.committed + worst + floor > acct.effective_cap and not (v3 and cleanup):
+        if acct.committed + worst + floor > acct.effective_cap and not cleanup_exempt:
             raise BudgetExhausted(...)                                # was :404-414 against cap
-        #    recovery-headroom and category/spill rules unchanged (:415-444)
-        # 4. SEASON aggregate (post-LOCK only; the parent row is locked and mirrored):
+        #    recovery-headroom rule unchanged (:415-427); category/spill FEASIBILITY is computed
+        #    without mutation (N2-14): spill_from_recovery's transfer amount is calculated here,
+        #    and the "category allocation exhausted" refusal (:431-438) also exempts cleanup —
+        #    no budget_transfers row is written until every check below has passed
+        # 4. SEASON aggregate (post-LOCK only; the locked parent row is mirrored):
         if v3 and parent is not None and parent.committed + worst > parent.effective_cap \
-           and not (v3 and cleanup):
+           and not cleanup_exempt:
             raise BudgetExhausted("season envelope exhausted")
+        # every admission check is complete before any write; one atomic tail (N2-14):
+        if spill_shortfall > 0:
+            ledger.apply_spill(target=request.category, shortfall=spill_shortfall,
+                               floor=floor, reason=f"auto-spill:{request.semantic_key}")
         insert_row(tx, "reservations", {..., "step_key": request.step_key})   # was :446-470
-        ledger.move(request.category, step_key, reserved=worst)       # mirrors child+step+parent
+        ledger.move(request.category, step_key, reserved=worst)       # mirrors child+step(+envelope)+parent
+        if cleanup_exempt:
+            ledger.pre_record_overrun(parent)   # N2-6: the required child/parent overrun increments
+                                                # and cost_overruns rows are recorded BEFORE flush
+                                                # (charge_id NULL allowed — reservation exposure)
         ledger.flush()
 ```
+
+(`Ledger.spill_from_recovery` at `S/budget/ledger.py:423-441` splits into the pure feasibility
+check it already performs and `apply_spill` — the `move_allocation` write
+(`S/budget/ledger.py:417-421`); same computation, the write moved after all checks.)
 
 **Why admission can never exceed a cap at any level.** Every commitment-changing path takes the
 same chain — mutex → SEASON → child → step → categories (§5.3; §8) — so the `committed` counters and
 `md_effective_cap` an admission reads are stable for its transaction: amendments, the only writers
 of effective caps, take the same chain (§5). Each check adds `worst` to the current committed at its
-level and refuses on exceeding that level's effective cap; the insert + counter move happen in the
-same transaction, so at commit `committed' = committed + worst ≤ effective` holds at step, child and
-season simultaneously. Attribution is not a commitment: V3 `cost_allocations` never move counters
+level and refuses on exceeding that level's effective cap; the transfer, insert and counter move
+happen in the same transaction, so at commit `committed' = committed + worst ≤ effective` holds at
+step, child and season simultaneously. **Admission itself never creates overrun** (N2-15): every
+refusal fires before any write, so `overrun_micro_usd` and `cost_overruns` grow only through actual
+billing beyond a cap (below) — the §10 race tests assert the stronger post-admission invariant
+`committed ≤ effective` (no erroneous admission disguised as overrun) at the admitting level.
+Attribution is not a commitment: V3 `cost_allocations` never move counters
 (§6), so nothing is counted twice, and expired/unknown exposure stays counted (`Ledger.expire`
 moves reserved→accrued, committed unchanged, `S/budget/ledger.py:388-396`; release is refused while
 operations are in flight, `S/budget/service.py:526-539`).
@@ -371,29 +584,42 @@ operations are in flight, `S/budget/service.py:526-539`).
 (`record_usage` docstring, `S/budget/service.py:850-852`): `_post_charge`
 (`S/budget/service.py:1154-1224`) applies the receipt and calls `check_overrun`
 (`S/budget/ledger.py:443-471`), which records the excess in `cost_overruns` and sets
-`paid_dispatch_blocked`. For V3 the same deltas mirror into the parent, and `check_overrun` also
-runs on the **SEASON** row — a season-level excess blocks paid work across every child account.
+`paid_dispatch_blocked`. For V3 the same deltas mirror into the parent, and `check_overrun` runs
+on the child and, separately, on the **SEASON** row. The two cases are distinct (N2-15): a
+**child-level** excess blocks paid work on that child only, while the season aggregate remains
+within its cap; a **season-level** excess blocks paid work across every child account. §10 tests
+child-only and aggregate overrun separately.
 Blocked admission surfaces as `BudgetExhausted` (`:381-386`), callers defer with A0's `BUDGET`
 reason (A0 §5.2) and `track_waits` projects `WAITING_BUDGET` (A1 0031); the data API (§6) exposes
 `overrun_micro_usd` and `paid_dispatch_blocked` so the UI labels the scope `BLOCKED (overrun)`.
 
 **Cleanup and shutdown are never refused** (A-T10 "shutdown proceeds with exhausted caps"). Today a
 flagged cleanup bypasses the blocked flag and the floor but "still has to fit the cap"
-(`S/budget/service.py:335-341`). For **V3** accounts the cap refusal in steps 2–4 above is skipped
-when `cleanup` (still only `pod.stop`/`pod.terminate`/`storage.cleanup`, `S/budget/policy.py:56-86`):
-the hold is admitted, the excess lands through `check_overrun` on child **and** parent — recorded
-truthfully (master §12.3's "existing cleanup/shutdown exception"), and paid dispatch stays blocked.
-The 0003/0032 committed trigger admits it because committed ≤ effective + overrun. **V1 keeps
-today's behaviour unchanged** (fit-the-cap refusal; recorded in §9 and OQ-7).
+(`S/budget/service.py:335-341`). For **V3** accounts an authorized cleanup (still only
+`pod.stop`/`pod.terminate`/`storage.cleanup`, `S/budget/policy.py:56-86`) is **exempt from the
+exhausted step, category, child-cap and season-aggregate refusals** — steps 2–4 and the category
+refusal above (`cleanup_exempt`): the hold is admitted, and the `overrun_micro_usd` increments it
+requires on the child **and** the parent are recorded before the counter `flush`
+(`pre_record_overrun` above, with `cost_overruns` rows — **a NULL charge reference is allowed while
+the exposure is reservation-only**; the column is nullable, `M/0003…sql:150`) so the
+committed-vs-effective-cap trigger sees `committed ≤ effective + overrun` and admits. Stop/terminate
+execution and truthful accounting survive even a failed reservation admission (N2-6): if the hold
+cannot be inserted at all, the stop still runs and its cost posts through the unreserved-receipt
+path with the overrun recorded truthfully (master §12.3's "existing cleanup/shutdown exception");
+paid dispatch stays blocked. **V1 keeps today's behaviour unchanged** (fit-the-cap refusal; §9
+and OQ-7).
 
 ## 4. Pre-STORY LOCK protocol and the STORY LOCK transaction (AR-2, AR-1)
 
 **Before STORY LOCK (AR-2).** `create_v3_season` opens, in its command transaction (A1 §6 activates
-it here): the season row, `season_tracks(IDEA)` (A1 0030), the `season_budget_mutex` row, and the
+it here): the season row, `season_tracks(IDEA)` (A1 0030), the `season_budget_mutex` row, the
 `SEASON_SETUP` account — **base cap 0**, shutdown reserve 0, all seven category rows with
-`allocated = 0` (`lock_categories` requires the full set, `S/budget/ledger.py:212-213`). Effective
-cap 0 means **no paid setup work before approval** (AC-13): every admission refuses at the child
-check. `approve_setup_budget` (§5, §7) is the only path to a non-zero effective cap. Account
+`allocated = 0` (`lock_categories` requires the full set, `S/budget/ledger.py:212-213`) — and the
+creator ownership link: `link_season_creator(tx, season, principal)` (`S/review/scope.py:38-63`)
+writes the `season_owners` row (source `CREATOR_AT_CREATION`) in the same transaction, so a V3
+season never exists unowned and the §5/§6 authorization rules have a row to bind to (N2-9).
+Effective cap 0 means **no paid setup work before approval** (AC-13): every admission refuses at the
+child check. `approve_setup_budget` (§5, §7) is the only path to a non-zero effective cap. Account
 factories: `open_setup_account` / `open_season_account` follow the idempotent
 `open_episode_account` pattern (`S/budget/service.py:220-262`, ON CONFLICT DO NOTHING + re-open
 comparison against the expected cap/categories). Pre-LOCK setup
@@ -402,9 +628,9 @@ the step caps (§3.3) — no parent exists yet, and none is needed: the mutex ma
 race-free.
 
 **STORY LOCK takes the same mutex.** The LOCK decision transaction (A1 §5) runs its steps 1–8 and
-the handler callback (`create_v3_episodes(season, count)`) joins it. Budget attach, inside the same
-transaction after the A1 sequence (idempotency → `season_tracks` → seasons → episode/track
-inserts), in §6-#7 order:
+the handler callback (`create_v3_episodes_in(tx, decision_context, count)`, §7) joins it. Budget
+attach, inside the same transaction after the A1 sequence (idempotency → `season_tracks` → seasons
+→ episode/track inserts), in §6-#7 order:
 
 1. `lock_budget_hierarchy`: mutex FOR UPDATE → lock the `SEASON_SETUP` account (the only existing
    budget row) — serialised against every setup mutation (AR-2's race test, §10).
@@ -417,10 +643,16 @@ inserts), in §6-#7 order:
    exposure".
 5. Create the V3 `EPISODE` accounts (episode id order): base cap US$10 (`CostPolicy`,
    `S/contracts/season.py:99-129`), parent set at creation, categories per policy.
-6. Create `budget_steps`: `episode_production` cap = `count × per_episode_base_cap` (the plan
-   guard); the setup-step rows already exist from `approve_setup_budget`.
+6. Create the production `budget_steps` rows: `step_05..step_09`, each with
+   `cap = per-episode step default × count` (CostPolicy defaults; OQ-2), plus the
+   `episode_production` envelope with `cap = count × per_episode_base_cap` (the plan guard),
+   validating `Σ(step_05..step_09 caps) ≤ episode_production cap` (§2.2); the setup-step rows
+   already exist from `approve_setup_budget`.
 7. **Validate against the SEASON base cap:** `committed_setup ≤ count × per_episode_base_cap`;
    refuse (rolling the whole decision back) otherwise, naming both numbers — OQ-1.
+8. **Validate the count against the binding (N2-10):** `count` must equal the episode count in the
+   approved activation binding (recomputed from the binding inputs behind `binding_sha256`); a
+   mismatch refuses and rolls the whole decision back — the operator approved a specific count.
 
 **AR-1: setup consumes the envelope, never adds to it.** The SEASON base cap is
 `episode count × the approved per-episode base cap`, full stop (AR-1 replacement wording). Setup
@@ -439,7 +671,7 @@ Setup never touches the episode accounts: setup reservations/receipts resolve to
 only (§3.1), and setup→episode attribution is `cost_allocations` rows without counter moves (§6).
 
 **After attachment**, every mutation takes mutex → `SEASON` → child (§3.2). A missing parent after
-LOCK is an error (`§3.2`). Extensions and episode-count changes are `SEASON` amendments (§5).
+attachment is an error (`§3.2`). Extensions and episode-count changes are `SEASON` amendments (§5).
 
 ## 5. Cap amendments (AC-11)
 
@@ -451,16 +683,28 @@ One command path, two faces:
 | `amend_account_cap(account, expected_old_effective, expected_revision, new_effective, category_deltas, step_deltas?, reason, idempotency_key)` | Operator (human session) | Any later effective-cap change on a V3 account, including `SEASON` (episode-count changes, extensions) |
 
 **Authorisation:** human session + CSRF on the unsafe route (`S/review/api.py:201` refuses
-non-human principals; `md_cap_amendment_requires_human_session`, §2.3, is the SQL backstop).
+non-human principals) **plus account-scope authorization** (N2-9): the command resolves
+account → season and requires `require_season_access(tx, principal, season_id)`
+(`S/review/scope.py:79-84`) — a live session matching `actor_owner_id` proves authentication, the
+`season_owners` row proves the actor owns *this* season; a foreign scope is `NotFound`, so
+workflow, revision and financial detail are never leaked to it. The SQL backstop binds the same
+rule: `md_cap_amendment_requires_human_session` (§2.3 guard 1) verifies the actor's `season_owners`
+row for the account's season, so even a fabricated amendment from an authenticated owner of a
+different season cannot commit.
 **Idempotency:** `IdempotencyService.execute` with A1's §5 preflight seam;
-`account_cap_amendments.idempotency_key` is UNIQUE; a replay returns the stored response.
+`account_cap_amendments.idempotency_key` is UNIQUE; a replay returns the stored response
+(`replayed=true`, no new row); the same key with different command parameters raises
+`IdempotencyConflict` (A-T2 pattern; §10 tests both).
 **Serialisation with admission:** the command takes, in §6 order — idempotency row (#1) → the
 RETRY_WAIT job rows it will wake (#5, below) → `lock_budget_hierarchy` (#7: mutex → SEASON for
-child amendments) → account → `budget_steps` → categories — so an amendment and an admission are
-totally ordered on the same chain; a stale `expected_old_effective` / `account_revision` raises
-`StaleRevision` explicitly.
+child amendments) → account → `budget_steps` → categories — then calls `md_apply_cap_amendment`
+(§2.3) inside the same transaction, so an amendment and an admission are totally ordered on the
+same chain; a stale `expected_old_effective` / `account_revision` raises `StaleRevision`
+explicitly (surfaced from the SQL lineage validation — the §2.3 UNIQUE constraints already make a
+fork impossible; N2-4).
 
-**Ancestor-limit validation (in the same transaction, under those locks):**
+**Ancestor-limit and floor validation (in the same transaction, under those locks; every rule is
+re-checked by the §2.3 SQL constraint trigger — the backstop is not Python-only, N2-4):**
 - raising a child (`EPISODE`/`SEASON_SETUP`) **never raises `SEASON`**: validate
   `new_effective_child ≤ md_effective_cap(season) − (season.committed − child.committed)` — the
   raised child must still fit the season envelope around its siblings' commitments; a `SEASON`
@@ -468,8 +712,14 @@ totally ordered on the same chain; a stale `expected_old_effective` / `account_r
   with empty `category_deltas`, §2.3);
 - lowering: `new_effective ≥ committed` (never below existing exposure);
 - for spending accounts `Σ category_deltas = new − old` and the resulting allocations sum to
-  `new_effective` (§2.3 re-checks); `step_deltas` may only move caps of steps owned by that
-  account, and for the setup account `Σ step caps ≤ new_effective` after the change.
+  `new_effective` (§2.3 re-checks the final state); `step_deltas` may only move caps of steps owned
+  by that account, and for the setup account `Σ step caps ≤ new_effective` after the change;
+  production step raises additionally respect `Σ(step_05..step_09 caps) ≤ episode_production cap`
+  (§2.2).
+
+**Responses (exact, N2-10):** `approve_setup_budget` and `amend_account_cap` return
+`{amendment_id, account_id, old_effective_micro_usd, new_effective_micro_usd, account_revision,
+woken_jobs, replayed}` — nothing else; a refusal writes nothing.
 
 **Durable wakeup (A0's columns):** in the same transaction, `UPDATE jobs SET run_after = now()
 WHERE status='RETRY_WAIT' AND defer_reason='BUDGET' AND season_id = <the season>` (episode
@@ -480,22 +730,43 @@ transaction takes job→budget locks today (recorded in §8; A3 must keep it tha
 `approve_setup_budget` runs the same wakeup (OQ-5).
 
 **Direct mutation refused:** `cap_micro_usd` immutable (`M/0003…sql:33-34`); amendment rows
-append-only, human-session-guarded, V3-only, consistency-guarded (§2.3) — A-T9 asserts all three
-plus the committed-vs-effective-cap trigger on the counters.
+append-only, human-session- and season-owner-guarded, V3-only, consistency-guarded, lineage-unique
+(§2.3) — A-T9 asserts all of these plus the committed-vs-effective-cap trigger on the counters, and
+§10 adds rollback/replay (N2-15).
 
 ## 6. Forecasts and the Costs data API (spec §5.5, §5.6; AC-13, AC-14)
 
 **Forecasts.** `season_forecast(tx, season_id)`, a read helper used at two checkpoints — the
 CAST_LOCK gate conditions (A1's `conditions(tx, …)` seam) and V3 render-lane admission (first
-render dispatch per season; a blocker, not a money refusal):
+render dispatch per season; a blocker, not a money refusal). `committed` and `remaining` are
+**non-overlapping by construction** (N2-12): episodes already in production have their holds and
+spend inside `committed`, so they contribute only an expected *residual*, never a second full
+estimate:
 
 ```
 committed = SEASON account counters (mirrored: setup + episodes, attribution excluded)
-remaining = count of episode_tracks with production_state IN ('PLANNED','DIRECTED','RENDERING','EDITING','DRAFTING')
-observed  = Σ committed over episodes that have begun production ÷ that count   (0 if none)
-plan      = per-episode plan estimate (the episode base cap by default)
-forecast  = committed + remaining × max(observed, plan);   capacity = md_effective_cap(season) − committed
+unstarted = episode_tracks with production_state IN ('PLANNED','DIRECTED')   — no spend of theirs is in committed
+in_flight = episode_tracks with production_state IN ('RENDERING','EDITING','DRAFTING') — spend already in committed
+observed  = Σ committed over begun episodes ÷ that count   (0 if none)
+plan      = per-episode plan estimate; source and version pinned (below)
+per_ep    = max(observed, plan)
+forecast  = committed + (|unstarted| × per_ep) + Σ_{e ∈ in_flight} max(0, per_ep − committed_e)
+capacity  = md_effective_cap(season) − committed
 ```
+
+(`committed_e` is episode *e*'s own account counters; the residual term is the
+partial-production handling.) **Plan-estimate source/version (N2-12):** until phase B records
+per-episode estimates, `plan` is the per-episode base cap bound in the STORY LOCK activation
+binding — `plan_source='lock_base_cap'`, `plan_binding_sha256=<the activation's hash>` in the
+response, so the number is reproducible; if phase B later adds a per-episode estimate, its source
+and revision travel in the same fields. **Pre-LOCK availability (N2-12):** the Costs route exists
+from season creation, but the `SEASON` account does not — before LOCK the forecast section reports
+the setup-only view: `phase='pre_lock'`, `committed` = setup counters, `remaining = 0`,
+`forecast = committed`, `capacity = md_effective_cap(setup) − committed`. (The CAST_LOCK and
+render checkpoints are post-LOCK by definition.) **Revalidation (N2-12):** the forecast is
+evaluated live at every CAST_LOCK activation-condition evaluation and every render-lane admission
+dispatch — never cached — so any budget or scope change (amendment, episode-count change) is
+re-checked at the next checkpoint.
 
 `forecast > md_effective_cap(season)` is a **gate condition** (blocker) with a "raise the cap or
 cut scope" action — the CAST_LOCK gate refuses to open (A1's activation conditions), and render
@@ -506,22 +777,26 @@ second subtraction anywhere (`setup_committed` is shown separately for the UI).
 **Costs data API.** One V3 read route, `GET /v3/seasons/{season_id}/costs`
 (`S/budget/api.py` gains a sibling router; `require_workflow(expected='v3')` — a V1 season is
 `WORKFLOW_MISMATCH`, the V1 route `GET /episodes/{id}/costs` (`S/budget/api.py:21`) is untouched).
-Response `SeasonCostsV3` (generated contracts, §2.4), one REPEATABLE READ READ ONLY transaction
-(`S/budget/reports.py:3-5` pattern). Separate quantities, each its exact ledger query:
+**Season-scope authorization (N2-9):** the route resolves the season and requires
+`require_season_access` (`S/review/scope.py:79-84`) — a foreign scope is `NotFound`, never a leak
+of workflow, revision or financial detail. Response `SeasonCostsV3` (generated contracts, §2.4),
+one REPEATABLE READ READ ONLY transaction (`S/budget/reports.py:3-5` pattern). Separate
+quantities, each its exact ledger query — unknowns stay unknown, never COALESCEd to zero (N2-13):
 
 | Quantity | Query |
 |---|---|
 | **cash** (settled) | `SELECT COALESCE(SUM(settled_micro_usd),0)::bigint FROM budget_accounts WHERE season_id=%s AND scope_kind IN ('SEASON_SETUP','EPISODE')` — Σ settled over the season's cash accounts (the setup account before and after LOCK, episode accounts post-LOCK; the aggregate `SEASON` row is excluded by kind). Per-account rows returned alongside |
-| **accrued/unsettled** | same shape on `accrued_micro_usd` |
-| **reserved exposure** | same shape on `reserved_outstanding_micro_usd` (expired and past-expiry holds included: EXPIRED rows keep their exposure counted, `S/budget/ledger.py:388-396`; the unknowns listing follows `S/budget/reports.py:81-86`) |
+| **accrued/unsettled** | same shape on `accrued_micro_usd` — this is also where **expired exposure lands**: expiry moves reserved→accrued (`S/budget/ledger.py:388-396`), so expired holds are shown in their actual ledger bucket (N2-13) |
+| **reserved exposure** | open holds only: same shape on `reserved_outstanding_micro_usd`. Expired holds are *not* here — see accrued above — and the unresolved-exposure listing (the `S/budget/reports.py:81-86` pattern) names every EXPIRED-without-settlement hold explicitly, so no exposure is hidden by the bucket move (N2-13) |
 | **attribution** (never cash, never cap consumption) | `SELECT target_account_id, COALESCE(SUM(amount_micro_usd),0) FROM cost_allocations a JOIN budget_accounts t ON t.id=a.target_account_id WHERE t.season_id=%s GROUP BY 1` — display only: V3 allocations move no counters (below) |
 | **setup counted once** | setup charges exist once on the setup account; the attribution panel references them (`source_account_id`); no panel sums allocation shares into cash — the setup account's own counters are the single count |
-| **step panel** | `SELECT step_key, cap_micro_usd, reserved_outstanding_micro_usd, accrued_micro_usd, settled_micro_usd FROM budget_steps WHERE season_id=%s` |
-| **provider attribution** | `charges.step_key` + `charges.provider` (`M/0003…sql:105`), grouped |
-| **subscription allocation / LLM estimates** | `SELECT COUNT(*), COALESCE(SUM(cost_estimate_microusd),0) FROM llm_invocations WHERE season_id=%s` — A0's 0027 records; `llm.subscription` is unmetered (A0 §5.5 item 5: no `UsageReceipt`, no charge), so it appears **only** here |
-| **quota** | latest `quota_observations` per invocation (A0 0027) |
+| **step panel** | `SELECT step_key, cap_micro_usd, reserved_outstanding_micro_usd, accrued_micro_usd, settled_micro_usd FROM budget_steps WHERE season_id=%s` — production steps report their real identities (steps 5–9), the envelope row reports the aggregate (§2.2) |
+| **provider attribution** | `charges.step_key` + `charges.provider` (`M/0003…sql:105`), grouped — computed over each reservation's **current** final rows, respecting accrual-to-settlement replacement (`apply_receipt` replaces finals rather than accumulating, `S/budget/ledger.py:331-349`, `:316-330`), so an accrual later settled is never double-counted (N2-13) |
+| **subscription allocation** | a separate field with its basis stated honestly (N2-13): A0's `llm.subscription` rows carry no money (`phase-A0-spec.md` §5.5 item 5: no `UsageReceipt`, no charge) and no ledger source prices the subscription fee — the field reports `subscription_allocation=null, basis='unavailable'` (plus the subscription invocation count) unless/until A0 or `Settings` defines an allocation basis |
+| **LLM estimates** | `SELECT COUNT(*) FILTER (WHERE cost_estimate_microusd IS NOT NULL), SUM(cost_estimate_microusd), COUNT(*) FILTER (WHERE cost_estimate_microusd IS NULL) FROM llm_invocations WHERE season_id=%s` — separate `estimated_count` / `estimated_micro_usd` / `unknown_estimate_count`; no COALESCE, so unavailable estimates stay visible as unknowns, never zero (N2-13). `llm.subscription` is unmetered, so it appears **only** here and in the subscription panel |
+| **quota** | latest `quota_observations` per invocation (A0 0027); invocations without one are counted in `quota_unknown_count` — quota uncertainty preserved, not zero-filled (N2-13) |
 | **overrun / blocked** | `overrun_micro_usd`, `paid_dispatch_blocked` per account + season (§3.3) |
-| **forecast** | the §6 helper output + inputs |
+| **forecast** | the §6 helper output + inputs (incl. `plan_source`, `plan_binding_sha256`, `phase`) |
 
 **V3 attribution writes no counters.** `allocate_research_cost` (`S/budget/service.py:1276-1370`)
 keeps its V1 body; the V3 variant (`attribute_setup_cost`) inserts `cost_allocations` rows (source
@@ -536,45 +811,66 @@ with several receipts (GPU accrual → settlement → late adjustment) post each
 
 ## 7. The command table (A2 rows; A1 §6 columns)
 
-| Command | Actor | Scope / revision owner | Prerequisites (hash-bound where applicable) | Writes | Events | Replay identity | Activation |
+| Command | Actor | Scope / revision owner | Prerequisites (hash-bound where applicable) | Writes | Events (exact) | Replay identity | Activation |
 |---|---|---|---|---|---|---|---|
-| `create_v3_season(intake_ref)` | Operator (human session) | season / — | A1 §6 (intake ref, owner scope) | seasons(v3, PROPOSED) + `season_tracks(IDEA)` + `season_budget_mutex` + `SEASON_SETUP` account (base 0, categories 0) | (A1's creation events) | idempotency key | **A2** (AR-6) |
-| `approve_setup_budget(season, amount, category_deltas, step_caps, reason)` | Operator (human session + CSRF) | setup account / expected `old_effective = 0` + `account_revision` | season is v3; no prior setup approval (`old_effective` 0); amount within the Settings bound | `account_cap_amendments` row (0 → amount); `budget_steps` initial caps; BUDGET-job wakeup | `budget.cap_amended` | idempotency key | **A2** |
-| `create_v3_episodes(season, count)` | System (STORY LOCK handler); exposed to test handlers in phase A | season / `season_tracks.revision` | STORY LOCK APPROVE decision (A1 §5 transaction); §4 validation passes | episodes (legacy PLANNED) + `episode_tracks` + `SEASON` account + parent attach + `EPISODE` accounts + `episode_production` step | (LOCK decision's own events, A1 §5) | semantic `(scope, from, to, revision)` | **A2** (AR-6) |
-| `amend_account_cap(account, expected_old_effective, expected_revision, new_effective, category_deltas, step_deltas?, reason)` | Operator (human session + CSRF) | account / `account_revision` + `old_effective` | §5 validations (ancestor limits, deltas sum, V3-only) | `account_cap_amendments` row; `budget_steps` caps; BUDGET-job wakeup | `budget.cap_amended` | idempotency key | **A2** |
-| STORY LOCK budget step (the §4 attach) | System, inside the LOCK decision | season / decision revision + binding hash | §4 steps 1–7 | as §4 | (LOCK's own events, A1) | the decision's idempotency key | **A2** |
+| `create_v3_season(intake_ref)` | Operator (human session) | season / — | A1 §6 (intake ref, owner scope) | seasons(v3, PROPOSED) + `season_tracks(IDEA)` + `season_budget_mutex` + `SEASON_SETUP` account (base 0, categories 0) + `season_owners` creator link (`link_season_creator`, §4; N2-9) | A1 §6's season-creation event set only; A2 adds no budget event (the cap-0 setup account is not evented) | idempotency key | **A2** (AR-6) |
+| `approve_setup_budget(season, amount, category_deltas, step_caps, reason)` | Operator (human session + CSRF + season access) | setup account / expected `old_effective = 0` + `account_revision` | season is v3; no prior setup approval (`old_effective` 0); amount within the Settings bound | `account_cap_amendments` row (0 → amount); `budget_steps` initial caps; BUDGET-job wakeup | exactly one `budget.cap_amended` (payload below) | idempotency key | **A2** |
+| `create_v3_episodes_in(tx, decision_context, count)` — internal helper, never a command | System (STORY LOCK handler); exposed to test handlers in phase A | season / `season_tracks.revision` | STORY LOCK APPROVE decision (A1 §5 transaction); §4 validations pass, incl. `count` = the approved binding's episode count (§4 step 8, N2-10) | episodes (legacy PLANNED) + `episode_tracks` + `SEASON` account + parent attach + `EPISODE` accounts + `step_05..step_09` + `episode_production` envelope rows | none of its own — its effects ride the LOCK decision's events (A1 §5's `approval.recorded` + handler events) | inherits the decision's idempotency key and transaction (below) | **A2** (AR-6) |
+| `amend_account_cap(account, expected_old_effective, expected_revision, new_effective, category_deltas, step_deltas?, reason)` | Operator (human session + CSRF + season access) | account / `account_revision` + `old_effective` | §5 validations (ancestor limits, deltas sum, V3-only) — all re-checked in SQL (§2.3) | `account_cap_amendments` row; `budget_steps` caps; BUDGET-job wakeup | exactly one `budget.cap_amended` (payload below) | idempotency key | **A2** |
+| STORY LOCK budget step (the §4 attach) | System, inside the LOCK decision | season / decision revision + binding hash | §4 steps 1–8 | as §4 | none beyond the decision's (as above) | the decision's idempotency key | **A2** |
 
-Every row runs through `IdempotencyService.execute` with the §5 preflight; a refusal writes
-**nothing** (A-T2 pattern). The `budget.cap_amended` payload schema: `{account_id, scope_kind,
-season_id, old_effective_micro_usd, new_effective_micro_usd, reason, actor_owner_id, revision}`.
+**Only external human commands enter `IdempotencyService.execute`** (N2-10): `create_v3_season`,
+`approve_setup_budget` and `amend_account_cap` — the service owns their transaction, with the §5
+preflight; a refusal writes **nothing** (A-T2 pattern). The internal LOCK helpers —
+`create_v3_episodes_in(tx, decision_context, count)` and the §4 budget attach — run **inside the
+caller-owned decision transaction** and inherit its replay identity (the decision's idempotency
+key, A1 §5 steps 1/8): they never open their own transaction, never enter `execute`, and so can
+never nest a transaction waiting on its caller. The `budget.cap_amended` payload schema:
+`{account_id, scope_kind, season_id, old_effective_micro_usd, new_effective_micro_usd, reason,
+actor_owner_id, revision}`. Mismatched replay (same key, different parameters) raises
+`IdempotencyConflict` for every command above; matching replay returns the stored response with
+`replayed=true` and writes nothing (§10).
 
 ## 8. Lock audit (spec §6 #7; AC-8, AC-12)
 
 The §6 table (A1 §9) row 7 in full: `season_budget_mutex → SEASON → child accounts (id order) →
 budget_steps → categories → reservations → charges/receipts`, the audit including provider-operation
-advisory locks and caller-owned billing transactions. Every transaction A2 adds or touches:
+advisory locks and caller-owned billing transactions — **complete outer transactions, not just the
+shared helpers' interiors** (N2-5). Every transaction A2 adds or touches:
 
 | Transaction | Locks in order | Verdict |
 |---|---|---|
-| `reserve` (V3) | policy checks (no locks) → tx: mutex → SEASON → child → step row → categories → replay read → reservation insert | conforms (§3.3) |
+| `reserve` (V3) | policy checks (no locks) → tx: mutex → SEASON → child → step row → categories → replay read → all admission checks → atomic tail (transfer + reservation insert + counters) | conforms (§3.3; N2-14) |
 | `release` (`S/budget/service.py:484-543`) | mutex → SEASON → child (`:500`) → categories (`:501`) → reservation (`:502`) — today's order preserved, hierarchy prepended | conforms |
 | `expire_stale` (`:545-577`) | per distinct account in `:557` id order: mutex → SEASON → child (`:562`) → categories (`:563`) → reservations FOR UPDATE id order (`:566`) | conforms |
 | `record_usage_in_transaction` (`:864-880`) | mutex → SEASON → child (`:872`) → categories (`:873`) → linked reservation (`_linked_reservation`, `:1068-1080`) → charge insert | conforms |
 | `_record_gpu_interval` (`:882-956`) | mutex → SEASON → child (`:912`) → categories (`:913`) → lease read → overlap check → charge + interval inserts; the pod EXCLUDE gist 40P01 mapping (`:997-1006`) unchanged | conforms |
 | `settle_billed_lease` (`S/budget/billing.py:1269`) | **today: child account (`:1296`) → reservation (`:1297`) → `record_usage_in_transaction` (`:1367`) — child-before-parent, the inversion the spec names.** Fix: `lock_budget_hierarchy` before `:1296`; the rest unchanged | **fixed** — competing test §10 |
+| billing ingestion (`ingest` → `_ingest_in_transaction`, `S/budget/billing.py:208-…`) | **today: query advisory (451045, `:256`) → per bucket: bucket advisory (451046, `:297`) → budget chain → next bucket advisory — `#6 → #7 → #6`, the outer-billing cycle (N2-5).** Fix: the ingest core takes the query advisory, then **all** of the batch's bucket advisories in `bucket_identity_sha256` order **before** the first budget lock; buckets then post through the chain with no lock reacquisition | **fixed** — competing-ingestion test §10 |
+| `verify_invoice_period` (`S/budget/billing.py:449-…`) | invoice-period advisory (451050, `:496`) → evidence rows → any posting through the budget chain joins after | audited — advisory strictly before every budget lock |
+| `resolve_podless_create` (`S/budget/billing.py:786-895`) | podless advisory (451051, `:828`) → resolution insert → posts the receipt through the budget helper (`:893`) — one advisory, then the chain, no reacquisition | audited — conforms |
 | `resolve_billing_recovery` (`:747-831`) | advisory xact lock on the allocation (`:761`, #6-class, before budget) → hierarchy → child (`:811`) → categories (`:812`) → charge (`:817`) → resolution insert (`:820`) | **fixed** (hierarchy prepended before `:811`) |
 | `reconcile_provider_allocation_in_transaction` (`:588-704`) | advisory (`:611`) → posting row FOR UPDATE (`:615`) → hierarchy → child (`:654`) → categories (`:655`) → `_lease_window_reservation` FOR UPDATE (`:1040-1065`) → charge | **fixed** (hierarchy before `:654`) |
-| `record_provider_invoice_verification_in_transaction` (`:718-745`) | advisory (`:729`) → finalization row (`:732`) — no account locks (evidence only) | n/a (unchanged) |
-| `transfer` (`:1228-1272`) | mutex → SEASON → child (`:1246`) → categories (`:1247`) → `budget_transfers` insert (`S/budget/ledger.py:417-421`) | conforms |
+| `record_provider_invoice_verification_in_transaction` (`:718-745`) | advisory (`:729`) → finalization row (`:732`) — no account locks (evidence only) | audited — no budget locks, no inversion possible |
+| `transfer` (`:1228-1272`) | mutex → SEASON → child (`:1246`) → categories (`:1247`) → `budget_transfers` insert (at the atomic tail; `S/budget/ledger.py:417-421`) | conforms |
 | `attribute_setup_cost` (V3, §6) | mutex → SEASON → source (setup) → target accounts in id order — allocations only, no counter moves | conforms |
-| `approve_setup_budget` / `amend_account_cap` (§5) | idempotency (#1) → RETRY_WAIT job rows FOR UPDATE (#5) → mutex → SEASON (child amendments) → account → steps → categories → amendment insert → job UPDATE | conforms (#5 before #7; no existing path takes job→budget — A3 must preserve this; recorded as A2's only new order, with the §10 race test) |
+| `approve_setup_budget` / `amend_account_cap` (§5) | idempotency (#1) → RETRY_WAIT job rows FOR UPDATE (#5) → mutex → SEASON (child amendments) → account → amendment tip → steps → categories → amendment insert + revision advance → job UPDATE | conforms (#5 before #7; no existing path takes job→budget — A3 must preserve this; recorded as A2's only new order, with the §10 race test) |
 | STORY LOCK decision + attach (§4) | A1 §5 order (1 → 2 → 4 → episode/track inserts → 3) then §4's mutex → setup → SEASON create → parent set → episode accounts → steps | conforms (inserts of not-yet-existing rows serialise under the mutex + unique indexes, per A1 §9's justification) |
-| `create_v3_season` | idempotency → A1's creation order → mutex row + setup account inserts | conforms |
+| `create_v3_season` | idempotency → A1's creation order (incl. `season_owners` creator link) → mutex row + setup account inserts | conforms |
 | V1 paths | helper is a no-op (no mutex row, `workflow_version='v1'`): lock sequences byte-identical to today | untouched |
 
-**Provider-operation advisory locks:** the three `pg_advisory_xact_lock` sites
-(`S/budget/service.py:611`/`:729`/`:761`, keys 451047-9) all take the advisory before any budget row
-lock — #6-class before #7, no inversion; A2 adds none. The lease claim's two-transaction pattern
+**Provider-operation and billing advisory locks (N2-5):** seven `pg_advisory_xact_lock` sites, all
+#6-class, all taken **before any budget row lock**: `S/budget/service.py:611`/`:729`/`:761`
+(451047-9) and, in the caller-owned billing transactions, `S/budget/billing.py:256` (451045,
+billing query), `:297` (451046, billing bucket), `:496` (451050, invoice-period evidence),
+`:828` (451051, podless-create resolution). A2 adds none. The one cycle — ingestion's
+bucket-lock-after-budget-lock — is closed by pre-acquiring the batch's bucket locks in
+`bucket_identity_sha256` order (row above). **Cross-season ordering (N2-5):** a transaction that
+needs the budget chains of more than one season (an ingestion batch's buckets can map to episodes
+of several seasons) takes **all** required `season_budget_mutex` rows in `season_id` order first —
+after the advisory locks, before any account lock of any of those seasons — then proceeds per
+season down the #7 chain; combined with the bucket pre-acquisition this makes the lock order
+deterministic and cycle-free across ingesters. The lease claim's two-transaction pattern
 (`S/rendering/leases.py:702-716`: reserve tx, then lease-insert tx) stays; each transaction holds
 one lock class plus the already-held scope track lock (A1 §8/§9). Worker-completion
 job-before-track order remains A3's row (A1 §9 item 1); A2 adds no such transaction.
@@ -593,9 +889,13 @@ Every V1 path A2 touches, and why its behaviour and tests stay identical:
 - **Admission checks:** unit-price, queue, category, spill, recovery-headroom and shutdown-floor
   rules run unchanged (`S/budget/policy.py`; `S/budget/service.py:404-444`); the child-cap check
   compares against `effective_cap`, which equals `cap_micro_usd` without amendments — and V1
-  accounts can never have them (§2.3 guard 2). V1 cleanup still must fit the cap (`:335-341`);
+  accounts can never have them (§2.3 guard 2). The N2-14 compute-then-apply split changes no V1
+  outcome: the feasibility arithmetic is `spill_from_recovery`'s own, and the transfer row is
+  written in the same transaction it always was — refusals never durably wrote anything (rollback),
+  admissions write the identical rows. V1 cleanup still must fit the cap (`:335-341`);
   only V3 cleanup admits past it (§3.3, OQ-7).
-- **SQL:** the 0003:27-28 CHECK becomes the 0032 trigger with the identical predicate; the 0003:13
+- **SQL:** the 0003:27-28 CHECK becomes the 0032 trigger with the identical predicate (0034's
+  amendment-aware term is a no-op without amendment rows); the 0003:13
   cap bound keeps `≤ 10_000_000` verbatim for V1 kinds; scope-kind, episode-binding, queue and
   category CHECKs are extended additively. `md_reservation_step_rules` requires `step_key IS NULL`
   on V1 reservations — today's rows are all NULL (the column is new).
@@ -605,11 +905,20 @@ Every V1 path A2 touches, and why its behaviour and tests stay identical:
 - **Research allocation:** `allocate_research_cost` (`S/budget/service.py:1276-1401`) keeps its body
   and `_check_research_share` refusals for V1; the no-counter V3 variant is a separate method.
 - **Settlement/recovery:** `settle_billed_lease`, `resolve_billing_recovery`,
-  `reconcile_provider_allocation` gain only the no-op-for-V1 hierarchy call; postings, evidence and
-  idempotency unchanged.
-- **API:** `GET /episodes/{id}/costs` (`S/budget/api.py:21`), `S/budget/reports.py` and
-  `S/analytics/cost.py:111-151` are untouched (the latter aggregates V1 kinds only); the V3 route
-  is separate.
+  `reconcile_provider_allocation`, the billing ingestion core, `verify_invoice_period` and
+  `resolve_podless_create` gain the no-op-for-V1 hierarchy call (and, for ingestion, the bucket
+  pre-acquisition — lock order only, no observable change for a single-bucket/single-season V1
+  batch); postings, evidence and idempotency unchanged.
+- **API and readers:** `GET /episodes/{id}/costs` (`S/budget/api.py:21`) is untouched;
+  `S/budget/reports.py` keeps its response semantics — its account reads (`:52`, `:62`) gain the
+  effective-cap alias (§2.3 inventory) without changing any returned V1 field (no amendments ⇒
+  same number). `S/analytics/cost.py:96-151` is **not** inherently V1-only: its EPISODE-scope
+  queries match V3 accounts too (`scope_kind='EPISODE'` exists in both versions — account kind
+  does not discriminate workflow version, N2-11), so it gains explicit `seasons.workflow_version='v1'`
+  guards preserving V1 response semantics while V3 rows are served by the §6 route; the
+  qualification/lookup readers (`S/review/intake.py:936`, `S/review/service.py:325`,
+  `S/story/service.py:1117`) are audited — SEASON_RESEARCH-only queries cannot return V3 rows
+  (a V3 season has none), so they need no change beyond the audit.
 - **Tests:** every existing budget test (`X/integration/budget/**`, `X/contract/**`) runs green and
   unedited; A2's tests are new files (§10); the upgrade test asserts V1 rows and refusals identical
   across 0032–0034.
@@ -618,25 +927,28 @@ Every V1 path A2 touches, and why its behaviour and tests stay identical:
 
 All offline, ephemeral PostgreSQL via the existing conftest, pytest `--basetemp` under the session
 scratchpad, real runtime/composition with fakes; `make check` + V1 `make pilot` stay green.
+**Independent PostgreSQL connections and controlled barriers throughout (N2-15); deadlock or
+lock-wait timeout in any race case is a test failure, not a pass condition.**
 
 | ID | File (new unless noted) | Cases |
 |---|---|---|
-| A-T9 | `X/integration/v3/test_budget_hierarchy.py` | admission-order matrix: four distinct refusals (unit price `UnknownPrice` → step `BudgetExhausted(step_key)` → child cap → season envelope) at their own thresholds; **the A-T9 arithmetic**: 10 episodes × $10 base, $30 setup approved → LOCK validates at committed 30M ≤ 100M; episode reservations beyond the remaining 70M refused at level 4 while each child cap is still 10M; **setup mutation racing STORY LOCK attach**: two connections, one setup `reserve`, one LOCK decision — the mutex serialises them; whichever wins, the other sees the post-state (attach includes the hold, or the hold admits against the attached parent); never a detached parent; **setup before approval refused** (base 0 → every admission refuses; no reservation, no charge); **setup never touches episode accounts** (after LOCK + spend + attribution: episode accounts hold only their own reservations/charges; allocations exist as rows only); **amendment wakeup**: a `RETRY_WAIT`/`defer_reason='BUDGET'` job gets `run_after=now()` in the amendment transaction; **direct-SQL amendment refused**: `UPDATE budget_accounts SET cap_micro_usd=…` (immutable trigger), amendment INSERT without a live session, amendment on a V1 account, amendment with deltas not summing to the change — all raise; **V1 accounts can't be amended** |
-| A-T10 | `X/integration/v3/test_budget_concurrency.py` | ≥2 connections, one V3 season post-LOCK: reserve vs amendment (raise lands between two reserves — second admits against the new effective cap, or `StaleRevision` on a stale `expected_old_effective`); reserve vs settlement vs release vs late billing interleaved on sibling accounts — after every interleaving, invariant asserts `committed ≤ effective + overrun` at child **and** season, `Σ step counters = account counters`, parent counters = Σ children cash exposure; expired holds keep commitment (expire under race); **truthful overrun blocks**: a settlement beyond the child cap records `cost_overruns`, sets `paid_dispatch_blocked` on child and season, every further paid admission refuses, cleanup still admitted; **shutdown proceeds with exhausted caps**: cleanup reservation on an over-cap V3 account is admitted and its excess recorded as overrun (child + parent), while the same request on a V1 over-cap account is refused (today's behaviour); the settle-vs-reserve **inversion test**: conn A `settle_billed_lease` on episode 1, conn B `reserve` on episode 1's account, both V3 — serialised (no deadlock, no lock-wait inversion); `resolve_billing_recovery` racing a reserve on the target account |
-| A-T11 | `X/integration/v3/test_cost_ledger.py` | exactly-once per canonical receipt: identical replay returns `replayed=True` (`_replay`), differing content → `IdempotencyConflict`; **multi-receipt operation**: ACCRUAL → SETTLEMENT → late ADJUSTMENT on one GPU reservation — each posts once, the settlement replaces accrued per `S/budget/ledger.py:331-349`, the adjustment adds to settled (`:316-330`); late restated SETTLEMENT refused; **late adjustment on a closed hold** recorded truthfully; **setup counted once**: setup charge + attribution to 3 episodes — cash/accrued/reserved panels unchanged by the attribution, attribution panel shows the shares, no episode counter moved; **unknown exposure retained**: EXPIRED hold counts until settlement reconciles; **cash/accrued/reserved/attribution/estimate/quota separate**: `SeasonCostsV3` fields populated from distinct sources (charges/counters/`llm_invocations`/`quota_observations`), `llm.subscription` invocations appear in the subscription panel and never as charges; forecast helper: committed + remaining × max(observed, plan), blocker above the effective cap |
-| A-T16 (A2 part) | `X/integration/persistence/test_migrations.py` (extend; upgrade test at `:122` is the pattern) | 0032–0034 apply on a populated V1 database at 0031 head: every existing row unchanged, applied 0001–0031 checksums unchanged, `step_key` NULL on all V1 reservations/charges, `EXPECTED_TABLES` superset holds, the replaced 0003:27-28 predicate refuses the same V1 overage with the trigger's message, catalog tests green on the three new tables |
-| contracts | `X/contract/contracts/test_v3_budget_contracts.py` | `BudgetScopeKind` exact; `_scope_and_bound` setup rule (season named, episode forbidden); `UNSUPPORTED_SCOPE` error schema; `SeasonCostsV3` + `budget.cap_amended` examples; generated-contract drift check green (`Makefile:33`) |
+| A-T9 | `X/integration/v3/test_budget_hierarchy.py` | admission-order matrix: four distinct refusals (unit price `UnknownPrice` → step `BudgetExhausted(step_key)` → child cap → season envelope) at their own thresholds; **the A-T9 arithmetic**: 10 episodes × $10 base, $30 setup approved → LOCK validates at committed 30M ≤ 100M; episode reservations beyond the remaining 70M refused at level 4 while each child cap is still 10M; **no cross-step borrowing**: step_05 capacity cannot fund a step_06 reservation (refused, and only an amendment moves caps — N2-7); **setup mutation racing STORY LOCK attach (stale-parent, N2-1/N2-15)**: two connections with a controlled barrier — the setup `reserve` reads identity, the LOCK decision completes the attach, then the setup mutation proceeds under the mutex: it re-reads the attachment, locks the parent and admits against the attached season (never skips it, never a detached parent); **setup before approval refused** (base 0 → every admission refuses; no reservation, no charge); **setup never touches episode accounts** (after LOCK + spend + attribution: episode accounts hold only their own reservations/charges; allocations exist as rows only); **amendment wakeup**: a `RETRY_WAIT`/`defer_reason='BUDGET'` job gets `run_after=now()` in the amendment transaction; **amendment rollback/replay (N2-15)**: a validation failure mid-amendment leaves no amendment row, no step-cap change, no revision advance, no job wakeup; a replayed amendment returns the stored response with no second row; a same-key/different-parameters replay raises `IdempotencyConflict`; **direct-SQL negatives (all via direct SQL, N2-8/N2-4/N2-9)**: `UPDATE budget_accounts SET cap_micro_usd=…` (immutable trigger); `UPDATE budget_steps SET cap_micro_usd=…` without an amendment (and it passing *inside* the amendment transaction); `DELETE FROM budget_steps` / `TRUNCATE budget_steps` (refused); non-integer number writes on every new table; amendment INSERT without a live session; amendment INSERT by an authenticated owner of a *different* season (season-owner guard, N2-9); amendment on a V1 account; amendment with deltas not summing to the change; amendment not applying its category deltas (deferred consistency trigger refuses at commit); reservation `step_key` UPDATE (immutable identity); charge insert whose step disagrees with its reservation's; `episode_production` reservation refused on any account |
+| A-T10 | `X/integration/v3/test_budget_concurrency.py` | ≥2 connections, one V3 season post-LOCK: **reserve-vs-reserve boundary (N2-15)**: sibling admitters (two episode accounts) and same-child admitters, barriers aligned so both connections have read the same committed/cap state — only affordable admissions succeed, and after every interleaving the stronger invariant holds: `committed ≤ effective` at the admitting level with **no admission-created overrun** (no `cost_overruns` row, no `overrun_micro_usd` growth — overrun arises only from billing); reserve vs amendment (raise lands between two reserves — second admits against the new effective cap, or `StaleRevision` on a stale `expected_old_effective`); reserve vs settlement vs release vs late billing interleaved on sibling accounts — after every interleaving, invariant asserts `committed ≤ effective + overrun` at child **and** season, `Σ step counters = account counters` (setup and production identities, §2.2), parent counters = Σ children cash exposure; expired holds keep commitment (expire under race); **truthful overrun blocks, child-only vs aggregate separated (N2-15)**: a settlement beyond a *child* cap with the season aggregate still within cap records `cost_overruns` and sets `paid_dispatch_blocked` on that child only — other children keep admitting paid work; a settlement pushing the *season* aggregate over blocks every child; in both cases cleanup is still admitted; **shutdown proceeds with exhausted caps**: cleanup reservation on an over-cap V3 account is admitted and its excess recorded as overrun (child + parent, `charge_id` NULL for reservation exposure) before the flush, while the same request on a V1 over-cap account is refused (today's behaviour); **the settle-vs-reserve inversion test**: conn A `settle_billed_lease` on episode 1, conn B `reserve` on episode 1's account, both V3 — serialised (no deadlock, no lock-wait inversion); **competing ingestion (N2-5/N2-15)**: two connections ingesting batches whose bucket sets overlap — both pre-acquire their bucket locks in `bucket_identity_sha256` order before the budget chain; no `#6→#7→#6` cycle, no deadlock, both complete; `resolve_billing_recovery` racing a reserve on the target account |
+| A-T11 | `X/integration/v3/test_cost_ledger.py` | exactly-once per canonical receipt: identical replay returns `replayed=True` (`_replay`), differing content → `IdempotencyConflict`; **multi-receipt operation**: ACCRUAL → SETTLEMENT → late ADJUSTMENT on one GPU reservation — each posts once, the settlement replaces accrued per `S/budget/ledger.py:331-349`, the adjustment adds to settled (`:316-330`); late restated SETTLEMENT refused; **late adjustment on a closed hold** recorded truthfully; **setup counted once**: setup charge + attribution to 3 episodes — cash/accrued/reserved panels unchanged by the attribution, attribution panel shows the shares, no episode counter moved; **expired exposure in its actual bucket (N2-13)**: an EXPIRED hold appears in accrued (not reserved) plus the unresolved-exposure listing, never silently zeroed; **cash/accrued/reserved/attribution/subscription/estimate/quota separate (N2-13)**: `SeasonCostsV3` fields populated from distinct sources — subscription allocation reported with `basis='unavailable'` (no ledger source), `llm.subscription` invocations counted in the subscription panel and never as charges, estimate fields returning `estimated_count`/`estimated_micro_usd`/`unknown_estimate_count` with NULL estimates preserved as unknowns (no COALESCE-to-zero), quota unknowns counted; **provider totals replacement-aware (N2-13)**: grouped totals reflect accrual→settlement replacement (an accrued-then-settled reservation counts once); forecast helper: `committed + |unstarted| × max(observed, plan) + Σ in-flight residuals`, blocker above the effective cap, `plan_source`/`plan_binding_sha256` in the response, pre-LOCK setup-only view (N2-12) |
+| A-T16 (A2 part) | `X/integration/persistence/test_migrations.py` (extend; upgrade test at `:122` is the pattern) | 0032–0034 apply on a populated V1 database at 0031 head: every existing row unchanged, applied 0001–0031 checksums unchanged, `step_key` NULL on all V1 reservations/charges, `EXPECTED_TABLES` superset holds, the replaced 0003:27-28 predicate refuses the same V1 overage with the trigger's message (on INSERT **and** UPDATE, N2-2), `amendment_revision=0` on all V1 accounts, catalog tests green on the three new tables (incl. `budget_steps` DELETE/TRUNCATE, N2-8) |
+| contracts | `X/contract/contracts/test_v3_budget_contracts.py` | `BudgetScopeKind` exact; `_scope_and_bound` setup rule (season named, episode forbidden); `UNSUPPORTED_SCOPE` error schema; `UsageReceipt.step_key` (optional; V1 `None`, V3 validated — N2-8); `SeasonCostsV3` split panels + `budget.cap_amended` examples; generated-contract drift check green (`Makefile:33`) |
 
 ## 11. Open questions
 
 | # | Question | Recommendation |
 |---|----------|----------------|
 | OQ-1 | LOCK validation refuses when setup commitment > count × base (e.g. $30 setup, 2 episodes → cap $20). No SEASON account exists yet to amend. | Refuse with both numbers in the error; the remedy is re-issuing `create_v3_episodes` with a higher count (the operator's lever), and the setup-approval UI should warn when the approved amount exceeds 10 × a plausible count. No pre-LOCK SEASON amendment. |
-| OQ-2 | Exact step-key strings and their mapping (1–4 + teaser + launch setup-scope; 5–9 → `episode_production`). | As proposed in §2.2 (`step_01..step_10`, `launch`, `episode_production`); phase B's Script Maker brief should confirm no step needs splitting before A2 builds. |
+| OQ-2 | Exact step-key strings and mapping. **Settled in v1.1 (N2-7):** setup = `step_01..step_04` + `step_10` + `launch`; production steps 5–9 keep their real identities (`step_05..step_09`) against the episode accounts; `episode_production` is the derived envelope (`Σ(step_05..step_09 caps) ≤ envelope cap`). | As settled above; phase B's Script Maker brief should confirm only whether any production step needs *splitting* before A2 builds (the per-step cap split is CostPolicy's to propose). |
 | OQ-3 | Are teaser/launch step caps set at setup approval or later? | Created at setup approval inside the approved amount, `launch` defaulting to 0 (no paid launch work until amended) — one approval moment, later changes via §5. |
 | OQ-4 | SEASON/SEASON_SETUP SQL sanity ceiling US$1,000 (§2.1). | Accept; policy limits stay in Python (Settings/`CostPolicy`); the ceiling only stops absurd corruption. |
 | OQ-5 | Does `approve_setup_budget` also wake BUDGET-waiting jobs? | Yes — same command path (§5); pre-approval there is normally nothing to wake, but the semantics are uniform. |
 | OQ-6 | Should V3 attribution reuse `cost_allocations` (source = setup account) or a V3-specific table? | Reuse: the table's shape fits (`M/0003…sql:132-144`) and the Costs API reads one attribution panel; the no-counter-move rule is the V3 difference. |
 | OQ-7 | V3 cleanup admits past the cap (A-T10 wording) while V1 cleanup still must fit it (`S/budget/service.py:335-341`). | Keep the divergence: it is exactly master §12.3's "existing cleanup/shutdown exception, recorded truthfully", realised for V3 only; V1 alignment would change V1 behaviour, which phase A forbids. Flagged for the record. |
+| OQ-8 | Subscription-allocation basis: no ledger source prices the `llm.subscription` fee today (N2-13). | Report `subscription_allocation=null, basis='unavailable'` (plus invocation counts) until A0 or `Settings` defines an allocation basis; do not fabricate a number from estimate sums. |
 
 — end of note —
