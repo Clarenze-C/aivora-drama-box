@@ -188,6 +188,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   both GLM-5.3 slots busy (a0d-fix1 10m in and healthy; r5-spec-v03 running). Launch phase-F-spec the
   moment r5-spec-v03 exits (docs slot, main checkout). Goldfish for phase F goes to a fresh cwd
   `phase-f-review/` after the draft lands.
+- 13 Nov 18:21Z (GLM): **R5 spec v0.3 committed** (`980eb19`, 560 lines; 12/12 applied, nothing
+  BLOCKED; new package R5f = per-pod billing verification, no migration). Worktree `.scratch/t031-r5`
+  created (branch `feat/t031-r5` at `104b26b`, venv symlinked); build brief `T031-fix-round/r5-build-brief.md`
+  written — **launches when a0d-fix1 frees the code slot**. Phase F spec draft running (`phase-f-spec`).
+  Running: a0d-fix1 (code) + phase-f-spec (docs); z.ai 5h 29%.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
