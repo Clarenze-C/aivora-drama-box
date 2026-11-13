@@ -276,7 +276,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED; B-T3/B-T7/B-T11 only gained clauses; B1/B5 notes wait on Monday's Opus call, as ruled).
   Launched `f-spec-v03` (docs). Running: a0d-fix1 + f-spec-v03; Codex free. Docs queue: a3-note-rev1
   → a2-note-rev2 → c-spec-v04. A6b rulings still pending on GLM's desk.
-- 13 Nov 21:06Z (GLM): **A6b note round 1 ruled** (N6-1..6 BLOCKING, N6-7..11 SHOULD-FIX —
+- 13 Nov 20:47Z (GLM): **A6b note round 1 ruled** (N6-1..6 BLOCKING, N6-7..11 SHOULD-FIX —
   **all 11 ACCEPTED**; try-lock approach confirmed sound; per-action ownership checks, INTENTS recovery
   identities, V1 key/eligibility preservation, integer-only payloads, the missing two-minute LLM
   reconciler trigger added). `a6b-critique-rulings.md` + `a6b-note-rev1-brief.md` written. **Q4 fully
