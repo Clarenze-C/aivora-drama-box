@@ -295,6 +295,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   receipts `.scratch/a0d-gate2/.scratch/gate/`). **z.ai 5h 69% ≥ 50%: all GLM jobs held** (docs queue
   a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1, R5 build) until the 23:43Z reset.
   Running: a0d-review-r2 + phase-f-recritique (Codex 2/2) + the gate.
+- 13 Nov 21:05Z (GLM): **A0-D round 2 = FIX-REQUIRED** (6 CLOSED: AD-2/3/4/5/12/13; AD-1 REGRESSED;
+  AD5-1..10: 7 BLOCKING + 1 partial-set + AD5-8/9 SHOULD-FIX; every finding has a Fix line).
+  **Rule 7: two rounds done → A0-D STOPS for the weekend** → OPERATOR QUEUE. The gate at `6974d5a`
+  still runs (evidence for Monday). Codex slot free (1/2). z.ai still ≥ 50% — GLM queue held.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -328,3 +332,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - Phase C spec: round 2 REWORK after 9/16 closed (2 BLOCKING remain: reroll-generation freshness,
   cross-system recovery admission). GLM applied all round-2 rulings as v0.4, no round 3 (rule 7).
   Monday: Opus re-checks `phase-c-recritique-rulings.md`; accept v0.4 vs round 3.
+- A0-D: round-2 review FIX-REQUIRED after a full fix round (6/13 closed at `6974d5a`; AD-1 regressed
+  — the gateway now demands `policy_identity` the step never sends, so normal calls fail admission;
+  plus 6 more BLOCKING: exited-unit evidence, twin-validator divergence, cancellation adoption bypass,
+  A0-R1 quota mapping, conflicting replays, requalification clearance). Rule 7 stopped it — no round 3
+  this weekend. Monday: Opus re-reads `codex-review-a0d-r2.md` + the gate receipts and decides a fix
+  round 2 (would be review round 3) vs re-scoping. The A0-R1 dependency in AD5-1/AD5-5 ties into the
+  also-stopped A0-R1 item.
