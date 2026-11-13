@@ -210,6 +210,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   blessed by Codex). `phase-b-critique-rulings.md` + apply brief `phase-b-v05-brief.md` written.
   Docs-job queue: c-spec-v02 first, then b-spec-v05 (both launch as GLM slots free; a0d-fix1 step 3/5
   and phase-f-goldfish still running). z.ai 5h reset → 5%.
+- 13 Nov 19:15Z (GLM): **phase F Goldfish ruled** (73 findings: 4 Blocker / 33 Major / 36 Nit —
+  all ACCEPTED; CON-B1 = in-place date UPDATE, CON-B2 = option (a) synthetic carrier episode,
+  CON-B3 = F5 conditionally blocked on **O-8 (operator)**, CON-B4 = gate re-map; CON-M6 extends C's
+  picks engine). `phase-f-goldfish-rulings.md` + apply brief `phase-f-v02-brief.md` written.
+  **O-8 added to OPERATOR QUEUE** (blocks F5 only). Launched `c-spec-v02` (docs slot freed by the
+  goldfish exit). Docs queue: b-spec-v05, then f-spec-v02. Running: a0d-fix1 + c-spec-v02.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -230,3 +236,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - Phase C pre-build decisions (from Goldfish N27/N34, needed before C6/C7 build):
   (1) O-C1 neutral-source voice intake — a DECISIONS "decide before phase C" item still open;
   (2) V1 `create_episode` keeps no identity lock (permanent carve-out) — needs your nod.
+- Phase F: O-8 ruling (EN/ZH caption delivery) — needed before F5 builds. Recommendation on record:
+  YouTube caption tracks now (post-publish `upload_captions`); TikTok/Facebook TH-only until T032
+  qualifies caption files; flip per destination. F1–F4 proceed without it.
