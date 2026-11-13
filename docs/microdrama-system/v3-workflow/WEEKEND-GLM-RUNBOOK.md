@@ -40,10 +40,12 @@ Check that the session really runs on GLM (the banner can be stale): `/proc/<pid
    - you never call `ai-route plan` (Opus).
    - `--out` keeps only the job's **final message**. Briefs therefore name a separate `-REPORT.md`. For swarm jobs,
      recover the full text from `~/.claude/projects/<cwd-key>/<session>.jsonl` (the longest assistant text).
-3. **Quota:**
-   - Start a GLM build only when `ai-route --quota` shows z.ai 5h < 50%.
-   - Run one Drama Box build at a time, and none while the operator's SFW job holds the window.
-   - Launch no new Codex job once Codex week ≥ 60% (the ICT and SFW sessions share it).
+3. **Quota (operator, 13 Nov: SFW and ICT are idle this weekend, so Drama Box gets all of GLM and Codex):**
+   - **GLM:** at most **2 GLM-5.3 jobs at once**, each started only when z.ai 5h < 50%, and only when independent
+     (different worktrees, or one code and one docs-only), plus at most **1 GLM-5.3-Flash swarm** (1/3 quota).
+   - **Codex:** at most 2 jobs at once (hard limit). Launch no new Codex job once Codex week ≥ **75%**; the rest is
+     for Mon–Thu.
+   - **CPU:** at most **one full gate** (`make check` + `make pilot`) at a time. Builders' focused pytest runs are fine.
    - On exit 75, retry after the reset. Never swap models.
 4. **No polling.**
    - Long jobs run as `systemd-run` units or `run_in_background` with a `tail --pid` /
@@ -70,6 +72,31 @@ Check that the session really runs on GLM (the banner can be stale): `/proc/<pid
    - **Never** change `SPEC-v3.md`, `DECISIONS.md` or an operator decision, and never weaken an acceptance test.
      If a finding needs that, stop the item and queue it for the operator/Opus.
 
+## Scheduling: fill every free slot at each wakeup
+
+Four tracks run side by side. At each wakeup, in this order:
+
+1. **Collect results:**
+   - read finished jobs;
+   - update STATE;
+   - write rulings or fix briefs for anything that came back.
+2. **Codex slot free?** Launch the highest-priority ready Codex job: code reviews first, then note critiques, then
+   spec critiques.
+3. **No code build running and z.ai < 50%?** Launch the next ready code build. Track A (critical path) comes
+   before Track T.
+4. **One code build running, z.ai < 50%, and a docs job ready?** Launch one docs job in parallel (Track S).
+5. **A swarm slot free and a fact map needed?** Launch it with `ai-route swarm`.
+6. `ScheduleWakeup`: about 1200–1800 s while jobs run; just after the reset time when everything waits on quota.
+
+| Track | Kind | Items |
+|-------|------|-------|
+| **A**: phase A code (critical path, sequential) | code | Q1 A0-D → Q3 A1 → A2 → A3 → A4 → A5 → A6a → A6b → A6c. Each needs its note/spec critiqued and accepted, the previous package accepted, then build → review → gate. A4/A5/A6a/A6c have no design note: build briefs come straight from `phase-A-spec.md` §10, reviewed "with the diff" |
+| **T**: T031 run-readiness | code, other tree | Q2. Independent of Track A: may build while an A build runs |
+| **S**: specs and notes | docs only | Q4 note revisions; Q5 phase B; **Q7 phases C, D, E, F, G spec drafts** |
+| **R**: Codex | reviews | serves A, T and S by priority |
+
+Doc jobs never edit code, `SPEC-v3.md` or `DECISIONS.md`, so they can run beside any build.
+
 ## Queue (priority order; skip an item whose "waits for" isn't met)
 
 | # | Item | Now | Next step(s) | Waits for |
@@ -80,13 +107,16 @@ Check that the session really runs on GLM (the banner can be stale): `/proc/<pid
 | Q4 | **A2, A3, A6b design notes** | Drafted 12 Nov (`A2-`, `A3-`, `A6b-design-note.md`); never critiqued | Codex critique round 1 each (pattern `a1-note-critique-brief.md`) → rulings → GLM revises the note → round 2. Builds follow A1 in table order: A2 → A3 → A4/A5/A6a (no note) → A6b → A6c | Codex reset |
 | Q5 | **Phase B spec** v0.3 | Draft (`phase-B-spec.md`; operator answered O-B1..6; one neutral voice per speaker) | `ai-route goldfish phase-B-spec.md` (~40 min GLM; never two Goldfish runs with one cwd) → rulings → Codex critique round 1 (pattern `spec-critique-brief.md`) → B1 and B5 design notes | z.ai < 50% |
 | Q6 | **A0-R1** (`dramabox-llm` ai-route role, `/root/.claude`) | Fix round 1 done (`a0r1-fix1-final.md`) | Codex re-review, round 2 (pattern `codex-review-a0r1-brief.md`, scoped to RR-1..15). **The merge into `/root/.claude` main waits for the operator**: a broken `ai-route` would stop every session | Codex reset |
-| Q7 | *(only if everything above is waiting)* **Phase C spec** draft | Not started | GLM writes it (Large-spec rules): swarm fact map → spec v0.1 from master §4.4 → Goldfish. No build | idle |
+| Q7 | **Phase C–G spec drafts** (Track S, in parallel with builds) | Not started. Master `SPEC-v3.md` v0.4.6 §4.4–§4.10, §5–§13, the §15.1 phase/AT table, §15.2 R-ID ownership | Per phase, in order **C, F, E, G, D**. D last: it depends on T031's real Pika results. (1) a swarm fact map (copy `b-factmap-brief.md`, retargeted to that phase's code); (2) `ai-route build` of a docs-only spec brief producing `phase-<X>-spec.md` v0.1, modelled on `phase-B-spec.md`: requirements, design, packages, acceptance rows mapped to that phase's V3-AT ids, open questions with recommendations; (3) Goldfish; (4) Codex critique only once A/B critiques are done. **No build of C–G this weekend** | z.ai < 50% |
 
-**Codex order:** Q1 review and Q2 critique first (2 slots), then Q3, Q4 ×3, Q6, Q5.
+**Codex order:** Q1 review and Q2 critique first (2 slots); then Q3 round 2 and the Q4 notes; then build reviews as A1/R5
+land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 
 ## STATE (GLM: append one dated line per step; newest last)
 
 - 13 Nov 03:30Z (Opus): queue written.
+- 13 Nov 03:50Z (Opus): operator gives Drama Box all of GLM and Codex for the weekend. Rule 3 widened (2 GLM jobs +
+  1 swarm, Codex ≤ 75%); four-track scheduling added; Q7 widened to C–G spec drafts.
   - A0-D gate running.
   - R5 Goldfish at 03:40Z.
   - Codex week 99% until 10:30Z.
