@@ -140,6 +140,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   - A0-D gate (`a0d-offline-gates`).
 
   Codex queue timer at 10:31Z (6 of 7 briefs written; the R5 critique brief follows the Goldfish resolution).
+- 13 Nov 04:25Z (Opus): R5 Goldfish done (1 Blocker, 17 Majors, 20 Nits; reports `T031-fix-round/r5-goldfish/`).
+  - Opus ruled every finding in `T031-fix-round/r5-goldfish-rulings.md`; **Q1 = P** (predicted schema).
+  - GLM applies the rulings → spec v0.2 (unit `r5-spec-v02`, after the phase B Goldfish ends). On success it publishes
+    `codex-r5-critique-brief.md`, which the Codex queue then picks up.
+  - Phase C fact map done (`c-factmap.md`); phase C spec draft queued (unit `phase-c-spec`).
 
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
