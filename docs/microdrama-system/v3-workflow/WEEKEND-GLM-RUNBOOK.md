@@ -288,7 +288,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   `tests/unit/llm` itself; **Codex round-2 review launched** (`a0d-review-r2`, scoped to AD-1..13,
   `--base ea1cc10`). Next: on my green line → full gate in a new pinned checkout at `6974d5a` + R5 build
   launch (code slot free; z.ai check first). Running: f-spec-v03 + a0d-review-r2 + my verify run.
-- 13 Nov 21:02Z (GLM): **phase F v0.3 committed** (17/17 applied; round-2 critique launched —
+- 13 Nov 20:55Z (GLM): **phase F v0.3 committed** (17/17 applied; round-2 critique launched —
   `phase-f-recritique`, Codex slot 2/2). **Acceptance step 1 GREEN by GLM's own run**: `tests/unit/llm`
   62 passed (matches builder); second suite (integration, 53) re-runs after the gate to avoid CPU
   contention. **Gate running** at pinned `6974d5a` (`a0d-gate2` checkout, unit `dramabox-a0d2-gates`,
