@@ -183,6 +183,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   written; docs job `dramabox:r5-spec-v03` launched (spec v0.3). Running now: a0d-fix1 (build),
   r5-spec-v03 (docs), f-factmap (swarm) = at the rule-3 limit; z.ai 5h 23%.
   Next tick: R5 build brief from v0.3; Q4 A2/A3/A6b rulings; phase B critique rulings; phase C → v0.2.
+- 13 Nov 18:14Z (GLM): **f-factmap done and verified** (107 lines, 45 citations, 6 honest NOT FOUNDs
+  incl. teaser and thumbnail pick). Phase F spec brief `phase-f-spec-brief.md` written — **launch held**:
+  both GLM-5.3 slots busy (a0d-fix1 10m in and healthy; r5-spec-v03 running). Launch phase-F-spec the
+  moment r5-spec-v03 exits (docs slot, main checkout). Goldfish for phase F goes to a fresh cwd
+  `phase-f-review/` after the draft lands.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
