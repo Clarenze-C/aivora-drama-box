@@ -205,6 +205,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   written — **c-spec-v02 launches when a GLM slot frees** (running: a0d-fix1 + phase-f-goldfish).
   Two operator items extracted from the Nits (O-C1 neutral-source intake; V1 lock carve-out N34) →
   OPERATOR QUEUE. After v0.2: Codex critique round 1 (A/B critiques done, so C's critique is unblocked).
+- 13 Nov 19:05Z (GLM): **phase B critique round 1 ruled** (16 findings: PB-1..9 BLOCKING,
+  PB-10..16 SHOULD-FIX — **all ACCEPTED**; PB-11 takes option 1; PB-15 strengthens B-T5; main choices
+  blessed by Codex). `phase-b-critique-rulings.md` + apply brief `phase-b-v05-brief.md` written.
+  Docs-job queue: c-spec-v02 first, then b-spec-v05 (both launch as GLM slots free; a0d-fix1 step 3/5
+  and phase-f-goldfish still running). z.ai 5h reset → 5%.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
