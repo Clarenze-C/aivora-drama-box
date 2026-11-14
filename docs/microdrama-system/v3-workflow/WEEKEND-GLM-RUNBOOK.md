@@ -414,6 +414,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   + separate completion predicates; paid rearm NOT_FOUND-only). A3 now **corrected, awaiting final
   verify** — a 5th Codex round needs the operator's nod (the authorization was "one last R4").
   Running: r5-build + a2-note-rev3 + g-factmap.
+- 14 Nov 08:48Z (GLM): **A2 v1.3 committed** (`9d0af9c`, all five round-3 residuals closed, none
+  BLOCKED). Launched: **A2 R4** (Codex) + **a1-note-rev3** (GLM slot, fits before the 09:30 cutoff).
+  Running: r5-build + a1-note-rev3 + g-factmap (swarm) + a2-note-r4. Window nearly fully used;
+  no further GLM launches this window.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
