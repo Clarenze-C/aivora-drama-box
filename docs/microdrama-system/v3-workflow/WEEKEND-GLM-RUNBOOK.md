@@ -572,6 +572,8 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   fields beyond hash equality, snapshot enforcement for all extension inputs, version-vs-fence,
   critic-after-join). All 5 ACCEPTED (`b5-recritique-rulings.md`); **b5-note-rev2 running**; R3
   follows. Running: a0d-fix4 + b5-note-rev2.
+- 14 Nov 20:56Z (GLM): **B5 v0.3 committed** (`f3a4b11`, 871 lines, 5/5 round-2 rulings, none
+  BLOCKED). **B5 R3 verification launched** (`b5-note-r3`). Running: a0d-fix4 (build) + b5-note-r3.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
