@@ -1,0 +1,13 @@
+**Verdict: APPROVE** for the authorized PB5-1..PB5-5 verification scope. No new PB6 findings from the round-2 edits.
+
+All references below are to [phase-B-spec.md](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-B-spec.md).
+
+| Finding | Status | Verification |
+|---|---|---|
+| **PB5-1** | **CLOSED** | §9, [lines 672–673](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-B-spec.md:672): replacement requires an uncancelled, rejected `PROPOSED` scope with no open activation or unfinished proposal work. Reopening requires rejection, the appropriate planning state and completed work; explicitly refuses after Approve and during Revise regeneration. Extension commands compare **`season_extensions.revision`**, consistent with A1 §5/§6. B-T3/B-T11 cover refusals. |
+| **PB5-2** | **CLOSED** | §2.4 D5, [line 222](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-B-spec.md:222), §7.1 and §11 consistently ship completion/runtime integration in **B2**. Proposal completion and LOCK opening commit atomically; runtime must suppress its second finish. B3 consumes the seam; B4/B5 add joins. B-T3 includes the B2 commit-boundary crash case. |
+| **PB5-3** | **CLOSED** | §3.2, [lines 263–271](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-B-spec.md:263): `IDEA → PROPOSED` occurs only on initial completion. Fresh-intake round 1 and Revise retain `PROPOSED`; activation opens at final revisions. B-T3 exercises the real replacement route. |
+| **PB5-4** | **CLOSED** | §8, [lines 630–645](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-B-spec.md:630): creation validates the named amendment’s season/`SEASON` account and funding under phase-A §5.4, then atomically creates authorization plus extension. Builder admission and extension STORY LOCK enforce that authorization downstream. B-T11 removes the circular creation prerequisite and covers invalid amendments, rollback and downstream refusal. |
+| **PB5-5** | **CLOSED** | §2, [lines 122–131](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/phase-B-spec.md:122), correctly distinguishes existing `PayoffDebt.debt_id` from pack-level prose. §2.1 makes prose display-only; §6.2/B-T7 require unknown-ID rejection and ledger/effect-derived debt status. Attribution matches `contracts/v2.py:206` and `:361`; V2 stays unchanged. |
+
+No replacement wording required. Read-only static review against the supplied binding versions and current code; no files changed or tests run.

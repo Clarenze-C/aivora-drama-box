@@ -1,6 +1,6 @@
 # Phase C: Character bible → picks → wardrobe → voices → CAST LOCK
 
-**Version 0.4 DRAFT, 13 Nov 2026** (v0.1 11 Nov, GLM draft; v0.2 applies the Goldfish rulings
+**Version 0.4.1, 14 Nov 2026** (v0.4 + the round-3 APPROVE-WITH-CHANGES clarification PC6-1 applied by the orchestrator) (v0.1 11 Nov, GLM draft; v0.2 applies the Goldfish rulings
 (`phase-c-goldfish-rulings.md`); v0.3 applies the Codex round-1 critique rulings
 (`phase-c-critique-rulings.md`) — all 16 findings ACCEPTED (PC-1..PC-16); **v0.4 applies the Codex
 round-2 rulings (`phase-c-recritique-rulings.md`)** — all 7 ACCEPTED (PC5-1..PC5-7), replacement
@@ -389,11 +389,16 @@ panel on the STORY LOCK screen (`NOT_AVAILABLE` until the C2 package ships).
   still be running, and a submit-through-final-poll span can exceed the batch seconds. **The C3 note
   defines durable recovery admission shared by every participating generator (PC5-2)** — published
   before submit and **checked under flock before any new submit; worker death or ambiguous submission
-  retains the blocker until reconciliation proves no prior work remains active** (operation state is
-  re-derived through `ProviderOperation.reconcile`; only a reconciled terminal state re-admits
-  dispatch). **Batch limits stop new submissions; they do not release protection around unfinished
+  retains the blocker until reconciliation proves no prior work remains active**. Under flock,
+  recovery admission may be cleared after reconciliation proves **either terminal completion or
+  `NOT_FOUND` — the provider never accepted the recorded operation** (operation state is re-derived
+  through `ProviderOperation.reconcile`, which permits resubmission after `NOT_FOUND`); running or
+  unknown outcomes retain the blocker. **Before resubmission, recovery admission is published
+  again.** **Batch limits stop new submissions; they do not release protection around unfinished
   work** — the limit is checked before submitting the next operation, never mid-operation. A restart
-  therefore cannot inherit a hold and cannot overlap a still-running accepted operation.
+  therefore cannot inherit a hold and cannot overlap a still-running accepted operation. C-T6 also
+  kills a holder **after admission publication but before submit**, then proves safe recovery without
+  overlapping submissions.
   **Fairness:** bounded Drama batches — at most `fairness_batch_images` (default 8) or
   `fairness_batch_seconds` (default 120 s) per hold, then release and re-acquire, so ARISA's turns and
   Drama's interleave. **The seconds setting limits further submissions, not total hold duration
