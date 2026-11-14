@@ -632,6 +632,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   concurrent fix6 pytest; consistent with the established load-flake pattern, receipts kept). It ran
   beside fix6's suites. **The decisive solo a0d6 gate at `eea2f79` (running now, nothing else live)
   supersedes it**; if the isolation failure reappears solo, it becomes a real fix7 finding.
+• 14 Nov 23:38Z (GLM): **A0-D ACCEPTED** — R7 ACCEPT + the decisive solo gate GREEN at
+  `eea2f79` (372 integration; make check + pilot passed; receipts `.scratch/a0d-gate6/.scratch/gate/`).
+  Six fix rounds, seven reviews, findings 13→10→7→4→2→1→0. **A1 BUILD LAUNCHED** (`a1-build`,
+  base `eea2f79`, migrations 0028–0031; brief from A1 note v1.4 + phase-A §10). r5-fix1 queues
+  behind it (one-build rule). A0-D's install/qualification steps remain OPERATOR-gated.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -697,3 +702,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - Disk (updated): 4.3G free and falling (gate checkouts + basetemps today). Besides RR-T3's
   ≥12GiB, the solo gate rerun and further builds would benefit from a cleanup pass — operator call
   (GLM may not delete).
+- A0-D (updated): **ACCEPTED 14 Nov 23:38Z** (R7 ACCEPT, decisive gate green at `eea2f79`).
+  Still yours when ready: install the gateway's systemd unit + group 64010 + directories; OK the
+  live qualification (≤5 calls). No merge/push happened.
