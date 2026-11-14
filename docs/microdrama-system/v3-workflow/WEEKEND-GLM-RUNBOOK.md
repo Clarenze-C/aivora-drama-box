@@ -588,6 +588,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   predicate, absent-intent restore case, calibration switch sequence). All 3 ACCEPTED
   (`phase-g-recritique-rulings.md`); **g-spec-v04 apply running**; R3 follows. Running: a0d-fix4
   (unit sweep) + g-spec-v04.
+- 14 Nov 21:30Z (GLM): **phase G v0.4 committed** (`39171da`, 3/3 round-2 rulings incl. the
+  calibration admission-lane redesign). **G R3 verification launched** (`phase-g-r3b` after a path
+  relaunch). Running: a0d-fix4 (unit sweep) + phase-g-r3b.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an

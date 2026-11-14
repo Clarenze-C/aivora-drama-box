@@ -1,0 +1,9 @@
+Phase G spec **v0.4** landed in place — all three round-2 rulings folded per their Replacement wording, cross-checked against C v0.4.1's switch/provisional-price/admission seams and A0 v0.4's deferral vocabulary (§5.1 clamp, non-terminal rows, per-job `retry_at`):
+
+- **PG5-1 (BLOCKING)** — §4's predicate now derives from GD4's latest evidence under its freshness policy + isolation status; fresh on-pace evidence supersedes historical refusals while their deferral rows stay non-terminal; refusal history, week-reset horizon and per-job clamps preserved separately; old clause (b) explicitly withdrawn; G-T2(h) asserts recovery with an old non-terminal `PACE_WEEK` row still present.
+- **PG5-2 (SHOULD-FIX)** — §5.1 retains the recovered-intent case and adds an effect created *and* accepted after the snapshot (no row, no client token in the dump); the resume exercises §5.4's fence-and-reconcile dry (fence → discover via preserved external evidence → adopt by external identity; unresolved activity blocks admission with no submit); new §5.2 bullet, §5.4 statement and G-T3/G3 rows extended.
+- **PG5-3 (BLOCKING)** — §7.2's ordering rule replaced: calibration is a distinctly authorized bounded workload admitted through every-admission image-lane guards that refuse ordinary cast jobs including queued ones ("no pilot-specific admission code" withdrawn with the conflict it created); provisional-price exception stays calibration-only; cast admits only after measured receipts + committed checkpoint + complete demand-list fit; G-T6 gains the dry test (calibration proceeds while queued cast refuses; early/partial lift refused); §15 risk row and two §16 alternatives-rejected rows added.
+
+No acceptance row weakened (G-T3/G-T6 only gained assertions; LIVE row untouched); live/paid steps stay operator-gated. Offline docs job only — no push, no report file.
+
+**Commit `39171da`** · `phase-G-spec.md` now **1009 lines** (96 insertions, 39 deletions).
