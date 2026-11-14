@@ -1,12 +1,17 @@
 # B1 design note: V3 story records, stores, prompt registry, and the B contract base
 
-**Version 0.2 DRAFT, 14 Nov 2026. Author: GLM (design note only; one file, no code).**
+**Version 0.3 DRAFT, 14 Nov 2026. Author: GLM (design note only; one file, no code).**
 **Round-1 critique applied:** [codex-b1-note-critique.md](codex-b1-note-critique.md) (B1-1..B1-12) —
 **all 12 ACCEPTED** per [b1-critique-rulings.md](b1-critique-rulings.md) (GLM ruling, Opus re-check
 Mon); each finding integrated individually per its Replacement paragraphs, B1-1's document-DDL
 immutability enforcement first. No acceptance row weakened; no BLOCKED finding left unapplied.
-Round-2 critique follows (phase-B §11 B1: "critiqued first"); nothing here builds until the note is
-accepted and A0–A3 have shipped.
+**Round-2 critique applied:** [codex-b1-note-recritique.md](codex-b1-note-recritique.md) — 10 of 12
+CLOSED; **B1R2-1 (BLOCKING, guard placement) and B1R2-2 (SHOULD-FIX, extension-scope verification)
+both ACCEPTED** per [b1-recritique-rulings.md](b1-recritique-rulings.md) (GLM ruling, Opus re-check
+Mon), each folded per its Replacement paragraphs — the Replacement wording wins where it restates
+v0.2 text. No acceptance row weakened; no BLOCKED finding left unapplied; R3 verification follows
+under the operator's standing waiver. Nothing here builds until the note is accepted and A0–A3 have
+shipped.
 
 **Binding inputs:** [phase-B-spec.md](phase-B-spec.md) **v0.6 (ACCEPTED)** §0–§13, esp. §2/§2.1–§2.4,
 §5.4, §7, §9, §11 (B1 row), §12 (B-T1/B-T2); [phase-A-spec.md](phase-A-spec.md) v0.3 §1–§7;
@@ -25,7 +30,11 @@ the V1/V2 contract anchors, the store and runtime shapes, and every consumer mod
 below). The v0.2 pins add round-1 anchors verified the same way: `S/contracts/build.py:41-44/:139`
 (the classifier), `S/rendering/routing.py:262/:279`, `S/qa/observation.py:366`,
 `S/qa/comparison.py:642`, `S/references/v2_planning.py:174/:239/:295/:366/:550`,
-`S/core/jobs.py:478` (`claim`), and the §4 call-site pins. Where this note cites an A-phase object
+`S/core/jobs.py:478` (`claim`), and the §4 call-site pins. The v0.3 pins add the round-2 anchors,
+verified the same way: `S/qa/continuity_sources.py:112/:127` (the `continuity_expectations` entry
+and the manifest-state early return that precedes the v0.2 helper guards) and
+`S/references/v2_dispatch_context.py:186/:204` (`load_reference_context` and its episode read inside
+the transaction it owns). Where this note cites an A-phase object
 that is specced but not yet merged, the citation names the note section that defines it.
 
 ---
@@ -457,9 +466,15 @@ historical V2 packs are the legacy partition under `v1` seasons, so the reader n
 
 - **`v3`:** select the binding at the episode track's **current `content_revision`** (§2.6 — the
   row at the episode's current fence value), then load the pack by the binding's exact
-  `pack_record_id`/`pack_version`/`pack_sha256` and verify the record's recomputed hash plus the
-  `planning_scope_id` and `episode_number` against the binding. A missing binding or episode row is
-  `NotFound`; a hash or scope mismatch is `Conflict` (the store discipline).
+  `pack_record_id`/`pack_version`/`pack_sha256` and verify the record's recomputed hash. Resolve the
+  expected planning scope through the binding's STORY LOCK approval (via
+  `story_lock_approval_event_id`): its `extension_id`, when present, otherwise its season ID
+  (B1R2-2 — §2.6 stores no `planning_scope_id` column, so the expected scope is derived through the
+  approval, never read off the binding; comparing the pack's `planning_scope_id` with the binding's
+  `season_id` alone would reject extension packs). Verify approval/episode/extension ancestry and
+  range, binding season and episode number, then compare the pack's scope and number. Any mismatch
+  fails without fallback. A missing binding or episode row is `NotFound`; a hash or scope mismatch
+  is `Conflict` (the store discipline). B-T2 tests both season and extension bindings.
 - **`v1`:** explicitly select a **qualifying V2 pack when one exists** (the episode's current
   `EpisodePack` document in `v2_contract_documents`, validated under schema `2.0`; V2 pack reads
   reuse `read_v1_manifest` (`S/contracts/v2.py:1041`) where it applies), **otherwise** the V1
@@ -476,14 +491,18 @@ trio per module and pin exactly one site each — an existing A1 guard, a dispat
 module guard B1 adds). **B1-3: each row pins an exact callable and the transaction/workflow context
 available there** — a `require_workflow` guard needs a transaction, so pure functions over
 already-loaded records are never named as guard sites; they are preserved **behind** an explicitly
-guarded boundary. All callables verified present @ `a34a9ff`:
+guarded boundary. **B1R2-1: guards sit inside entry transactions, before legacy-document reads or
+early returns; entry methods without `tx` open an explicit workflow-check transaction before
+interpretation/effects, and generic persistence entries get an explicit, ancestry-validated scope.**
+All callables verified present @ `a34a9ff`:
 
 | Consumer (phase-B §2.3) | Pinned guard site — exact callable (context) | Class |
 |-------------------------|---------------------------------------------|-------|
 | D: `S/story/directing.py` (`compile_episode_pack` `:101`, `invalidated_shot_ids` `:418`) | the module is **pure** (verified: every callable takes loaded records; no transaction anywhere, and `compile_episode_pack` has no caller in `src/` today) — its only transaction-bearing loaders are A1's guarded story-service compile boundary `compile_season` (`S/story/service.py:473`) / `_claim_episode` (`:733`) / `_persist_success` (`:1321`); the pure compiler stays behind that boundary, and D's single-shot compiler entry takes its own module guard in D's note | existing A1 guard (boundary) |
-| D: `S/references/v2_planning.py` (+ `v2_binding.py`, `v2_dispatch_context.py`) | new module guards at `V2ReferenceRepository`'s transaction-bearing planning entries — `prepare_demands` (`:239`), `persist_generated` (`:295`), `persist_document` (`:366`; the repository holds the db, `:174`). `validate_episode_reference_state` (`:550`) is pure over already-loaded records and stays behind the boundary (no separate guard); the binding/dispatch modules are enumerated separately in the shared fixture (below) | B1 module guard |
-| D: `S/rendering/routing.py` (`ShotRouter` `:262`) | new module guard at `ShotRouter.route_shot` (`:279`) — the routing entry the D compiler calls; it persists its decision durably, so the caller's transaction is available there. `RoutingPolicy` (`:146`) is configuration, not an entry — no guard | B1 module guard |
-| D: `S/qa/continuity_sources.py` | new module guard at the module's transaction-entry readers `_verified_doc` (`:38`) / `_current_script` (`:76`) — both take `tx` | B1 module guard |
+| D: `S/references/v2_planning.py` (+ `v2_binding.py`) | new module guards at `V2ReferenceRepository`'s transaction-bearing planning entries — `prepare_demands` (`:239`), `persist_generated` (`:295`), `persist_document` (`:366`; the repository holds the db, `:174`). The generic persistence entry `persist_document(tx, record)` takes no episode/season parameter of its own, so it is given an **explicit, ancestry-validated scope** (B1R2-1): the caller names the scope the write belongs to, the guard validates the record's ancestry against that scope's track before any write, and a scope that does not ancestry-validate refuses. `validate_episode_reference_state` (`:550`) is pure over already-loaded records and stays behind the boundary (no separate guard); `v2_binding.py` is enumerated separately in the shared fixture (below) | B1 module guard |
+| D: `S/references/v2_dispatch_context.py` | new module guard at `load_reference_context` (`:186`) — it **owns a transaction and directly interprets episode records** (the episode row read at `:204`, then the legacy `_current_doc` loads), so leaving its module without a guard left this entry uncovered (B1R2-1). The guard runs inside that entry transaction, before any legacy-document read | B1 module guard |
+| D: `S/rendering/routing.py` (`ShotRouter` `:262`) | new module guard at `ShotRouter.route_shot` (`:279`) — the routing entry the D compiler calls. `route_shot` has **no caller transaction** (persistence opens a separate transaction later), so this entry without `tx` **opens an explicit workflow-check transaction before interpretation/effects** (B1R2-1). `RoutingPolicy` (`:146`) is configuration, not an entry — no guard | B1 module guard |
+| D: `S/qa/continuity_sources.py` | new module guard at `V2RecordContinuityExpectations.continuity_expectations` (`:112`) — the entry that opens the module's transaction; the guard runs **inside that entry transaction, before legacy-document reads or early returns** (B1R2-1: the manifest-state early return at `:127` fires before either v0.2 helper site, so guarding only `_verified_doc` (`:38`) / `_current_script` (`:76`) left those paths uncovered). The readers stay behind the guarded entry | B1 module guard |
 | E: `S/editing/service.py` (`_claim` `:638`, `_persist` `:994`, `rebuild_caption_outputs` `:226` — A1 §7 inventory) | **existing A1 refusal guards** — B1 adds nothing | existing |
 | E: `S/editing/edl.py` (`build_edl`, `:102`) | `build_edl` is pure over loaded sources (no transaction) — guarded at its transaction-bearing caller `S/editing/service.py assemble_episode` (calls `build_edl` at `:605`): new module guard at `assemble_episode` entry; the builder stays behind it | B1 module guard (service entry) |
 | E: `S/editing/captions.py` (`spot_caption_track`, `:49`) | `spot_caption_track` is pure (no transaction) — guarded at its transaction-bearing caller `S/editing/service.py _execute` (calls it at `:791`): new module guard at `_execute` entry; the variants path `S/editing/variants_service.py _export_hooks` (calls it at `:1845`) is enumerated in the shared fixture's dispatch section with the same refusal | B1 module guard (service entry) |
@@ -501,13 +520,16 @@ phase moves them to the V3 reader.
 
 **Shared fixture (B-T2):** the guard inventory lives in one imported module —
 `X/integration/v3/guard_inventory.py` holds **two enumerations** (B1-3): the entry-point table (A1's
-A-T5 rows + the B1 rows above), and a **separate list of the binding/dispatch modules** that carry
-no module guard of their own — `S/references/v2_binding.py`, `S/references/v2_dispatch_context.py`,
+A-T5 rows + the B1 rows above, `load_reference_context` included), and a **separate list of the
+binding/dispatch modules** that carry no module guard of their own — `S/references/v2_binding.py`,
 the `_export_hooks` caption path (`S/editing/variants_service.py:1845`), and the workers dispatch
-boundary — each asserted reachable only through a guarded entry. A1's `test_discriminator.py` and
-B1's `test_guard_sites.py` both **import** it. No re-edited copy of A1's A-T5; refusals never
-hard-code D/E/F future state (each site asserts only "V3 episode → `WORKFLOW_MISMATCH`; V1 episode
-→ unchanged behaviour").
+boundary — each asserted reachable only through a guarded entry. The fixture **tests direct calls
+with V3 episodes lacking legacy documents, alongside worker paths** (B1R2-1): every entry-table site
+is invoked directly on a V3 episode that has no V1/V2 documents and must still refuse
+`WORKFLOW_MISMATCH` — the refusal comes from the guard, not from document absence. A1's
+`test_discriminator.py` and B1's `test_guard_sites.py` both **import** it. No re-edited copy of A1's
+A-T5; refusals never hard-code D/E/F future state (each site asserts only "V3 episode →
+`WORKFLOW_MISMATCH`; V1 episode → unchanged behaviour").
 
 ## 5. The contract-delta register (D1..D6; C-B1, first-class deliverable)
 
@@ -640,7 +662,7 @@ UPDATE (phase-A §6). Every B1-owned mutation, and every command row §7 pins fo
 | `edit_tier` (B5) | **1** → **2** track FOR UPDATE (owner scope + expected revision under it) → **#4** document version persists (profile; revised demand/critic/binding records) + binding rebuild → `supersede_gate` → one track revision advance → `open_gate` INSERTs — one atomic sequence (§7; B1-8) | conforms — the #4 domain writes precede the activation/revision writes inside the same held-**#2** transaction; no `content_revision` bump |
 | `create_extension` (B5) | **1** → **2** `season_tracks` → **#4** seasons + authorization + `season_extensions` INSERT (A1 0030 table) | conforms |
 | D5 completion seam (B2 ships) | handler's caller transaction: **#2** scope track FOR UPDATE **before** job locks → fence/lease validation → **#4** output persists → **#5** job completion write → continuation/gate creation commits atomically; runtime does not finish again (`S/workers/runtime.py:245/:259`, `S/core/jobs.py:676`) | conforms by construction (phase-B §2.4 D5); the B2 commit-boundary crash case is B-T3's |
-| B1 guard/reader reads (`require_workflow`, `read_episode_story`, registry lookups) | plain reads, no locks | n/a |
+| B1 guard/reader reads (`require_workflow`, `read_episode_story`, registry lookups, and the explicit workflow-check transactions opened at `tx`-less entries — e.g. `route_shot`, B1R2-1) | plain reads, no locks | n/a |
 
 No B1 mutation takes a #6/#7 lock (no provider operations, no budget writes in B1's scope). No
 inversion is introduced: the store never locks a document row before the caller's track lock, and
@@ -666,13 +688,18 @@ the claim-boundary skip (§6) takes no lock at all (a candidate filter, A1 §7 c
   enforced); V1/V2 validators unchanged (AST-identical source, as B-T1); every guarded entry point
   from §4 — A1's A-T5 rows **and** the B1 module guards — enumerated through the shared
   `guard_inventory.py` fixture (the entry table **and** the separate binding/dispatch list), each
-  refusing a V3 episode with `WORKFLOW_MISMATCH` while V1 rows pass unchanged; the **direct-SQL DDL
+  refusing a V3 episode with `WORKFLOW_MISMATCH` while V1 rows pass unchanged, **and tested by
+  direct call with V3 episodes lacking legacy documents, alongside worker paths** (B1R2-1); the
+  **direct-SQL DDL
   tests** (B1-1): UPDATE on each frozen `v3_story_documents` column fails, the `current` flip
   succeeds, and INSERTs with a missing, null or non-string `schema_version` fail; the
   **schema-classification assertions** (B1-2): no `v3_story` model or example appears under V1/V2;
   the **reader selection tests** (B1-4): `v3` resolves through the current-`content_revision`
-  binding with exact pack ID/version/hash and scope/episode-number verification, `v1` prefers a
-  qualifying V2 pack over the V1 pair, and a corrupt selected V2/V3 record fails without fallback;
+  binding with exact pack ID/version/hash verification and the §4 scope/episode-number check — the
+  expected scope resolved through the STORY LOCK approval (`extension_id` when present, otherwise
+  the season ID), approval/episode/extension ancestry and range verified, **tested against both
+  season and extension bindings** (B1R2-2); `v1` prefers a qualifying V2 pack over the V1 pair, and
+  a corrupt selected V2/V3 record fails without fallback;
   the **claim-availability tests** (B1-11): an unavailable head candidate followed by runnable work
   claims, the skipped job's attempts/events are unchanged, and the job claims after its handler is
   installed.
@@ -731,6 +758,9 @@ PB-9 (§2.3); PB-10 (§2.6); PB5-5 (§2.3); PB-14's storage side (§7); O-B1..O-
 **Round-1 critique map (v0.2 — all 12 ACCEPTED per `b1-critique-rulings.md`):** B1-1 → §1/§2.2 +
 B-T2; B1-2 → §2.3 + B-T2; B1-3 → §4; B1-4 → §4 + B-T2; B1-5 → §7/§8; B1-6 → §2.4/§6 + B-T3; B1-7 →
 §5 D2; B1-8 → §7/§8; B1-9 → §2.2/§2.3/§3; B1-10 → §5 D6/§7; B1-11 → §6 + B-T2; B1-12 → §2.5.
+
+**Round-2 critique map (v0.3 — both ACCEPTED per `b1-recritique-rulings.md`):** B1R2-1 → §4 intro +
+guard table + shared fixture + §8 read row + B-T2; B1R2-2 → §4 `v3` selection + B-T2.
 
 **Requirement coverage (phase-B §14):** R-1.2/R-2.1/R-2.2/R-3.2/R-3.3 record shapes (§2); R-3.1
 (no `scoped_map_only`, §3); R-2.3 ledger sibling (§2.3). B1 gates no R-ID end to end — the R-IDs
