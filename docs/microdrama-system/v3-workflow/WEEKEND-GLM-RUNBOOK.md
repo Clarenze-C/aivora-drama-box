@@ -456,6 +456,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   r5a-flag/r5b-boot + r5d-prepare/r5f-billing — matches claims). **Full gate running** at pinned
   `6bcdbfa` (`t031-gate-r5` checkout, unit `dramabox-t031r5-gate`). R5 now waits on the Codex review
   (running) + gate. Running: a0d-fix2 + phase-e-goldfish + r5-review + the gate.
+- 14 Nov 11:2?Z (GLM): **R5 review round 1 = FIX-REQUIRED** (R5V-1..4 BLOCKING — resume boot
+  timing, +3 per report; R5V-5..10 SF). All 10 ACCEPTED (`r5-review-rulings.md`); fix brief
+  `r5-fix1-brief.md` written — **launches when a GLM build slot frees** (a0d-fix2 holds it; one-build
+  rule). Running: a0d-fix2 + phase-e-goldfish + the t031 gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
