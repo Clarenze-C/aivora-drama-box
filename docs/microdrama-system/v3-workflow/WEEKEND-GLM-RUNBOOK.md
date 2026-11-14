@@ -350,6 +350,13 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 02:12Z (GLM): **phase F v0.4 committed** (`2a0b01c`, 1100 lines, 7/7 round-2 rulings,
   none BLOCKED — F's spec chain complete pending Monday's Opus call). Launched `a3-note-rev2` (docs).
   Running: r5-build + a3-note-rev2. Docs queue last: a6b-note-rev2. Codex idle.
+- 14 Nov 07:40Z (GLM, operator-observed gap): both 02:19Z exit-75s (r5-build quota-hit at 2h33m,
+  a3-note-rev2 at 8m) went unhandled — the session was dormant and the retry at the ~05:14Z z.ai reset
+  never fired. **~2h20m of open quota lost; cause noted, fix: every tick now always re-arms a wakeup,
+  and exit-75 handling schedules the retry explicitly.** Recovery done: A3 v1.2 edit was complete
+  (killed between edit and commit) → committed by orchestrator `43806c8`; **r5-build relaunched**
+  (resumes: R5b+R5c committed at `b6d3b48`; R5a image rebuild was disk-blocked, 6G free now);
+  **a6b-note-rev2 launched** (last docs job). z.ai 1%, Codex 0%/25%.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
