@@ -343,6 +343,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   ruling row — it applied it as the direct test obligation of the accepted findings; **GLM ratifies
   that application** (strengthens only; Opus can strike §9's additions Monday with a two-line revert).
   Launched `f-spec-v04` (docs). Running: r5-build + f-spec-v04. Docs queue next: a3-note-rev2 (last).
+- 14 Nov 02:07Z (GLM): **A6b round 2 = REWORK** (7/12 closed; N6R2-1/2 BLOCKING recovery gaps,
+  N6R2-3..5 SHOULD-FIX). Rule 7 → all 5 ACCEPTED, applied as **v1.2** (brief `a6b-note-rev2-brief.md`,
+  queued last), **no round 3**; Opus decides Monday (queued). Running: r5-build + f-spec-v04; Codex
+  idle. Docs queue: a3-note-rev2 → a6b-note-rev2.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -390,3 +394,5 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - A3 note: round 2 REWORK (4 BLOCKING remain: recovery-path reachability vs the real jobs/states
   code, the paid-operation lock order, + 2 more per the report). GLM applied all round-2 rulings as
   v1.2, no round 3 (rule 7). Monday: Opus re-checks `a3-recritique-rulings.md`; accept v1.2 vs round 3.
+- A6b note: round 2 REWORK after 7/12 closed (2 BLOCKING recovery gaps remain). GLM applied all
+  round-2 rulings as v1.2, no round 3 (rule 7). Monday: Opus re-checks `a6b-recritique-rulings.md`.
