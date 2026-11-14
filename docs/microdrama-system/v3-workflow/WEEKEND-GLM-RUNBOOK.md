@@ -469,6 +469,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   builder's identical make check passed 275 green solo. **Gate reruns SOLO after a0d-fix2 exits**
   (receipts kept). Disk trend noted: 6.0G→4.3G today — the RR-T3 image rebuild (12G) is further away,
   not closer.
+- 14 Nov 12:08Z (GLM): **phase E v0.2 committed** (`c04366f`, 653 lines, 65/65 applied, none
+  BLOCKED). **E Codex critique round 1 launched** (`phase-e-critique`). Running: a0d-fix2 (build) +
+  phase-e-critique (Codex 1/2). Queue: t031 solo gate rerun + r5-fix1 after a0d-fix2; A1 one-more-cycle
+  ask still open.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
