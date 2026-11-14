@@ -1,11 +1,14 @@
-# Phase F spec — release: metadata, Gate 2, teaser, calendar, slots, amendment integration (v0.3 DRAFT)
+# Phase F spec — release: metadata, Gate 2, teaser, calendar, slots, amendment integration (v0.4 DRAFT)
 
-Status: **DRAFT v0.3**, 13 Nov 2026, GLM. Codex round-1 critique applied per
-`phase-f-critique-rulings.md` (PF-1..17, **all 17 ACCEPTED**; findings and replacement wording in
-`codex-phase-f-critique.md`; PF-9 = first option). Prior: Goldfish rulings per
-`phase-f-goldfish-rulings.md` (all ACCEPTED; findings and Stage-8 resolutions in
-`phase-f-review/consolidated_review_report.md` — 4 Blocker / 33 Major / 36 Nit) applied as v0.2.
-Next: the round-2 Codex critique (F has one round left under rule 7). Binding inputs:
+Status: **DRAFT v0.4**, 13 Nov 2026, GLM. Codex round-2 recritique applied per
+`phase-f-recritique-rulings.md` (PF5-1..7, **all 7 ACCEPTED**; findings and replacement wording in
+`codex-phase-f-recritique.md`; verdict REWORK — 9/17 CLOSED, 8 PARTIAL). **Round-2 rulings applied
+(GLM); awaiting Opus re-check — no round 3 run** (rule 7: round 2 was the last this weekend).
+Prior: round-1 critique applied per `phase-f-critique-rulings.md` (PF-1..17, **all 17 ACCEPTED**;
+PF-9 = first option) as v0.3; Goldfish rulings per `phase-f-goldfish-rulings.md` (all ACCEPTED;
+findings and Stage-8 resolutions in `phase-f-review/consolidated_review_report.md` — 4 Blocker /
+33 Major / 36 Nit) applied as v0.2. Next: Opus re-check of v0.4's round-2 rulings (queued).
+Binding inputs:
 `SPEC-v3.md` v0.4.6 (§4.8–4.10, §9, §12.6, §15.1–15.2; V3C-26 — SPEC §4.3; O-8/N35 — SPEC
 §9.2 + §19.1; N11 — SPEC §9.2; O-3/O-6/O-7 — SPEC §19.1), `DECISIONS.md`
 (Q6, line 61), `phase-A-spec.md` v0.3, `phase-B-spec.md` v0.4, `phase-A0-spec.md` v0.4,
@@ -60,7 +63,10 @@ assembles from (E's — the deterministic assembly seam itself already exists, `
 1. **V1/V2 never change** (B §1.1 / C §1.1 rule). V3 release code lives in new modules
    `S/release_v3/`. Today's publishing machinery is **reused, not forked — through
    version-selected adapters** (PF-1): F supplies the V3 adapters for **scheduling, command
-   construction, submit, poll/reconcile, recovery and release views**. V3 transitions use
+   construction, submit, poll/reconcile, recovery and release views**, and **registers distinct V3
+   submit/poll/reconcile job types with A's work scope (PF5-1)** — the routed V3 lifecycle is
+   complete: W13 discovers admitted V3 posts needing poll, reconciliation or authorized retry
+   independently of its admission window (§7.1), and **W09 remains legacy-only**. V3 transitions use
    `episode_tracks`; legacy episode state remains pinned (`PLANNED` — A §1). Shared transport
    and persistence primitives are reused beneath those adapters — `metadata_versions`,
    `platform_posts`, `approval_events`, `approved_slot_metadata`, `release_approval_manifests`
@@ -111,15 +117,16 @@ assembles from (E's — the deterministic assembly seam itself already exists, `
    the teaser approval is missing/stale. Reject LAUNCH leaves the release track at
    `CALENDAR_PROPOSED` without launch authority; the planning track is untouched (A §2.2).
 6. **Gate 2 records content authority independently of allocation; allocation binds everything
-   already approved** (PF-12, correcting v0.2's two-writer split; N21 — SPEC §4.9). The Gate 2
-   (or `TEASER_FINAL`) APPROVE handler always records the approval→episode content binding on
-   `release_slot_identities.bound_approval_event_id`, whether or not the identities exist yet.
-   LAUNCH's allocation step then binds **every already-approved in-scope episode** — the teaser
-   and *all* episodes holding current Gate 2 approvals, not only the first five (episodes 6+
-   approved before LAUNCH bind at LAUNCH; their later renewals re-bind). After LAUNCH, every
-   subsequent effective approval refreshes the affected content bindings — later-episode first
-   approvals, **renewed approvals for episodes 1–5, and teaser replacements** — without rerunning
-   LAUNCH. One record shape; the writers are the decision handlers themselves (Gate 2,
+   already approved** (PF-12, correcting v0.2's two-writer split; N21 — SPEC §4.9). **Before
+   allocation, content authority remains discoverable through the decided activation, approval
+   and package (PF5-5)** — no identity row exists yet and none is written: pre-allocation
+   authority lives on the decision side (the activation-bound approval event + package hash).
+   **Allocation resolves and binds every effective in-scope approval** — the teaser and *all*
+   episodes holding current Gate 2 approvals, not only the first five (episodes 6+ approved
+   before LAUNCH bind at LAUNCH; their later renewals re-bind). **After allocation, approval
+   handlers refresh existing identity bindings** (`bound_approval_event_id`) — later-episode
+   first approvals, **renewed approvals for episodes 1–5, and teaser replacements** — without
+   rerunning LAUNCH. One record shape; the writers are the decision handlers themselves (Gate 2,
    `TEASER_FINAL`, extension approval), with LAUNCH as the bulk initial writer at allocation.
 7. **A draft is not an approval.** Metadata drafts and thumbnail picks exist **before** the Gate 2
    activation opens; they carry no release authority of any kind. The sealed manifest equals the
@@ -147,8 +154,9 @@ assembles from (E's — the deterministic assembly seam itself already exists, `
    route-gated workflow, never a second submit. Until O-8 is ruled, F5 stays conditionally
    blocked and no delivery code ships.
 10. **HELD / MISSED / PARTIAL are derived, per-destination episode-release states** (SPEC §2.2
-    cites N43), computed from three inputs — `platform_posts` rows, `publication_admissions` and
-    the calendar — never stored side state (AR-4; §7.4 names its provenance). The stored per-slot
+    cites N43), computed from operation/linkage evidence (`provider_ops`), `platform_posts` rows,
+    `publication_admissions` and the calendar — never stored side state (AR-4; §7.4 names its
+    provenance; PF5-6). The stored per-slot
     states stay today's enum (`M/0005:51-52`, verified: no PARTIAL/MISSED — FM §5). Definitions
     in §7.4.
 11. **A post is never duplicated.** The existing invariants carry over unchanged: unique external
@@ -159,20 +167,25 @@ assembles from (E's — the deterministic assembly seam itself already exists, `
 12. **Reschedule is calendar authority, not an amendment.** It changes dates, not content: it
     appends a new calendar revision (§1.3), rebuilds **date-bearing content** (CTA/recap copy
     that names dates, SPEC §4.7:460-461; teaser instants), **updates the date columns in place**
-    on un-submitted V3 `platform_posts` rows (§1.4), **re-binds every not-yet-admitted slot
-    identity** to the new revision (§8.1), and **fences or replaces obsolete queued commands
+    on un-submitted V3 `platform_posts` rows (§1.4), **re-binds every moved slot identity —
+    never-admitted and admitted-pre-begin alike — to the new revision, atomically with their date
+    projections and replacement commands** (§8.1 — PF5-3), and **fences or replaces obsolete queued commands
     atomically** — checking operation history/linkage, not post state alone (§7.1.2 — PF-6). It
     never touches published media, never supersedes a
     content approval by itself, and shares the Confirm-with-impact-hash shape of A §7.3. Content
     that must materially change still goes through Gate 2 (renewed approval, SPEC §9.2 item 6).
-13. **Amendments fence publication at release admission.** Release admission re-validates, in one
-    transaction and in A's §6 lock order: the content fence (the effective approval's
-    activation-bound `content_revision` vs the scope's current — §7.1 item 1, never
-    `approval_events.expected_revision` — PF-2), the effective
+13. **Amendments fence publication at release admission and at the submit barrier.** Release
+    admission re-validates, in one transaction and in A's §6 lock order: the content fence (the
+    effective approval's activation-bound `content_revision` vs the scope's current — §7.1 item 1,
+    never `approval_events.expected_revision` — PF-2), the effective
     approval, the manifest↔current-metadata equality (FM §2 live binding), **and** the calendar
     revision. (§7.1 enumerates the six admission checks authoritatively; this item states the
-    principle.) An amendment applied anywhere between validation and submit is impossible because
-    the track SHARE lock is held through the mutation (A §7.1). A submission already past
+    principle.) **Admission and submit are separate fenced transactions (PF5-3):** admission
+    commits before the worker submits, so an amendment landing between them is caught by the
+    submit adapter's before-begin revalidation under A's §6 lock order — final validation compares
+    the command's revision and instant with the authorized calendar binding under locks held
+    through `provider_ops.begin` (§7.1.2) — and past-begin attempts retain their recorded request
+    and reconcile. A submission already past
     `provider_ops.begin` when an amendment applies is handled by A §7.3 invalidation + the
     existing reconcile; if it published, it stays published (immutable), its approval is
     superseded so **changed artifacts cannot follow it**, and the only remedies are the existing
@@ -213,7 +226,7 @@ version)`, one `current` row, hash re-verified on read, `contract_type` allowlis
 | `F-1` | **`v3_release_documents`** | the release document store above; guarded |
 | `F-2` | **`metadata_drafts`** + **`metadata_draft_versions`** (committed — CON-M15; the `metadata_versions` reuse option is dropped as non-viable: its `platform_post_id` is NOT NULL, `M/0005:85`, and drafts exist pre-post) | `metadata_drafts`: `season_id`, `target_kind` (`EPISODE` \| `TEASER`), `episode_id` **nullable** (NULL iff `TEASER` — the teaser key shape, CON-N9), `slot_key` (destination-scoped: platform + locale + `release_slot` name), `state` (`PREFILLING`/`DRAFT`/`SEALED`/`SUPERSEDED`; a projection — §2.1), `draft jsonb` (typed `MetadataDraftV3`: TH title/caption/description/hashtags/CTA + optional EN/ZH fields + the deterministic disclosure text ref), `prefill_job_id`, `calendar_revision` (the revision the CTA/date text was resolved against), `sealed_manifest_hash` nullable, `sealed_at`; `UNIQUE NULLS NOT DISTINCT (season_id, target_kind, episode_id, slot_key)`. `metadata_draft_versions`: `draft_id`, `version`, `draft jsonb`, `editor_session`, `created_at` (append-only); guarded |
 | `F-3` | **C picks-engine extension — no new tables** (CON-M6; §2.2 FD1) | `cast_pick_items.pick_kind` gains `THUMBNAIL` (item key `thumb:ep:<episode_number>` / `thumb:teaser`; `selection_mode HUMAN_PICK`); candidates are the generated variant **assets**; `cast_pick_votes.candidate_kind` gains `ASSET`. **Each candidate persists, per candidate (PF-14):** the exact asset id/version/sha256, the **source pack/cast/content bindings it was generated from**, and its `inspection_ref` (C §9 output-inspection evidence). Voting semantics are C §4's unchanged — **voting only selects**: a vote can never make a stale candidate current (a candidate generated from an obsolete pack/cast binding stays stale until regenerated and re-selected — §3.3). **Consumer scope:** THUMBNAIL items exist only for release picks (explicit consumer scope); they never enter CAST LOCK membership (C §8) or cast forecasts (C §3) — the C-side register entry carries that exclusion |
-| `F-4` | **`release_slot_identities`** | `season_id`, `episode_number` (0 = teaser carrier), `platform`, `locale`, `account_ref`, `release_slot` name, `dedupe_key` (computed exactly as `ReleaseSlotKey.canonical_hash`, `S/contracts/release.py:74-76`, verified), `calendar_revision_allocated`, `bound_approval_event_id` nullable, `bound_calendar_revision` nullable, `platform_post_id` nullable (**set once, at release admission; never cleared** — reschedule updates the row's date columns in place, §1.4, so the pointer never moves); `UNIQUE (season_id, episode_number, platform, locale, account_ref, release_slot)`; `dedupe_key UNIQUE`; guarded, no-delete |
+| `F-4` | **`release_slot_identities`** | `season_id`, `episode_number` (0 = the teaser's **logical** carrier key — pinned onto the guarded carrier episode through the V3 carrier adapter only, §2.2 FD7(a)/§5(a) — PF5-2; never legacy-writable), `platform`, `locale`, `account_ref`, `release_slot` name, `dedupe_key` (computed exactly as `ReleaseSlotKey.canonical_hash`, `S/contracts/release.py:74-76`, verified), `calendar_revision_allocated`, `bound_approval_event_id` nullable, `bound_calendar_revision` nullable, `platform_post_id` nullable (**set once, at release admission; never cleared** — reschedule updates the row's date columns in place, §1.4, so the pointer never moves); `UNIQUE (season_id, episode_number, platform, locale, account_ref, release_slot)`; `dedupe_key UNIQUE`; guarded, no-delete |
 | `F-5` | **`publication_admissions`** (append-only) | one row per release-admission decision: `slot_identity_id`, `calendar_revision`, `content_revision`, `approval_event_id`, `manifest_hash`, `admitted_at`, `outcome` (`CREATED_POST`/`REFUSED` + typed reason); the audit trail behind §7 and V3-AT-30 |
 | `F-6` | **`release_throughput_observations`** | `season_id`, `interval_start_utc`/`interval_end_utc` (**explicit closed, non-overlapping interval** — PF-17; default the 24 h ending at each 19:05 Asia/Bangkok trigger; `UNIQUE (season_id, interval_start_utc)` makes writes idempotent and late ticks a backfill), `approved_episodes` (episodes whose **first** Gate 2 APPROVE fell inside the interval — CON-M29), `released_episodes` (episodes reaching all-required-destinations verified inside the interval), `buffer_days` (§6.3), `cost_to_date`; written by the throughput schedule (§9); append-only. **Rolling aggregates (sustained 7-day rate, catch-up) are derived on read from complete intervals only, never stored** (AR-4 — CON-N3) |
 | `F-7` | **`corrective_posts`** | `season_id`, `carrier_episode_id` (each decision's own carrier — §8.3), `trigger_kind` (`RESCHEDULE_N11`), `calendar_revision_pair`, `inaccurate_cta_refs jsonb` (the published posts whose CTA text the change made inaccurate), `decision` (`PROPOSED`/`APPROVED`/`POSTED`/`DECLINED`), approval refs; append-only decisions |
@@ -244,7 +257,7 @@ vocabulary **before the F1 note is accepted**:
 | FD4 | `CapabilityLimits` gains nullable `max_title_chars` / `max_hashtags` (§1.16) | the release contracts (`S/contracts/release.py:469-475` — neither exists today, verified) | contracts bump in package F1; capability records pin per destination |
 | FD5 | **Gate-2 Revise typed targeting as a compatible extension of A's Gate 2 feedback contract (PF-9, ruling = first option).** A's contract is retained unchanged: EPISODE_FINAL REVISE carries timecoded feedback and season notes stay prohibited (A §2; A1 §4 — identical in both versions). `RevisionTargetKind` gains `METADATA`/`THUMBNAIL`; the V3 REVISE command carries timecoded feedback **plus** a typed target payload routing "regen noted units only" (§4) | A1's `RevisionTargetKind` (C's CD3 grew it for `PICK`), A1 §4's feedback validators and the 0030 deferred notes trigger (episode Gate 2 never writes `season_revision_notes`) | F-owned migration mirroring B's D2 / C's CD3, **registered as an explicit compatible extension**: feedback validation untouched; the typed target is additive and refused where A's contract would be violated. V1/V2 unchanged. Test: real JSON/HTML feedback submission + typed target commits in one transaction (F-T5) |
 | FD6 | **V3 release-scope obligations vs resolved calendar instants (PF-5).** The V3 slot-plan shape separates the hashed content obligation (slot identity, kind, asset, dependencies, disclosures, caption tracks) from the resolved calendar instant; the V3 command builder resolves the schedule from the current authorized calendar binding and checks it against the post projection (§1.4, §7.1.1) | the release contracts' dated plans + package/scope hashes (`S/contracts/release.py:280,335-355`; `publication_command_for_post` reads `plan.schedule` — `S/publishing/commands.py:154`) | contracts bump in package F1 (the V3 scope shape omits the mutable instant from the hashed obligation); the V3 command-construction adapter (§1.1) supplies the resolved instant. **Legacy dated packages and hashes retain their existing interpretation**; V1/V2 unchanged |
-| FD7 | **The carrier as an explicit V3 contract crossing (PF-3).** Registered components: (a) guarded carrier identity/numbering; (b) season-gate→carrier-package binding; (c) manifest resolution; (d) catalog policy; (e) corrective-post authority | `episodes.episode_number >= 1` CHECK (`M/0002:62`); `ReleasePackage.episode_number` PositiveInt (`S/contracts/release.py:271`); A1's season-gate command (no `episode_id` on `TEASER_FINAL`) vs the manifest/live loaders requiring approval entity = carrier episode (`M/0021:61-62`; `S/publishing/metadata.py:177-180`); live submit's current-membership-catalog check (`S/publishing/service.py:502-513`) | F-owned guarded migration + version-aware validation in F's range (package F5): carrier rows are admitted **only** through the V3 carrier adapter, which preserves the V1/V2 constraints (a legacy attempt at carrier numbering still fails its CHECKs); the adapter resolves the season-gate decision onto the carrier package the manifest loaders require and supplies the carrier's catalog policy; N11 corrective carriers bind the corrective decision event as content authority (§8.3). **F-T6 exercises the real typed and SQL paths** (§5) |
+| FD7 | **The carrier as an explicit V3 contract crossing (PF-3).** Registered components: (a) guarded carrier identity/numbering — **pinned, incl. the logical-0 mapping (PF5-2)**; (b) season-decision→carrier-package/manifest binding — **the approval entity stays season-scoped (PF5-2)**; (c) manifest resolution; (d) catalog policy; (e) corrective-post authority — **N11's required approval/manifest binding defined (PF5-2)** | `episodes.episode_number >= 1` CHECK (`M/0002:62`); `ReleasePackage.episode_number` PositiveInt (`S/contracts/release.py:271`); A1's season-gate command (no `episode_id` on `TEASER_FINAL`) vs the manifest/live loaders requiring approval entity = carrier episode (`M/0021:61-62`; `S/publishing/metadata.py:177-180`); live submit's current-membership-catalog check (`S/publishing/service.py:502-513`) | F-owned guarded migration + version-aware validation in F's range (package F5): carrier rows are admitted **only** through the V3 carrier adapter, which preserves the V1/V2 constraints (a legacy attempt at carrier numbering still fails its CHECKs); the carrier numbering/mapping is pinned (logical episode number 0 → the guarded carrier namespace, §5(a)) and F **persists an explicit season-decision→carrier-package/manifest binding validated by a V3 branch of the SQL trigger and loaders — the legacy branch remains unchanged (PF5-2)**; the carrier's catalog policy is its own (never membership-episode semantics); N11 corrective carriers bind the corrective decision event as approval reference + the decision's sealed posted-content manifest as manifest reference (§8.3). **F-T6 exercises the real typed and SQL paths** (§5) |
 
 **Standing rule (C-B1 for F):** any further F identifier that crosses an A/B/C enforced contract
 (enum, CHECK, trigger, validator) is added to this register and checked before the F1 note is
@@ -354,9 +367,11 @@ it.)
 - **What changes for V3:** (a) the form is **prefilled from `metadata_drafts`** (V3-AT-11) — the
   sealed `ApprovedSlotMetadata` per slot is the edited draft, verbatim; (b) **the thumbnail pick
   is a blocker** (§3.2); (c) the handler records the **content binding** — content authority
-  independent of allocation (§1.6): first approvals for later episodes, renewals for episodes
-  1–5, and teaser replacements all (re)bind their identities — plus the calendar-revision
-  dependency of the sealed CTA; (d) recaps/CTA previews and costs join
+  independent of allocation (§1.6): **pre-allocation approvals stay discoverable through the
+  decided activation, approval and package until LAUNCH's allocation binds them; after
+  allocation**, first approvals for later episodes, renewals for episodes
+  1–5, and teaser replacements all refresh their (existing) identity bindings — plus the
+  calendar-revision dependency of the sealed CTA; (d) recaps/CTA previews and costs join
   the existing page (SPEC §4.9); (e) **Revise retains A's Gate 2 feedback contract and adds
   typed targeting through an explicitly registered compatible extension (PF-9 — §2.2 FD5).**
   The V3 EPISODE_FINAL REVISE command carries **timecoded feedback** exactly as A §2 / A1 §4
@@ -392,29 +407,44 @@ it.)
   — `episodes.episode_number >= 1` is enforced (`M/0002:62`) and `ReleasePackage.episode_number`
   is `PositiveInt` (`S/contracts/release.py:271`) — so the carrier is registered as an **explicit
   V3 contract crossing** whose components are (§2.2 FD7): **(a) guarded carrier
-  identity/numbering** — the F5 design note pins the reserved season-scoped carrier
-  namespace/numbering, admitted **only** through the V3 carrier adapter with version-aware
-  validation that preserves the enforced V1/V2 constraints (a legacy writer attempting carrier
-  numbering fails exactly as today); **(b) season-gate→carrier-package binding** — `TEASER_FINAL`
-  is a season gate through A's decision transaction (A1's command carries no `episode_id`), and
-  the V3 binding adapter resolves that season decision onto the carrier episode/package the
-  manifest and live loaders require (approval entity = carrier episode — `M/0021:61-62`;
-  `S/publishing/metadata.py:177-180`); **(c) manifest resolution** — `TEASER_FINAL` joins
+  identity/numbering — pinned (PF5-2)** — F's V3 contracts key the teaser carrier **logically**
+  as episode number 0 (F-4), and the F5 design note pins the **mapping** of that logical key onto
+  the reserved season-scoped carrier episode namespace, admitted **only** through the V3 carrier
+  adapter with version-aware validation that preserves the enforced V1/V2 constraints (a legacy
+  writer attempting carrier numbering fails exactly as today); **(b)
+  season-decision→carrier-package/manifest binding (PF5-2)** — `TEASER_FINAL`
+  is a season gate through A's decision transaction (A1's command carries no `episode_id`) and
+  **the approval entity stays season-scoped**; F **persists an explicit
+  season-decision→carrier-package/manifest binding** (the season approval event → the carrier
+  package and its sealed manifest), and a **V3 branch of the SQL trigger and the manifest/live
+  loaders** (`M/0021:61-62`; `S/publishing/metadata.py:177-180`) validates that binding,
+  resolving the carrier-episode lookup those paths enforce — **the legacy branch remains
+  unchanged** (a V1/V2 row never sees a season-scoped approval);
+  **(c) manifest resolution** — `TEASER_FINAL` joins
   `GateType` (§2.2 FD3) and the `md_gate2_manifest_binding` trigger's allowlist grows it in F's
   guarded range (V1/V2 bindings unchanged — F-T11), so the teaser seals a manifest exactly as an
   episode does and §7.1's checks read identically for the carrier; **(d) catalog policy** — the
   V3 command builder supplies the carrier's catalog policy (live submit's
   current-membership-catalog check, `S/publishing/service.py:502-513`, treats a carrier by its
-  own policy, not as a membership episode); **(e) corrective-post authority** — N11 corrective
+  own policy, not as a membership episode); **(e) corrective-post authority — approval/manifest
+  binding defined (PF5-2)** — N11 corrective
   posts use the same carrier pattern: each decision's own carrier (recorded in
   `corrective_posts.carrier_episode_id`, F-7) carries its slot identities (fixed `corrective`
   release-slot name never collides) and binds the **corrective decision event as content
-  authority plus the decision's posting instant** — no calendar obligation, no Gate 2 (§8.3).
+  authority plus the decision's posting instant**; its **required approval/manifest references
+  are defined: the corrective decision event is the approval reference and the decision's sealed
+  posted-content manifest is the manifest reference, both validated by the same V3
+  trigger/loader branch as (b)**; its **catalog policy** follows the corrective route's own
+  qualified capability (O-F5), never membership-episode semantics — no calendar obligation, no
+  Gate 2 (§8.3).
   **F-T6 exercises these real typed and SQL paths** — carrier creation through the guarded
-  adapter, season-gate binding, manifest bind and catalog policy — not a parallel mock.
+  adapter, season-decision→carrier binding (approval entity season-scoped), manifest bind and
+  catalog policy — not a parallel mock.
 - **`TEASER_FINAL`** is a season-scoped gate through A's decision transaction (values from A §2.1;
-  **entity = the season scope** — A1's season-gate command carries no `episode_id`; the V3
-  binding adapter resolves the decision onto the carrier episode/package, §2.2 FD7(b)). It
+  **entity = the season scope** — A1's season-gate command carries no `episode_id`; the
+  persisted season-decision→carrier-package/manifest binding, validated by the V3 trigger/loader
+  branch, carries the season approval onto the carrier — the approval entity itself is never
+  re-scoped, §2.2 FD7(b) — PF5-2). It
   approves teaser *content*: the cut, its metadata drafts, its
   thumbnail pick. It binds nothing calendular — the teaser's slot identities and instant come from
   the calendar revision that LAUNCH binds.
@@ -455,10 +485,12 @@ it.)
   never renumber. **Extension identities are allocated and bound by the extension approval
   handler** (§8.4), never by a re-run LAUNCH (CON-M2).
 - **Binding:** `bound_approval_event_id` + `bound_calendar_revision` are set by the decision
-  handlers — LAUNCH's allocation bulk-binds **every already-approved in-scope episode** (teaser
-  and all episodes with current Gate 2 approvals, not only the first five); after LAUNCH, each
-  effective Gate 2 / `TEASER_FINAL` / extension approval refreshes the bindings it affects
-  (later episodes, initial-five renewals, teaser replacements — §1.6). Release admission
+  handlers — LAUNCH's allocation **resolves and binds every effective in-scope approval** (the
+  teaser and all episodes with current Gate 2 approvals, not only the first five;
+  pre-allocation approvals stay discoverable through the decided activation, approval and
+  package until allocation binds them — §1.6 — PF5-5); after LAUNCH, each
+  effective Gate 2 / `TEASER_FINAL` / extension approval refreshes the **existing** bindings it
+  affects (later episodes, initial-five renewals, teaser replacements — §1.6). Release admission
   requires a current binding whose approval is effective and hash-matches.
 - **Slot matrix per destination:** exactly one full-episode post, TH (SPEC §9.1); EN/ZH as caption
   tracks per the O-8 decision (§1.9, §15 O-F1); disclosures ≥1 with MD-015 mandatory (the existing
@@ -517,11 +549,18 @@ start date).
 A new schedule **`w13-release-admission`** (5 min; registered in A6b's registry — FM §6 lists
 today's 14) discovers due slot identities **inside the permitted dispatch window** (air instant
 in `(now, now + lead]`; the lead is config **`release_admission_lead_seconds`, default 600 s** —
-CON-M28). **A past-air identity is never dispatched by discovery (PF-13):** once the air instant
+CON-M28). **W13's discovery also extends past the admission window for admitted posts (PF5-1):**
+it discovers admitted V3 posts needing **poll, reconciliation or authorized retry** — processing,
+ambiguous (`NEEDS_RECONCILIATION`) and re-armed posts — independently of the dispatch window,
+feeding the distinct V3 poll/reconcile jobs (§1.1, §10). **A past-air identity is never
+dispatched by discovery (PF-13):** once the air instant
 passes without a verified post the destination state is MISSED (§7.4) and the only recoveries
 are an approved reschedule supplying valid calendar authority (§8.1), the §5 teaser repair
 inside its window, or closeout — a blocker clearing after the air instant does not re-open
-dispatch, and queued jobs alone never authorize overdue publication. For each discovered
+dispatch, and queued jobs alone never authorize overdue publication. **The dispatch window is
+enforced again before begin and on retry (PF5-6):** a queued command whose air instant has
+passed is fenced at the before-begin barrier and never executes late (§7.1.2); begun work
+remains owned by reconciliation (§7.4). For each discovered
 identity, under the season track lock:
 
 1. **fence (PF-2):** resolve the effective approval's **decided activation** and compare its
@@ -548,12 +587,15 @@ identity, under the season track lock:
 All hold ⇒ **create the `platform_posts` row** (SCHEDULED, date from the identity's effective
 calendar revision) through **`schedule_release_slot`** — the V3 scheduling adapter's per-slot
 row creation (§7.1.1) — set `platform_post_id` on the identity, append
-`publication_admissions (CREATED_POST)`, and enqueue `publish.submit_slot` **for the V3 submit
-adapter** (§1.1 — the version-selected submit/poll path reusing the shared transport and
+`publication_admissions (CREATED_POST)`, and enqueue the **distinct V3 submit job**
+`release_v3.submit_slot` (§1.1, §10 — registered with A's work scope, PF5-1; the
+version-selected submit path reusing the shared transport and
 persistence primitives, with the §7.1.2 barriers). Any
 refusal ⇒ `publication_admissions (REFUSED, reason)`; the derived state shows the typed cause.
-**`w09` is not modified** — A1 §7's candidate filter keeps V3 rows out of its selection; V3
-submits run through the adapter, never through W09.
+**`w09` is not modified — it remains legacy-only (PF5-1)** — A1 §7's candidate filter keeps V3
+rows (submit **and** poll candidates) out of its selection; V3
+submits, polls and reconciles run through the distinct registered V3 jobs over the adapters,
+never through W09.
 
 #### 7.1.1 The row-creation invariants (one owner — CON-M4; PF-1)
 
@@ -593,18 +635,24 @@ about pre-`begin` state. The V3 submit adapter therefore adds two barriers aroun
 3-phase submit:
 
 - **Before `provider_ops.begin`:** the adapter revalidates, in one transaction and under A's §6
-  lock order, **content authority** (effective approval + hash match), **calendar authority**
-  (the current authorized calendar binding; the resolved instant vs the post projection — §2.2
-  FD6), **cancellation**, and **binding authority** (manifest/live binding where applicable).
-  Any drift ⇒ the command is fenced, never submitted.
+  lock order, **content authority** (effective approval + hash match), **calendar authority** —
+  **final validation compares the command's calendar revision and resolved instant with the
+  current authorized calendar binding under locks held through begin** (the resolved instant vs
+  the post projection — §2.2 FD6 — PF5-3) — **the dispatch window** (re-enforced here and on
+  retry: a queued command whose air instant has passed is fenced and never executes late —
+  PF5-6), **cancellation**, and **binding authority** (manifest/live binding where applicable).
+  Any drift ⇒ the command is fenced, never submitted. **Admission and submit are separate fenced
+  transactions (PF5-3)** — this barrier, not the admission transaction's lock, closes the gap
+  between them.
 - **After begin / before the response transaction:** the outcome transaction reconciles against
   **operation history/linkage** — a reschedule or amendment that landed between the barriers is
   detected from the recorded operations and the post settles per §8.5, never silently adopting a
-  stale date.
+  stale date. **Past-begin attempts retain their recorded request and reconcile (PF5-3).**
 
 **Reschedule cooperates from its side (PF-6):** the apply transaction (§8.1) checks operation
 history/linkage — **not post state alone** — and **fences or replaces obsolete queued commands
-atomically**: queued `publish.submit_slot` commands carrying a superseded calendar revision are
+atomically**: queued V3 submit commands (`release_v3.submit_slot`) carrying a superseded
+calendar revision are
 cancelled and re-enqueued against the new revision inside the same transaction, so a queued
 command can never submit a stale date. Past-`begin` work reconciles (§8.5).
 
@@ -635,7 +683,9 @@ plus the admission-time check).
   fail** (`S/publishing/service.py:101-102`, verified); the V3 **recovery adapter** (§1.1 — PF-1;
   the legacy `retry_held_slot` is guarded against V3 rows by A1 §7) re-checks the destination
   and returns HELD→SCHEDULED only when the checks now pass (`service.py:1060-1068` semantics,
-  reused beneath the adapter). T032 qualifying a held capability flips the capability record;
+  reused beneath the adapter) **and the dispatch window is re-checked on retry (PF5-6)** — a
+  retry whose air instant has passed never re-arms dispatch (the identity is MISSED, §7.4;
+  recovery is §7.1's approved paths). T032 qualifying a held capability flips the capability record;
   the V3 retry then clears against it — no change to the legacy path.
 - **A rejected or unready episode near its air time** (release admission due within the lead
   window — `release_admission_lead_seconds` — with no current Gate 2, an open Revise, or stale
@@ -649,20 +699,26 @@ plus the admission-time check).
 
 ### 7.4 Derived episode-release states (SPEC §2.2 cites N43; AR-4 — phase-A-spec's architecture-rule appendix: side states are derived, never stored)
 
-Computed from three inputs — `platform_posts` rows, `publication_admissions` and the calendar
-(CON-N25) — never stored side state.
+Computed from operation/linkage evidence (`provider_ops`), `platform_posts` rows,
+`publication_admissions` and the calendar (CON-N25) — never stored side state.
 
-**Per-destination states, with precedence (PF-13):** evaluation is exclusive per destination —
-an in-flight post row (SCHEDULED/HELD/SUBMITTED/PROCESSING/NEEDS_RECONCILIATION) claims the
-identity as HELD or UNVERIFIED-PAST-AIR; **only when no in-flight row exists and the air
-instant has passed is the state MISSED** (a past-air identity with a refusal and no post is
-MISSED, never HELD); before the air instant, a refusal is HELD.
+**Per-destination states, with precedence (PF-13, PF5-6):** evaluation is exclusive per
+destination and **derives unresolved external effects from operation/linkage evidence, never row
+state alone** — a post row with **no begun operation** (never-begun SCHEDULED/HELD; existing
+reconciliation refuses exactly those states, `S/publishing/service.py:953`) is not an unresolved
+external effect: past air it is **MISSED**; a row with a **begun operation**
+(SUBMITTED/PROCESSING/NEEDS_RECONCILIATION — operation linkage exists) claims the identity as
+HELD pre-air or **UNVERIFIED-PAST-AIR** past air, owned by reconciliation; a past-air identity
+with a refusal and no post is
+MISSED, never HELD; before the air instant, a refusal is HELD. **The dispatch window is
+re-enforced before begin and on retry (§7.1/§7.1.2 — PF5-6), so a queued command never executes
+past its air instant; begun work remains owned by reconciliation.**
 
 | State | Meaning |
 |---|---|
 | `HELD` | **pre-air:** release admission refused, or the publish slot HELD, with a typed blocker (capability, dependency, teaser, authority) — recoverable held work; retry/repair paths apply |
-| `MISSED` | the air instant passed with no verified post **and no post row in an in-flight state** (SCHEDULED/HELD/SUBMITTED/PROCESSING/NEEDS_RECONCILIATION) — terminal for that obligation: recovery is an **approved reschedule** (new calendar authority, §8.1), the §5 teaser repair inside its window, or closeout; discovery never re-dispatches it (§7.1) and **queued jobs alone do not authorize overdue publication** (CON-N22's no-queued-jobs clause is necessary, not sufficient) |
-| `UNVERIFIED-PAST-AIR` | a post exists and is past its air instant but not yet verified (RETRY_WAIT / NEEDS_RECONCILIATION / poll pending) — display only; reconcile owns it (CON-N11); an **unresolved external effect**, distinct from recoverable HELD work |
+| `MISSED` | the air instant passed with no verified post **and no begun operation** — never-begun SCHEDULED/HELD rows included: row state alone is not operation evidence (PF5-6) — terminal for that obligation: recovery is an **approved reschedule** (new calendar authority, §8.1), the §5 teaser repair inside its window, or closeout; discovery never re-dispatches it (§7.1), **queued jobs alone do not authorize overdue publication**, and the before-begin/retry window check fences any queued command whose instant passed (§7.1.2 — PF5-6; CON-N22's no-queued-jobs clause is necessary, not sufficient) |
+| `UNVERIFIED-PAST-AIR` | a post exists **with a begun operation** and is past its air instant but not yet verified (RETRY_WAIT / NEEDS_RECONCILIATION / poll pending) — display only; reconcile owns it (CON-N11); the **unresolved external effect** state, distinguished from never-begun rows by operation/linkage evidence (PF5-6), distinct from recoverable HELD work |
 
 **Cross-destination aggregate:**
 
@@ -680,7 +736,9 @@ Carried over verbatim from today (FM §5, verified): unique external id per plat
 idempotent client token per (slot, package); 3-phase crash-safe submit with
 `PUBLISH_DEADLINE_MS`/`MAX_SUBMIT_ATTEMPTS`; ambiguous ⇒ `NEEDS_RECONCILIATION`; reconcile adopts
 a found post by external id, or **re-arms only a proven-absent publish slot** (same token,
-capped). F adds no new path; the 30-episode simulation (F-T8) exercises all of them.
+capped). F adds no new path — V3 posts reach poll/reconcile/authorized-retry execution through
+the distinct registered V3 jobs and W13's extended discovery (§7.1 — PF5-1); the 30-episode
+simulation (F-T8) exercises all of them.
 
 ## 8. Reschedule, corrective post, amendment, extension (V3C-26 — SPEC §4.3; V3-AT-30/31)
 
@@ -696,16 +754,22 @@ apply transaction (A §7.3 shape). **Confirm is Apply** (one transaction):
 
 1. append the new calendar revision;
 2. **fence or replace obsolete queued commands atomically (PF-6):** checking operation
-   history/linkage — not post state alone — cancel every queued `publish.submit_slot` command
-   whose calendar revision is superseded and re-enqueue it against the new revision, inside this
+   history/linkage — not post state alone — cancel every queued V3 submit command
+   (`release_v3.submit_slot`) whose calendar revision is superseded and re-enqueue it against
+   the new revision, inside this
    transaction, so no queued command can submit a stale date;
 3. **update the date columns in place** (`scheduled_utc`, `local_time`, `iana_zone`) on every V3
    `platform_posts` row the transaction can lock in SCHEDULED — identity columns (slot identity,
    package, approval, asset, `client_token`) byte-identical (§1.4); rows past
    `provider_ops.begin` are left to settle and surface on the impact screen (§8.5);
-4. **re-bind every not-yet-admitted slot identity** (`platform_post_id IS NULL`) to the new
-   revision — without this, an already-approved later episode could never admit after one
-   reschedule (CON-M2); identities whose obligation and instant the revision leaves
+4. **atomically update the calendar bindings of every moved identity — never-admitted
+   (`platform_post_id IS NULL`) and admitted-pre-begin alike — together with their date
+   projections (step 3) and replacement commands (step 2) (PF5-3):** without this, an
+   already-approved later episode could never admit after one reschedule (CON-M2), and a moved
+   admitted identity would keep a revision no longer equivalent to its instant — the post
+   projection and `bound_calendar_revision` never diverge; final submit-side validation compares
+   the command's revision and resolved instant with this authority under locks held through
+   begin (§7.1.2 — PF5-3); identities whose obligation and instant the revision leaves
    byte-unchanged are simply **carried forward** by the equivalence rule (§8.4);
 5. mark dependent drafts stale where the instants their CTA text names actually changed (§3.3 —
    carry-forward revisions stale nothing).
@@ -731,23 +795,36 @@ until E pins the contract; BLOCKED is reported, never forced. Unchanged publishe
 excluded from the closure.
 
 **Renewed content authority installs through the guarded V3 rebinding operation (PF-7).** For a
-sealed but unaired episode the default and only renewed-approval path is a **metadata-delta
+sealed but unaired episode the default renewed-approval path is a **metadata-delta
 Gate 2 re-approval** (a scoped, low-cost re-approval of the metadata-only delta; the amendment
 coordinator's metadata rebuild branch, SPEC §12.6 item 6, drives it): `metadata_versions` policy
 edits require an existing `platform_posts` row (`M/0005:85`) and the live-binding equality
 refuses any drift from the sealed manifest (FM §1/§2), so nothing else can rebind pre-publication
 (CON-M3). But a renewed approval cannot mutate the admitted row — `release_package_id`,
 `approval_event_id`, media and `client_token` are trigger-immutable once written
-(`M/0005:77-80`) — so the delta re-approval is **installed by `rebind_release_slot` (§12)**:
+(`M/0005:77-80`) — so F **registers a guarded V3 SQL rebinding exception preserving legacy
+immutability (PF5-4)** — the trigger keeps its behavior for every write except the V3 rebinding
+operation's guarded path; V1/V2 and all other V3 writes stay fully immutability-guarded — and
+the re-approval is **installed by `rebind_release_slot` (§12)**:
 
-- **preconditions, all proven before any mutation:** the identity is unpublished — operation
-  history/linkage proves **no external effect** (no `provider_ops.begin` for its post row, or no
-  post row yet); any **begun work is reconciled first** (settled per §8.5); the renewed approval
-  is effective and hash-matches the renewed package;
-- **effect:** the admitted row's package/approval/media references rebind to the renewed
-  authority and the `client_token` re-derives from the renewed package hash — through the V3
-  adapter's guarded write path, preserving **attempt history** (prior admissions and submissions
-  stay in `publication_admissions`/operation history as the audit trail);
+- **preconditions, all proven before any mutation:** the identity is unpublished —
+  operation history/linkage proves **no external effect**: **either no `provider_ops.begin` for
+  its post row (or no post row yet), or definitive reconciled absence — reconcile proved the old
+  execution produced no external post — with the old execution fenced (PF5-4)**; any
+  **unresolved begun work is reconciled first** (settled per §8.5); the renewed approval is
+  **effective and hash-matches the renewed package — an effective episode re-approval (the
+  metadata-delta Gate 2 default above) or a renewed `TEASER_FINAL` for teaser replacement
+  (PF5-4)**;
+- **effect:** **one atomic transaction replaces authority/media, current metadata and queued
+  commands (PF5-4)** — the admitted row's package/approval/media references rebind to the
+  renewed authority, current metadata moves to the renewed sealed manifest, queued V3 submit
+  commands for the identity are replaced against the renewed authority, and the `client_token`
+  re-derives from the renewed package hash with **token/operation linkage specified** (the
+  re-derived token links to the renewed package; operation history records the old→new request
+  linkage) — through the V3 adapter's guarded write path under the registered SQL exception,
+  while **preserving immutable old requests, history and attempt caps** (prior admissions and
+  submissions stay in `publication_admissions`/operation history as the audit trail; caps never
+  reset);
 - **invariants:** **published media remains immutable — a published identity can never rebind**
   (its remedies stay the existing metadata policy edits and the N11 corrective post, §8.3);
   a **date-only UPDATE remains valid where content authority is unchanged** (§1.4) — rebinding
@@ -762,7 +839,12 @@ path on **the decision's own carrier** (§5 — `corrective_posts.carrier_episod
 its own slot identities (`PROMO_CUT`-kind, `corrective` release-slot name) and the same
 verification rules. **Corrective-post authority is explicit (PF-3/§2.2 FD7(e)):** the carrier
 binds the **corrective decision event as content authority** and the decision's posting instant
-as its schedule — no calendar obligation, no Gate 2; admission of a corrective identity checks
+as its schedule; its **required approval/manifest references are defined (PF5-2)** — the
+corrective decision event is the approval reference and the decision's sealed posted-content
+manifest is the manifest reference, both validated by the same V3 trigger/loader branch as the
+teaser binding (§5(b)); its **catalog policy** follows the corrective route's own qualified
+capability (O-F5), never membership-episode semantics (§5(d)) — no calendar obligation, no
+Gate 2; admission of a corrective identity checks
 the decision (effective, unposted-elsewhere) instead of a Gate 2 approval, and the calendar
 check reduces to "the decision is current". Nothing auto-posts.
 
@@ -849,6 +931,7 @@ check reduces to "the decision is current". Nothing auto-posts.
 | `release_v3.make_thumbnails` | C's `image` lane | Nano Banana seam (C §5) | episode scope: EPISODE account, `step_08`; teaser scope: season-setup sub-budget, `step_10` (§1.15 — CON-M7) |
 | `release_v3.teaser_cut` | `release` | none (deterministic assembly of approved artifacts, reusing `S/editing/{edl,export,ffmpeg}.py` — §5) | none |
 | `release_v3.rebuild_dated` | `release` | none | none |
+| `release_v3.submit_slot` / `release_v3.poll_slot` / `release_v3.reconcile_slot` — **the distinct V3 submit/poll/reconcile jobs, registered with A's work scope (PF5-1)**; discovered by W13's admission-window and admitted-post discovery (§7.1) | `release` | the shared submit/poll/reconcile cores beneath the version-selected adapters (§1.1) — never W09 | none |
 | `release_v3.deliver_captions` | `release` | destination caption surface (e.g. YouTube `upload_captions` — FM §9) | none — **conditional on the O-8 ruling (§1.9 — PF-15; package F5, blocked until ruled)**; binds the exact E-produced tracks, reconciles upload outcomes, verifies required languages; failure holds release qualification with retry/reconcile |
 
 **F adds two schedules** to A6b's registry (CON-N8): `w13-release-admission` (5 min; §7.1) and
@@ -893,7 +976,7 @@ here.
 | `decide_corrective_post(ref, decision)` | Operator | season | a proposed N11 row | `corrective_posts` decision; posting via the ordinary path | `release.corrective_decided` | idempotency key | **F** |
 | `decide_extension(windows_read, range, mode)` | Operator | season / `season_tracks.revision` | release RELEASING/COMPLETE; B §8 eligibility | B `create_extension` + calendar revision append + `ExtensionDecisionV3` + extension-identity allocation/binding (§8.4) | `release.extension_decided` | idempotency key | **F** (needs B §8 shipped) |
 | `close_out_episode(episode, reason)` | Operator (human session + CSRF) | season | release track `RELEASING` or later; the episode is not `PUBLISHED_VERIFIED` on any destination; typed reason (`WITHDRAWN_BY_OPERATOR` / `UNAIRABLE`) | appends an `EpisodeCloseoutV3` document (§2); the board shows CLOSED OUT; COMPLETE's predicate counts the episode resolved; successors' `depends_on` on it is treated as resolved (the recorded override) | `release.episode_closed_out` | idempotency key | **F** |
-| `rebind_release_slot(identity, renewed_approval)` | Operator (human session + CSRF) | season / identity | a metadata-delta Gate 2 re-approval is effective and hash-matches the renewed package; the identity is unpublished — operation history/linkage proves **no external effect**; begun work reconciled first (§8.2 — PF-7) | installs the renewed package/approval/media/token on the identity + admitted row through the V3 adapter's guarded write (attempt history preserved; published identities refuse — immutable) | `release.slot_rebound` | idempotency key | **F** |
+| `rebind_release_slot(identity, renewed_approval)` | Operator (human session + CSRF) | season / identity | an **effective episode re-approval (metadata-delta Gate 2 default) or renewed `TEASER_FINAL`** hash-matches the renewed package; the identity is unpublished — **no `provider_ops.begin`, or definitive reconciled absence with the old execution fenced**; unresolved begun work reconciled first (§8.2 — PF-7/PF5-4) | atomically replaces authority/media, current metadata and queued commands on the identity + admitted row through the guarded V3 SQL rebinding exception (token/operation linkage specified; immutable old requests, history and attempt caps preserved; published identities refuse — §8.2) | `release.slot_rebound` | idempotency key | **F** |
 | `retry_slot` / `cancel_slot` | existing | — | existing (`service.py:1045,1060`) | existing — **V3 rows route through the version-selected recovery adapter (§1.1, §7.3 — PF-1); the legacy entry points stay guarded** | existing | existing | today |
 
 ## 13. Build packages (in order; `make check` + V1 `make pilot` green at every gate)
@@ -915,12 +998,12 @@ migration tail (§ header conventions). **Applied migration bytes are never edit
 | Package | Builds | Gate | Design note |
 |---|---|---|---|
 | **F1** | **Create** migrations `F-1..F-8` (§2), the `ReleaseV3Store` (§2) and the contracts bump — `CapabilityLimits` fields (§1.16, FD4), `GateType` values (FD3), pick-engine kinds + per-candidate persistence (FD1), Revise-target compatible extension (FD5), the V3 obligation/instant scope split (FD6); registers FD7 (carrier) in the crossing register for F5 to implement; **Reuse** V1/V2 rows byte-identical (§1.1). **F-T11 at F1 covers schema compatibility; its workflow half re-asserts after each workflow package (PF-16)** | F-T1, F-T11 (schema half) | **Critiqued first** (migrations + the §2.2 crossing register) |
-| **F2** | **Create** the calendar document type, `propose_calendar`, the LAUNCH gate, identity allocation/binding, the buffer rule (§6), the `w13-release-admission` schedule with its dispatch window (§7.1), the season-scoped identity graph (§7.2), the per-slot row-creation variant `schedule_release_slot` (§7.1.1) and the V3 submit/poll adapters with the §7.1.2 barriers; **Reuse** F1's tables — F2's "`publication_admissions`" and calendar mentions are F2's logic over F1's objects, not second creates (CON-M21) | F-T2, F-T3, F-T4 | **Critiqued first** (authority, locks) |
+| **F2** | **Create** the calendar document type, `propose_calendar`, the LAUNCH gate, identity allocation/binding, the buffer rule (§6), the `w13-release-admission` schedule with its dispatch window **and admitted-post poll/reconcile/retry discovery (§7.1 — PF5-1)**, the season-scoped identity graph (§7.2), the per-slot row-creation variant `schedule_release_slot` (§7.1.1) and the distinct V3 submit/poll/reconcile jobs registered with A's work scope (§1.1, §10 — PF5-1) plus the V3 submit/poll adapters with the §7.1.2 barriers; **Reuse** F1's tables — F2's "`publication_admissions`" and calendar mentions are F2's logic over F1's objects, not second creates (CON-M21) | F-T2, F-T3, F-T4 | **Critiqued first** (authority, locks) |
 | **F3** | **Create** metadata drafts — prefill job, edit surface, staleness (§3.1, §3.3) — and thumbnail generation/composite/inspection/pick through C's extended engine (§3.2); **Reuse** C's `image` lane + A0's LLM runtime | F-T14 (+ `make check`) | With the diff |
 | **F4** | **Create** the Gate 2 V3 flow — prefilled form, pick blocker, seal = edited drafts, later-episode slot binding, typed Revise targets (§4); **Reuse** A's decision transaction + the existing manifest path | F-T5, F-T11 | **Critiqued first** (seal transaction) |
 | **F5** | **Create** the teaser — plan, carrier through the guarded V3 carrier adapter + teaser package (§5, §2.2 FD7), cut job (`S/editing` reuse), spoiler check, `TEASER_FINAL`, `PROMO_CUT` identities, premiere gating, recovery options, **and — conditional on the O-8 ruling — the caption delivery + verification workflow (`release_v3.deliver_captions`, §1.9/§10 — PF-15)** | F-T6 | **Blocked** until the O-8 ruling (§1.9) and E acceptance (above) |
 | **F6** | **Create** the derived states (precedence + window, §7.4) + successor holding + near-air bot options + retry/swap/push wiring + the V3 recovery/release-view adapters (§7.2–§7.4, §1.1) | F-T7, F-T8 | With the diff |
-| **F7** | **Create** reschedule (queued-command fencing included — §8.1/§7.1.2) + rebuild + the guarded rebinding operation (`rebind_release_slot`, §8.2) + N11 corrective posts (§8.3); **re-runs the 30-day simulation with recovery execution (F-T8 completion — PF-16)** | F-T9, F-T8 (re-run) | **Critiqued first** (immutability edges) |
+| **F7** | **Create** reschedule (queued-command fencing + **moved admitted identities' atomic re-binding** included — §8.1/§7.1.2, PF5-3) + rebuild + the guarded rebinding operation (`rebind_release_slot` through the registered V3 SQL exception, §8.2 — PF5-4) + N11 corrective posts (§8.3); **re-runs the 30-day simulation with recovery execution (F-T8 completion — PF-16) and re-runs F-T6's teaser repair for the admitted teaser with renewed `TEASER_FINAL` authority + rebinding (PF5-7)** | F-T9, F-T8 (re-run), F-T6 (admitted-teaser repair re-run) | **Critiqued first** (immutability edges) |
 | **F8** | **Create** amendment/extension fences + the A4 `DependencyProvider` registration (edges + rebuild handlers, E-contract edges BLOCKED and reported — §8.2, PF-10) + `ExtensionDecisionV3` + carry-forward/equivalence + viewership windows + the `CONTINUED`/`RESUMED` modes (§8.4–§8.5) | F-T10 | **Critiqued first** (races — V3-AT-30) |
 | **F9** | **Create** throughput counters + Costs/status surfaces + bot alerts (§9) | F-T12 | With the diff |
 | **F10** | **Create** tabs 8–10 + Launch UI (§11) | F-T13 | With the diff |
@@ -934,15 +1017,15 @@ phase F row) — every F package is offline/mock first.
 | Test | Proves |
 |---|---|
 | F-T1 | Given a populated V1+V2 database, applying `F-1..F-8` ⇒ every migration applies; guards + catalog present; applied-migration rows byte-unchanged; generated contracts show zero drift |
-| F-T2 (V3-AT-12; **seeded**) | Seeding: five current Gate-2 approvals produced through **explicit A-compliant test handlers/fixtures driving A's V3 decision transaction** in OFFLINE_MOCK (the legacy Gate-2 service refuses V3 rows — A1 §7; PF-16; stated seeding, not F4's flow). Stimulus: LAUNCH with 4 approved ⇒ typed refusal; with 5 ⇒ LAUNCH proceeds and binds the calendar hash + identities + approval hashes; **allocation binds every already-approved in-scope episode, not only the first five (§1.6 — PF-12)**; the teaser instant lands at premiere − 3 days |
+| F-T2 (V3-AT-12; **seeded**) | Seeding: five current Gate-2 approvals produced through **explicit A-compliant test handlers/fixtures driving A's V3 decision transaction** in OFFLINE_MOCK (the legacy Gate-2 service refuses V3 rows — A1 §7; PF-16; stated seeding, not F4's flow). Stimulus: LAUNCH with 4 approved ⇒ typed refusal; with 5 ⇒ LAUNCH proceeds and binds the calendar hash + identities + approval hashes; **allocation resolves and binds every effective in-scope approval, not only the first five — pre-LAUNCH approvals beyond episode five (episodes 6+ approved before LAUNCH) bind at allocation (§1.6 — PF-12/PF5-5; explicitly asserted — PF5-7)**; the teaser instant lands at premiere − 3 days |
 | F-T3 (**seeded as F-T2**) | Given a LAUNCH-approved season: dispatch attempted without LAUNCH ⇒ refused; with a superseded/stale calendar revision ⇒ refused at release admission; Reject LAUNCH ⇒ release track returns to `CALENDAR_PROPOSED`, planning track untouched. (Reschedule assertions live in F-T9 — CON-B4.) |
 | F-T4 | Each admission check injected in turn (fence mismatch, superseded approval, stale binding, unqualified capability, unmet dependency, caption route unavailable) ⇒ the matching typed refusal; unqualified capability ⇒ HELD, not failed. **Admission comparator (PF-2): a seeded episode whose approval's decision revision ≠ its content revision admits successfully — the comparator reads the activation-bound `content_revision`, never `approval_events.expected_revision`; asserting the wrong pair is shown to fail. Dispatch window (PF-13): a past-air identity is never discovered, even after its blocker clears** |
 | F-T5 (V3-AT-11) | Drafts prefilled from the pack ⇒ the Gate 2 form is prefilled; after edits ⇒ the sealed manifest equals the edited drafts verbatim; Approve with no thumbnail pick ⇒ typed refusal; with a stale pick ⇒ typed refusal; the sealed CTA records its calendar-revision dependency. **Revise extension (PF-9): a real JSON/HTML timecoded-feedback payload + typed target (`metadata`/`thumbnail`) submits and commits in one transaction; a notes-only episode Revise (no feedback) is refused per A's contract** |
-| F-T6 (V3-AT-12) | A cut quoting a later reveal ⇒ the spoiler check blocks `TEASER_FINAL`; episode 1 per destination waits until the teaser verifies; a late teaser ⇒ HELD with repair/reschedule options — **repair proven end-to-end here; the reschedule recovery is staged to F-T9** (here: the option is offered and the hold asserted). **Carrier through the real typed + SQL paths (PF-3/§2.2 FD7):** the teaser's posts exist as ordinary `platform_posts` rows — carrier created through the guarded V3 carrier adapter (a legacy writer attempting carrier numbering still fails the enforced CHECKs), the season-gate decision resolves onto the carrier package, the manifest binds on the carrier episode, and the catalog policy holds (CON-B2) |
-| F-T7 (**seeded**) | Seeding: a held dependency; a passed air instant with no post; one verified + one unverified destination; **a required destination with no post row at all (not yet admitted)**. ⇒ HELD/MISSED/PARTIAL (+ `UNVERIFIED-PAST-AIR`) derived per destination from stored rows only with §7.4's precedence (past-air + no in-flight row ⇒ MISSED, never HELD); successors hold; no stored side state; **the episode stays incomplete while any required identity lacks a verified post, even after another destination verified (PF-11)** |
+| F-T6 (V3-AT-12) | A cut quoting a later reveal ⇒ the spoiler check blocks `TEASER_FINAL`; episode 1 per destination waits until the teaser verifies; a late teaser ⇒ HELD with repair/reschedule options — **repair proven end-to-end for the never-admitted subset here; admitted-teaser repair (renewed `TEASER_FINAL` authority installed through rebinding) is staged to F7 and re-run at its gate, and the reschedule recovery is staged to F-T9** (here: the options are offered and the holds asserted — PF5-7). **Carrier through the real typed + SQL paths (PF-3/§2.2 FD7):** the teaser's posts exist as ordinary `platform_posts` rows — carrier created through the guarded V3 carrier adapter (a legacy writer attempting carrier numbering still fails the enforced CHECKs), the season decision's persisted binding resolves onto the carrier package/manifest (**approval entity season-scoped, validated by the V3 trigger/loader branch — PF5-2**), the manifest binds through that branch, and the catalog policy holds (CON-B2). **Caption delivery, conditional on the O-8 ruling (PF5-7/PF-15):** where a destination's route is `CAPTION_FILES`, `release_v3.deliver_captions` binds the exact E-produced tracks, reconciles upload outcomes and verifies the required languages; a required-language failure holds release qualification with retry/reconcile offered |
+| F-T7 (**seeded**) | Seeding: a held dependency; a passed air instant with no post; one verified + one unverified destination; **a required destination with no post row at all (not yet admitted)**. ⇒ HELD/MISSED/PARTIAL (+ `UNVERIFIED-PAST-AIR`) derived per destination from stored rows **+ operation/linkage evidence** with §7.4's precedence (**past-air + no begun operation ⇒ MISSED, never HELD — a never-begun SCHEDULED/HELD row is MISSED, not an unresolved external effect; begun-but-unverified ⇒ UNVERIFIED-PAST-AIR — PF5-6**); successors hold; no stored side state; **the episode stays incomplete while any required identity lacks a verified post, even after another destination verified (PF-11)** |
 | **F-T8 (V3-AT-29)** | **The 30-episode release simulation — late teaser, rejected episode near air time, zero buffer, partial destination failure, ambiguous publication ⇒ no duplicated post anywhere; re-arm only on proven absence; every recovery offered and operator-approved (push execution itself is F-T9's assertion; here its offer, approval gate and hold — CON-B4). The full simulation re-runs at F7's gate with recovery execution included (PF-16) — the F6 run asserts offers/gates/holds; the F7 re-run completes V3-AT-29** |
-| F-T9 (**seeded**) | Seeding: a launched season mid-RELEASING with to-dispatch, dispatched and published rows. **Two reschedules applied ⇒ still exactly one `platform_posts` row per identity; only the date columns changed; identity columns byte-identical (CON-B1); obsolete queued commands fenced/replaced — none submits a stale date (§7.1.2).** Impact lists published inaccurate CTAs; rebuild rewrites only date-bearing content; published rows/objects untouched; the N11 post decides + posts via the ordinary path; an in-flight submit settles and is surfaced on the impact screen. **Date-only and rebuilt-content paths asserted separately (PF-16/PF-7): the date-only reschedule leaves content authority untouched; a rebuilt-content case re-approves through the metadata-delta Gate 2 and installs via `rebind_release_slot` (no duplicate rows, attempt history preserved)** |
-| **F-T10 (V3-AT-30/31)** | **Races injected — amendment vs F-job completion vs admission vs in-flight submit ⇒ stale results quarantined, old approvals cannot release changed artifacts; the §7.1.2 submit barrier vs a reschedule landing between admission and begin ⇒ the stale command is fenced, never submits a stale date (PF-6); extension during RELEASING and after COMPLETE incl. changed cast ⇒ published hashes + authority intact, and base identities remain admissible under the carry-forward rule with carried-forward drafts not stale (PF-8)** |
+| F-T9 (**seeded**) | Seeding: a launched season mid-RELEASING with to-dispatch, dispatched and published rows. **Two reschedules applied ⇒ still exactly one `platform_posts` row per identity; only the date columns changed; identity columns byte-identical (CON-B1); obsolete queued commands fenced/replaced — none submits a stale date (§7.1.2); moved admitted identities' `bound_calendar_revision` updates atomically with their date projection and replacement command — post row and binding never diverge (PF5-3/PF5-7).** Impact lists published inaccurate CTAs; rebuild rewrites only date-bearing content; published rows/objects untouched; the N11 post decides + posts via the ordinary path; an in-flight submit settles and is surfaced on the impact screen. **Date-only and rebuilt-content paths asserted separately (PF-16/PF-7): the date-only reschedule leaves content authority untouched; a rebuilt-content case re-approves through the metadata-delta Gate 2 and installs via `rebind_release_slot` through the guarded V3 SQL exception (no duplicate rows; immutable old requests, history and attempt caps preserved — PF5-4)** |
+| **F-T10 (V3-AT-30/31)** | **Races injected — amendment vs F-job completion vs admission vs in-flight submit ⇒ stale results quarantined, old approvals cannot release changed artifacts; both §7.1.2 submit barriers tested explicitly (PF5-7): before-begin — a reschedule/amendment landing between admission and begin ⇒ the stale command is fenced, never submits a stale date (PF-6), and the re-enforced dispatch window fences a queued command whose air instant passed (PF5-6); after-begin — a reschedule landing between begin and the response transaction ⇒ detected from operation history/linkage, the recorded request retained, settles per §8.5, never silently adopting a stale date (PF5-3); extension during RELEASING and after COMPLETE incl. changed cast ⇒ published hashes + authority intact, and base identities remain admissible under the carry-forward rule with carried-forward drafts not stale (PF-8)** |
 | F-T11 | V1/V2 compatibility, **split per PF-16**: **schema half (F1's gate)** — V1/V2 tables, triggers and readers unchanged and readable beside the V3 DDL; applied-migration bytes unchanged; **workflow half (re-asserted after each workflow package, completing at F10)** — V1/V2 Gate 2, manifests, dated slots and their readers unchanged and readable beside *live* V3 rows; no V3 calendar applied to a historical approval; legacy paths still refuse V3 rows (`WORKFLOW_MISMATCH`) |
 | F-T12 (MA11) | Seeded approvals/releases ⇒ counters correct over explicit closed intervals (`approved_episodes` counts first-time Gate-2 approvals per interval; a late-evening approval lands in the next interval, never omitted; a missed tick backfills idempotently — PF-17); **buffer counts consecutive approved obligations ahead of the next release — an approved episode beyond a gap does not count, and destination constraints render**; buffer below 2 days ⇒ the alert fires; Costs/status show sustained/catch-up/buffer/cost |
 | F-T13 | Tabs 8–10 + Launch: every state in §11 renders; one primary action per screen; admission refusals render typed; bot alerts deduplicated with timeouts (A §8) |
@@ -990,7 +1073,7 @@ phase F row) — every F package is offline/mock first.
 
 | Risk | Limit / mitigation | Owner |
 |---|---|---|
-| `w13-release-admission` is a new single point on the publication critical path | the 5-min registry schedule is stateless (due-slot discovery = air instant inside the dispatch window `(now, now + lead]` — §7.1): a missed tick catches up on the next; the bot alerts when a due slot identity has no admission row within 2 ticks (10 min); a down scheduler delays admissions, it never drops them | F2 builder |
+| `w13-release-admission` is a new single point on the publication critical path | the 5-min registry schedule is stateless (due-slot discovery = air instant inside the dispatch window `(now, now + lead]`, plus admitted-post poll/reconcile/retry discovery — §7.1, PF5-1): a missed tick catches up on the next; the bot alerts when a due slot identity has no admission row within 2 ticks (10 min); a down scheduler delays admissions, it never drops them | F2 builder |
 | `publication_admissions` REFUSED rows grow unboundedly while a due slot identity stays held (re-refusal every 5 min) | rows stay append-only audit, but the alert collapses to one deduplicated bot alert per identity per day (`admission_refusal_alert_cap`, default 1/day); the board shows only the latest typed reason | F6 builder |
 | No mid-RELEASING abort/rollback story | **A's `cancel_season` / `cancel_episode`** (A §2's command table; terminal) **is the abort path**: it cancels queued jobs through the transaction-owned helper and the release board surfaces the held remainder; F adds no second mechanism | Operator |
 | Lead time vs predecessor verification latency (episode N's admission hostage to N−1's verify finishing inside the window) | the daily cadence gives each predecessor ~24 h; the exposure is compressed reschedules only — the reschedule impact screen warns when a compression leaves less than `release_admission_lead_seconds` between consecutive episodes, and a successor that misses shows HELD (dependency) pre-air — past-air with no in-flight row it is MISSED (§7.4) with §7.3's options | Operator |
@@ -1004,7 +1087,7 @@ Master-level risks and their owners: SPEC §18.
 |---|---|---|
 | One `v3_release_documents` store (F-1) | Per-record tables | mirrors B's/C's stores (B §2/C §2): one guard/hash/allowlist story; per-record tables duplicate the sealing machinery per type |
 | `publication_admissions` (F-5) | Reusing `approval_events` | admissions are high-frequency non-decisions (one refusal row per 5-min tick); `approval_events` is A's one-decision-per-revision gate vocabulary (FM §2) — different invariants |
-| New `w13-release-admission` schedule (§7.1) | Extending `w09` | `w09`'s discovery is "due SCHEDULED rows" (FM §6); pre-row discovery needs the calendar + slot identities — a different query shape; `w09` stays untouched — A1 §7's candidate filter already excludes V3 rows from its selection, and V3 submits run through the version-selected adapter (§1.1, PF-1) |
+| New `w13-release-admission` schedule (§7.1) | Extending `w09` | `w09`'s discovery is "due SCHEDULED rows" (FM §6); pre-row discovery needs the calendar + slot identities — a different query shape; `w09` stays untouched — A1 §7's candidate filter already excludes V3 rows (submit and poll candidates) from its selection, and V3 submits/polls/reconciles run through the distinct registered V3 jobs over the version-selected adapters (§1.1, PF-1/PF5-1) |
 | Calendar as a versioned document (F-1 store) | Date columns on slot rows | SPEC §9.2 makes the revision the authority; columns cannot express proposal, history or impact (FM §4); V1/V2 already pin dates at schedule time by convention |
 | Admission-time row creation **+ in-place date UPDATE** on un-submitted rows (§1.4) — adopted (CON-B1/CON-M1) | Create rows at LAUNCH and UPDATE dates on reschedule | rows would exist with calendar authority only and be visible to `w09` before content authority binds; admission-time creation holds both authorities at insert; the UPDATE is safe because dates are not trigger-pinned (`M/0005:77-80`, §1.4) |
 | Cancel + re-create on reschedule | — (structurally impossible) | one-way `cancel_slot`, `dedupe_key`/identity UNIQUEs, no CANCELLED→SCHEDULED transition, trigger-immutable `client_token` (CON-B1) — rejected before B1 adopted the in-place UPDATE |
@@ -1014,4 +1097,4 @@ Master-level risks and their owners: SPEC §18.
 | Metadata-delta Gate 2 re-approval as the unaired default (§8.2) — adopted (CON-M3) | Metadata policy edits pre-publication | policy edits require an existing `platform_posts` row (`M/0005:85`) and live-binding equality refuses any drift from the sealed manifest — only Gate 2 APPROVE can rebind pre-publication |
 | Version-selected adapters for scheduling/command/submit/poll/recovery/release views (§1.1) — adopted (PF-1) | Running V3 through the unchanged legacy schedule/submit/recovery paths (v0.2's framing) | A1 §7 guards every legacy entry point with `WORKFLOW_MISMATCH` and filters V3 rows out of W09 — the unchanged paths cannot execute for V3; the adapters reuse the shared transport/persistence primitives beneath without forking, and V3 transitions live on `episode_tracks` with legacy state pinned (A §1) |
 | Typed Revise targeting as a compatible extension of A's timecoded feedback contract (§4, §2.2 FD5) — adopted (PF-9, ruling = first option) | `season_revision_notes` with typed targets for episode Gate 2 (v0.2's FD5) | A §2 / A1 §4 keep EPISODE_FINAL REVISE on timecoded feedback in both versions and A1's deferred trigger refuses season notes on episode gates — the notes-based command is unpassable; the compatible extension adds targeting without touching A's contract |
-| Guarded V3 rebinding `rebind_release_slot` (§8.2, §12) — adopted (PF-7) | "Different package ⇒ `Conflict`" on every re-admission (v0.2) | trigger-immutable identity columns mean a renewed approval could never install on an admitted row — recovery would permanently refuse; rebinding proves no external effect first, reconciles begun work, preserves attempt history, and never touches published identities |
+| Guarded V3 rebinding `rebind_release_slot` through a registered V3 SQL exception (§8.2, §12) — adopted (PF-7, PF5-4) | "Different package ⇒ `Conflict`" on every re-admission (v0.2) | trigger-immutable identity columns mean a renewed approval could never install on an admitted row — recovery would permanently refuse; the guarded V3 SQL exception preserves legacy immutability while rebinding accepts no-begin or definitive reconciled absence (old execution fenced), atomically replaces authority/media, current metadata and queued commands with token/operation linkage, preserves immutable old requests, history and attempt caps, and never touches published identities |
