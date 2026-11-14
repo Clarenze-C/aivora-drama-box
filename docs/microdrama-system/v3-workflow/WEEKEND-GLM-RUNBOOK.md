@@ -548,6 +548,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   verification suites + **R4 review** (`a0d-review-r4`). Also: **B1 v0.2 committed** (`2669406`),
   B1 round-2 critique running; **g-spec-v02 apply launched**. Running: b1-note-r2 + a0d-review-r4
   (Codex 2/2) + g-spec-v02 + my verification.
+- 14 Nov 20:00Z (GLM): **A0-D R4 = FIX-REQUIRED, converging** (7/10 closed; AD7-1..4: 2 BLOCKING +
+  2 SF; trajectory 13→10→7→4). **fix3 verification GREEN by GLM: 187 passed.** fix4 brief ready
+  (`a0d-fix4-brief.md`) — launches at the 20:17Z window reset; R5 + solo gate follow. **B1 round 2 =
+  REWORK (10/12)**: both remainders ACCEPTED (`b1-recritique-rulings.md`), b1-note-rev2 queued behind
+  g-spec-v02, R3 follows. (Note: blast-radius held one command over a no-op rm — redone without it.)
+  Running: g-spec-v02.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
