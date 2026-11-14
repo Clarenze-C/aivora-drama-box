@@ -387,7 +387,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   the quota-killed round-2 apply was incomplete; the orchestrator's rescue-commit of an unverified
   edit is the root cause, noted for Monday). **A3 PARKED for Opus** per the agreed rule.
   `a2-note-r3` launched (last r3). Accepted: B, C, A6b. Running: r5-build + a2-note-r3.
-- 14 Nov 08:1?Z (GLM): **A2 r3 = REWORK** (5/10 closed; lock-cycle items persist as predicted).
+- 14 Nov 08:09Z (GLM): **A2 r3 = REWORK** (5/10 closed; lock-cycle items persist as predicted).
   **A2 PARKED for Opus.** ROUND-3 SWEEP COMPLETE — final: **B APPROVED, C APPROVED (v0.4.1),
   A6b APPROVED; A2 + A3 parked for Opus; F deferred** (per operator-approved plan). Codex queue empty.
   GLM runway: r5-build (running) → a0d-fix2 → A1 note revision → A0-R1 fix → E spec draft.
