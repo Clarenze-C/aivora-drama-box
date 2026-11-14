@@ -554,6 +554,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   REWORK (10/12)**: both remainders ACCEPTED (`b1-recritique-rulings.md`), b1-note-rev2 queued behind
   g-spec-v02, R3 follows. (Note: blast-radius held one command over a no-op rm — redone without it.)
   Running: g-spec-v02.
+- 14 Nov 20:03Z (GLM): **phase G v0.2 committed** (`e76bda3`, 760 lines, 19/19 Majors + nits, none
+  BLOCKED). **b1-note-rev2 launched** (docs slot). G critique round 1 next (Codex, as slots free).
+  Running: b1-note-rev2. fix4 launches at the 20:17Z reset.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
