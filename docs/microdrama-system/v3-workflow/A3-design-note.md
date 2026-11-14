@@ -1,7 +1,7 @@
 # A3 design note: revision fence, cancellation, stale quarantine, per-queue workers
 
 **Version 1.3, 14 Nov 2026. Author: GLM (design note only; one file, no code).**
-v1.3 — round-2 integration completed + round-3 blockers folded (GLM); operator-authorized R4
+v1.3 — round-2 integration completed + round-3 blockers folded + R4 findings N3R4-1/2 applied (GLM, 14 Nov); awaiting final verify
 follows. v1.2's round-2 apply was PARTIAL (the apply job was quota-killed mid-edit); this version
 completes, in the body, every integration round 3 flagged partial and folds the round-3 report —
 [codex-a3-r3.md](codex-a3-r3.md) (N3R3-1/N3R3-2 BLOCKING, N3R3-3/N3R3-4 SHOULD-FIX, verdict
