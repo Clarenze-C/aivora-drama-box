@@ -483,6 +483,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 12:36Z (GLM): **E round 2 = REWORK (close)**: 9/13 closed; PE5-1/2 BLOCKING + PE5-3/4 SF.
   All 4 ACCEPTED → **e-spec-v04 apply running**; R3 verify follows under the standing waiver pattern
   (veto-able). Running: a0d-fix2 (regression sweep) + e-spec-v04.
+- 14 Nov 12:39Z (GLM): **phase E v0.4 committed** (`3be36af`, 827 lines, 4/4 round-2 rulings, none
+  BLOCKED). **E R3 verification launched** (`phase-e-r3`, scoped to PE5-1..4). Running: a0d-fix2 +
+  phase-e-r3.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
