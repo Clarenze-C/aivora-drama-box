@@ -425,6 +425,8 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   introduced N2R4-1/2 BLOCKING + N2R4-3 SF — each fold regresses elsewhere). **A2 PARKED for Opus**
   — no 5th round requested; this is the design-judgment loop predicted. Running: r5-build +
   a1-note-rev3. Codex idle (nothing review-ready until a1-rev3 or r5 lands).
+- 14 Nov 08:59Z (GLM, operator): **A3 5th verify authorized and launched** (`a3-note-r5`, scoped to
+  the two R4 applications only). Running: r5-build + a1-note-rev3 (finishing) + a3-note-r5 (Codex).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
