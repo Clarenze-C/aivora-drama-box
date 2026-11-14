@@ -435,6 +435,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   Comfy submit ordering vs the real commit-before-HTTP code — + 4 SF; all with replacements; looks
   like integration slips, not the A2 loop). **Operator asked: one more A1 cycle (apply → R4)
   recommended** — it gates today's A1 build. Accepted: B, C, A6b, A3. Running: r5-build (R5e/R5f).
+- 14 Nov 10:36Z (GLM): z.ai reset (1%, window to 15:14Z). r5-build still in its own full make check
+  (integration phase; real processes verified — healthy, not stuck). **phase-e-spec draft launched**
+  (docs, beside the one build). a0d-fix2 waits for r5's exit per the one-build rule. A1 one-more-cycle
+  ask still open with the operator.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
