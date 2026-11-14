@@ -1,14 +1,23 @@
-# Phase G: live qualification — production composition, composed restore, all-gate composition, the LIVE pilot (v0.3 DRAFT)
+# Phase G: live qualification — production composition, composed restore, all-gate composition, the LIVE pilot (v0.4 DRAFT)
 
-Status: **v0.3 DRAFT**, 14 Nov 2026, GLM (weekend runbook). v0.2 → v0.3 applies the Codex round-1
-critique ([codex-phase-g-critique.md](codex-phase-g-critique.md), verdict REWORK — PG-1…PG-14)
-per the rulings in [phase-g-critique-rulings.md](phase-g-critique-rulings.md) — **all ACCEPTED**,
-each finding integrated individually per its Replacement paragraphs (PG-1's LIVE-pilot LAUNCH
-reachability first). v0.1 → v0.2 applied the Goldfish rulings
+Status: **v0.4 DRAFT**, 14 Nov 2026, GLM (weekend runbook). v0.3 → v0.4 applies the Codex round-2
+recritique ([codex-phase-g-recritique.md](codex-phase-g-recritique.md), verdict REWORK — 11 findings
+closed at v0.3; PG5-1/PG5-3 BLOCKING, PG5-2 SHOULD-FIX, each folded per its Replacement paragraph)
+per the rulings in [phase-g-recritique-rulings.md](phase-g-recritique-rulings.md) — **all 3 ACCEPTED**:
+the §4 pause predicate now derives from GD4's latest evidence, so a fresh on-pace observation clears
+it while the old `PACE_WEEK` deferral rows stay non-terminal (PG5-1); the §5.1 restore test
+additionally exercises an effect whose intent is absent from the snapshot, through the §5.4
+fence-and-reconcile procedure (PG5-2); the §7.2 calibration workload is admission-distinguished, so
+the image switch can serve it without releasing queued cast work (PG5-3). v0.2 → v0.3 applies the
+Codex round-1 critique ([codex-phase-g-critique.md](codex-phase-g-critique.md), verdict REWORK —
+PG-1…PG-14) per the rulings in [phase-g-critique-rulings.md](phase-g-critique-rulings.md) — **all
+ACCEPTED**, each finding integrated individually per its Replacement paragraphs (PG-1's LIVE-pilot
+LAUNCH reachability first). v0.1 → v0.2 applied the Goldfish rulings
 ([phase-g-goldfish-rulings.md](phase-g-goldfish-rulings.md) — all 61 ACCEPTED: the 19 Majors per each
 one's Fix direction in
 [phase-g-review/consolidated_review_report.md](phase-g-review/consolidated_review_report.md), the 42
-nits as mechanical sweeps). Round-2 critique follows. Binding
+nits as mechanical sweeps). Round-3 verification follows under the standing waiver (per the round-2
+rulings file above). Binding
 inputs: `SPEC-v3.md` v0.4.6 (§3.1, §3.3, §9.4, §10.1–§10.6, §11, §12.5→§10.6, §15.1–§15.2, §16.1–§16.3),
 `DECISIONS.md` (the T031 lineage rows incl. the $8 envelope conventions, 12 Nov; the Dramabox Bot rows,
 11 Nov), [phase-A0-spec.md](phase-A0-spec.md) v0.4, [phase-A-spec.md](phase-A-spec.md) v0.3,
@@ -254,7 +263,7 @@ signed by the operator in a commit that records the report's sha256.
 | GD1 | Schedule `g.quota_pause` (300 s interval — the schedule catalog's fastest class, `S/scheduling/registry.py:129/:135`; §4 records why a poller at this cadence, and §16 the rejected event-driven alternative) | A6b's schedule registry (phase-A §9.1; F added two entries the same way) | G-owned registration in G2's wiring; each firing durably records its evaluation as a **G evaluation audit record** appended to the existing transactional event log (PG-8 — GD3's sink; not a `scheduler_firings` payload: A6b's shape carries period identity and timing only, `A6b-1`) — the episode memory §4 reconstructs across ticks and restarts |
 | GD2 | `track.wait_started` admits a **scope-level, jobless variant** (payload: season, `track='production'`, cause `QUOTA_UNREADABLE` \| `PACE_WEEK`, `retry_at`, `edges: rising`) | A6a's event registry and payload schemas (phase-A §8.4) | requested as an A-side register entry — this row is the note; A's owner admits the payload variant (master §3.3's "quota wait" event at production scope). No new event name; per-job waits keep A's per-job shape. `track='production'` because the pause halts the one shared subscription route, which no single content track owns — affected jobs keep their own per-track waits (`track_waits`), so the scope alert names the route, not a track |
 | GD3 | The §10 command-event families `pilot.*` (`pilot.authorized`, `pilot.claim_recorded`, `pilot.thresholds_confirmed`) and `ops.*` (`ops.domain_activated`, `ops.restore_proven`) | A1 §6's command-event convention; A §8.4's bot-event registry (checked: no overlap — these are not bot events, not schedule/job identifiers, not gate vocabulary) | declared **command-audit appends**: each §10 command appends its events inside its own transaction (A1 §6's exact convention); sink = the transactional event log. Names are G-owned and namespaced clear of A's enforced `track.*`/`gate.*` vocabulary; this row is the registration record |
-| GD4 | An **A0 extension: a bounded, launch-free quota refresh** with timestamped evidence (PG-3) — a refresh path that does not dispatch model work, so quota readability can be re-established without an invocation | A0's quota surfaces: `quota_observations` is keyed by `(invocation_id, attempt)` (A0 §5.6), so the stored stream cannot gain a row without a dispatch; A0 §5.7's gate checks gateway health and policy identity | requested as an **A0-side register entry** — this row is the note; A0's owner admits the extension (the GD2 pattern). The extension provides the bounded refresh and its **freshness policy**; enforcement (A0 §5.7) and G's alert reader (§4) both read that one policy, so they cannot silently disagree. Details in §4 |
+| GD4 | An **A0 extension: a bounded, launch-free quota refresh** with timestamped evidence (PG-3; §4's pause predicate derives from this evidence — PG5-1) — a refresh path that does not dispatch model work, so quota readability can be re-established without an invocation | A0's quota surfaces: `quota_observations` is keyed by `(invocation_id, attempt)` (A0 §5.6), so the stored stream cannot gain a row without a dispatch; A0 §5.7's gate checks gateway health and policy identity | requested as an **A0-side register entry** — this row is the note; A0's owner admits the extension (the GD2 pattern). The extension provides the bounded refresh and its **freshness policy**; enforcement (A0 §5.7) and G's alert reader (§4) both read that one policy, so they cannot silently disagree. Details in §4 |
 
 **Standing rule (C-B1 for G):** any further G identifier crossing an A–F enforced contract joins this
 register before the G1 note is accepted.
@@ -343,14 +352,22 @@ Traefik/TLS steps remain the runbook's, executed by the operator.
 ## 4. `dramabox-llm` off-pace: pause and alert (V3-AT-14)
 
 **The pause is derived, never stored** (AR-4 — phase-A-spec's architecture-rule appendix: side states
-are derived, never stored): `llm_route_paused(season)` is true while (a) the latest quota observation
-for the route is unreadable, or (b) any **active `PACE_WEEK` deferral** exists — active meaning a
-non-terminal deferral with `defer_reason=PACE_WEEK` **regardless of its `retry_at`** (A0 §5.1's
-60 s–6 h clamp shortens retries, never episodes), the week reset being days away — refusal with a retry
-time is, in production effect, a pause (master SPEC-v3.md:665-667 "Persisted refusals carry retry
-times; an unreadable quota pauses production / No silent provider fallback").
+are derived, never stored). **The predicate reads GD4's latest evidence, never the deferral rows
+(PG5-1):** `llm_route_paused(season)` is derived from **GD4's latest quota evidence under its
+freshness policy and the route's current isolation status** — true while that latest fresh evidence is
+unreadable or stale, or reads off-pace, or the route is isolation-failed. **Fresh readable, on-pace
+evidence supersedes historical refusals even while their deferred job rows remain non-terminal** —
+v0.3's clause (b) (any non-terminal `PACE_WEEK` deferral holds the pause regardless of its
+`retry_at`) is withdrawn with the contradiction it created: a latch no fresh observation can clear
+contradicts the recovery clause below. **Refusal history, gateway reset times and per-job retry
+clamps are preserved separately** — the week reset a `PACE_WEEK` refusal carries (days away) stays
+the route-level retry horizon, A0 §5.1's 60 s–6 h clamp keeps governing only per-job `retry_at`
+values, and a refusal with a retry time remains, in production effect, a pause for the jobs it defers
+(master SPEC-v3.md:665-667 "Persisted refusals carry retry times; an unreadable quota pauses
+production / No silent provider fallback") — but it is evidence the predicate weighs, never a latch
+it holds.
 
-**One source for enforcement and alert (PG-3, corrected).** A0's stored stream is keyed by
+**One source for enforcement and alert (PG-3/PG5-1, corrected).** A0's stored stream is keyed by
 `(invocation_id, attempt)` (§5.6) — observations are *results of invocations*, and A0 §5.7's gate
 checks gateway health and policy identity; nothing in A0 today refreshes quota readability without
 dispatching model work. v0.2's "the un-pause reader is the gate itself" was therefore wrong in one
@@ -417,9 +434,14 @@ redefined by the other.
    settled work. Backup: `pg_dump` + objects tar + **manifest** (drill.sh:115-119, via the shared backup
    entrypoint, §3.3) → the point fields and the manifest of a `RestoreProofV3`. **Then, after the DB
    snapshot (PG-6):** the fake provider **accepts** the submitted operation — an effect accepted after
-   the snapshot, whose local identity and receipt are therefore absent on restore. The fake provider's
-   external state store lives outside the dump and is **preserved across the restore**, so the restored
-   world faces a provider that holds an acceptance the DB does not know.
+   the snapshot, whose local identity and receipt are therefore absent on restore. **A second effect
+   is created as well as accepted after the snapshot (PG5-2):** a fresh operation submitted to the
+   fake provider through the same seam, with **no local operation row and no client token in the
+   dump** — an effect whose *intent* is absent, not just its receipt (v0.3's single seed reconciles a
+   recovered identity; it cannot exercise discovery of an effect the DB never saw). The fake
+   provider's external state store lives outside the dump and is **preserved across the restore**, so
+   the restored world faces a provider that holds one acceptance against a recovered identity and one
+   activity it has no record of at all.
 2. **Restore** into a fresh compose project (drill.sh:121-141: postgres up, **`psql -v ON_ERROR_STOP=1`
    load of the dump** (drill.sh:127 — the drill restores through psql, not `pg_restore`), app up,
    health + owner login + page-read). **Delta on the drill, new G work:** the drill never restores the
@@ -433,7 +455,12 @@ redefined by the other.
    janitor/reconciler path resolves the in-flight operation via its client token —
    `S/contracts/providers.py:200` "NOT_FOUND = safe to resubmit"; adopt-by-external-id otherwise —
    **including the post-snapshot acceptance of step 1, which reconcile must discover and adopt, never
-   resubmit**); the sender re-claims the `CLAIMED` intent (A §8.3's `AMBIGUOUS` path: one retry, flagged
+   resubmit**; **the omitted activity of step 1 (PG5-2) is handled by the §5.4 fence-and-reconcile
+   choreography, exercised dry: the source deployment is fenced (verified shutdown — the test profile
+   is stopped and the proof verifies it), the retained provider listing is read, the activity with no
+   local identity is discovered and adopted under its external identity, and while it remains
+   unresolved the restored deployment admits no new effect — the block itself submits nothing**); the
+   sender re-claims the `CLAIMED` intent (A §8.3's `AMBIGUOUS` path: one retry, flagged
    `possible_duplicate`, then dead letter).
 4. **Assert and record:** §5.2's checks; the `RestoreProofV3` verdict (proof kind recorded per §5.5).
 
@@ -444,6 +471,11 @@ redefined by the other.
   reconcile semantics, FM §1). **Post-snapshot acceptance (PG-6):** the effect the provider accepted
   after the DB snapshot is discovered by reconcile and adopted by its external identity — the
   restored world's blindness to it never becomes a second submission.
+- **Omitted-intent activity (PG5-2):** the effect created and accepted wholly after the snapshot —
+  no local operation row, no client token in the dump — is discovered through the preserved external
+  evidence under the §5.4 fence-and-reconcile choreography and adopted under its external identity;
+  **while unresolved it blocks admission of new effects, and the blocked admission itself performs no
+  submit** — the fake provider records zero submissions for it before adoption, and none needed after.
 - **Objects (PG-7):** the referenced closure of §3.3 holds — every object key the DB snapshot
   references is present in the restored volume with matching size and hash, re-verified from the
   manifest after extraction; injected failure cases (a missing object, a corrupted byte, a manifest
@@ -474,9 +506,13 @@ at-least-once — a send ambiguous at backup time may be delivered twice after r
 flagged `possible_duplicate` (A §8.3), and a dead-lettered intent is shown on Home.** v0.2's
 unconditional "money/publication is exactly-once" claim is withdrawn: the test covers operations whose
 intent survived the snapshot; effects **accepted after the snapshot** have no local identity or receipt
-on restore, and database uniqueness alone cannot prove them absent — that is exactly the step-1
-post-snapshot acceptance §5.1 now seeds. No claim of exactly-once notification is made anywhere (master
-§19.2 superseded the v0.1 "exactly once" wording).
+on restore, and database uniqueness alone cannot prove them absent. §5.1 therefore seeds both edges
+(PG5-2): the post-snapshot acceptance of a *recovered identity* (reconcile adopts it, never
+resubmits) **and an effect whose intent is absent from the dump entirely — created as well as accepted
+after the snapshot — which only the fence-and-reconcile procedure below can find: it blocks admission
+while unresolved, is discovered through the preserved external evidence, and is adopted without a
+second submit.** No claim of exactly-once notification is made anywhere (master §19.2 superseded the
+v0.1 "exactly once" wording).
 
 **Actual recovery (a real restore from a real backup) is a separate, stricter procedure:** before the
 restored deployment admits any new effect, **fence the former deployment** (it must stop submitting —
@@ -485,7 +521,9 @@ retained provider/gateway evidence** (provider operation listings, gateway invoc
 evidence T031-R5 R5f's billing finality already retains); any **unresolved activity blocks admission**
 until reconciled. The nightly/unclean proofs justify trust in the machinery; the fence-and-reconcile
 procedure is what makes a real recovery safe for effects the DB never saw. This procedure lives in the
-DOMAIN-RUNBOOK's recovery section (operator-executed), and the `RestoreProofV3` record links to it.
+DOMAIN-RUNBOOK's recovery section (operator-executed), and the `RestoreProofV3` record links to it;
+**§5.1's unclean-world proof exercises the procedure dry against the preserved fake-provider evidence
+(PG5-2) — the live procedure itself stays operator-executed.**
 
 ### 5.5 Proof kinds and cadence (the matrix §3.3/§3.5/O-G2 rest on)
 
@@ -577,12 +615,24 @@ commands bind authorization and threshold fields; nothing else appends phases).
 
 ### 7.2 P0 — planning, reduced cast, lock throughput (needs A0–C; master §11)
 
-**Ordering rule (PG-9): ordinary cast dispatch stays disabled until calibration completes and its
-export is committed.** C's initial-generation helper fires **automatically** once setup approval and
-STORY LOCK coexist (C §4 — no fourth operator verb), and steps 1–3 below create exactly that pair; the
-pilot profile therefore keeps the image provider **switch off** (C §5's predicate: a switch-off
-provider's jobs defer typed — the normal pre-qualification state) until the calibration checkpoint is
-published. No pilot-specific admission code: the existing switch is the gate.
+**Ordering rule (PG-9/PG5-3): the calibration workload is admission-distinguished, so the image
+switch can serve it without releasing queued cast work.** C's initial-generation helper fires
+**automatically** once setup approval and STORY LOCK coexist (C §4 — no fourth operator verb), and
+steps 1–3 below create exactly that pair — so by the time calibration runs, ordinary cast image jobs
+are already queued, and a bare switch-on would release them; v0.3's "keep the switch off until the
+checkpoint publishes" could not run live calibration at all — the switch conflict PG5-3 names, which
+the provisional-price exception does not resolve. The pilot instead **authorizes calibration as a
+distinct bounded workload** (its own recorded authorization — decision 4's discipline, bound through
+`record_pilot_authorization`) and **enables the provider with every-admission guards on the image
+lane: admission admits only the calibration workload and refuses ordinary cast image jobs, including
+jobs already queued.** This is G's one deliberate piece of pilot admission code (v0.3's "no
+pilot-specific admission code" is withdrawn with the conflict it created): the guard sits at the
+composition's image-lane dispatch gate, not in the runner, and is enforced on every admission path —
+worker, scheduler, comparison harness, retry (decision 4/PG-4's discipline). **Ordinary cast
+generation is admitted only after all three pass: measured receipts replace the provisional rate
+card, the calibration checkpoint is committed (the §2.1b export, cited by sha256), and the complete
+demand-list fit check (item 2) passes** — then the guards lift and C §5's switch-plus-qualification
+gate governs alone.
 
 1. **Calibration batch (operator-authorized, separately bounded workload — PG-9):** live Nano Banana
    through C's lock + fairness (prerequisite: C3 merged, ARISA-side adoption per master §10.2 — §8) —
@@ -595,8 +645,10 @@ published. No pilot-specific admission code: the existing switch is the gate.
    for the calibration workload, never for cast generation or episodes); measured receipts replace it
    and the forecast recomputes. **The measured price/throughput checkpoint is published immediately
    when calibration completes** (the §2.1b export, cited by sha256) — phase-close export is too late
-   for a checkpoint C's gate needs *inside* P0 — **and only then does the runner enable normal cast
-   generation** (image switch on, forecast on measured numbers).
+   for a checkpoint C's gate needs *inside* P0 — **and the ordering rule's admission guards lift only
+   on the three-way condition: measured receipts, the committed checkpoint and the complete
+   demand-list fit check (item 2)**; normal cast generation then runs on measured numbers, governed
+   by C §5's switch-plus-qualification gate alone.
 2. **Full planning, steps 1–3** (B's planning steps: 1 Script Maker → LOCK, 2 bible, 3 episodes → STORY
    LOCK — B §3–§5; **step 4 is C's cast step**, started when C's handler registers, B:438): 24 episodes
    through the real `dramabox-llm` subscription (Opus bible/architect/season critic; Sonnet translation
@@ -791,11 +843,11 @@ G1 note from the tail.
 | Package | Builds | Gate | Design note | Create / modify |
 |---|---|---|---|---|
 | **G1** | `G-1` store + `OpsV3Store`; contracts bump (the four document types); the §2.2 crossing register delivered (GD1–GD4; GD4's A0-side request note itself ships with G2) | G-T1 | **Critiqued first** (migrations + crossings) | **Create** (migration, store module; the contracts bump modifies the generated contracts) |
-| **G2** | Off-pace pause: the derived predicate, `g.quota_pause`, the **evaluation audit records** (PG-8) with atomic evaluation/firing/alert commit, the scope-level alert, the Home banner reader; the no-fallback composition proof; **the GD4 A0-extension request note** (launch-free quota refresh + freshness policy, PG-3) | G-T2 (V3-AT-14) | With the diff | **Modify** (schedule-registry registration and composition/gate wiring in A6b/A6c/A0 territory); Create: the banner reader, the evaluation-audit writer |
-| **G3** | Composed restore: the drill extension (unclean seed **incl. the post-snapshot provider acceptance**, resume steps, objects extraction + **manifest closure verification**), `RestoreProofV3` writer, the scoped dedup statement + real-recovery fence/reconcile procedure (§5.4); **the shared backup entrypoint + timer files with the backup manifest** (§3.3); **the credential-free nightly restore composition** (§5.5, PG-5) | G-T3 (V3-AT-32) | **Critiqued first** (ops-critical) | **Modify** `microdrama/deployment/staging/drill.sh` (steps 5–7 extended, step 6 routed through the shared entrypoint); Create: backup script + manifest writer + timer units |
+| **G2** | Off-pace pause: the derived predicate, `g.quota_pause`, the **evaluation audit records** (PG-8) with atomic evaluation/firing/alert commit, the scope-level alert, the Home banner reader; the no-fallback composition proof; **the GD4 A0-extension request note** (launch-free quota refresh + freshness policy; the §4 predicate reads its evidence — PG-3/PG5-1) | G-T2 (V3-AT-14) | With the diff | **Modify** (schedule-registry registration and composition/gate wiring in A6b/A6c/A0 territory); Create: the banner reader, the evaluation-audit writer |
+| **G3** | Composed restore: the drill extension (unclean seed **incl. the post-snapshot provider acceptance and the omitted-intent effect (PG5-2)**, resume steps with the **fence-and-reconcile dry exercise**, objects extraction + **manifest closure verification**), `RestoreProofV3` writer, the scoped dedup statement + real-recovery fence/reconcile procedure (§5.4, **exercised dry by the proof — PG5-2**); **the shared backup entrypoint + timer files with the backup manifest** (§3.3); **the credential-free nightly restore composition** (§5.5, PG-5) | G-T3 (V3-AT-32) | **Critiqued first** (ops-critical) | **Modify** `microdrama/deployment/staging/drill.sh` (steps 5–7 extended, step 6 routed through the shared entrypoint); Create: backup script + manifest writer + timer units |
 | **G4** | The all-gate composition suite + fixtures + `make v3-allgates` + the evidence writer | G-T4 (V3-AT-34) | With the diff | **Modify** `microdrama/Makefile` (new target); Create: suite, fixtures, writer |
 | **G5** | Composition completion: per-provider completion checks (the §3.1 startup/dispatch matrix), CPU-quota deployment units, the qualification procedure, `ProductionCompositionV3`, the activation checklist + command | G-T5 | With the diff | **Modify** composition startup/dispatch checks (A6c territory); Create: units, procedure |
-| **G6** | Pilot scaffolding: the pilot profile, the runner CLI, authorization/envelope gates **as an every-admission guard (decision 4/PG-4: worker, scheduler, comparison-harness and retry paths validate campaign/phase/immutable workload/current quote/allowed effect/remaining envelope independently of the runner)**, the frozen-workload harness, the `PILOT-REPORT.md` generator, the hash-manifested evidence closure + terminal-closure flow (§2.1b, PG-10) | G-T6 | **Critiqued first** (money paths) | **Create** |
+| **G6** | Pilot scaffolding: the pilot profile, the runner CLI, authorization/envelope gates **as an every-admission guard (decision 4/PG-4: worker, scheduler, comparison-harness and retry paths validate campaign/phase/immutable workload/current quote/allowed effect/remaining envelope independently of the runner)**, **the §7.2 image-lane calibration guards (PG5-3: while they hold, only the authorized calibration workload admits — queued ordinary cast image jobs refuse typed)**, the frozen-workload harness, the `PILOT-REPORT.md` generator, the hash-manifested evidence closure + terminal-closure flow (§2.1b, PG-10) | G-T6 | **Critiqued first** (money paths) | **Create** |
 | **G7** | Live procedures pack: the AT-28 live procedure (§8), the P0–P2 runbooks (dry-run modes) at `deployment/pilot/runbooks/` **including the effect-mode leg-boundary choreography (decision 3, PG-13) and the §7.0 extension-decision procedure**, the staged live-claim and threshold flows (§10, PG-11/PG-12) | G-T7 | **Critiqued first** (money/locks) | **Create** |
 
 **Routing:** GLM builds each package (`ai-route build -w`); Codex critiques the G1/G3/G6/G7 notes and
@@ -814,10 +866,10 @@ lists below the table — one observable per bullet, so each can be ticked indep
 |---|---|---|
 | G-T1 | G1 | `G-1` applies on a populated V1+V2+V3 database; guards present (no delete, no truncate, integer-only numbers) and the store's document-type catalog lists exactly the four G types; documents roundtrip hash-verified; applied migrations unchanged; generated contracts zero drift |
 | **G-T2 (V3-AT-14)** | G2 | Off-pace pause, alert and Home surface through the production composition — assertions (a)–(i) below |
-| **G-T3 (V3-AT-32)** | G3 | The §5.1 procedure on the unclean world: restore + resume with **zero duplicate submits** (fake provider counts) — **including the provider acceptance that landed after the DB snapshot, whose external state is preserved across restore (PG-6: discovered by reconcile and adopted, never resubmitted)**; at most the latest missed period fired; the ambiguous notification **retried at most once, flagged `possible_duplicate`, then delivered or dead-lettered**; no duplicated publication; **the manifest's referenced closure verified after extraction, and injected failure cases — a missing object, a corrupted byte, a mismatched backup set — each fail the proof (PG-7)**; `RestoreProofV3` verdict PASS and its §5.4 statement (deduplication *for recovered identities*) matches the observed behaviour; a drained-world control run also passes; the timer unit files are present and invoke the one shared backup entrypoint the drill uses, and **the nightly control-proof composition is credential-free with every external transport faked and asserts zero real transport calls across senders, reconciliation, janitors and cancellation (PG-5)** |
+| **G-T3 (V3-AT-32)** | G3 | The §5.1 procedure on the unclean world: restore + resume with **zero duplicate submits** (fake provider counts) — **including the provider acceptance that landed after the DB snapshot, whose external state is preserved across restore (PG-6: discovered by reconcile and adopted, never resubmitted)**; **the omitted-intent effect — created as well as accepted after the snapshot, with no local operation row or client token in the dump — is discovered through the preserved external evidence under the §5.4 fence-and-reconcile choreography, blocks admission while unresolved without another submit, and is then adopted under its external identity (PG5-2)**; at most the latest missed period fired; the ambiguous notification **retried at most once, flagged `possible_duplicate`, then delivered or dead-lettered**; no duplicated publication; **the manifest's referenced closure verified after extraction, and injected failure cases — a missing object, a corrupted byte, a mismatched backup set — each fail the proof (PG-7)**; `RestoreProofV3` verdict PASS and its §5.4 statement (deduplication *for recovered identities*, blocked-admission-then-adoption *for the omitted-intent effect*) matches the observed behaviour; a drained-world control run also passes; the timer unit files are present and invoke the one shared backup entrypoint the drill uses, and **the nightly control-proof composition is credential-free with every external transport faked and asserts zero real transport calls across senders, reconciliation, janitors and cancellation (PG-5)** |
 | **G-T4 (V3-AT-34)** | G4 | The §6 suite over one season, all real handlers, fake providers — assertions (a)–(j) below |
 | G-T5 | G5 | Fail-closed completion and activation per the §3.1 startup-vs-dispatch matrix — assertions (a)–(f) below |
-| G-T6 | G6 | The runner refuses every live leg without the recorded authorization (hash-bound; a wrong sha refused); **the every-admission authorization guard (decision 4/PG-4) refuses: a direct dispatch that bypasses the runner (worker/scheduler path), a stale or drifted plan hash, an expired authorization, and a retry of an already-admitted effect outside the remaining envelope — each tested on the worker, scheduler, comparison-harness and retry paths independently**; the envelope is the account hard-stop (a leg over the setup budget is refused); the report generator over a seeded pilot-shaped dataset produces every master-§11 section with measured-vs-forecast marked and **per-provider quota lines per the §7.4 rule (units/source/window/concurrency/uncertainty or explicit `NOT_APPLICABLE`/`UNAVAILABLE`; charges separate; attestations labelled — PG-14)**; the frozen-workload harness records **each role's usage under both models** (4 roles × 2 — O-G5); **the staged threshold flow (§10, PG-12): `confirm_live_thresholds(stage=P1_SCREEN)` accepts P1 quality evidence and gates P2 after financial clearance, `stage=FINAL` evaluates P1/P2 quality and the available throughput windows, and a screen decision cannot mark final throughput acceptance complete — a FINAL attempt to record PASS where the window does not exist is refused (PG-2)**; **the hash-manifested evidence closure (§2.1b, PG-10) verifies without the source DB/volumes, and terminal closure exists for PASS, FAIL and ABORTED**; no test touches the network |
+| G-T6 | G6 | The runner refuses every live leg without the recorded authorization (hash-bound; a wrong sha refused); **the every-admission authorization guard (decision 4/PG-4) refuses: a direct dispatch that bypasses the runner (worker/scheduler path), a stale or drifted plan hash, an expired authorization, and a retry of an already-admitted effect outside the remaining envelope — each tested on the worker, scheduler, comparison-harness and retry paths independently**; **the §7.2 calibration admission distinction (PG5-3), dry: with the provider enabled and setup approval + STORY LOCK both present so ordinary cast image jobs are queued, the calibration workload proceeds through the real gate while every queued cast image job stays refused (worker, scheduler and retry paths), and the guards lift only after measured receipts + the committed checkpoint + the complete demand-list fit check — an early or partial lift is refused**; the envelope is the account hard-stop (a leg over the setup budget is refused); the report generator over a seeded pilot-shaped dataset produces every master-§11 section with measured-vs-forecast marked and **per-provider quota lines per the §7.4 rule (units/source/window/concurrency/uncertainty or explicit `NOT_APPLICABLE`/`UNAVAILABLE`; charges separate; attestations labelled — PG-14)**; the frozen-workload harness records **each role's usage under both models** (4 roles × 2 — O-G5); **the staged threshold flow (§10, PG-12): `confirm_live_thresholds(stage=P1_SCREEN)` accepts P1 quality evidence and gates P2 after financial clearance, `stage=FINAL` evaluates P1/P2 quality and the available throughput windows, and a screen decision cannot mark final throughput acceptance complete — a FINAL attempt to record PASS where the window does not exist is refused (PG-2)**; **the hash-manifested evidence closure (§2.1b, PG-10) verifies without the source DB/volumes, and terminal closure exists for PASS, FAIL and ABORTED**; no test touches the network |
 | G-T7 | G7 | The AT-28 dry choreography on an isolated copy mirroring the parent-directory bind topology, with **C-T6's simulated-competitor harness playing the ARISA side**: exclusion, kill-after-admission recovery, swap→typed BLOCKED (real-inode holds coordinated in the runbook); the P0–P2 runbooks' dry-run modes execute end to end against fakes, **including the effect-mode leg-boundary choreography (decision 3, PG-13: stop admission → reconcile active effects → stop processes → switch mode → restart matching, with both modes' allowed-effect bounds never widened)**; a T032-held destination — **or any destination missing §7.6's QUALIFIED requirements (PG-11)** — records `HELD` and is excluded from claims |
 | G-T8 | all | `make check` + V1 `make pilot` green at every package gate; `make v3-allgates` green at G4 and before any live qualification |
 | **LIVE** | execution (operator) | V3-AT-17 and master §16.3 complete only through the operator-gated P0–P2 execution with evidence: pilots complete; `PILOT-REPORT.md` signed with measured per-episode cost and quota per provider (§7.4's honesty rule); master §16.3 thresholds confirmed via `confirm_live_thresholds(stage=FINAL)` **with every throughput entry backed by windows and approval counts that actually exist — missing evidence stays UNMEASURED and completes only through the §7.0 extension's release legs or post-pilot production observation, never through confirmation (PG-1/PG-2)**; AT-28's live stage recorded; per-destination claims recorded **per §7.6 (`QUALIFIED` only with verified pilot posts; otherwise `HELD`)**. **G's packages never spend — this row passes outside the build, by the operator's hand** |
@@ -843,7 +895,9 @@ lists below the table — one observable per bullet, so each can be ticked indep
 - (h) recovery resumes work; non-LLM tracks continue throughout — **recovery is driven by the GD4
   A0-extension's launch-free refresh (PG-3): fresh readable, on-pace evidence supersedes prior
   refusals automatically, with no model dispatch required to un-pause, and an isolation failure
-  (policy-identity mismatch) keeps the pause and requires requalification.**
+  (policy-identity mismatch) keeps the pause and requires requalification.** PG5-1's setup holds:
+  the recovery is asserted **with an old non-terminal `PACE_WEEK` deferral row still present** — the
+  pause clears, dispatch resumes, and the old row keeps only its own retry clamp; it holds nothing.
 - (i) the route pause renders on Home as a scope-level banner derived from the episode record (never
   from per-job `track_waits` rows), is dismissable (A1's scope-alert dismissal), and clears on recovery.
 
@@ -927,6 +981,7 @@ lists below the table — one observable per bullet, so each can be ticked indep
 | P2's window cannot express the production SLO's rolling 7-day rate, and 3 new episodes cannot supply catch-up's 4 first approvals over 2 days | §7.4 (PG-2): first-approval counts read from complete F-6 intervals preserving F's boundaries; span rates reported preliminary with the window named; **sustained and catch-up stay UNMEASURED until their windows/counts exist — confirmation cannot convert them**; they complete only via the O-G9 extension or post-pilot production | Operator |
 | Four episodes cannot reach LAUNCH: publication qualification and verified-post evidence are unreachable in the default pilot | §7.0 (PG-1) states it explicitly: production throughput is the pilot's measurable; publication stays blocked until five consecutive episodes + teaser hold current approvals; the extension needs a separately approved plan and envelope (O-G9); no approval is ever seeded and F's gate is never weakened | Operator |
 | A mode-leg handoff leaves an effect in flight across the boundary (paid work running when a public-action leg starts, or vice versa) | the decision-3 choreography (PG-13) is fixed-order — stop new admission, reconcile active effects, stop processes, switch, restart — and each leg's mode bounds are never widened; the runbook's dry-run rehearses it (G-T7) | Operator + G7 builder |
+| The §7.2 calibration guards mis-lift or stick (cast work released early, or stalled past the checkpoint) | the lift condition is three-way and machine-checked (measured receipts + committed checkpoint + complete demand-list fit — no manual clear); G-T6 asserts both directions: queued cast refuses while the guards hold, and an early or partial lift is refused | G6 builder |
 | Upstream volatility: no D spec yet, T031-fix3 unmerged until N36, A-line worktrees unmerged | every D-dependent obligation is a pinned prerequisite (header); D-pinned packages (G4–G6) wait; prerequisites re-checked at each package gate | Orchestrator |
 
 Master-level risks and their owners: master §18 (quota terms, throughput SLO, cap changes).
@@ -945,6 +1000,8 @@ Master-level risks and their owners: master §18 (quota terms, throughput SLO, c
 | Jobless `track.wait_started` variant (GD2) | A new `production.paused` event name | master §3.3's event list is binding vocabulary; a scope-level "quota wait" is within it — extend the payload, not the name |
 | Polled pause edge at the catalog's fastest cadence, 300 s (§4) | Event-driven emission at the A0 §5.7 dispatch gate | the falling edge has no event source (A §8.4 has no wait-ended event; GD2 extends payloads, never names), and once every LLM job has deferred, dispatch traffic stops — gate-side emission goes silent exactly during the longest pauses; the poller is traffic-independent and its evaluation records are the episode memory, all for alert latency already bounded by the GD4 freshness policy's recovery horizon. 300 s keeps the cadence inside the existing catalog class (`registry.py:129/:135`) |
 | A0 extension: a bounded, launch-free quota refresh with one freshness policy (GD4, §4) | The dispatch gate as the un-pause reader (v0.2's wording) | A0's stored observations are keyed `(invocation_id, attempt)` (A0 §5.6) — results of invocations, not a stream any reader can refresh; blocking dispatch on the last unreadable result can prevent the very invocation that would produce a newer one, so a dispatch-dependent un-pause can deadlock behind the pause it should clear. The extension refreshes independently of model dispatch, and enforcement + alert sharing its one freshness policy is what keeps them from silently disagreeing |
+| The §4 pause predicate reads GD4's latest evidence under the freshness policy (PG5-1) | v0.3's clause: any non-terminal `PACE_WEEK` deferral holds the pause regardless of its `retry_at` | a latch no fresh observation can clear: GD4's on-pace refresh would leave the route paused for the week's remainder, contradicting the recovery clause the same section promises. The deferral rows are the pause's *effects*; deriving the predicate from its cause keeps recovery automatic while the week reset and the per-job clamps keep their own, separate meanings |
+| Admission-distinguished calibration workload behind every-admission image-lane guards (§7.2, PG5-3) | The bare per-provider switch as the only gate (v0.3's rule: switch off until the checkpoint publishes) | calibration itself needs the provider live, and a bare switch-on releases the queued cast work C §4's helper creates automatically — the switch cannot both serve calibration and hold cast. The guards admit exactly the bounded, operator-authorized calibration workload and refuse everything else on the lane, including queued jobs, until measured receipts + the committed checkpoint + the demand-list fit check pass |
 | G evaluation audit records appended to the transactional event log (§4, PG-8) | Evaluation payload columns on A6b's `scheduler_firings` | A6b's shape carries period identity and timing only (`A6b-1`), and firing deduplication does not remember a falling edge anyway; adding payload columns would reopen an accepted A-line migration for a G need, while the append-only transactional event log already exists (GD3's sink) and lets evaluation + firing identity + rising-edge alert commit as one transaction — rollback-safe and restart-reconstructable |
 | Production store authoritative + sha256-bound file exports for ephemeral-profile records (§2.1b) | Pilot-DB-only records | a LIVE claim whose evidence dangles after `down -v` is a qualification artifact without durable evidence (decision 9 generalized); the export step makes every phase's landing refs verifiable from the committed tree |
 | One shared backup entrypoint for drill and timer (§3.3/§5.5) | A standalone timer script beside the drill's inline shell | two implementations fork exactly the code path AT-32's proof rests on — the nightly proof would validate whatever the timer runs while the drill exercises something else |
