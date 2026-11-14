@@ -499,6 +499,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 12:43Z (GLM): **phase G spec draft launched** (`phase-g-spec`, docs slot — Q7's last
   draft before D). Running: a0d-review-r3 (Codex) + phase-g-spec + GLM fix2 verification (suites).
   The a0d gate at `b84a397` launches when the verification returns; r5-fix1 held behind the gate.
+- 14 Nov 12:4?Z (GLM): **A0-D fix2 acceptance step 1 GREEN** — both suites by GLM's own run:
+  161 passed (fix round added ~46 tests). **Full gate running SOLO at `b84a397`** (`a0d-gate3`
+  checkout, unit `dramabox-a0d3-gate`; no build running beside it — r5-fix1 held). Running:
+  a0d-review-r3 + phase-g-spec + the gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
