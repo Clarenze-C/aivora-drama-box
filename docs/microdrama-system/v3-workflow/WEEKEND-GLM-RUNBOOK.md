@@ -514,6 +514,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   release path never verifies a required post; clean assert, not starvation — receipts kept). The
   failure was appended to the fix3 brief as **AD6-GATE-1** and **fix3 LAUNCHED** (build slot; AD6-1..7
   + the gate red). Running: a0d-fix3 + phase-g-goldfish. r5-fix1 still queued (A0-D critical path).
+- 14 Nov 18:14Z (GLM, second dormancy gap recorded): fix3 quota-hit at 13:55Z (31m, 1 turn) and the
+  G-Goldfish launch was refused; the session then sat dormant ≈4h20m (keepwarm had expired) — two
+  z.ai windows rolled over unused. 18:14Z recovery: **fix3 relaunched** (brief intact incl.
+  AD6-GATE-1; resumes from report if any) + **G-Goldfish relaunched** (G v0.1 draft had committed
+  before the earlier refusal). z.ai 1% (window to 20:17Z); Codex 0%/25%. Lesson re-confirmed: idle
+  wakeups must always re-arm.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
