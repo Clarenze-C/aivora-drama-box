@@ -391,6 +391,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   **A2 PARKED for Opus.** ROUND-3 SWEEP COMPLETE — final: **B APPROVED, C APPROVED (v0.4.1),
   A6b APPROVED; A2 + A3 parked for Opus; F deferred** (per operator-approved plan). Codex queue empty.
   GLM runway: r5-build (running) → a0d-fix2 → A1 note revision → A0-R1 fix → E spec draft.
+- 14 Nov 08:15Z (GLM, operator-approved): **A2/A3 fix + one R4 each** authorized; queue reordered:
+  on r5-build exit → a3-note-rev3 (docs) → a2-note-rev3 (docs) → a0d-fix2 (code; both R4 critiques
+  run on Codex in parallel) → A1 revision → A0-R1 fix → E spec draft → G fact map/draft → F1/F2/F4/
+  F7/F8 notes. D stays last (needs E/G + R5 real results). Briefs `a3-note-rev3-brief.md` +
+  `a2-note-rev3-brief.md` written, ready to fire.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
