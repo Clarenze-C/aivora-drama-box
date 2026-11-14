@@ -605,6 +605,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 22:08Z (GLM): **A0-D R5 = FIX-REQUIRED, converging** (2/4 closed; AD8-1 BLOCKING + AD8-2
   SF; trajectory 13->10->7->4->2). **fix5 launched** (AD8-1/2 only); R6 + solo gate follow. The
   gate at `15ce674` still running as evidence. Running: a0d-fix5 + the gate.
+- 14 Nov 22:35Z (GLM): **A0-D FIX5 DONE** — both AD8 findings addressed at `1e43b70` (123 unit-llm
+  + 84 gateway-integration green; 4 documented deviations incl. the cancel/rearm choice and an
+  accepted cross-version hash-vocabulary break — flagged to R6 to weigh). Acceptance chain running:
+  GLM verification + **R6 review**; fresh solo gate at `1e43b70` after verification. The stale
+  a0d4 gate (at 15ce674) becomes evidence only.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
