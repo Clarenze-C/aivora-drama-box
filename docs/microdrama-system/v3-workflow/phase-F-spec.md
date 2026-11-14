@@ -137,22 +137,18 @@ assembles from (E's — the deterministic assembly seam itself already exists, `
    with a typed reason while no candidate is picked (or while the pick is stale, §3.3). The
    picked candidate becomes the cover triple (`id/version/sha256`) the existing V2 binding
    already requires (FM §1).
-9. **O-8 stays open — the OPERATOR decides; GLM does not.** **Package F5 is conditionally blocked
-   on the ruling; F1–F4 may proceed** (CON-B3). The operator chooses, per destination, between
-   caption-file delivery where the platform supports it and *not delivering* EN/ZH there (options
-   and the recorded recommendation in §15 O-F1; extra posts are excluded by SPEC §9.1). YouTube
-   has a real caption surface today (`upload_captions`, **not part of submit** —
-   `S/publishing/youtube/adapter.py:250-258`, FM §9); TikTok/Facebook have none verified. The
-   chosen route is recorded per destination in `CaptionRouteV3` (§2; written by
-   `record_caption_route`, §12) and enforced at release admission (§7.1 item 5).
-   **Conditional on the ruling, F5 implements the selected route's durable delivery and
-   verification workflow** (PF-15): a delivery job/continuation binds the **exact E-produced
-   tracks**, uploads them through the destination's qualified surface, reconciles upload
-   outcomes, and verifies the required languages; a required-caption failure **holds release
-   qualification** (typed blocker) and exposes retry/reconcile. Ordinary publication
-   verification (`visibility`/`disclosures`) is unchanged — caption delivery is a separate,
-   route-gated workflow, never a second submit. Until O-8 is ruled, F5 stays conditionally
-   blocked and no delivery code ships.
+9. **O-8 RULED by the operator, 14 Nov 2026** (binding; the recorded recommendation adopted verbatim):
+   **YouTube = EN/ZH caption tracks, uploaded post-publish via `upload_captions`; TikTok/Facebook =
+   Thai-only** (no EN/ZH delivery there); **per-destination config flip allowed once T032 platform
+   qualification proves caption-file support**; no burned-in per-language video variants. Recorded per
+   destination in `CaptionRouteV3` (§2; written by `record_caption_route`, §12) and enforced at release
+   admission (§7.1 item 5). **F5 is UNBLOCKED** and implements the YouTube delivery surface now; the
+   TikTok/Facebook legs stay unbuilt until the T032 flip (PF-15): a delivery job/continuation binds the
+   **exact E-produced tracks**, uploads them through the destination's qualified surface, reconciles
+   upload outcomes, and verifies the required languages; a required-caption failure **holds release
+   qualification** (typed blocker) and exposes retry/reconcile. Ordinary publication verification
+   (`visibility`/`disclosures`) is unchanged — caption delivery is a separate, route-gated workflow,
+   never a second submit.
 10. **HELD / MISSED / PARTIAL are derived, per-destination episode-release states** (SPEC §2.2
     cites N43), computed from operation/linkage evidence (`provider_ops`), `platform_posts` rows,
     `publication_admissions` and the calendar — never stored side state (AR-4; §7.4 names its
@@ -932,7 +928,7 @@ check reduces to "the decision is current". Nothing auto-posts.
 | `release_v3.teaser_cut` | `release` | none (deterministic assembly of approved artifacts, reusing `S/editing/{edl,export,ffmpeg}.py` — §5) | none |
 | `release_v3.rebuild_dated` | `release` | none | none |
 | `release_v3.submit_slot` / `release_v3.poll_slot` / `release_v3.reconcile_slot` — **the distinct V3 submit/poll/reconcile jobs, registered with A's work scope (PF5-1)**; discovered by W13's admission-window and admitted-post discovery (§7.1) | `release` | the shared submit/poll/reconcile cores beneath the version-selected adapters (§1.1) — never W09 | none |
-| `release_v3.deliver_captions` | `release` | destination caption surface (e.g. YouTube `upload_captions` — FM §9) | none — **conditional on the O-8 ruling (§1.9 — PF-15; package F5, blocked until ruled)**; binds the exact E-produced tracks, reconciles upload outcomes, verifies required languages; failure holds release qualification with retry/reconcile |
+| `release_v3.deliver_captions` | `release` | destination caption surface (e.g. YouTube `upload_captions` — FM §9) | none — **YouTube leg active per the O-8 ruling (§1.9, ruled 14 Nov); TT/FB legs wait on the T032 flip**; binds the exact E-produced tracks, reconciles upload outcomes, verifies required languages; failure holds release qualification with retry/reconcile |
 
 **F adds two schedules** to A6b's registry (CON-N8): `w13-release-admission` (5 min; §7.1) and
 `w13b-throughput` (daily 19:05 Asia/Bangkok, calendar-triggered, ordered after the 19:00 release
