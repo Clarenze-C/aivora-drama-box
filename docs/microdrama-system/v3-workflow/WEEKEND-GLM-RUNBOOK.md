@@ -327,6 +327,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   points cross-checked against the A0-D fix tree; A-T8/A-T12a/A-T18 strengthened). Launched:
   `a2-note-rev2` (docs) and **A3 Codex round 2** (`a3-note-r2`, final A3 round). Running: r5-build +
   a2-note-rev2 + a3-note-r2. Docs queue next: c-spec-v04 → a6b-note-rev1 → f-spec-v04.
+- 14 Nov 01:28Z (GLM): **A3 round 2 = REWORK** (N3R2-1..4 BLOCKING — recovery reachability and the
+  paid-op lock order among them; N3R2-5..7 SHOULD-FIX). Rule 7 → all 7 ACCEPTED, applied as **v1.2**
+  (brief `a3-note-rev2-brief.md`, queued), **no round 3**; Opus decides Monday (queued). Running:
+  r5-build + a2-note-rev2; Codex idle. Docs queue: c-spec-v04 → a6b-note-rev1 → f-spec-v04 → a3-note-rev2.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -371,3 +375,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   binding, reschedule/binding atomicity, rebinding vs SQL immutability). GLM applied all round-2
   rulings as v0.4, no round 3 (rule 7). Monday: Opus re-checks `phase-f-recritique-rulings.md`;
   accept v0.4 vs round 3.
+- A3 note: round 2 REWORK (4 BLOCKING remain: recovery-path reachability vs the real jobs/states
+  code, the paid-operation lock order, + 2 more per the report). GLM applied all round-2 rulings as
+  v1.2, no round 3 (rule 7). Monday: Opus re-checks `a3-recritique-rulings.md`; accept v1.2 vs round 3.
