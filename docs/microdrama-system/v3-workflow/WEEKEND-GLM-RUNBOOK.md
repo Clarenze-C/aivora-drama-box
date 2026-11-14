@@ -439,6 +439,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   (integration phase; real processes verified — healthy, not stuck). **phase-e-spec draft launched**
   (docs, beside the one build). a0d-fix2 waits for r5's exit per the one-build rule. A1 one-more-cycle
   ask still open with the operator.
+- 14 Nov 10:51Z (GLM): **phase E spec v0.1 drafted** (546 lines; committed by orchestrator — the
+  docs-job pattern has no self-commit for first drafts). **E Goldfish launched** (cwd `phase-e-review/`,
+  ~40 min). Running: r5-build (make check) + phase-e-goldfish. Q7 drafting order C→F→**E**✓→G→D.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
