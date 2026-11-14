@@ -1,24 +1,31 @@
 # A1 design note: discriminator, gates, decision transaction, tracks
 
-**Version 1.3, 14 Nov 2026. Author: GLM (design note only).** Round-2 findings applied
-(GLM); operator-authorized R3 follows. v1.3 folds every Replacement from
-[codex-a1-note-recritique.md](codex-a1-note-recritique.md) (verdict REWORK: N1R-1..N1R-3 BLOCKING,
-N1R-4..N1R-12 SHOULD-FIX): the recursive `track_waits` DDL (N1R-1), the V1 schema-pin adapter
-(N1R-2), extension approval uniqueness (N1R-3), command `activation_id` (N1R-4), work-scope
-immutability and plumbing (N1R-5), canonical operation dismissals (N1R-6), Gate-2 Reject feedback
-(N1R-7), GPU transaction ownership audited against the real `comfy_jobs.py:600` /
-`provider_ops.py:121` sites (N1R-8), the shutdown predicate rework (N1R-9), direct-read guards
-(N1R-10), the preserved V1 diagnostic contract (N1R-11) and the A1 production-injection boundary
-(N1R-12); §13 maps each. v1.2 (11 Nov) applied [codex-a1-note-critique.md](codex-a1-note-critique.md)
+**Version 1.4, 14 Nov 2026. Author: GLM (design note only).** Round-3 findings applied
+(GLM); operator-authorized R4 verification follows. v1.4 folds every Replacement from
+[codex-a1-r3.md](codex-a1-r3.md) (verdict REWORK: N1R3-1/2 BLOCKING, N1R3-3..6 SHOULD-FIX): the
+workflow-resolved approval-identity partition — V1 identity columns refused, V3 `activation_id`
+required, ancestry validated before either uniqueness index accepts a row (N1R3-1, §2.3); the
+Comfy submit ordering corrected to the real commit-before-HTTP sequence at
+`comfy_jobs.py:611-639`, matching A3 §9 A-T18 (N1R3-2, §8/§9); one canonical per-transaction lock
+order — scope → job → provider-operation serialization/rows → lease rows → budget locks — with
+`ensure_pod`'s create-request / pod-binding / activation transactions enumerated separately
+(N1R3-3, §8/§9); the complete work-scope replay comparison scoped to resolved V3 work only, the
+V1 type/input-hash rule preserved (N1R3-4, §2.4); V1 scope compatibility evaluated with the
+original `gate_type='SEASON_CONCEPT'` equivalence and legacy failure precedence preserved, the
+expanded season-gate set V3-only (N1R3-5, §2.2); and the concurrent-decision expectation corrected
+to `GateNotReady` for the closed activation (N1R3-6, §5/§9); §13.0 maps each. v1.3 (14 Nov)
+applied [codex-a1-note-recritique.md](codex-a1-note-recritique.md) in full (N1R-1..N1R-12;
+§13.1 maps each); v1.2 (11 Nov) applied [codex-a1-note-critique.md](codex-a1-note-critique.md)
 N1-1..N1-18 in full (verdict REWORK; every "Replace" binding) plus the rulings on N1-5/N1-7/N1-10.
 Requirements: [phase-A-spec.md](phase-A-spec.md) v0.3 §0–§3, §6, §10, §11 (AC-1..9, AC-22/23,
 AR-3/4/6 binding); master [SPEC-v3.md](SPEC-v3.md) v0.4.4 §2.1–§2.2, §4.3, §10.0, §10.5; A0 v0.4
 §5.2/§5.5/§5.6; [A2-design-note.md](A2-design-note.md) v1.3 and [A3-design-note.md](A3-design-note.md)
 v1.3 (lock-order and GPU-audit statements stay mutually consistent). Facts re-verified on
 `feat/microdrama-m0-m4` @ `39e5319`; v1.3 re-verifies its cited sites at `81b783f` — including the
-committed `schemas/v1/ApprovalCommand.schema.json` bytes (N1R-2) — (tail 0025; 0026 =
-`.scratch/t031-gate-h2/` T031; 0027 = A0, **not yet built**). `S/` = `src/microdrama/`,
-`M/` = `migrations/`, `X/` = `tests/`.
+committed `schemas/v1/ApprovalCommand.schema.json` bytes (N1R-2); v1.4 re-verifies its round-3
+sites at `0607f41` (`comfy_jobs.py:611-639`, `leases.py:901-970`, `jobs.py:429-434`,
+`M/0002…sql:184-208`) — (tail 0025; 0026 = `.scratch/t031-gate-h2/` T031; 0027 = A0, **not yet
+built**). `S/` = `src/microdrama/`, `M/` = `migrations/`, `X/` = `tests/`.
 
 ---
 
@@ -83,16 +90,22 @@ CREATE FUNCTION md_approval_gate_rules() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v text; season_gate boolean; bound boolean;
 BEGIN
   v := md_season_version_of(NEW.entity_type, NEW.entity_id);
-  season_gate := NEW.gate_type IN ('SEASON_CONCEPT','STORY_LOCK','CAST_LOCK','TEASER_FINAL','LAUNCH');
-  IF season_gate <> (NEW.entity_type = 'season') THEN
-    RAISE EXCEPTION 'new row for relation "approval_events" violates check constraint "approval_events_check"'
-      USING ERRCODE='check_violation', CONSTRAINT='approval_events_check'; END IF;
   bound := NEW.gate_type = 'EPISODE_FINAL' AND NEW.action = 'APPROVE'
            AND NOT (jsonb_array_length(NEW.media_hashes) > 0
                     AND NEW.management_policy_hash IS NOT NULL AND NEW.release_scope_hash IS NOT NULL);
   IF v = 'v1' OR v IS NULL THEN
     -- V1 rules reproduced EXACTLY (0002:184,200,201,202-204,205), each raise emitting the
     -- dropped CHECK's original SQLSTATE, constraint name and primary message (N1R-11).
+    -- N1R3-5: scope compatibility is evaluated with the ORIGINAL 0002:200 equivalence
+    -- ((gate_type = 'SEASON_CONCEPT') = (entity_type = 'season')) and FIRST, preserving
+    -- legacy failure precedence -- a new gate value on a season entity fails
+    -- approval_events_check (0002:200: (false) = (true) is false), while on an episode
+    -- entity the original scope rule passes ((false) = (false)) and the gate-type
+    -- membership raise (0002:184) reports instead. The expanded season-gate set exists
+    -- only in the V3 branch below.
+    IF (NEW.gate_type = 'SEASON_CONCEPT') <> (NEW.entity_type = 'season') THEN
+      RAISE EXCEPTION 'new row for relation "approval_events" violates check constraint "approval_events_check"'
+        USING ERRCODE='check_violation', CONSTRAINT='approval_events_check'; END IF;
     IF NEW.gate_type NOT IN ('SEASON_CONCEPT','EPISODE_FINAL') THEN
       RAISE EXCEPTION 'new row for relation "approval_events" violates check constraint "approval_events_gate_type_check"'
         USING ERRCODE='check_violation', CONSTRAINT='approval_events_gate_type_check'; END IF;
@@ -110,6 +123,12 @@ BEGIN
                              'EPISODE_FINAL') THEN
       RAISE EXCEPTION 'gate_type not admitted for v3'
         USING ERRCODE='check_violation', CONSTRAINT='approval_events_v3_gate_type'; END IF;
+    -- N1R3-5: the expanded season-gate set applies to V3 ONLY (new constraint name; V1
+    -- diagnostics are untouched by it).
+    season_gate := NEW.gate_type IN ('SEASON_CONCEPT','STORY_LOCK','CAST_LOCK','TEASER_FINAL','LAUNCH');
+    IF season_gate <> (NEW.entity_type = 'season') THEN
+      RAISE EXCEPTION 'v3 gate scope does not match entity type'
+        USING ERRCODE='check_violation', CONSTRAINT='approval_events_v3_scope'; END IF;
     -- N1-2: feedback validation branches by gate (spec §2.3).
     IF NEW.gate_type = 'EPISODE_FINAL' THEN
       -- Gate 2 keeps its timecoded feedback rules in BOTH versions, unchanged — including
@@ -152,6 +171,17 @@ and primary message before and after 0029. V3 rows raise the new `approval_event
 except where the rule is verbatim V1 (`approval_events_check2`/`check3` on Gate 2), which keep the
 original names for uniform diagnostics. A-T16 compares these stable fields across the upgrade —
 never the pre-0029 raw messages against different custom raises (§10).
+
+**Legacy failure precedence preserved (N1R3-5).** Scope compatibility is evaluated per version,
+never by a shared predicate: the V1 branch evaluates the **original** `0002:200` equivalence
+(`(gate_type = 'SEASON_CONCEPT') = (entity_type = 'season')`) first, and the expanded five-gate
+season set exists only in the V3 branch (new name `approval_events_v3_scope`). The raise order
+inside the V1 branch therefore reproduces legacy precedence — a new gate value on a **season**
+entity fails `approval_events_check` (as `0002:200` did: `(false) = (true)` is false), while on an
+**episode** entity the original scope rule passes (`(false) = (false)`) and the gate-type
+membership raise reports `approval_events_gate_type_check` — the exact diagnostic reversal the v1.3
+shared predicate produced is eliminated. A-T1 tests the new gate values on both V1 entity types
+with exactly these original diagnostics.
 
 ### 2.3 Migration 0030 — tracks, activations, activation events, notes
 
@@ -281,17 +311,36 @@ ALTER TABLE approval_events
   ADD COLUMN activation_id uuid REFERENCES gate_activations(id),
   ADD COLUMN extension_id  uuid REFERENCES season_extensions(id);
 
--- Scope linkage validated at commit: the named activation must match the row's gate, entity,
--- extension and decision revision (deferred: the DECIDED event and notes join the transaction).
+-- Partition discipline is workflow-resolved, never guessed from a nullable column (N1R3-1):
+-- the workflow is resolved from the approval entity itself; V1 rows must carry NULL
+-- activation_id AND NULL extension_id (else they would sit in the V3 index partition and
+-- escape the preserved 0002:208 rule), and V3 rows must carry a non-NULL activation_id (else
+-- they would sit in the V1 partition and share scope/revision with preserved V1 history across
+-- the two indexes). With identity present, the activation's workflow and complete
+-- season/episode/extension ancestry are validated against the approval before either index
+-- partition accepts the row (deferred: the DECIDED event and notes join the transaction).
 CREATE FUNCTION md_v3_approval_identity() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE a record;
+DECLARE v text; a record;
 BEGIN
-  IF NEW.activation_id IS NULL THEN RETURN NULL; END IF;   -- V1 rows never set it
+  v := md_season_version_of(NEW.entity_type, NEW.entity_id);
+  IF v = 'v1' OR v IS NULL THEN
+    IF NEW.activation_id IS NOT NULL OR NEW.extension_id IS NOT NULL THEN
+      RAISE EXCEPTION 'v1 approval cannot carry v3 decision identity'
+        USING ERRCODE='check_violation', CONSTRAINT='approval_events_v3_identity'; END IF;
+    RETURN NULL;
+  END IF;
+  IF NEW.activation_id IS NULL THEN
+    RAISE EXCEPTION 'v3 approval requires its gate activation identity'
+      USING ERRCODE='check_violation', CONSTRAINT='approval_events_v3_identity'; END IF;
   SELECT * INTO a FROM gate_activations WHERE id = NEW.activation_id;
   IF a.id IS NULL OR a.gate_type <> NEW.gate_type
-     OR (a.gate_type = 'EPISODE_FINAL' AND a.episode_id <> NEW.entity_id)
+     OR (a.gate_type = 'EPISODE_FINAL'
+         AND (a.episode_id <> NEW.entity_id
+              OR a.season_id <> (SELECT season_id FROM episodes WHERE id = NEW.entity_id)))
      OR (a.gate_type <> 'EPISODE_FINAL' AND a.season_id <> NEW.entity_id)
      OR a.extension_id IS DISTINCT FROM NEW.extension_id
+     OR (NEW.extension_id IS NOT NULL
+         AND a.season_id <> (SELECT season_id FROM season_extensions WHERE id = NEW.extension_id))
      OR a.decision_revision <> NEW.expected_revision THEN
     RAISE EXCEPTION 'approval does not match its activation scope'
       USING ERRCODE='check_violation', CONSTRAINT='approval_events_v3_identity'; END IF;
@@ -301,6 +350,8 @@ CREATE CONSTRAINT TRIGGER approval_events_v3_identity_trigger AFTER INSERT ON ap
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION md_v3_approval_identity();
 
 -- Uniqueness: legacy rule preserved for V1; V3 keyed by full scope/revision and per activation.
+-- Partitions are workflow-resolved by md_v3_approval_identity (N1R3-1) — never by the nullable
+-- column alone.
 DROP INDEX approval_events_one_per_revision;
 CREATE UNIQUE INDEX approval_events_one_per_revision ON approval_events
   (gate_type, entity_id, expected_revision) WHERE activation_id IS NULL;
@@ -311,8 +362,13 @@ CREATE UNIQUE INDEX approval_events_one_decision_per_activation ON approval_even
   (activation_id) WHERE activation_id IS NOT NULL;
 ```
 
-Semantics: V1 rows never set `activation_id` (the V1 recorder is untouched, §5), so the partial
-index preserves their rule **exactly** — dropping and recreating it inside 0030 is not an edit of
+Semantics: **partition membership is workflow-resolved and enforced, never assumed (N1R3-1)** —
+the deferred trigger refuses a V1 row carrying `activation_id`/`extension_id` (restoring the full
+strength of the preserved `0002:208` rule, which a nullable-column guess weakened) and a V3 row
+without `activation_id` (which would otherwise select the V1 partition and share scope/revision
+with preserved V1 history across the two indexes); neither uniqueness partition is reachable by
+choice of a nullable value. The untouched V1 recorder (§5) never sets either column, so the partial
+index preserves the V1 rule **exactly** — dropping and recreating it inside 0030 is not an edit of
 applied 0002 bytes. A second decision on one activation violates
 `approval_events_one_decision_per_activation` **and** `gate_activation_events`' `UNIQUE (activation_id)`
 — either reports the conflict. Because every decision advances its scope's `revision`
@@ -389,7 +445,14 @@ CREATE INDEX jobs_logical_work_idx ON jobs (logical_work_id) WHERE logical_work_
 
 `track` is NULL for every V1 job (and `require_workflow` refuses V3 rows on legacy paths, so no V1 writer sets it). `replaces_job_id` + `logical_work_id` are the replacement identity separate from the UNIQUE `jobs.semantic_key` (`M/0001…sql:78`, AR-4). `jobs_identity_immutable` (`M/0001…sql:104`) is untouched — and neither it nor the trigger above guarded `season_id`/`episode_id`, which is why the V3-conditional scope guard is added beside them (N1R-5): V3 work-scope identity cannot be re-pointed after insert, while every V1 UPDATE path (including episode back-fill on INSERT, which is not an UPDATE) keeps its exact behaviour.
 
-**Typed enqueue/work-scope changes (N1-9, N1R-5).** `JobService.enqueue` (`S/core/jobs.py:353`; INSERT at `:389`) gains keyword-only `track`, `extension_id`, `logical_work_id`, `replaces_job_id`, persisted by the same INSERT, and the typed row plumbing carries them end to end: `Job` (`S/core/jobs.py:95`) and the `_job` mapper (`:136`) gain all four work-scope fields, so no caller reads scope off the raw row. Validated inside the caller's transaction: a V3 job is discriminated by the **resolved season's `workflow_version`** — `track` set requires the resolved season to be `'v3'` and a `'v1'` season refuses a tracked job; `track` set requires `season_id`; an `episode_id` resolves its season and a mismatch is refused (today an episode job may persist without `season_id` — `S/core/jobs.py:385` back-fills only the episode); `extension_id` must belong to the same season with `track='planning'`; `replaces_job_id` must name an older job of the same scope, track and `logical_work_id`; every V3 payload carries `expected_content_revision` for its resolved fence. **Replay comparison (N1R-5):** the semantic-key replay check (`S/core/jobs.py:429`) currently compares job type and input hash only — it is extended to compare the **complete work scope** (`season_id`, `episode_id`, `extension_id`, `track`, `logical_work_id`, `replaces_job_id`); the same semantic key re-used for a different scope raises `IdempotencyConflict` exactly as a different input does. The immutability triggers protect scope identity after insert; V1 call sites are unchanged (all four params default to NULL).
+**Typed enqueue/work-scope changes (N1-9, N1R-5).** `JobService.enqueue` (`S/core/jobs.py:353`; INSERT at `:389`) gains keyword-only `track`, `extension_id`, `logical_work_id`, `replaces_job_id`, persisted by the same INSERT, and the typed row plumbing carries them end to end: `Job` (`S/core/jobs.py:95`) and the `_job` mapper (`:136`) gain all four work-scope fields, so no caller reads scope off the raw row. Validated inside the caller's transaction: a V3 job is discriminated by the **resolved season's `workflow_version`** — `track` set requires the resolved season to be `'v3'` and a `'v1'` season refuses a tracked job; `track` set requires `season_id`; an `episode_id` resolves its season and a mismatch is refused (today an episode job may persist without `season_id` — `S/core/jobs.py:385` back-fills only the episode); `extension_id` must belong to the same season with `track='planning'`; `replaces_job_id` must name an older job of the same scope, track and `logical_work_id`; every V3 payload carries `expected_content_revision` for its resolved fence. **Replay comparison (N1R-5, N1R3-4):** the semantic-key replay check (`S/core/jobs.py:429-434`)
+currently compares job type and input hash only. The **complete work-scope comparison**
+(`season_id`, `episode_id`, `extension_id`, `track`, `logical_work_id`, `replaces_job_id`) applies
+to **resolved V3 work only** (`track` set / resolved season `'v3'`): the same semantic key re-used
+for a different V3 work scope raises `IdempotencyConflict` exactly as a different input does. The
+**V1 rule is preserved unchanged** — V1 replay keeps comparing job type and input hash only, so a
+V1 replay whose explicit `season_id`/`episode_id` argument differs against the same semantic key is
+never newly refused (the v1.3 unconditional extension is withdrawn). The immutability triggers protect scope identity after insert; V1 call sites are unchanged (all four params default to NULL).
 
 ```sql
 CREATE TABLE alert_dismissals (
@@ -674,9 +737,9 @@ Registration rules (N1-13, N1R-12): test handlers carry intrinsic provenance —
 2. Lock the scope track FOR UPDATE (episode gates: `season_tracks` then `episode_tracks`; extension scopes: `season_tracks` then `season_extensions`).
 3. **Owner scope first** (N1-6): `scoped_owner_id` (`S/review/scope.py:64`) with the NotFound-as-missing rule of `S/review/service.py:401-404` — a foreign scope answers like a missing one before any workflow/state error is exposed.
 4. `require_workflow(tx, season_id, expected='v3')`; then the resolver's ancestry proof (episode → season, extension → season).
-5. `resolve_gate_binding` resolves the **command's exact `activation_id`** (N1R-4) — it must exist, be the scope's **open** activation, and match the complete scope (gate, season, episode, extension) **before** any comparison; then the **three-way comparison under the locks (N1-6)** — activation's stored `binding_sha256` = recomputed hash = command's hash; activation's `decision_revision` = track `revision` = command's `expected_revision`; activation's `content_revision` = track `content_revision` = command's `expected_content_revision`. A mismatch is `StaleRevision` (command vs authority) or `GateNotReady` (activation vs authority — changed authority requires a fresh activation: supersede, reopen). A concurrent second decision hits `approval_events_one_decision_per_activation` / `approval_events_v3_one_per_revision` (§2.3, N1R-3) — V1 rows keep the preserved partial `approval_events_one_per_revision` (`M/0002…sql:208`) — reported like `S/core/approvals.py:108-116`.
+5. `resolve_gate_binding` resolves the **command's exact `activation_id`** (N1R-4) — it must exist, be the scope's **open** activation, and match the complete scope (gate, season, episode, extension) **before** any comparison; then the **three-way comparison under the locks (N1-6)** — activation's stored `binding_sha256` = recomputed hash = command's hash; activation's `decision_revision` = track `revision` = command's `expected_revision`; activation's `content_revision` = track `content_revision` = command's `expected_content_revision`. A mismatch is `StaleRevision` (command vs authority) or `GateNotReady` (activation vs authority — changed authority requires a fresh activation: supersede, reopen). **A concurrent second decision re-checks openness under the track lock first and is refused `GateNotReady` for the already-closed activation (N1R3-6); the §2.3 partial indexes (`approval_events_one_decision_per_activation` / `approval_events_v3_one_per_revision`) remain the commit-time backstop** — V1 rows keep the preserved partial `approval_events_one_per_revision` (`M/0002…sql:208`) — reported like `S/core/approvals.py:108-116`.
 6. `handler.conditions(tx, binding)` → nonempty is `GateNotReady`.
-7. **Record at r**: `record_v3_decision(tx, ...)` (new, `S/core/v3_approvals.py`) inserts the `approval_events` row at revision *r* **persisting the command's `activation_id` and `extension_id` — the immutable decision identity whose scope linkage the deferred §2.3 trigger validates at commit (N1R-3)** (EPISODE_FINAL REVISE carries timecoded feedback, persisted to `feedback_events` exactly as V1 does; season-gate REVISE carries ≥1 typed notes row and empty feedback — the deferred trigger backstops; every Reject carries empty feedback with its explanation in `reason`, N1R-7), appends `approval.recorded`, and appends the **`DECIDED` activation event** closing the activation.
+7. **Record at r**: `record_v3_decision(tx, ...)` (new, `S/core/v3_approvals.py`) inserts the `approval_events` row at revision *r* **persisting the command's `activation_id` and `extension_id` — the immutable decision identity whose workflow-resolved partition and scope linkage the deferred §2.3 trigger validates at commit (N1R-3, N1R3-1)** (EPISODE_FINAL REVISE carries timecoded feedback, persisted to `feedback_events` exactly as V1 does; season-gate REVISE carries ≥1 typed notes row and empty feedback — the deferred trigger backstops; every Reject carries empty feedback with its explanation in `reason`, N1R-7), appends `approval.recorded`, and appends the **`DECIDED` activation event** closing the activation.
 8. `handler.on_decision(tx, ...)` with the decision context (revision *r*, binding, approval id): its writes, job enqueues, events and **authorised track transitions** join this transaction (e.g. STORY_LOCK APPROVE moves planning `PLANNED → STORY_LOCKED` here — §6).
 9. **Advance once:** the transaction bumps the scope's `revision` *r → r+1* as its final track write. Neither the recorder nor the handler bumps it.
 10. The idempotent response is stored. Any failure at any step rolls everything back.
@@ -773,19 +836,24 @@ One admission protocol, not scattered predicates. **Every gate/pick activation a
 insertion, admission, adoption and transfer mutation takes the scope's track lock (§6 #2/#3) FOR
 UPDATE first — before any lease, job or budget lock — and re-checks the counterpart predicate under
 it. Owning transaction, mode and order are named per mutation (N1R-8): the track row FOR UPDATE is
-the ancestor lock, and where the pre-existing code commits separately (the
-reservation-then-insert pattern), **each committed mutation re-takes the scope lock inside its own
-transaction and re-checks under it** — no lock is "already held" across separately committed
-operations. The order at every final mutation is ancestor-before-leaf: scope track (#2/#3) → job
-(#5, where the path already takes `lease_guard`) → provider-operation serialization/advisory and
-operation row (#6) → reservation (#7, where applicable) → lease row/pod writes (#6).**
+the ancestor lock, and where the pre-existing code commits separately (the reservation-then-insert
+pattern; `ensure_pod`'s create-request/pod-binding/activation chain), **each committed mutation
+re-takes the scope lock inside its own transaction and re-checks under it** — no lock is "already
+held" across separately committed operations. One canonical sequence per transaction (N1R3-3):
+scope track (#2/#3) → job (#5, where the path already takes `lease_guard`) → provider-operation
+serialization/advisory and rows (#6) → lease row/pod writes (#6) → budget/reservation locks
+(#7, where applicable) — a transaction never takes a budget lock ahead of its lease rows, and the
+v1.3 "#6 → #7 → lease writes" listing is withdrawn. The pod path's separately committed
+transactions are enumerated individually in §9 — create-request, pod-binding and activation — each
+naming its scope-lock reacquisition and the intervening provider call (N1R3-3;
+`S/rendering/leases.py:901-913`, `:919`, `:943`, `:970`).**
 
 | Attachment | Where | Rule under the scope lock |
 |---|---|---|
 | Gate/pick activation | `TrackService.open_gate` (§6); pick activation (C) reuses it | **admission predicate (N1R-9): refuse while any live lease exists in scope** (episode: `S/rendering/leases.py:204 episode_live_lease_count`; season: new `season_live_lease_count`) **and until every prior lease in scope is resolved**, where resolved means exactly one of: (i) a verified shutdown of its own (`record_terminate_verified`, `S/rendering/leases.py:468`); (ii) **transferred away** — its compute window closed at the transfer instant and it deliberately has no verified stop of its own (`:1376`, T045 R8/G16); ownership of termination follows the transfer chain to its **final holder**, whose stop must be verified; (iii) **durably proven no-create** — no pod was ever requested or recorded for it. Only an *unverified shutdown of a potentially created pod* blocks; transferred history and proven no-create never do. A wait is exposed only after zero live exposure plus full resolution — no GPU is held while a human wait opens (master §10.5) |
 | Lease admission | `claim` (`S/rendering/leases.py:671`, incl. `_w05_render_dispatch`'s claim at `S/scheduling/service.py:747`; insert at `:789`) | refuse when an open activation exists for the scope. The reservation-then-insert two-transaction pattern (`:674-676`) stays; **owning transactions (N1R-8): the reservation transaction and the lease-insert transaction each take the scope track row FOR UPDATE first and re-check the activation predicate before their INSERT (#7 reservation tx; #6 lease tx)** — the activation race is closed inside both committed mutations, not by a lock held across them |
-| Pod acquisition / reactivation | `ensure_pod` (`:876`; `_record_create_request:940`, `_record_pod_id:916`, `_activate:968`) | same check, in the transaction performing each write, before any new external submit under that scope |
-| Actual Comfy dispatch / adoption | begin/dispatch boundary: `_submit_bound_graph` (`S/rendering/comfy_jobs.py:600` — begins the operation, queues the graph, persists the external prompt ID); `_load_current_prompt_manifest:572` is a preceding locator read; `_verify_job:703`/`_collect_outputs:914` and the `reconcile_unknown` paths are adoption/reconciliation | same check in the dispatch transaction before the external submit: scope track FOR UPDATE (#2/#3) → re-check → `lease_guard` job SHARE (#5, `S/core/jobs.py:648`) → `provider_ops.begin`'s serialization (`pg_advisory_xact_lock` per job then per reservation, `S/core/provider_ops.py:121`; begin's reservation FOR SHARE precedes for V1 callers, preserved verbatim) → operation INSERT/queue submit → commit. The V3 composition's full begin/rearm chain (#6 before #7, eligibility first) is specified and tested in A3 §7; this row supplies the admission predicate A3's composition re-checks under the scope lock |
+| Pod acquisition / reactivation | `ensure_pod` (`:876`; `_record_create_request:940`, `_record_pod_id:916`, `_activate:968`) | same check, re-taken in **each of the three separately committed transactions** (N1R3-3) — create-request (`:940`), pod-binding (`:916`) and activation (`:968`) each reacquire the scope track lock FOR UPDATE, re-check admission, then take the lease row FOR UPDATE before their write; the provider create call (`acquire_or_reconcile:902`) intervenes between create-request and pod-binding under **no** held data lock, before any new external submit under that scope |
+| Actual Comfy dispatch / adoption | begin/dispatch boundary: `_submit_bound_graph` (`S/rendering/comfy_jobs.py:600`): the guarded begin transaction (`:611-623`) **commits the durable operation intent first**; only then is the graph submitted over HTTP (`queue_prompt`, `:630`), and the submission outcome is persisted by a **separate** transaction (`record_result(SUBMITTED, external_id)` at `:639`; `_fail_without_dispatch`/`_mark_unknown` on the failure paths). `_load_current_prompt_manifest:572` is a preceding locator read; `_verify_job:703`/`_collect_outputs:914` and the `reconcile_unknown` paths are adoption/reconciliation | **the real order is preserved, not inverted (N1R3-2): the guarded begin/rearm transaction commits before submission.** Its sequence: scope track FOR UPDATE (#2/#3) → re-check admission → `lease_guard` job SHARE (#5, `S/core/jobs.py:648`) → `provider_ops.begin`'s serialization (`pg_advisory_xact_lock` per job then per reservation, `S/core/provider_ops.py:121`; begin's reservation FOR SHARE precedes for V1 callers, preserved verbatim) → operation INSERT → **commit**. Dispatch then **reacquires the ordered scope/job/operation/lease/reservation guards and revalidates admission against the already-durable operation** before the external submit — the provider is never accepted against an operation that can still roll back (A3 §9 A-T18 boundary (1)). The outcome persists separately (`:639`), and an ambiguous submission retains its durable reconciliation identity — the committed operation row drives recovery, never a resubmit guess. The V3 composition's full begin/rearm chain (#6 before #7, eligibility first) is specified and tested in A3 §7; this row supplies the admission predicate A3's composition re-checks under the scope lock |
 | Transfer | `transfer` (`:1319`; final transaction `:1361`) | destination scope's track lock first; refuse when the destination has an open activation. **Owning transactions (N1R-8): the reservation (`:1357`, `_reserve_for_lease`, its own transaction) and the final transfer transaction (`:1361`: destination scope FOR UPDATE → old lease FOR UPDATE `:1362` → release + new-lease insert) each re-take the destination scope lock and re-check the activation predicate before committing** |
 | Heartbeat | `heartbeat` (`:1019`) | the existing human-wait branch (`:1031-1039`) fires only for a **non-ACTIVE** lease; V3 adds an explicit refusal for an **ACTIVE** lease whose scope has an open activation — an ACTIVE V3 lease cannot be kept alive through a wait; the janitor is the cleaner |
 | Janitor candidate + `_cause` | `S/rendering/janitor.py:237 _sweep_leases`, `:272 _cause` | candidate query adds `OR EXISTS (open activation for the lease's season/episode/extension)`; `_cause` returns `'human_wait'`, reusing the terminal mapping in `_clean_lease` (`:302-309`) — verified shutdown, accrual accounted |
@@ -820,8 +888,8 @@ Transactions A1 adds or touches, including every GPU transaction the §8 protoco
 | V3 decision (§5) | 1 (`S/core/idempotency.py:84-87`) → 2 `season_tracks` FOR UPDATE (→ 3 `episode_tracks` for Gate 2; → 2 `season_extensions` for extension scopes) → 4 seasons row (ownership+version, mirroring `S/review/service.py:401`) → approval/notes/`DECIDED`-event inserts → 5 job enqueues by the callback → single revision advance | conforms |
 | `open_gate` / `supersede_gate` | 2 track lock → 6 live-lease count + resolution reads (verified stop / transferred-with-verified-final-holder / durably proven no-create, N1R-9; guarded counts, no lease row lock) → activation/event insert | conforms |
 | Lease admission, V3 arm of `claim` | **two committed mutations, each owning its locks (N1R-8):** reservation tx = 2/3 scope track FOR UPDATE → re-check → 7 reservation INSERT; lease tx = 2/3 scope track FOR UPDATE → re-check → 6 lease INSERT (`S/rendering/leases.py:789`). The pre-existing two-transaction pattern (`:674-676`) is unchanged; the scope lock is **re-taken inside each transaction**, never held across commits — the v1.2 "already-held scope lock" phrasing is withdrawn | conforms |
-| Comfy dispatch (V3 admission arm) | 2/3 scope track FOR UPDATE (§8 admission) → 5 job SHARE (`lease_guard`, `S/core/jobs.py:648`) → 6 provider-operation xact advisories — per job, then per reservation (`_lock_linked`, `S/core/provider_ops.py:121`) → 6 operation INSERT / queue submit (`_submit_bound_graph`, `S/rendering/comfy_jobs.py:600`) → commit | conforms — V1 `begin` keeps its verbatim shape (reservation FOR SHARE before the advisories; A3 §7 asserts it unchanged for V1 callers); the V3 composition's #6-before-#7 order with eligibility validated first is A3 §7's audited and separately tested chain — this row adds only the #2/#3 admission prefix and predicate |
-| Pod activation (`ensure_pod` path) | 2/3 → 6 lease row → provider call → 6 activation write (`:916`, `:940`, `:968`) | conforms |
+| Comfy dispatch (V3 admission arm) | **begin/rearm transaction, committed before submission (N1R3-2):** 2/3 scope track FOR UPDATE (§8 admission) → 5 job SHARE (`lease_guard`, `S/core/jobs.py:648`) → 6 provider-operation xact advisories — per job, then per reservation (`_lock_linked`, `S/core/provider_ops.py:121`) → 6 operation INSERT (`_submit_bound_graph`'s `begin`, `S/rendering/comfy_jobs.py:611-623`) → **commit** — then the HTTP submit (`:630`) under the reacquired ordered guards, its outcome persisted by a separate transaction (`:639`) | conforms — **durable intent is committed before the external submit (the real `comfy_jobs.py` sequence and A3 §9 A-T18 boundary (1)); the v1.3 "operation INSERT / queue submit → commit" listing is withdrawn (N1R3-2)**; V1 `begin` keeps its verbatim shape (reservation FOR SHARE before the advisories; A3 §7 asserts it unchanged for V1 callers); the V3 composition's #6-before-#7 order with eligibility validated first is A3 §7's audited and separately tested chain — this row adds only the #2/#3 admission prefix and predicate |
+| `ensure_pod` path — three separately committed transactions (N1R3-3) | **create-request tx**: 2/3 scope track FOR UPDATE → re-check → 6 lease row FOR UPDATE → `create_requested_at` write (`:940`) → commit; **provider create call** (`acquire_or_reconcile:902`, no data locks held); **pod-binding tx**: 2/3 → re-check → 6 lease row FOR UPDATE → `pod_id` write (`:916`); **activation tx**: 2/3 → re-check → 6 lease row FOR UPDATE → ACTIVATE write (`:968`) | conforms — each transaction reacquires the scope lock and re-checks admission under it; the provider call never runs under a held data lock; the v1.3 single-row compression ("2/3 → 6 lease row → provider call → 6 activation write") is withdrawn |
 | `transfer` | **two committed mutations, each re-taking the destination scope lock (N1R-8):** reservation tx = 2/3 destination FOR UPDATE → re-check → 7 reservation (`:1357`); final tx = 2/3 destination FOR UPDATE → re-check → 6 old lease FOR UPDATE (`:1362`) → 6 new-lease insert (`:1361`) | conforms |
 | `advance_planning` / `advance_production` / `advance_release` | 2 (→ 3 for episode-scoped edges) → 4 → 5 (only when a phase handler enqueues) | conforms |
 | `create_v3_episodes` (A2 activation) | 2 → 4 seasons → episode INSERTs → 3 `episode_tracks` INSERTs → 7 budget attach (A2) | justified: the "#3" step is an insert of rows that do not yet exist, not a row lock; inserts serialise under #2/#4 and the `episode_id` unique index — the v1.1 row's literal `2 → 4 → 3` was an ordering of effects, not locks |
@@ -842,7 +910,7 @@ singleton's `pg_try_advisory_lock` remains A6 (spec §9.1).
 2. `S/budget/billing.py:1296` locks a child account/reservation before shared settlement logic (parent later) — A2's inversion to fix (spec §5.3).
 3. `_w03_episode_cadence` inserts episodes without the season row lock (`S/scheduling/service.py:219-238`) — a **pre-existing V1 serialization gap**, not itself a demonstrated inversion; V3 rows are filtered out (§7). Recorded for the V1 hardening backlog, owner: orchestrator.
 
-**Competing-transaction tests A1 ships** (`X/integration/v3/test_lock_order.py`, two connections): concurrent `decide` on one activation → one commits, the other `StaleRevision`, one `DECIDED` event; `decide` vs `advance_planning` → serialized by §6-#2, no lost bump; `open_gate` vs `open_gate` → one open activation; **`open_gate` vs lease claim/adoption/transfer on one scope** (N1-8/17) → the mutation either precedes (activation refused until verified resolution, N1R-9) or follows (admission refused), never both live; **season-gate `open_gate` vs episode lease admission in the same season** (N1R-8) → admission refused while the season gate is open, an unrelated season unaffected; **transfer followed by verified stop of the final holder** (N1R-9) → `open_gate` admitted — a transferred-away prior lease with no stop of its own no longer blocks.
+**Competing-transaction tests A1 ships** (`X/integration/v3/test_lock_order.py`, two connections): concurrent distinct-key `decide` on one activation → one commits; the loser re-checks openness under the track lock and receives `GateNotReady` for the closed activation (N1R3-6 — the v1.3 `StaleRevision` expectation is withdrawn; §5 step 5 checks openness first), same-key replay returns the stored response, one `DECIDED` event; `decide` vs `advance_planning` → serialized by §6-#2, no lost bump; `open_gate` vs `open_gate` → one open activation; **`open_gate` vs lease claim/adoption/transfer on one scope** (N1-8/17) → the mutation either precedes (activation refused until verified resolution, N1R-9) or follows (admission refused), never both live; **season-gate `open_gate` vs episode lease admission in the same season** (N1R-8) → admission refused while the season gate is open, an unrelated season unaffected; **transfer followed by verified stop of the final holder** (N1R-9) → `open_gate` admitted — a transferred-away prior lease with no stop of its own no longer blocks.
 
 ## 10. Test plan (A-T1..A-T6, A-T16; N1-18)
 
@@ -850,13 +918,13 @@ All offline, real runtime/composition with fakes (existing conftest / ephemeral 
 
 | ID | File (new unless noted) | Cases |
 |---|---|---|
-| A-T1 | `X/integration/v3/test_gate_rules.py`; `X/contract/contracts/test_v3_gate_actions.py`; existing `X/contract/contracts/test_states_routes_jobs.py:76` (green, unedited) | **complete V1 acceptance/rejection matrix** — every gate × action × version: v1 admits SEASON_CONCEPT APPROVE/REJECT and EPISODE_FINAL APPROVE/REVISE/REJECT, refuses the four new gates; v3 admits all six × three actions; EPISODE_FINAL rules identical both versions (binding **and** timecoded feedback); **retained 0007–0021 approval-guard cases on V1 rows**; deferred note trigger (season-gate commit without notes fails, with matching notes commits); Gate-2 V3 REVISE with feedback commits, without fails; **N1R-3 uniqueness: an extension decision reusing a season-used revision commits; a second decision on one activation and a same-scope/revision double-decision both conflict; a V1 row never carries `activation_id`**; `V3_GATE_ACTIONS` exact; `GATE_ACTIONS` byte-asserted unchanged; `ApprovalCommand` with a V3 gate → `ValueError`, no `KeyError`; **frozen V1 bytes (N1R-2)**: committed `schemas/v1/**` + `examples/v1/**` equal the accepted prerequisite baseline, the adapter's v1 `ApprovalCommand` output byte-identical (field `$ref` + two-value `$defs.GateType`), v3 examples **validated** by manifest discovery, and the new V1 rejection probes asserted outside the generated tree; `contracts-check` green (`Makefile:30,34`) |
-| A-T2 (V3-AT-2) | `X/integration/v3/test_decision.py` | positive LOCK approve/revise/reject via the test handler; negatives: foreign owner (NotFound, no existence signal, **before workflow/state errors**), service credential, missing CSRF, wrong gate/scope/hash/revision/content_revision (each three-way mismatch distinct), stale page, superseded activation (GateNotReady; a fresh activation over unchanged content **is** decidable — reopening/binding per N1-5/N1-15); **activation identity (N1R-4): a wrong or already-decided `activation_id` → GateNotReady, and an old page naming a superseded activation never matches its replacement over unchanged content (no revision bump needed)**; callback failure rolls **everything** back — approval row, notes, `DECIDED` event, track revision, handler writes, **enqueued jobs and idempotency state**; concurrent decisions (one wins); idempotent replay returns the stored response; `NOT_AVAILABLE` preflight leaves **no idempotency record**; notes typed against binding units (target outside the binding → 422); **real test-handler injection through A1's normal-composition boundary refused** — `validate_for_production()` rejects an intrinsically-test handler and a `for_testing=True` registry both (N1R-12); **A6 reuses this boundary, so the test composes the registry exactly as the A1 factory does** |
+| A-T1 | `X/integration/v3/test_gate_rules.py`; `X/contract/contracts/test_v3_gate_actions.py`; existing `X/contract/contracts/test_states_routes_jobs.py:76` (green, unedited) | **complete V1 acceptance/rejection matrix** — every gate × action × version: v1 admits SEASON_CONCEPT APPROVE/REJECT and EPISODE_FINAL APPROVE/REVISE/REJECT, refuses the four new gates — **each new gate value tested on both V1 entity types with the original diagnostics under legacy failure precedence (N1R3-5): `approval_events_check` on a season entity, `approval_events_gate_type_check` on an episode entity**; v3 admits all six × three actions; EPISODE_FINAL rules identical both versions (binding **and** timecoded feedback); **retained 0007–0021 approval-guard cases on V1 rows**; deferred note trigger (season-gate commit without notes fails, with matching notes commits); Gate-2 V3 REVISE with feedback commits, without fails; **N1R-3/N1R3-1 uniqueness and partition: an extension decision reusing a season-used revision commits; a second decision on one activation and a same-scope/revision double-decision both conflict; the identity trigger refuses a V1 row carrying `activation_id`/`extension_id`, refuses a V3 row without `activation_id`, and refuses an activation whose workflow or season/episode/extension ancestry misses the approval**; `V3_GATE_ACTIONS` exact; `GATE_ACTIONS` byte-asserted unchanged; `ApprovalCommand` with a V3 gate → `ValueError`, no `KeyError`; **frozen V1 bytes (N1R-2)**: committed `schemas/v1/**` + `examples/v1/**` equal the accepted prerequisite baseline, the adapter's v1 `ApprovalCommand` output byte-identical (field `$ref` + two-value `$defs.GateType`), v3 examples **validated** by manifest discovery, and the new V1 rejection probes asserted outside the generated tree; `contracts-check` green (`Makefile:30,34`) |
+| A-T2 (V3-AT-2) | `X/integration/v3/test_decision.py` | positive LOCK approve/revise/reject via the test handler; negatives: foreign owner (NotFound, no existence signal, **before workflow/state errors**), service credential, missing CSRF, wrong gate/scope/hash/revision/content_revision (each three-way mismatch distinct), stale page, superseded activation (GateNotReady; a fresh activation over unchanged content **is** decidable — reopening/binding per N1-5/N1-15); **activation identity (N1R-4): a wrong or already-decided `activation_id` → GateNotReady, and an old page naming a superseded activation never matches its replacement over unchanged content (no revision bump needed)**; callback failure rolls **everything** back — approval row, notes, `DECIDED` event, track revision, handler writes, **enqueued jobs and idempotency state**; concurrent decisions (one wins; the distinct-key loser receives `GateNotReady` for the closed activation, same-key replay returns the stored response — N1R3-6); idempotent replay returns the stored response; `NOT_AVAILABLE` preflight leaves **no idempotency record**; notes typed against binding units (target outside the binding → 422); **real test-handler injection through A1's normal-composition boundary refused** — `validate_for_production()` rejects an intrinsically-test handler and a `for_testing=True` registry both (N1R-12); **A6 reuses this boundary, so the test composes the registry exactly as the A1 factory does** |
 | A-T3 | `X/integration/v3/test_handler_availability.py` | STORY_LOCK/CAST_LOCK/TEASER_FINAL/LAUNCH and V3 EPISODE_FINAL → `NOT_AVAILABLE` for all three actions through JSON **and** HTML; nothing recorded — no approval row, no activation change, no event, no job, **no idempotency write**; no fallback to V1 |
-| A-T4 | `X/integration/v3/test_commands.py` | every §6 row incl. `advance_production`/`advance_release` unavailable edges; allowed sources advance, refused sources raise `InvalidTransition`/`GateNotReady`; replay identity, **incl. enqueue replay: the same semantic key re-used for a different work scope → `IdempotencyConflict` (N1R-5)**; events (the §6 `Writes · jobs · events` column, per command); **every gate's Reject result** (§6 table — Reject feedback empty, explanation in `reason`, N1R-7); extension-scope advancement consumes `season_extensions.revision`; gate-edge advance proves the `DECIDED` event; A2/A3-gated commands → `NOT_AVAILABLE` with no writes |
+| A-T4 | `X/integration/v3/test_commands.py` | every §6 row incl. `advance_production`/`advance_release` unavailable edges; allowed sources advance, refused sources raise `InvalidTransition`/`GateNotReady`; replay identity, **incl. enqueue replay: the same semantic key re-used for a different V3 work scope → `IdempotencyConflict` (N1R-5), while V1 replay keeps the existing type/input-hash rule — a V1 semantic key replayed with a changed explicit season/episode argument still replays (N1R3-4)**; events (the §6 `Writes · jobs · events` column, per command); **every gate's Reject result** (§6 table — Reject feedback empty, explanation in `reason`, N1R-7); extension-scope advancement consumes `season_extensions.revision`; gate-edge advance proves the `DECIDED` event; A2/A3-gated commands → `NOT_AVAILABLE` with no writes |
 | A-T5 | `X/integration/v3/test_discriminator.py` | every §7 entry point — v1.1 inventory **and the N1-14 boundary table** — refuses a V3 row with `WORKFLOW_MISMATCH` (services, direct callers, replayed jobs incl. `resolve_reconciliation`); **direct reads (N1R-10): `season_view`, `episode_review`, `episode_page` and direct progress calls raise `WORKFLOW_MISMATCH` after owner access — never a filtered-away NotFound — while enumeration listings still exclude V3 rows**; selectors/listings exclude V3 rows while shared owner-access helpers still serve V1; `workflow_version` immutable; episode re-parent refused; V1 rows still pass every guarded path |
 | A-T6 | `X/integration/v3/test_track_waits.py` | concurrent waits show together (RETRY_WAIT quota + unresolved op); **every quota reason** maps (QUOTA_5H/PACE_WEEK/QUOTA_UNREADABLE/CONCURRENCY → QUOTA; BUDGET; provider trio → PROVIDER); **`defer_reason IS NULL` projects no wait** (retrying); one job resuming clears only its row; terminal FAILED blocks until a later SUCCEEDED replacement through validated `replaces_job_id` links — **a stale successful replacement does not clear a current failure**; chained replacements resolve (the recursive view, N1R-1); extension-fenced jobs use the extension fence; operation alerts dismiss by operation identity — **a stored job context on an operation dismissal is refused by the CHECK (canonical form, N1R-6)**; scope-level dismissal works; NEEDS_RECONCILIATION and in-flight/UNKNOWN ops block even for CANCELLED jobs; dismissal marks `dismissed` only; GPU per §8: `open_gate` with a live lease, or with an **unverified shutdown of a potentially created pod**, refused (N1R-9); **a transferred-away prior lease does not block once the final holder's stop is verified, and a durably proven no-create lease never blocks (N1R-9)**; lease claim during an open activation refused — **including an episode claim while a season-scope gate is open (N1R-8)**; **ACTIVE V3 heartbeat during a wait refused**; janitor releases with cause `human_wait` after verified shutdown |
-| A-T16 | `X/integration/persistence/test_migrations.py` (extend; upgrade test at `:122` is the pattern) | 0028–0031 apply on a **populated, accepted-0027 V1 database**: seed V1 seasons/episodes/approvals/jobs at 0027 via `S/testing/seed.py`, migrate to head, **compare every existing row** and assert applied 0001–0027 checksums unchanged, `workflow_version='v1'` backfilled, **the preserved V1 diagnostic contract held after 0029 (N1R-11): every reproduced rule raises the original SQLSTATE, constraint name and primary message — the stable fields `translate_db_error` exposes (`S/persistence/db.py:77`) — and V3-only rules raise the new `approval_events_v3_*` names; old raw messages are never asserted against different custom raises**, jobs work-scope columns **and `approval_events.activation_id`/`extension_id`** NULL on every pre-existing row, `EXPECTED_TABLES` superset holds; catalog tests green on all seven new tables (TRUNCATE + integer guards included — `test_schema_catalog.py:57,65`); fresh-create tail asserts `0028..0031` |
+| A-T16 | `X/integration/persistence/test_migrations.py` (extend; upgrade test at `:122` is the pattern) | 0028–0031 apply on a **populated, accepted-0027 V1 database**: seed V1 seasons/episodes/approvals/jobs at 0027 via `S/testing/seed.py`, migrate to head, **compare every existing row** and assert applied 0001–0027 checksums unchanged, `workflow_version='v1'` backfilled, **the preserved V1 diagnostic contract held after 0029 (N1R-11): every reproduced rule raises the original SQLSTATE, constraint name and primary message — the stable fields `translate_db_error` exposes (`S/persistence/db.py:77`) — with legacy failure precedence intact for the new gate values on both V1 entity types (N1R3-5), and V3-only rules raise the new `approval_events_v3_*` names; old raw messages are never asserted against different custom raises**, jobs work-scope columns **and `approval_events.activation_id`/`extension_id`** NULL on every pre-existing row, `EXPECTED_TABLES` superset holds; catalog tests green on all seven new tables (TRUNCATE + integer guards included — `test_schema_catalog.py:57,65`); fresh-create tail asserts `0028..0031` |
 
 
 ## 11. Open questions
@@ -886,6 +954,17 @@ N1-5/N1-7/N1-10 were re-ruled during this revision (immutable activations; valid
 transition–advance once; write-boundary enum enforcement) and are applied throughout.
 
 ## 13. Finding → resolution
+
+### 13.0 Round 3 (codex-a1-r3.md, verdict REWORK — v1.4, all folded)
+
+| Finding | Resolved in |
+|---------|-------------|
+| N1R3-1 (BLOCKING — approval identity can select either uniqueness partition) | §2.3 (`md_v3_approval_identity` resolves the workflow from the approval entity: V1 rows must carry NULL `activation_id`/`extension_id`, V3 rows a non-NULL `activation_id`, and the activation's workflow plus complete season/episode/extension ancestry validate against the approval before either index partition accepts the row — the nullable-column guess and the un-prohibited V1 activation identity are gone); §2.3 semantics paragraph; §5 step 7; §10 A-T1 |
+| N1R3-2 (BLOCKING — Comfy queue submission precedes durable intent) | §8 dispatch row + §9 Comfy row (the guarded begin/rearm transaction commits before submission, matching the real `comfy_jobs.py:611-623`/`:630`/`:639` sequence and A3 §9 A-T18 boundary (1); dispatch reacquires the ordered scope/job/operation/lease/reservation guards and revalidates admission against the already-durable operation; the outcome persists separately; an ambiguous submission keeps its durable reconciliation identity) |
+| N1R3-3 (lock audit contains incompatible sequences) | §8 opening (one canonical per-transaction order — scope → job → provider-operation serialization/rows → lease rows → budget locks; the "#6 → #7 → lease writes" listing withdrawn) + §8 pod row + §9 `ensure_pod` row (create-request, pod-binding and activation transactions enumerated separately, each naming its scope-lock reacquisition and the intervening provider call) |
+| N1R3-4 (complete-scope replay comparison must be V3-only) | §2.4 (complete work-scope replay comparison applies to resolved V3 work only; V1 keeps the existing type/input-hash rule, `S/core/jobs.py:429-434`); §10 A-T4 |
+| N1R3-5 (V1 diagnostic identity changes on new gate values) | §2.2 (V1 scope compatibility evaluated with the original `gate_type='SEASON_CONCEPT'` equivalence, first, preserving legacy failure precedence; the expanded season-gate set is V3-only under `approval_events_v3_scope`) + the precedence paragraph; §10 A-T1/A-T16 |
+| N1R3-6 (concurrent-decision test expects the wrong refusal) | §5 step 5 (openness re-check under the track lock first; partial indexes as commit-time backstop) + §9 competing tests + §10 A-T2 (distinct-key loser receives `GateNotReady` for the closed activation; same-key replay returns the stored response) |
 
 ### 13.1 Round 2 (codex-a1-note-recritique.md, verdict REWORK — v1.3, all folded)
 
