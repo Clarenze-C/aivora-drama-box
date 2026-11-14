@@ -627,6 +627,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 22:59Z (GLM): **A0-D R7 = ACCEPT** (AD9-1 CLOSED, no regressions). **fix6 verification
   GREEN by GLM: 211 passed.** The DECISIVE solo gate is running at `eea2f79` (`a0d-gate6`, unit
   `dramabox-a0d6-gate`) — green + R7 ACCEPT = **A0-D ACCEPTED** → A1 build launches immediately.
+- 14 Nov 23:0?Z (GLM): the SUPERSEDED a0d5 gate (at `1e43b70`) came back red: 366 passed, 1 error
+  (Gate2 owner-metadata setup) + 1 failed (llm_gateway isolation test — GET status non-200 under
+  concurrent fix6 pytest; consistent with the established load-flake pattern, receipts kept). It ran
+  beside fix6's suites. **The decisive solo a0d6 gate at `eea2f79` (running now, nothing else live)
+  supersedes it**; if the isolation failure reappears solo, it becomes a real fix7 finding.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
