@@ -496,6 +496,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   verification suites running. Gate at `b84a397` runs SOLO after verification (lesson from the
   resource-starved t031 gate run); **r5-fix1 held until the a0d gate finishes** to avoid gate+build
   contention. E R3 APPROVE recorded earlier (5 chains accepted).
+- 14 Nov 12:43Z (GLM): **phase G spec draft launched** (`phase-g-spec`, docs slot — Q7's last
+  draft before D). Running: a0d-review-r3 (Codex) + phase-g-spec + GLM fix2 verification (suites).
+  The a0d gate at `b84a397` launches when the verification returns; r5-fix1 held behind the gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
