@@ -477,6 +477,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   blessed in principle, persistence/job contracts insufficient). All 13 ACCEPTED
   (`phase-e-critique-rulings.md`); **e-spec-v03 apply running** (docs, beside the one build).
   Running: a0d-fix2 + e-spec-v03.
+- 14 Nov 12:25Z (GLM): **phase E v0.3 committed** (`8746297`, 784 lines, 13/13 applied, none
+  BLOCKED). **E round-2 critique launched** (`phase-e-recritique`, scoped to PE-1..13). Running:
+  a0d-fix2 + phase-e-recritique.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
