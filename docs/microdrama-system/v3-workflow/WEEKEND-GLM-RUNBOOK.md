@@ -421,6 +421,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 08:48Z (GLM): **g-factmap done** (142 lines, 12 NOT FOUNDs — live scaffolding gaps the G spec will define). Q7 status: C accepted, F final,
   E fact map done (draft queued for next window), G fact map done (spec draft behind E's).
   Running: r5-build + a1-note-rev3 + a2-note-r4.
+- 14 Nov 08:55Z (GLM): **A2 R4 = REWORK** (4/5 residuals closed, but the revised lock table
+  introduced N2R4-1/2 BLOCKING + N2R4-3 SF — each fold regresses elsewhere). **A2 PARKED for Opus**
+  — no 5th round requested; this is the design-judgment loop predicted. Running: r5-build +
+  a1-note-rev3. Codex idle (nothing review-ready until a1-rev3 or r5 lands).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -476,3 +480,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   4th review (rule: park after a failed r3).
 - A2 note (Mon): round-3 REWORK, 5/10 closed — the billing lock-order design (N2R2-4's cycle) needs
   Opus's judgment, not another wording fold. Reports: `codex-a2-r3.md` + `codex-a2-note-recritique.md`.
+- A2 note (Mon, updated): R4 closed 4/5 residuals but each lock-table fold introduces new blockers
+  (R4: baseline capture rejects SEASON amendments; invoice verification omits 451047; Stage-2 order
+  reversed). Needs Opus to design the lock table once, properly — not another wording round.
+  Reports: `codex-a2-r4.md` (+ lineage).
