@@ -507,6 +507,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   5 BLOCKING + 2 SF, all with Fix lines; AD6-1 = persist the frozen identity once). Fix3 brief
   written (`a0d-fix3-brief.md`) — **launches when the solo gate finishes** (no build beside a gate).
   Running: the a0d3 gate + phase-g-spec. r5-fix1 re-queues behind fix3 (A0-D is the critical path).
+- 14 Nov 12:58Z (GLM): **phase G spec v0.1 drafted and committed**; **G Goldfish launched**
+  (cwd `phase-g-review/`, ~40 min). Q7: C✓ F✓ E✓ G-in-review D-last. Running: the a0d3 gate +
+  phase-g-goldfish. fix3 + r5-fix1 queued behind the gate (critical path first).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
