@@ -1,0 +1,5 @@
+**Verdict: ACCEPT** — reviewed `1e43b70...eea2f79`, scoped to AD9-1 and regressions introduced by its fix.
+
+**AD9-1 — CLOSED.** [gateway.py:1484](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/deployment/llm-gateway/gateway.py:1484) now checks the frozen request and exact prompt/schema bytes before rearming. Interrupted repairs resume the replacements. [gateway.py:1417](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/deployment/llm-gateway/gateway.py:1417) also rejects authorization when consumed artifacts differ, are missing, or are unreadable. No further fix required; no introduced defects found within scope.
+
+Verification: 9 committed cases, 16 repair-write interruption cases, and 6 artifact-failure cases passed with memory-backed files and mocked systemd. `git diff --check` passed. Real-systemd suite totals remain builder-reported. No files changed.

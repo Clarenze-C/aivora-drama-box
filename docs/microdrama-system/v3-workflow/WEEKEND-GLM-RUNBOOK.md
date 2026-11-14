@@ -624,6 +624,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   re-derived from artifacts; red-first per the R6 repro; 123 + 88 green). Acceptance chain running:
   GLM verification + **R7 review**; final solo gate at `eea2f79` after verification. The a0d5 gate
   (at 1e43b70) is superseded evidence.
+- 14 Nov 22:59Z (GLM): **A0-D R7 = ACCEPT** (AD9-1 CLOSED, no regressions). **fix6 verification
+  GREEN by GLM: 211 passed.** The DECISIVE solo gate is running at `eea2f79` (`a0d-gate6`, unit
+  `dramabox-a0d6-gate`) — green + R7 ACCEPT = **A0-D ACCEPTED** → A1 build launches immediately.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
