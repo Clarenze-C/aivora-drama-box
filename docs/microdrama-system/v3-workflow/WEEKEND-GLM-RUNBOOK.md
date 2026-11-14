@@ -357,6 +357,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   (killed between edit and commit) → committed by orchestrator `43806c8`; **r5-build relaunched**
   (resumes: R5b+R5c committed at `b6d3b48`; R5a image rebuild was disk-blocked, 6G free now);
   **a6b-note-rev2 launched** (last docs job). z.ai 1%, Codex 0%/25%.
+- 14 Nov 08:1?Z (GLM): **A6b v1.2 committed** (`9f21c8b`, 664 lines — the docs queue is EMPTY;
+  all six two-round chains at final weekend state: B v0.6, C v0.4, F v0.4, A2 v1.2, A3 v1.2, A6b v1.2).
+  **Phase E fact-map swarm launched** (`e-factmap`; Q7 order C→F→**E**→G→D). Running: r5-build +
+  e-factmap (swarm). E spec draft follows the fact map; G after; D waits on R5's real run.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
