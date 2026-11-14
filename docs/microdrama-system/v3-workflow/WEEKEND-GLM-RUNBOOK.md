@@ -335,6 +335,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED — barrier tests now rendezvous-safe, per-category delta validation, unfinished-residual
   arithmetic pinned). Launched `c-spec-v04` (docs). Running: r5-build + c-spec-v04. Docs queue next:
   a6b-note-rev1 → f-spec-v04 → a3-note-rev2. Codex idle.
+- 14 Nov 01:52Z (GLM): **phase C v0.4 committed** (`deb850c`, 871 lines, 7/7 round-2 rulings,
+  none BLOCKED — C's spec chain complete pending Monday's Opus call). Launched `a6b-note-rev1` (docs).
+  Running: r5-build + a6b-note-rev1. Docs queue next: f-spec-v04 → a3-note-rev2. Codex idle.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an

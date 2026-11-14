@@ -1,0 +1,13 @@
+Phase C spec v0.4 is committed in place — `docs/microdrama-system/v3-workflow/phase-C-spec.md`, 871 lines (was 846; +92/−67). Commit `deb850c` on `feat/microdrama-m0-m4`, containing only that file. No report file written, nothing pushed.
+
+Per finding, all seven ACCEPTED rulings folded as replacement wording:
+
+- **PC5-1 (BLOCKING)** — §4 freshness now compares the selected candidate's recorded parent version **and invalidation generation** against the current authority; explicit parent reroll advances the generation idempotently, retries don't; C-T4 gains the unchanged-selection reroll case.
+- **PC5-2 (BLOCKING)** — §5: the C3 note defines durable recovery admission shared by every participating generator, checked under flock before any new submit; blocker retained until reconciliation proves no active prior work; ARISA adoption includes the protocol; canonical **parent-directory** bind (file-only ineligible); 120 s limits further submissions, not hold duration (also in O-C7); C-T6 tests a competing participant after holder death on isolated mounts matching deployment topology.
+- **PC5-3** — reference-pick tuples apply only to `REFERENCE_VERSION` selections; `VOICE_NEUTRAL` contributes through its voice tuple; "other" uses `other:<audition_vote_id>` in the voice tuple (§8, C-6) and stable provider reference (§7).
+- **PC5-4** — `generate_next(FACE)` yields 3 candidates per OUTFIT **and APPEARANCE_STATE** item, 1 per derived view; forecast uses the same counts (§3/§4, C-T3, C-T14a, §11).
+- **PC5-5** — §10 fence is **content-scoped**; CD6's global refresh uses its importer-run authority; `VoiceCastingV3` stores the ranked catalogue payload + hash (or immutable catalogue-version references); refresh never changes an existing snapshot, reranking creates a new version.
+- **PC5-6** — cast documents keyed `uuid5(CAST_V3_NS, '<type>:<planning_scope_id>[:<key>]')` with stored/validated scope ownership; C-T1/C-T13 prove an extension cannot supersede the initial scope's current documents or bindings.
+- **PC5-7** — C-T11 keeps only C7's passable clauses (registration + the reusable rights validator); audition gates at C6, Approve at C9, import at C9b, downstream dispatch at D — each package tests its implemented path; §7/§13 record the gating.
+
+Guards held: no acceptance row weakened (only additions); O-C1/O-C9 remain OPEN (OPERATOR); header reads v0.4, 13 Nov with status "round-2 rulings applied (GLM); awaiting Opus re-check — no round 3 run"; nothing contradicts SPEC-v3/DECISIONS/phase-A (the replacements refine C-internal mechanics only). Offline docs job throughout — no pushes, merges, restarts or deletions.
