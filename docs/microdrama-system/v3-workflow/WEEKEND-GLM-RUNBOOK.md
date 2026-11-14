@@ -620,6 +620,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 22:44Z (GLM): **a0d4 gate at `15ce674` GREEN** (overall 0; 364 integration; make check +
   pilot passed — receipts `.scratch/a0d-gate4/.scratch/gate/`). Evidence: gate-green entering
   fix5/fix6. The decisive gate runs at the fix6 tip after R7.
+- 14 Nov 22:55Z (GLM): **A0-D FIX6 DONE** — AD9-1 addressed at `eea2f79` (repair completeness
+  re-derived from artifacts; red-first per the R6 repro; 123 + 88 green). Acceptance chain running:
+  GLM verification + **R7 review**; final solo gate at `eea2f79` after verification. The a0d5 gate
+  (at 1e43b70) is superseded evidence.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
