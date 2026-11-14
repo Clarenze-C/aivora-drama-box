@@ -452,6 +452,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   "no tests ran"); corrected to the real files (`tests/unit/pipeline/test_t031_r5a_flag.py`,
   `rendering/test_t031_r5b_boot.py`, `pipeline/test_t031_r5d_prepare_run.py`,
   `pipeline/test_t031_r5f_billing_verify.py`) and re-running.
+- 14 Nov 11:2?Z (GLM): **R5 acceptance step 1 GREEN by GLM's own runs** (15 + 8 passed across
+  r5a-flag/r5b-boot + r5d-prepare/r5f-billing — matches claims). **Full gate running** at pinned
+  `6bcdbfa` (`t031-gate-r5` checkout, unit `dramabox-t031r5-gate`). R5 now waits on the Codex review
+  (running) + gate. Running: a0d-fix2 + phase-e-goldfish + r5-review + the gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
