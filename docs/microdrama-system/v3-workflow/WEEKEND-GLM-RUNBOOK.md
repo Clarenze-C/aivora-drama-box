@@ -409,6 +409,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   both round-3 blockers, verified lock rows against the real provider_ops sites; no BLOCKED items).
   Launched: `a2-note-rev3` (GLM slot) + **A3 R4** (`a3-note-r4`, Codex). Running: r5-build +
   a2-note-rev3 + g-factmap (swarm) + a3-note-r4. A1-rev3 next if a slot frees before ~09:30.
+- 14 Nov 08:42Z (GLM): **A3 R4 = REWORK by ONE blocker + 1 SF** ("lock-order correction complete;
+  recovery discovery needs one correction"). Both applied by the orchestrator (independent discovery
+  + separate completion predicates; paid rearm NOT_FOUND-only). A3 now **corrected, awaiting final
+  verify** — a 5th Codex round needs the operator's nod (the authorization was "one last R4").
+  Running: r5-build + a2-note-rev3 + g-factmap.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
