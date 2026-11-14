@@ -427,6 +427,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   a1-note-rev3. Codex idle (nothing review-ready until a1-rev3 or r5 lands).
 - 14 Nov 08:59Z (GLM, operator): **A3 5th verify authorized and launched** (`a3-note-r5`, scoped to
   the two R4 applications only). Running: r5-build + a1-note-rev3 (finishing) + a3-note-r5 (Codex).
+- 14 Nov 09:04Z (GLM): **A3 R5 = APPROVE** → **A3 note ACCEPTED** (v1.3 + R4 applies).
+  **A1 v1.3 committed** (`b894bbe`) and its **R3 verification launched** (`a1-note-r3`, Codex 2/2).
+  Accepted so far: **B, C, A6b, A3**. Pending: A1 R3 (running), A2 (Opus), r5-build (R5e/R5f).
+  Running: r5-build + a1-note-r3 + a3-note-r5-done.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an

@@ -1,0 +1,18 @@
+A1 note v1.3 committed — `b894bbe` on `feat/microdrama-m0-m4`, 1 file, +257/−91, now 930 lines. Docs-only; no code, pushes, merges, or env touched. Cross-checked against phase-A-spec v0.3 (§2.5–§2.7, §6 lock order unchanged), A2 v1.3 and A3 v1.3 (A3's §7 begin/rearm audit is the counterpart of the corrected §9), and the cited code sites re-verified at `81b783f`.
+
+Per-finding outcome — all 12 applied, none BLOCKED:
+
+- **N1R-1** (BLOCKING, view cannot compile) — applied: §2.4 `WITH RECURSIVE v3_jobs`; episode-cancellation branch now `SELECT e.season_id, et.episode_id, NULL::uuid, t.track, …` (nine columns throughout)
+- **N1R-2** (BLOCKING, schema pin breaks V1 bytes) — applied: §4 explicit V1 adapter preserving the two-value `$defs.GateType` + field `$ref` exactly (committed bytes re-verified); runtime guard kept; V3 **validation** manifest discovery; V1 probes outside frozen `examples/v1/**`
+- **N1R-3** (BLOCKING, extension approval collisions) — applied: §2.3 `approval_events.activation_id`/`extension_id` + scope-linkage deferred trigger; partial legacy index (V1 rule exact) + full-scope/revision + per-activation uniqueness; DDL allocated in 0030; §2.2/§5/A-T1/A-T16 aligned
+- **N1R-4** — applied: `activation_id` in `V3DecisionCommand`, displayed forms and hashing; §5 resolves that exact activation, requires open + complete-scope match before the three-way comparison
+- **N1R-5** — applied: V3-conditional `season_id`/`episode_id` immutability trigger; `Job`/`_job` gain all work-scope fields; replay (`jobs.py:429`) compares complete work scope; resolved season's `workflow_version` is the discriminator, not `track`
+- **N1R-6** — applied: operation dismissals canonical-NULL `subject_job_id` in CHECK, unique identity and writer; display context via `provider_operations`
+- **N1R-7** — applied: Reject = empty feedback + `reason` (V1 precedent `review/service.py:1364`); only Revise requires feedback/notes; Reject consequences preserved
+- **N1R-8** — applied: owning transaction + mode + ancestor-before-leaf order at every final admission mutation (reservation/lease insert, begin, dispatch at `comfy_jobs.py:600`, transfer); each committed mutation re-takes the scope lock; real advisory locks at `provider_ops.py:121` audited ("none" claim withdrawn); season-gate-vs-episode-admission race added
+- **N1R-9** — applied: zero live exposure + verified pod resolution; transfer chains followed to final holder (`leases.py:1376`); transferred history and proven no-create distinguished; transfer→verified-stop→gate-open test
+- **N1R-10** — applied: filters enumeration-only; `require_workflow(expected='v1')` refusal at `season_view`/`episode_review`/`episode_page`/progress after owner access, before projection — `WORKFLOW_MISMATCH`, never NotFound
+- **N1R-11** — applied: preserved diagnostic contract defined; V1-branch raises emit original SQLSTATE/constraint/primary message via `USING CONSTRAINT`; A-T16 compares those stable fields, never old messages vs custom raises
+- **N1R-12** — applied: A1 ships `GateHandlerRegistry.validate_for_production()` (rejects test-enabled registries + intrinsically-test handlers at normal composition); A-T2 injects through it; A6 must reuse it
+
+Plus the build-readiness ask: §6 gained a per-command `Writes · jobs · events` column; §13.1 maps all 12 findings. No acceptance test weakened — A-T1..A-T6/A-T16 only gained assertions (A-T16's diagnostic check changed shape because the trigger now emits the original fields it compares). Header reads v1.3, 14 Nov, "round-2 findings applied (GLM); operator-authorized R3 follows". Ready for the R3 verification pass.
