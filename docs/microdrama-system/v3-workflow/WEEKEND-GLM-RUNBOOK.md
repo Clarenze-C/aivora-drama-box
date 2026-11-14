@@ -591,6 +591,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 21:30Z (GLM): **phase G v0.4 committed** (`39171da`, 3/3 round-2 rulings incl. the
   calibration admission-lane redesign). **G R3 verification launched** (`phase-g-r3b` after a path
   relaunch). Running: a0d-fix4 (unit sweep) + phase-g-r3b.
+- 14 Nov 21:4?Z (GLM): **G R3 = APPROVE** → **phase G spec v0.4 ACCEPTED**. Phase-family
+  scoreboard: **B, C, E, G specs + A1/A3/A6b/B1/B5 notes ACCEPTED** · F final (deferred R3) ·
+  A2 parked (Opus) · **A0-D: fix4 in final sweep → R5 + gate next**. Q7 fully drafted: C✓F✓E✓G✓
+  (D last, needs R5's real results — operator-gated).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
