@@ -484,7 +484,9 @@ SCHEMA_MODEL_FOLDERS: dict[str, tuple[str, str]] = {
 
 def pinned_model_folders() -> dict[str, list[str]]:
     """The image's models.json folder -> pinned file names (repo deployment copy)."""
-    manifest_path = Path(__file__).resolve().parents[3] / "deployment" / "pika-h3-flex" / "models.json"
+    manifest_path = (
+        Path(__file__).resolve().parents[3] / "deployment" / "pika-h3-flex" / "models.json"
+    )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     folders: dict[str, list[str]] = {}
     for record in manifest["files"]:

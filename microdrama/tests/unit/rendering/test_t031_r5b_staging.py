@@ -39,7 +39,11 @@ T0 = datetime(2026, 11, 13, 15, tzinfo=UTC)
 
 
 def _office_compose(
-    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, seal_overrides: dict | None = None
+    db: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    seal_overrides: dict | None = None,
 ):
     """The authored R5d role table through the real composed world.
 

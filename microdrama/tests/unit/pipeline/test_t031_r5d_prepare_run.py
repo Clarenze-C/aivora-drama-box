@@ -529,6 +529,8 @@ def test_rr_t9_verify_preflight_pass_on_the_authored_set(
                 str(out / "authorization.draft.json"),
                 "--quote",
                 str(quote),
+                "--output",
+                str(tmp_path / "preflight.json"),
             ]
         )
         == 0
