@@ -1,11 +1,17 @@
 # A3 design note: revision fence, cancellation, stale quarantine, per-queue workers
 
-**Version 1.1, 13 Nov 2026. Author: GLM (design note only; one file, no code).**
-v1.1 applies the round-1 critique — [codex-a3-note-critique.md](codex-a3-note-critique.md)
-(N3-1..N3-10, verdict REWORK) — exactly as ruled in [a3-critique-rulings.md](a3-critique-rulings.md)
-(**all 10 ACCEPTED; directions binding**). Replacement wording wins; no acceptance test is
-weakened (A-T12a's expectation is *corrected* to the reachable path per N3-2, and A-T8/A-T18
-are strengthened per N3-9/N3-10). Requirements:
+**Version 1.2, 14 Nov 2026. Author: GLM (design note only; one file, no code).**
+v1.2 — round-2 rulings applied (GLM); awaiting Opus re-check — no round 3 run. It applies the
+round-2 recritique — [codex-a3-note-recritique.md](codex-a3-note-recritique.md)
+(N3R2-1..7: four BLOCKING, three SHOULD-FIX, verdict REWORK) — exactly as ruled in
+[a3-recritique-rulings.md](a3-recritique-rulings.md) (**all 7 ACCEPTED**, each folded per its
+Replacement paragraph). Replacement wording wins; no acceptance test is weakened — A-T8/A-T12a
+assertions are *corrected* to the real A0 signals and to both claim/amendment interleavings
+(N3R2-7). v1.1 (13 Nov) applied the round-1 critique —
+[codex-a3-note-critique.md](codex-a3-note-critique.md) (N3-1..N3-10, verdict REWORK) — exactly
+as ruled in [a3-critique-rulings.md](a3-critique-rulings.md) (**all 10 ACCEPTED; directions
+binding**; A-T12a's expectation *corrected* to the reachable path per N3-2, and A-T8/A-T18
+strengthened per N3-9/N3-10). Requirements:
 [phase-A-spec.md](phase-A-spec.md) v0.3 §0, §1, **§4**, **§6**, **§7.1, §7.4** (§7.2–§7.3 read for API
 fit), §10 (A3 row + AR-6 activation), §11 (A-T8, A-T12a, A-T18); AC-7, AC-15, AC-16, AC-23
 replacement wording in [codex-a-critique.md](codex-a-critique.md) (binding per §0) plus its
@@ -211,6 +217,16 @@ def fence(tx: Tx, scope: FenceScope, *, expected: int) -> int:
     quarantine path) and Conflict when actual < expected (a fence value from the
     future: corruption, refuse)."""
 
+def fence_classify(tx: Tx, scope: FenceScope, *, expected: int) -> str:
+    """N3R2-2: the recovery arm of the same ordered lock take. Locks the identical
+    ancestor chain in the identical §6 order and CLASSIFIES instead of raising —
+    'current' (actual == expected), 'stale' (actual > expected) or 'cancelled'
+    (cancelled_at on the scope or any ancestor) — because recovery must settle
+    exactly the stale/cancelled conditions fence() rejects: the recovery paths
+    (§3.2 settle row, §4.1) can never go through the throwing helper. Authority
+    inspection only, separated from admission rejection: the classification
+    commits evidence and accounting; only current execution may install content."""
+
 def scope_cancelled(tx: Tx, scope: FenceScope) -> bool:
     """Plain unlocked read of the same cancelled_at chain — admission checks only,
     never a guarantee (§7)."""
@@ -249,10 +265,10 @@ point used, not of a runtime flag.
 |---|---|
 | `S/core/jobs.py:enqueue` (`:353-438`) | **Enqueue — the front door (admission).** A1's N1-9 work-scope validation branch gains: `track` set → `expected = payload.expected_content_revision` (missing/malformed → `SchemaInvalid`; the 0035 CHECK is the SQL backstop) → `fence(tx, scope, expected)` **before** the INSERT (`:389-414`), SHARE held through it. `fence` here also rejects a cancelled scope or ancestor (`ScopeCancelled`) — a concurrent enqueue after a cancellation sweep cannot pass on revision equality (N3-4). Every continuation reaches the fence through this one seam, because every enqueue does: `rendering/routing.py:725`, `:944`; `review/service.py:464`, `:1267`, `:1321`; `review/intake.py:740`, `:852`; `qa/repairs.py:1259`, `:1304`, `:1439`; `core/api.py:119`; `pipeline/runner.py:186`; the scheduler's `_enqueue`. Inside an A1 decision transaction the SHARE lands on a row the transaction already holds FOR UPDATE — a no-op in one transaction, order preserved |
 | `S/core/jobs.py:claim` (`:478-550`) | **Admission.** After the in-flight quarantine checks (`:503-506` for RETRY_WAIT, `:520-523` for QUEUED) and before the RUNNING move (`:525-537`): for a V3 candidate, the plain-read pre-checks (§7 — never a lock): `scope_cancelled` → the job is finished `CANCELLED` with `error_code='SCOPE_CANCELLED'`, `outcome={kind:'CANCELLED', reason:'scope_cancelled'}` via `_move`; `current_revision` — `actual > expected` → the job is finished `CANCELLED` with `error_code='STALE_CONTENT'`, `outcome={kind:'CANCELLED', reason:'stale_content_revision', expected, actual}` (the map admits QUEUED→CANCELLED and RETRY_WAIT→CANCELLED, `S/contracts/states.py:102`, `:115`); either way the next candidate is considered — the handler never runs. Already-terminal rows (an amendment's `cancel_in` won the race) are skipped silently. **WAITING_EXTERNAL candidates lease normally** (`:512-514`): polling *is* observation of in-flight operations; its result is fenced at collection |
-| V3 LLM submit — `LlmStep` admission seam | `G/llm/step.py` `ensure` always enters `_begin_under_lease` before inspecting operation state, and its normal path rearms NOT_FOUND/REFUSED_PRELAUNCH through `_rearm_under_lease` — both create/rearm work. A3 therefore gives `LlmStep` an **injected admission callable** (the V3 composition passes `fence`): invoked *inside* `_begin_under_lease`'s and `_rearm_under_lease`'s own transactions — at the top, **before `_guarded`** — so the two exact integration points are these transactions' entry, with `provider_ops.begin` / `provider_ops.resubmit_allowed` still under the guard (A0R-1 unchanged). Fence SHARE (#2/3 incl. ancestor) → `_guarded` job SHARE (`lease_guard`) → begin/rearm. Stale → `StaleContentRevision` before any provider call, no `begin`, no money; cancelled scope → `ScopeCancelled`; either way the job finishes `CANCELLED` (`STALE_CONTENT` / `SCOPE_CANCELLED`) — never a generic Failed |
-| V3 LLM recovery — `LlmStep.settle_under_lease` (new, settlement-only) | The **observation/settlement entry** N3-3 requires: drives the same state dispatch as `ensure` for SUBMITTED/RUNNING (poll), SUCCEEDED/FAILED/CANCELLED (record + evidence), UNKNOWN (surface for the operator) — through `_guarded`, but structurally never calls `_begin_under_lease`, `_rearm_under_lease` or `_submit`: a NOT_FOUND operation in recovery is recorded and left, never rearmed. Used by §4.1's cancelled-job recovery and by stale-job settlement; its transaction shape is audited in §7 |
-| V3 paid submit | The paid submit step (the V1 shape is `rendering/comfy_jobs.py:611-623`) fences **in the same transaction as `provider_ops.begin`, under `lease_guard`** — A0's pattern (§5.1: every operation write under the guard). Order inside the transaction: `fence()` SHARE (#2/3) → `lease_guard` job SHARE (`S/core/jobs.py:648`) → `begin`'s own chain (#7 reservation FOR SHARE → #6 advisories → #6 INSERT — audited in §7). Stale/cancelled → no `begin`, no provider call, no money; the job finishes `CANCELLED`/`STALE_CONTENT` or `/SCOPE_CANCELLED` |
-| **The V3 collector** — `S/core/v3_collect.py` `collect_paid_result(...)` (new, N3-6) | One named collector with **one caller-owned transaction**. Provider bytes are prepared **outside** it (fetch + verify, the `_collect_outputs` discipline, `S/rendering/comfy_jobs.py:913-935`); then a single transaction: `fence()` SHARE (#2/3) → `lease_guard` job SHARE → `record_result` (operation UPDATE) → asset registration through the existing transaction-taking seam `rendering/comfy_assets.persist_output(tx, …)` → and, fenced on the same read, either installation/acceptance (current) or `record_stale(...)` (stale or cancelled scope) — all inside it. **Acceptance lives only here**: a V3 asset never becomes `ACCEPTED` outside this transaction (V1 `_accept_asset`, `S/pipeline/handlers.py:82-85`, is untouched). Money settlement (`_settle_if_needed` semantics, `:965-1070`) is invoked with the recorded result after commit and is idempotent — **crash recovery between result persistence and settlement** re-derives settlement from the committed operation state on the next poll/recovery pass (exactly-once per canonical receipt, A2 §3). A crash before the transaction commits leaves the operation SUBMITTED/RUNNING — the next poll re-fetches and re-collects. V1's three-transaction orchestration (collect-outputs tx `:923`, result tx `:899`, acceptance tx `handlers.py:82`) is preserved unchanged; V3 composes the same helpers inside its one transaction |
+| V3 LLM submit — `LlmStep` admission seam | `G/llm/step.py` `ensure` always enters `_begin_under_lease` before inspecting operation state, and its normal path rearms NOT_FOUND/REFUSED_PRELAUNCH through `_rearm_under_lease` — both create/rearm work. A3 therefore gives `LlmStep` an **injected admission callable** (the V3 composition passes `fence`): invoked *inside* `_begin_under_lease`'s and `_rearm_under_lease`'s own transactions — at the top, **before `_guarded`** — so the two exact integration points are these transactions' entry, with `provider_ops.begin` / `provider_ops.resubmit_allowed` still under the guard (A0R-1 unchanged). Fence SHARE (#2/3 incl. ancestor) → `_guarded` job SHARE (`lease_guard`) → begin/rearm. Stale → `StaleContentRevision` before any provider call, no `begin`, no money; cancelled scope → `ScopeCancelled`; either way the job finishes `CANCELLED` (`STALE_CONTENT` / `SCOPE_CANCELLED`) — never a generic Failed. **Routing is decided before this seam (N3R2-2):** a job already known cancelled or stale-recovering is routed to the settle row below and never enters `ensure`'s admission call |
+| V3 LLM recovery — `LlmStep.settle_under_recovery` (new, settlement-only; N3R2-2) | The **observation/settlement entry** N3-3 requires: drives the same state dispatch as `ensure` for SUBMITTED/RUNNING (poll), SUCCEEDED/FAILED/CANCELLED (record + evidence), UNKNOWN (surface for the operator) — but **never through `_guarded`**: that guard requires a RUNNING job with a live lease (`G/llm/step.py:439-444`; `S/core/jobs.py:621-654`), which a CANCELLED job can never satisfy and a stale NEEDS_RECONCILIATION job cannot either (its RESUME is refused, next-but-one row, while A0 reaches reconciliation authority through RESUME, `G/llm/reconciler.py:171-179`). Instead **ordered scope locking and authority inspection are separated from admission rejection**: the settle arm locks and revalidates the job/operation **under an audited recovery principal** — not the cancelled worker's lease, never restoring content authority — classifying the scope through `fence_classify` (§3.1), not the throwing `fence()`, whose rejections are exactly the conditions recovery must settle. The collector commits evidence and accounting from the resulting current/stale/cancelled classification; **only current execution may install content** — and this path is never current execution. Structurally never calls `_begin_under_lease`, `_rearm_under_lease` or `_submit`: a NOT_FOUND operation in recovery is recorded and left, never rearmed (N3R2-1). Used by §4.1's cancelled-job recovery and by stale-job settlement; its transaction shape is audited in §7 |
+| V3 paid submit | The paid submit step (the V1 shape is `rendering/comfy_jobs.py:611-623`) fences **in the same transaction as its operation begin, under `lease_guard`** — A0's pattern (§5.1: every operation write under the guard). Order inside the transaction (N3R2-3): `fence()` SHARE (#2/3) → `lease_guard` job SHARE (`S/core/jobs.py:648`) → **the V3 transaction-taking begin/rearm path: #6 serialization/operation locks precede #7 reservation locks, and reservation eligibility is validated atomically before the admission commits** (the spec's single order includes provider advisories, `phase-A-spec.md` §6 — see the §7 audit, which covers begin and rearm separately). V1 entry points are preserved: `provider_ops.begin`/`resubmit_allowed` keep their shape for V1 callers; the V3 composition drives its own begin/rearm path. Stale/cancelled → no begin, no provider call, no money; the job finishes `CANCELLED`/`STALE_CONTENT` or `/SCOPE_CANCELLED` |
+| **The V3 collector** — `S/core/v3_collect.py` `collect_paid_result(...)` (new, N3-6) | One named collector with **one caller-owned transaction**. Provider bytes are prepared **outside** it (fetch + verify, the `_collect_outputs` discipline, `S/rendering/comfy_jobs.py:913-935`); then a single transaction: `fence()` SHARE (#2/3) → `lease_guard` job SHARE → `record_result` (operation UPDATE) → asset registration through the existing transaction-taking seam `rendering/comfy_assets.persist_output(tx, …)` → and, fenced on the same read, either installation/acceptance (current) or `record_stale(...)` (stale or cancelled scope) — all inside it. **Acceptance lives only here**: a V3 asset never becomes `ACCEPTED` outside this transaction (V1 `_accept_asset`, `S/pipeline/handlers.py:82-85`, is untouched). Money settlement (`_settle_if_needed` semantics, `:965-1070`) is invoked with the recorded result after commit and is idempotent — **crash recovery between result persistence and settlement** re-derives settlement from the committed operation state on the next poll/recovery pass (exactly-once per canonical receipt, A2 §3); §4.1's discovery includes exactly this terminal-but-unsettled operation (N3R2-4). A crash before the transaction commits leaves the operation SUBMITTED/RUNNING — the next poll re-fetches and re-collects. V1's three-transaction orchestration (collect-outputs tx `:923`, result tx `:899`, acceptance tx `handlers.py:82`) is preserved unchanged; V3 composes the same helpers inside its one transaction |
 | Continuations | Covered by the `enqueue` seam: the finishing handler stamps the continuation's `expected_content_revision` with the fence value it validated under its own held lock, and the enqueue fence re-validates it (SHARE → INSERT) in the continuation's own transaction. A quarantined or cancelled collector never enqueues (§3.4) |
 | Reconciliation adoption — `resolve_reconciliation` (`S/core/jobs.py:752-862`) | Discovery and transitions unchanged (NEEDS_RECONCILIATION only, `:785`; RUNNING/SUCCEEDED/FAILED, `S/contracts/states.py:117` — the A0 reconciler selects the same status, `G/llm/reconciler.py` `_candidates`). For V3 rows, `fence()` SHARE is taken **before** `_lock` (`:784`) — track before job (§7). The SUCCEEDED resolution (`:811-843`) on a **stale** job still certifies the operations (recorded successes) but records `outcome.quarantined=true` and `record_stale(...)` instead of granting content authority. **RESUME (`:796-810`) is not offered to stale jobs** (N3-3: a resumed stale handler could only re-hit the fence at its first mutation — admission in disguise); a stale job's work continues, when justified, through a **replacement job** enqueued at the current revision (A1 `replaces_job_id`), which passes its own admission fence. Current (non-stale) NEEDS_RECONCILIATION jobs RESUME exactly as V1. The A0 auto-reconciler adopts results through the same rule: settle first, fence the installation |
 | Cancelled-job recovery (§4.1) | The authorised V3 path for operations still unresolved on CANCELLED jobs — settlement-only (N3-2/N3-3), spelled out in §4.1 |
@@ -335,7 +351,7 @@ the job. The stale worker stops under the existing lease guard: its next `_holds
 (`:621-627`) fails because the row is no longer RUNNING — `lease_guard` (FOR SHARE, `:648`)
 raises `Conflict("lease lost")`, and `finish` (`:677-679`) and `heartbeat` (`:605-606`) likewise.
 
-**How each V3 path converts that into control flow (N3-8).** A raw `Conflict` is **not**
+**How each V3 path converts that into control flow (N3-8, N3R2-5).** A raw `Conflict` is **not**
 automatically `LlmLeaseLost`: A0 performs that conversion inside `G/llm/step.py` `_guarded`
 (`lease_guard` Conflict → `LlmLeaseLost`), so LLM steps stop without a subsequent ordinary
 `finish` — the worker's guarded writes end and its durable operation stays in flight. The V3
@@ -343,12 +359,20 @@ automatically `LlmLeaseLost`: A0 performs that conversion inside `G/llm/step.py`
 call sites: lease loss → stop, no finish, no further provider call. This conversion must happen
 **inside the V3 handlers**, because the generic runtime arm (`S/workers/runtime.py` `_execute`,
 `Failed(error_code=type(error).__name__)` at `:249` + finish) would otherwise turn the Conflict
-into an ordinary Failed — exactly the "finish after ownership loss" A0 forbids. Equally, stale
-detection inside a collector **never aborts the evidence transaction**: the collector commits
-registration + `record_stale` first, then finishes the job `CANCELLED`/`STALE_CONTENT` through
-the legal transition — the quarantine evidence survives the control-flow change. Self-cancellation
-(the worker's own scope was cancelled) takes the same stop-without-finish path: observation only,
-§4.1 settles.
+into an ordinary Failed — exactly the "finish after ownership loss" A0 forbids. **Handler guards
+alone cannot close the window (N3R2-5):** A0's runtime calls `_finish` *after* the handler
+exception block (`G/workers/runtime.py:298`), so a cancellation landing between handler return
+and runtime completion escapes handler-local conversion — and ordinary `finish` has no CANCELLED
+outcome at all (`S/core/jobs.py:214-263`). V3 lease-loss handling is therefore specified **at
+the runtime completion/defer boundaries as well as the handler guards**: the boundary re-checks
+ownership and takes the same stop-without-finish path on loss — never converting it to `Failed`,
+never finishing what it no longer owns. Equally, stale detection inside a collector **never
+aborts the evidence transaction**: the collector commits registration + `record_stale` first,
+then finishes the job `CANCELLED`/`STALE_CONTENT` through the legal transition — the quarantine
+evidence survives the control-flow change. **Self-cancellation** (the worker's own scope was
+cancelled through `cancel_in`) uses `cancel_in`, then the **existing stop-without-finish control
+flow**: **quarantine evidence is committed before stopping**, and **no other outcome variant is
+introduced** — observation only, §4.1 settles.
 
 A provider call already in flight cannot be recalled — that is what reconciliation is for:
 
@@ -375,29 +399,63 @@ confirms (A0 §5.4); until then the job shows the cancelling state.
 v1.0 implied recovery moves a CANCELLED job to SUCCEEDED. That path does not exist —
 `resolve_reconciliation` requires NEEDS_RECONCILIATION (`S/core/jobs.py:785`), the A0 reconciler
 selects only that status (`G/llm/reconciler.py` `_candidates`), and CANCELLED has no outgoing
-transition (`S/contracts/states.py:119`). A3 therefore adds an **explicitly authorised V3 recovery
-path** instead of widening any transition:
+transition (`S/contracts/states.py:119`). A3 therefore adds an **explicit V3 recovery dispatcher
+over existing operations**, with per-kind legal transitions and provider evidence (N3R2-1),
+instead of widening any transition:
 
-- **Discovery.** A V3-only sweep — `track IS NOT NULL` jobs with status CANCELLED that still own
-  unresolved `provider_operations` (PENDING_SUBMIT / SUBMITTED / RUNNING / UNKNOWN — the same
-  states `track_waits`'s operation branch counts). Driven by the same audited
+- **Discovery (N3R2-4).** A V3-only sweep — `track IS NOT NULL` jobs with status CANCELLED that
+  still own `provider_operations` that are **unresolved** (PENDING_SUBMIT / SUBMITTED / RUNNING /
+  UNKNOWN — the same states `track_waits`'s operation branch counts) **or terminal with an
+  incomplete aftermath**: discovery also includes terminal operations whose required evidence,
+  accounting settlement or cancellation annotation is incomplete. The **durable completion
+  predicate** — operation terminal AND its `stale_artifacts` evidence row present when the
+  result is not installed AND settlement complete AND `outcome.settled_after_cancel` recorded —
+  is defined on the operation row itself, and the pass retries it idempotently. This closes the
+  crash case v1.1 could not see: a worker dying immediately after the result transaction commits
+  a terminal operation that no in-flight-only scan (this dispatcher's v1.1 form, and A0's
+  adopter, `G/llm/cancel_outbox.py:90-160`) would ever select again — and the terminal job can
+  never be re-claimed, so this pass is its only discoverer. Driven by the same audited
   operator-command surface as `resolve_reconciliation` and by the recovery pass; V1 rows are
   never selected.
-- **Ownership.** `llm.subscription` operations: A0's `adopt_confirmed_cancels` (above) — consumed,
-  no second variant. Paid kinds: **`JobService.settle_cancelled_operations(tx, …)`** — the
-  operation-settlement body of `resolve_reconciliation` lifted into a shared helper, driven with
-  the CANCELLED-job discovery; the job-status arm is replaced by a record: **the job stays
-  CANCELLED** and the settlement is written to `outcome.settled_after_cancel = {state, at}` —
-  no status transition, so no V1 terminal transition is widened and `J.CANCELLED`'s empty
-  transition set stands.
-- **Legal operation transitions** (evidence-backed only, through `record_result`): SUBMITTED /
-  RUNNING → SUCCEEDED / FAILED / CANCELLED per the provider's authoritative answer;
-  PENDING_SUBMIT → CANCELLED only with provider evidence that nothing launched; UNKNOWN without
-  recoverable external evidence stays UNKNOWN for the operator, exposure held.
+- **Authority (N3R2-2).** Recovery never runs under `_guarded` — that guard requires a RUNNING
+  job with a live lease (`G/llm/step.py:439-444`; `S/core/jobs.py:621-654`), which a CANCELLED
+  job cannot satisfy, and a stale NEEDS_RECONCILIATION job cannot either (its RESUME is refused
+  in §3.2's reconciliation row, while A0 reaches reconciliation authority through RESUME,
+  `G/llm/reconciler.py:171-179`). **Ordered scope locking and authority inspection are
+  separated from admission rejection:** the dispatcher locks and revalidates the job/operation
+  **under an audited recovery principal** — without the cancelled worker's lease, never
+  restoring content authority — classifying the scope through `fence_classify` (§3.1) rather
+  than the throwing `fence()`, whose rejections are exactly the conditions recovery must settle.
+  The collector commits evidence and accounting from the resulting current/stale/cancelled
+  classification; **only current execution may install content** — and this path is never
+  current execution. **Routing into this path is defined before `ensure`'s admission call**
+  (§3.2): a job already known cancelled never enters an admission arm.
+- **Per-kind legal transitions (N3R2-1) — evidence-backed only, through `record_result`.**
+  - **Paid kinds** — the dispatcher's settlement arm
+    (**`JobService.settle_cancelled_operations(tx, …)`**: an explicit settlement body over
+    provider evidence, *not* a lift from `resolve_reconciliation`, which only checks recorded
+    operations and changes job status, `S/core/jobs.py:790-862`). SUBMITTED / RUNNING →
+    SUCCEEDED / FAILED / CANCELLED per the provider's authoritative answer. **PENDING_SUBMIT
+    uses NOT_FOUND only with authoritative no-execution evidence; work the provider found
+    records its actual state** — the paid `PENDING_SUBMIT→CANCELLED` edge v1.1 permitted is not
+    legal: A0 restricts it to `llm.subscription` (`G/core/provider_ops.py:364-370`). UNKNOWN
+    without recoverable external evidence stays UNKNOWN for the operator, exposure held.
+  - **`llm.subscription`** — A0's `adopt_confirmed_cancels` (above), **extended with V3
+    evidence hooks and the missing recovery branches**: as-is it selects only in-flight states,
+    skipping PENDING_SUBMIT with DONE/REFUSED, missing gateway records and UNKNOWN
+    (`G/llm/cancel_outbox.py:90-160`), and its completion-race branch keeps metering but
+    discards the structured output, creating none of A3's promised quarantine evidence. The
+    extension adds those branches and, on the completion race, preserves the AD-11 settlement
+    (metering kept, job stays cancelled) **and appends the `stale_artifacts` evidence row**
+    (`cancelled_operation_result`) for the uninstalled result instead of discarding it.
+  - Both arms **preserve CANCELLED**: the job stays CANCELLED, the settlement written to
+    `outcome.settled_after_cancel = {state, at}` — settlement metadata recorded, no status
+    transition, so no V1 terminal transition is widened and `J.CANCELLED`'s empty transition set
+    stands — and both arms **never rearm or submit**.
 - **Permission (N3-3).** The path is observation/settlement only: it records legal results,
   preserves evidence, settles accounting — it never creates, rearms or submits work, never
   installs content, never enqueues continuations. On the LLM side it drives
-  `LlmStep.settle_under_lease` (§3.2), never `ensure`'s admission arms.
+  `LlmStep.settle_under_recovery` (§3.2), never `ensure`'s admission arms.
 - **Evidence and settlement.** Outputs register, receipts post exactly-once
   (`_settle_if_needed` semantics), and a result that is not installed — the scope is cancelled,
   stale, or both — appends `record_stale(reason='cancelled_operation_result', …)`; the 0035 CHECK
@@ -407,11 +465,12 @@ path** instead of widening any transition:
   wait remains the visible truth.
 
 **A-T12a's corrected expectation** (§9): cancel mid-flight → lease revoked, worker stops without
-finishing, operation untouched → the operation later settles through this path → **job stays
-CANCELLED** with `outcome.settled_after_cancel`, evidence rows for uninstalled results, money
-accounted, `track_waits` block cleared. (The SUCCEEDED+`outcome.quarantined=true` outcome remains
-the correct expectation only for *stale NEEDS_RECONCILIATION* jobs, whose transition is legal —
-OQ-3.)
+finishing, operation untouched → the operation later settles through this path (the V3-extended
+`adopt_confirmed_cancels` for `llm.subscription`, `settle_cancelled_operations` for paid kinds)
+→ **job stays CANCELLED** with `outcome.settled_after_cancel`, evidence rows for uninstalled
+results, money accounted, `track_waits` block cleared. (The SUCCEEDED+`outcome.quarantined=true`
+outcome remains the correct expectation only for *stale NEEDS_RECONCILIATION* jobs, whose
+transition is legal — OQ-3.)
 
 ## 5. Per-queue workers
 
