@@ -463,6 +463,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 11:2?Z (GLM): **E Goldfish done and ruled** (1 Blocker / 21 Major / 43 Nit — all ACCEPTED;
   B-1 takes the Stage-8 second-key arm: mix digest as replay key, EDL hash pure). `e-spec-v02`
   apply job launched (docs, beside the one build). Running: a0d-fix2 + e-spec-v02 + the t031 gate.
+- 14 Nov 12:02Z (GLM): **t031 gate run 1 at `6bcdbfa` = RED on resources, not code**: 264 passed
+  + 11 setup errors, all one session-scoped pilot fixture — `edit.variants_and_hooks: ffmpeg failed:`
+  with EMPTY detail while disk=4.3G / mem=1.2GB free and a0d-fix2's scopes ran concurrently. The
+  builder's identical make check passed 275 green solo. **Gate reruns SOLO after a0d-fix2 exits**
+  (receipts kept). Disk trend noted: 6.0G→4.3G today — the RR-T3 image rebuild (12G) is further away,
+  not closer.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -525,3 +531,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - Disk for T031's image rebuild (RR-T3): the builder needs ≥12GiB free and the volume has 5.5G.
   GLM cannot delete anything (rule 1). Free ≥12GiB (or name what may go) and the rebuild + local
   verification resumes; the push + paid run remain yours regardless.
+- Disk (updated): 4.3G free and falling (gate checkouts + basetemps today). Besides RR-T3's
+  ≥12GiB, the solo gate rerun and further builds would benefit from a cleanup pass — operator call
+  (GLM may not delete).
