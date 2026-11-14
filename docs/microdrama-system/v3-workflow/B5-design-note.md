@@ -1,8 +1,8 @@
 # B5 design note: season critic, finalization, STORY LOCK transaction, and the extension branch
 
-**Version 0.2 DRAFT, 14 Nov 2026. Author: GLM (design note only; one file, no code).** Critiqued
+**Version 0.3 DRAFT, 14 Nov 2026. Author: GLM (design note only; one file, no code).** Critiqued
 first before any B build (phase-B §11 B5 row): the lock transaction and the closure. Nothing here
-builds until the note is accepted and A0–A3 plus B1–B4 have shipped. **v0.2 applies the round-1
+builds until the note is accepted and A0–A3 plus B1–B4 have shipped. **v0.2 applied the round-1
 critique — all eight findings ACCEPTED per [`b5-critique-rulings.md`](b5-critique-rulings.md)
 (`codex-b5-note-critique.md` B5-1..B5-8), each integrated per its Replacement paragraph:** B5-1 the
 binding-hash / record-seal split (§2.1); B5-2 the extension-context snapshot (§5.1, §5.2, §5.3);
@@ -11,7 +11,23 @@ authorization predicate + the equality DDL (§5.2, §5.3, §5.5); B5-5 the criti
 the completion transaction (§1, §9); B5-6 the typed input-model delta + OQ-1 resolved (§5.3, §8,
 §13); B5-7 the binding document's address across the approval fence bump (§2.1); B5-8 the
 completed callback/finalization audit + tier-only Revise (§3.2, §6, §8, §9). No acceptance row
-weakened; A2-parked conflicts stay open questions (§13).
+weakened; A2-parked conflicts stay open questions (§13). **v0.3 applies the round-2 rulings — all
+five findings ACCEPTED per [`b5-recritique-rulings.md`](b5-recritique-rulings.md)
+(`codex-b5-note-recritique.md` B5R2-1..B5R2-5, each folded per its Replacement wording, which wins
+where it restates v0.2):** B5R2-1 the serial-planning-aware admission predicate — the complete
+pack-number set required at initial critic admission and STORY LOCK approval, not at every
+enqueue/dispatch (§5.3, §5.5, §10); B5R2-2 authorities loaded exclusively from the verified
+snapshot, duplicated input fields compared field-by-field — hash equality alone proves nothing
+about them (§5.2, §5.3, §10); B5R2-3 the conditional extension-context addition and its
+enqueue/dispatch validation registered for all four affected inputs — bible, promoted profile,
+episode plan, season critic (§5.2, §5.3); B5R2-4 the lock-approval provenance contract — the
+approved activation durably associated before the fence bump with the exact binding-document
+`(record_id, version, content_sha256)` and its separate `binding_sha256`, replacing verification
+against an activation that stores no document version (§0, §2.1, §3.1, §5.2, §5.3, §5.4, §5.5, §9,
+§10, §12); B5R2-5 the critic enqueue behind the round's join — tier updates synchronous, the
+critic's sole enqueue direct only when no asynchronous members remain (§1, §3.2, §6, §8, §9, §10).
+No acceptance row weakened; no BLOCKED finding left unapplied; R3 verification follows under the
+operator's standing waiver.
 
 **Binding inputs:** [phase-B-spec.md](phase-B-spec.md) **v0.6 (ACCEPTED)** §0–§12, esp. §4.2–§4.3
 (tiers, demand list), §5 (episodes → STORY LOCK), §5.4 (binding), §5.5 (closure revalidation),
@@ -44,6 +60,12 @@ semantic-key replay check, `M/0001…sql:78` `semantic_key … UNIQUE`, `S/contr
 for v0.2 the sealing anchor was re-read at the current head: `S/contracts/v2.py:66-68`
 `calculated_content_sha256` hashes the whole record minus the hash field itself — identity,
 version and timestamps included — B1 §2.3's inherited seal and the premise of §2.1's split).
+For v0.3 the round-2 cross-checks were re-read the same way: A1 §2.3's `gate_activations` carries
+`binding_sha256` and the revision stamps and **no binding-document version or `content_sha256`**
+(B5R2-4's premise); B1 §6 registers all four input models the extension-context addition touches —
+`BibleStepInput`, `PromoteProfileStepInput`, `PlanEpisodeStepInput`, `SeasonCriticStepInput`
+(B5R2-3); and phase-B §5.1 plans **one episode job at a time, in order**, while §7.1 gives a Revise
+round's **last job** the critic enqueue (B5R2-1/B5R2-5).
 **One pointer correction, recorded here**
 (never a spec conflict): the task brief cites "lock order (A1 §7)" — A1 §7 is the
 `require_workflow` inventory; the normative order is **phase-A §6 = A1 §9's table**, used
@@ -54,11 +76,12 @@ throughout this note.
 ## 0. Scope, prerequisites, migration allocation
 
 **B5 builds** (phase-B §11 B5 row): the season critic + repair + closure revalidation (§5.2/§5.5);
-the demand list (§4.3); `StoryLockBindingV3` finalization; the STORY LOCK handler + episode rows +
-bindings — **season and extension branches (PB-7)**; `edit_tier` + tier revalidation (C-M3, PB-5);
-`create_extension` + the extension authorization **with its extension-context snapshot (B5-2) and
-the extension's initial seam (B5-3)** + the extension builder; the season critic prompt
-(PB-6); `reopen_v3_gate` at the STORY LOCK gate (PB-14). Gate rows: **B-T7..B-T11** (§10).
+the demand list (§4.3); `StoryLockBindingV3` finalization; **the lock-approval provenance
+(B5R2-4, §2.1, migration B-6)**; the STORY LOCK handler + episode rows + bindings — **season and
+extension branches (PB-7)**; `edit_tier` + tier revalidation (C-M3, PB-5); `create_extension` + the
+extension authorization **with its extension-context snapshot (B5-2) and the extension's initial
+seam (B5-3)** + the extension builder; the season critic prompt (PB-6); `reopen_v3_gate` at the
+STORY LOCK gate (PB-14). Gate rows: **B-T7..B-T11** (§10).
 
 **B5 does not build:** any episode planning handler (B4), any promotion job handler (B3), the LOCK
 gate (B2), the UI (B6), the D5 seam itself (B2 shipped it; B5 adds its joins), any C/E/F consumer.
@@ -76,21 +99,27 @@ note: "B5's note allocates it (first B-number after B4's needs)". B2–B4 alloca
 | # | Expected | File | Purpose |
 |---|----------|------|---------|
 | **B-5** | 0040 | `0040_v3_extension_authorizations.sql` | The immutable extension authorization **carrying the extension-context snapshot columns** (PB-8, PB-9; §5.2, B5-2) |
+| **B-6** | 0041 | `0041_v3_lock_approval_provenance.sql` | The append-only **lock-approval provenance** — the approved activation durably bound to the exact binding-document `(record_id, version, content_sha256)` and its separate `binding_sha256` (B5R2-4; §2.1) |
 
-One purpose; creates only new objects (it references A1 0030's `season_extensions` and A2 0034's
-`account_cap_amendments`, both landed before any B build starts). Guard pattern per B1 §1:
+Each row is one purpose and creates only new objects (B-5 references A1 0030's `season_extensions`
+and A2 0034's `account_cap_amendments`; B-6 references A1 0030's `gate_activations` and
+`approval_events` — all landed before any B build starts). Guard pattern per B1 §1 for both:
 `md_forbid_mutation` (UPDATE+DELETE), statement TRUNCATE refusal and the integer-number guard via
-the 0026-style DO loop; `EXPECTED_TABLES` grows by the one name. The builder re-audits the tail at
-build time and allocates contiguously; if A/B allocations shift, B-5's number shifts **as a block**
-(purpose and order do not); applied bytes are never edited.
+the 0026-style DO loop; `EXPECTED_TABLES` grows by the two names. The builder re-audits the tail at
+build time and allocates contiguously; if A/B allocations shift, B-5's and B-6's numbers shift
+**as a block** (purpose and order do not); applied bytes are never edited.
 
 **Deviations considered (the B1/C-N22 checklist): none.** Every mechanism below rides A1/A2/B1
 primitives as specced. The two places the spec is silent were §13 open questions in v0.1; the
 round-1 rulings resolve them inside the accepted contracts — the extension's first planning
 enqueue is the adopted atomic enqueue, recorded as a **D6 register row** against B1 §7's inherited
 `J: none` (a new register row, never a silent edit; §5.3, §8, §13 OQ-1), and the binding-member
-encodings are pinned by the §2.1 hash split and the §5.2 snapshot (§13 OQ-4). The A2-parked items
-(OQ-2/OQ-3/OQ-5) stay open questions — recorded, not resolved.
+encodings are pinned by the §2.1 hash split and the §5.2 snapshot (§13 OQ-4). The round-2 rulings
+add two registered deltas of the same kind: the **lock-approval provenance** is a new B-owned
+append-only table (migration B-6, §2.1 — B5R2-4: A1's activation row stores no document version,
+and B never edits an A table's enforced shape), and the input-model register row now covers **all
+four affected inputs** (B5R2-3). The A2-parked items (OQ-2/OQ-3/OQ-5) stay open questions —
+recorded, not resolved.
 
 ## 1. The season critic (`story_v3.season_critic`, B5's handler)
 
@@ -102,7 +131,10 @@ PB-4 — B1 §6), queue (PRODUCTION) and registration are B1's, already landed; 
 type so B4 could enqueue it before B5 existed):
 1. the round's last `plan_episode` completion (B4's join enqueues it; B5's handler consumes it);
 2. the last repair re-plan's completion (§1.4 below);
-3. a STORY LOCK Revise round's last job (origin `human-revise`, phase-B §5.3/§7.1).
+3. a STORY LOCK Revise round's **last asynchronous member** (origin `human-revise`, phase-B
+   §5.3/§7.1) — the round's **sole** critic enqueue whenever asynchronous regeneration members
+   exist; only a tier-only round (no asynchronous members) enqueues it directly in the decision
+   transaction (§3.2, B5R2-5).
 
 **Handler phases (B5-5: the resumable external call never runs inside the completion
 transaction).** A0's step protocol commits durable intent before submission and can return waits
@@ -260,18 +292,56 @@ extension_id` for packs, continuity, demands, seam, promoted profiles, critic re
 authorities (PB-9, §5.2); the season's documents are never re-hashed — they are pinned by
 reference.
 
-**The binding document's address across the approval fence bump (B5-7).** Approve bumps the scope
-track's `content_revision` (§3.1 step 4) *after* finalization wrote
-`story-lock:<scope>:<content_revision>` — the track's post-approval fence therefore no longer
-names the approved document. Downstream resolution **follows the approved activation**: the
-approval event persists its `activation_id` (A1 §5 step 7, N1R-3); the activation row is immutable
-(A1 0030) and carries the **pre-approval `content_revision` stamp and `binding_sha256`** it was
-opened with; the reader resolves `story-lock:<scope>:<activation.content_revision>` at exactly
-that key and verifies the record's version and `binding_sha256` against the activation's value.
-**It never constructs the record address from the subsequently incremented track fence, and never
-selects an unqualified current version.** The extension-context snapshot pins exactly this triple
-(approval event ID + binding triple, §5.2), and B-T11 exercises the chain approval → reader
-resolution → extension pin.
+**The binding document's address across the approval fence bump (B5-7 + B5R2-4: the lock-approval
+provenance).** Approve bumps the scope track's `content_revision` (§3.1 step 4) *after* finalization
+wrote `story-lock:<scope>:<content_revision>` — the track's post-approval fence therefore no longer
+names the approved document. v0.2 told the reader to verify "the record's version … against the
+activation's value" — but **the activation row stores no document version**: A1 0030's
+`gate_activations` (A1 §2.3) carries `binding_sha256`, `content_revision` and `decision_revision`
+and nothing finer — and a tier edit rebuilds the binding at an **unchanged fence** (§6a: no
+`content_revision` bump), so multiple binding-document versions can exist under one
+`content_revision` with no activation column to pick among them. B5R2-4 therefore makes the
+association an explicit, durable fact:
+
+- **The write — before the approval fence bump.** Inside the Approve decision transaction, ahead of
+  §3.1 step 4's bump (and ahead of §5.5 step 5's on an extension scope), the callback appends the
+  **lock-approval provenance** row (migration B-6, §0): the approved `activation_id` (UNIQUE), the
+  `approval_event_id`, and the exact approved binding-document `(record_id, version,
+  content_sha256)` **plus its separate `binding_sha256`** — the activation's own value, which
+  blocker (b) has just proved current, over the document whose member preimage produced it.
+
+```sql
+CREATE TABLE v3_lock_approval_provenance (
+  id                uuid PRIMARY KEY,
+  schema_version    text NOT NULL DEFAULT '1.0',
+  activation_id     uuid NOT NULL UNIQUE REFERENCES gate_activations(id),
+  approval_event_id uuid NOT NULL REFERENCES approval_events(id),
+  record_id         uuid NOT NULL,
+  version           integer NOT NULL CHECK (version >= 1),
+  content_sha256    text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+  binding_sha256    text NOT NULL CHECK (binding_sha256 ~ '^[0-9a-f]{64}$'),
+  created_at        timestamptz NOT NULL DEFAULT now()
+  -- no FK on (record_id, version): the document is addressed through B1 §2.2's store,
+  -- which enforces (contract_type, record_id, version) uniqueness and re-verifies the hash
+);
+CREATE TRIGGER v3_lock_approval_provenance_append_only BEFORE UPDATE OR DELETE
+  ON v3_lock_approval_provenance FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
+-- + statement TRUNCATE refusal and the integer-number guard (§0 DO loop).
+```
+
+- **The read — resolve through the provenance, never the fence.** Downstream readers (C's included)
+  and the §5.2 extension pin resolve: approval event → its `activation_id` (A1 §5 step 7, N1R-3) →
+  the provenance row → the exact `(record_id, version)`; read that version through B1 §2.2's store
+  and verify its `content_sha256` and `binding_sha256` against the provenance row's values. **It
+  never constructs the record address from the subsequently incremented track fence, never selects
+  an unqualified current version, and never substitutes `binding_sha256` for the document-reference
+  seal** — the seal is `content_sha256` under B1 §2.3's whole-record rule; `binding_sha256` is the
+  separate member-preimage hash (§2.1's split, B5-1).
+
+The extension-context snapshot pins exactly this provenance (approval event ID + the document triple
++ the separate `binding_sha256`, §5.2), and B-T11 exercises the chain approval → provenance → reader
+resolution → extension pin, **including an approval after multiple same-fence binding versions** (a
+tier edit between finalization and Approve — B5R2-4's case).
 
 ### 2.2 The demand list (`SeasonDemandListV3`, deterministic)
 
@@ -330,9 +400,11 @@ both numbers, A2 §11 OQ-1). Then, still inside the one transaction:
    step 8); on the extension scope, the **extension** track advances (§5.5).
 4. **`content_revision` bumps** (A1 §6: lock approvals bump it): the season track on a season
    scope; the **extension track only** on an extension scope (PB-7 — existing season tracks
-   unchanged; PB5-1 — the extension's revision discipline is its own). The bump does not orphan
-   the approved binding document: §2.1's activation rule (B5-7) keeps its address resolvable at
-   the pre-approval revision.
+   unchanged; PB5-1 — the extension's revision discipline is its own). **Immediately before the
+   bump, the callback appends the lock-approval provenance row (B5R2-4, §2.1, migration B-6): the
+   approved activation durably associated with the exact binding-document `(record_id, version,
+   content_sha256)` and its separate `binding_sha256`.** The bump does not orphan the approved
+   binding document: §2.1's provenance contract (B5-7/B5R2-4) keeps its exact address resolvable.
 5. **No job enqueues** (step 4 is C's handler's to start; B1 §8's row).
 6. The decision's single revision advance closes the transaction (A1 §5 step 9 — the season's or
    the extension's `revision` per scope).
@@ -345,17 +417,23 @@ validated against the recomputed binding units). In the one transaction: the act
 bible sections via a scoped `story_v3.bible` round, the seam likewise — **and the regeneration
 enqueues join the decision transaction** (A1 §5 step 8 / §6's decide row: "J: handler callback
 enqueues only"). **A tier target invokes the shared internal tier-update/revalidation operation
-under this decision context (PB-5, §6, B5-8): during `on_decision` it persists its update — the
-tier change and every affected document version — *without* the standalone entry's fence bump,
-supersede or successor open** (A1 §5 runs the callback at step 8, before the transaction's sole
-revision advance at step 9, and no post-advance callback exists; the activation this decision
-just closed is already closed at step 7 — there is nothing left to supersede), **then enqueues
-the `human-revise` season-critic continuation inside the decision transaction; the successor
-activation opens at the later finalization, after the decision commits** (§6b). After the
-regeneration round: the closure revalidation (§4), then the season critic round (origin
-`human-revise`, PB-4), and finalization reopens the gate with a new binding (§2). A stale
-binding, a target outside the binding units, or an in-flight regeneration refuses (the PB5-1
-lifecycle guards).
+under this decision context (PB-5, §6, B5-8): during `on_decision` it applies its update
+synchronously — persisting the tier change and every affected document version — *without* the
+standalone entry's fence bump, supersede or successor open** (A1 §5 runs the callback at step 8,
+before the transaction's sole revision advance at step 9, and no post-advance callback exists;
+the activation this decision just closed is already closed at step 7 — there is nothing left to
+supersede). **The round's members are then collected across both kinds of target (B5R2-5):** the
+asynchronous regeneration rounds (noted packs, bible, seam) plus the synchronously applied tier
+update. **The `human-revise` season-critic continuation is enqueued directly inside the decision
+transaction only when no asynchronous members remain — a tier-only Revise; when any asynchronous
+member exists (a pure regeneration round or a mixed tier-plus-regeneration round), the critic's
+sole enqueue belongs to the last asynchronous member's completion join** (phase-B §7.1: a Revise
+round's last job enqueues the season critic) — a mixed round can therefore never start the critic
+before its required members complete. **The successor activation opens at the later finalization,
+after the decision commits** (§6b). After the round: the closure revalidation (§4), then the
+season critic round (origin `human-revise`, PB-4), and finalization reopens the gate with a new
+binding (§2). A stale binding, a target outside the binding units, or an in-flight regeneration
+refuses (the PB5-1 lifecycle guards).
 
 ### 3.3 Reject
 
@@ -477,18 +555,24 @@ produce — the DDL now enforces the definition the checks verify.
 cumulative count, amendment ID, human provenance — this row's own authority); the **explicit
 calendar input exactly as given** (`calendar_input`; F owns its semantics, B5 validated presence
 only — the input now has a scope-owned home); and **every pinned authority** (PB-9): the prior
-STORY LOCK approval event ID with its binding triple resolved through §2.1's activation rule
-(record ID, version, `binding_sha256`); the **CAST LOCK slot** — an exact approved reference when
-the season has one at creation time, otherwise the explicit `absent-until-C` sentinel; the exact
+STORY LOCK approval event ID with its binding provenance resolved through §2.1's contract
+(B5R2-4) — the exact binding-document `(record_id, version, content_sha256)`, the
+document-reference seal, **and** its separate `binding_sha256`; the **CAST LOCK slot** — an exact
+approved reference when the season has one at creation time, otherwise the explicit
+`absent-until-C` sentinel; the exact
 planned-terminal `ContinuityStateV3` triple; the exact published-canon identity (synthetic in B's
 tests); the season bible triple. `context_sha256` is the canonical hash of that object (the shared
 canonical encoder) — **the value every extension job input references and is validated against**.
 The snapshot is immutable with the row, and **deploying C never rewrites an existing snapshot**:
 an extension created before C keeps its absent CAST sentinel for its whole life; a post-C
 extension pins the exact reference at creation. The same freeze applies to every authority in the
-block. All extension jobs — enqueue, dispatch, approval — reference the snapshot
-(`authorization_id` + `context_sha256`) and validate agreement (§5.3/§5.5): later job inputs are
-checked **against the scope-owned snapshot**, never trusted as free-floating pinned references.
+block. All extension jobs — **the four registered inputs of B5R2-3: bible, promoted profile,
+episode plan, season critic** — reference the snapshot (`authorization_id` + `context_sha256`) at
+enqueue, dispatch and approval, and validate agreement (§5.3/§5.5): later job inputs are checked
+**against the scope-owned snapshot**, never trusted as free-floating pinned references — and
+**agreement identifies the snapshot, it does not substitute for its contents: the authorities are
+loaded exclusively from the verified snapshot row, and any authority fields duplicated in an input
+are compared field-by-field against that snapshot before use (B5R2-2, §5.3)**.
 
 ### 5.3 The extension planning edges and the builder
 
@@ -503,42 +587,63 @@ STORY LOCK for the new packs only. Edges B5 defines (PB-7):
 | `PLANNED → STORY_LOCKED` | the extension STORY LOCK Approve, inside the deciding transaction | extension |
 
 **Builder admission (PB5-4 — creation and downstream enforcement are separate; B5-4's full
-predicate):** every `story_v3.plan_episode` / `story_v3.season_critic` enqueue on an extension
-scope carries the typed extension-context reference (`authorization_id` + `context_sha256`) in
-its input and is validated **at enqueue and at dispatch**, then re-read under the held locks at
-approval (§5.5). The predicate, in full: **season/extension ancestry** — the authorization's
-`season_id` is this extension's season and its `extension_id` is the job's planning scope; **exact
-scope-range equality** — the episodes planned on the extension scope cover exactly
-`[episode_start, episode_end]`: no episode outside the range, no gap inside it; **cumulative
-count equal to `episode_end`** (§5.1's definition, now DDL-enforced); **predecessor contiguity** —
-`episode_start =` the pre-extension bound count `+ 1`; **amendment-account identity** — the named
-approved amendment on this season's unique `SEASON` account (§5.1 item 5); **snapshot agreement**
-— the input's `context_sha256` equals the authorization row's, so the pinned authorities are the
-snapshot's; and the extension scope is open. **Admission also validates the authorized planning
-state/round:** a re-plan or regeneration enqueue must cite a round the scope's persisted round
-state actually opened (PB-4's persisted origin) — **an open extension scope alone grants no
-regeneration authority.** A missing or mismatched authorization, range, count or snapshot refuses
-(B-T11) — this is what makes a hand-enqueued or replayed extension job unable to plan without the
-immutable authority. The extension's job inputs carry **pinned references, never "latest" reads**
-(PB-9), sourced from the snapshot: the prior STORY LOCK approval event ID and its binding triple
-(resolved per §2.1's activation rule); the **CAST LOCK slot — the exact approved reference when
-the season has one, otherwise the snapshot's explicit `absent-until-C` sentinel** (B's tests
-exercise the STORY slot with the CAST slot recorded absent — phase-B §8); the exact
-planned-terminal `ContinuityStateV3` triple (whose `source_pack_version`/`source_pack_sha256`
-pin, B1 §2.3, makes the terminal state immutable by match); the exact published-canon identity (F
-owns the real source; **B tests with a synthetic published canon**); the season bible triple. The
-prior approvals and packs are never touched.
+predicate, re-tiered by B5R2-1):** every extension-scope enqueue of the four inputs (B5R2-3)
+carries the typed extension-context reference (`authorization_id` + `context_sha256`) in its
+input and is validated **at enqueue and at dispatch**, then re-read under the held locks at
+approval (§5.5). **The per-job predicate, applied at enqueue and dispatch:** **season/extension
+ancestry** — the authorization's `season_id` is this extension's season and its `extension_id` is
+the job's planning scope; **authorization range equals the immutable extension range** — the
+referenced row's `[episode_start, episode_end]`, DDL-enforced contiguous with
+`cumulative_episode_count = episode_end` (§5.1's definition) and **predecessor-contiguous**
+(`episode_start =` the pre-extension bound count `+ 1`); **amendment-account identity** — the
+named approved amendment on this season's unique `SEASON` account (§5.1 item 5); **episode
+membership within the round** — every episode the job will plan or re-plan lies inside the
+authorized range **and within its authorized initial or regeneration round**; and the extension
+scope is open. **A complete, gap-free planned set is not required here and cannot be: phase-B
+§5.1 plans one episode job at a time, in order, and creation enqueues only the first episode
+before any extension packs exist (§5.1) — mid-build the planned set is partial by design.**
+**Admission also validates the authorized planning state/round:** a re-plan or regeneration
+enqueue must cite a round the scope's persisted round state actually opened (PB-4's persisted
+origin) — **an open extension scope alone grants no regeneration authority.** **Snapshot
+agreement and authority loading (B5R2-2):** the input's `context_sha256` equals the authorization
+row's — and that agreement **only identifies the snapshot; the authorities themselves are loaded
+exclusively from the verified snapshot row** named by `authorization_id` + `context_sha256`. If
+an input duplicates authority fields, **every field is compared against that snapshot before
+use** — copying the correct hash never establishes that the duplicated fields agree.
+**The complete-set checkpoints (B5R2-1):** the **complete authorized pack-number set** — every
+episode in `[episode_start, episode_end]`, no gap inside it, no episode outside it — is required
+**at initial season-critic admission** (the enqueue and dispatch of the extension's initial
+`story_v3.season_critic`, where the serially planned packs must all be present) **and at STORY
+LOCK approval** (§5.5's exactly-the-authorized-pack-number-set check). A missing or mismatched
+authorization, range, count, snapshot **or a duplicated authority field that differs from the
+snapshot** refuses (B-T11, including the altered-authority negative case) — this is what makes a
+hand-enqueued or replayed extension job unable to plan without the immutable authority. The
+extension's job inputs carry **pinned references, never "latest" reads** (PB-9), **loaded from
+the snapshot** (B5R2-2 — never from duplicated input fields): the prior STORY LOCK approval event
+ID and its binding provenance (§2.1's contract: the exact `(record_id, version, content_sha256)`
+plus the separate `binding_sha256`); the **CAST LOCK slot — the exact approved reference when the
+season has one, otherwise the snapshot's explicit `absent-until-C` sentinel** (B's tests exercise
+the STORY slot with the CAST slot recorded absent — phase-B §8); the exact planned-terminal
+`ContinuityStateV3` triple (whose `source_pack_version`/`source_pack_sha256` pin, B1 §2.3, makes
+the terminal state immutable by match); the exact published-canon identity (F owns the real
+source; **B tests with a synthetic published canon**); the season bible triple. The prior
+approvals and packs are never touched.
 
-**The typed input-model delta (B5-6 — a D6 register row, not a convention).** The
+**The typed input-model delta (B5-6 + B5R2-3 — a D6 register row, not a convention).** The
 extension-context reference is a registered model change, because B1 §6's input shapes do not
-carry it and existing contract models reject unknown fields: `PlanEpisodeStepInput` and
-`SeasonCriticStepInput` gain an optional typed group `extension_context: ExtensionContextRef |
-None` — `authorization_id`, `context_sha256` and the pinned authority fields above — with
-**conditional validation**: required (and checked against the snapshot) **iff the planning scope
-is an extension**; refused as non-null on a season scope. Regenerated `schemas/v3` + examples
-ship with B5's contract bump, and the same D6 register row that amends the `create_extension`
-command's `J:` cell (§8) records these additions against B1 §6's registered shapes — a deliberate
-delta, never a silent edit.
+carry it and existing contract models reject unknown fields — and §5.2's snapshot enforcement
+covers **all extension jobs**, not just planning and criticism: extension bible Revise and
+profile promotion also run on the extension scope (§5.1's effective-bible and effective-profile
+resolutions). **All four affected inputs registered in B1 §6 gain the optional typed group
+`extension_context: ExtensionContextRef | None`** — `BibleStepInput` and `PromoteProfileStepInput`
+(B1 §6 registers them separately for `story_v3.bible` and `story_v3.promote_profile`) alongside
+`PlanEpisodeStepInput` and `SeasonCriticStepInput` — carrying `authorization_id`,
+`context_sha256` and the pinned authority fields above, with **conditional validation and
+enqueue/dispatch validation registered for all four alike**: required (and checked against the
+snapshot) **iff the planning scope is an extension**; refused as non-null on a season scope.
+Regenerated `schemas/v3` + examples **for all four inputs** ship with B5's contract bump, and the
+same D6 register row that amends the `create_extension` command's `J:` cell (§8) records these
+additions against B1 §6's registered shapes — a deliberate delta, never a silent edit.
 
 ### 5.4 The extension's binding
 
@@ -549,7 +654,8 @@ plus tiers and promoted profiles effective over the extension's packs per §5.1'
 the extension's critic reports) **plus the pinned-authorities block** — §5.2's snapshot
 authorities as a typed payload field group inside the `binding_sha256` preimage (PB-9: the
 binding must not drift from what the builder consumed, and the builder consumed the snapshot):
-prior STORY LOCK approval + binding triple (per §2.1's activation resolution); the CAST slot
+prior STORY LOCK approval + binding provenance (per §2.1's contract, B5R2-4: the exact
+`(record_id, version, content_sha256)` and its separate `binding_sha256`); the CAST slot
 exactly as frozen in the snapshot (the exact reference or the explicit `absent-until-C`
 sentinel); terminal continuity triple; published-canon identity; season bible triple. The bible
 member is the **effective bible** of §5.1's resolution — the extension-local record once one
@@ -563,11 +669,12 @@ path (the unique `SEASON` account creation, the setup attach, the initial episod
 base cap) **must not run again, and the base cap is immutable**. B5 supplies the sibling helper
 `create_v3_extension_episodes_in(tx, decision_context, extension, authorization)`, called by the
 Approve callback after §3.1's blockers (the **authorization re-read under the held locks first,
-passing §5.3's full predicate — ancestry, exact scope-range equality against the packs offered,
-cumulative count, predecessor contiguity, amendment-account identity, snapshot agreement, and
-the authorized planning state/round; any mismatch refuses and rolls the decision back** (PB5-4 +
-B5-4), **and the approval requires exactly the authorized pack-number set** — the packs numbered
-`episode_start..episode_end` and no others; an extra or missing pack number refuses):
+passing §5.3's predicate at its approval checkpoint (B5R2-1) — ancestry, the complete
+authorized pack-number set as offered (every pack in `[episode_start, episode_end]`, no gap
+inside it, no pack outside it), cumulative count, predecessor contiguity, amendment-account
+identity, snapshot agreement with the authorities loaded from the verified snapshot and every
+duplicated input field compared against it (B5R2-2), and the authorized planning state/round;
+any mismatch refuses and rolls the decision back** (PB5-4 + B5-4)):
 
 1. Create **only the contiguous appended range's** episode rows (legacy `PLANNED`, empty plan —
    phase-B §5.4) and `episode_tracks`.
@@ -580,10 +687,10 @@ B5-4), **and the approval requires exactly the authorized pack-number set** — 
    authorization already proved it at creation — this re-proves it at approval under the locks).
 4. Write the binding rows (§3.1 step 2) for the extension's episodes;
    `story_lock_scope_revision` = the deciding revision *r* on the **extension's** track.
-5. `advance_planning(PLANNED → STORY_LOCKED)` on the extension track; bump
-   `season_extensions.content_revision`; **the season track, its accounts, prior approvals and
-   existing episode rows remain unchanged** (PB-7; B-T11 asserts the rollback and the
-   untouched-priors clauses).
+5. `advance_planning(PLANNED → STORY_LOCKED)` on the extension track; **append the lock-approval
+   provenance row (B5R2-4, §2.1)**; bump `season_extensions.content_revision`; **the season
+   track, its accounts, prior approvals and existing episode rows remain unchanged** (PB-7;
+   B-T11 asserts the rollback and the untouched-priors clauses).
 
 **Rollback:** the whole branch is inside the A1 §5 decision transaction; any failure at any step
 (A2-style forced failure in tests) leaves **no partial append** — no episode, track, account or
@@ -611,11 +718,13 @@ internal tier-update/revalidation operation** `apply_tier_update(tx, scope, char
   successor open**. A1 §5 runs the callback at step 8, *before* the transaction's sole revision
   advance at step 9, and no post-advance callback exists; the activation the decision just closed
   is already closed at step 7 — there is nothing left to supersede. The operation then **enqueues
-  the `human-revise` season-critic continuation inside the decision transaction** (A1 §6's decide
-  row: "J: handler callback enqueues only"), and **the successor activation opens at the later
-  finalization, after the decision commits** — the standalone entry's revision advance is here
-  the decision transaction's own; no double advance. Exercised through the real decision route in
-  B-T10.
+  the `human-revise` season-critic continuation inside the decision transaction directly only
+  when the round has no asynchronous regeneration members (a tier-only Revise); in a mixed round
+  the critic's sole enqueue belongs to the last asynchronous member's completion join** (A1 §6's
+  decide row: "J: handler callback enqueues only"; B5R2-5, §3.2), and **the successor activation
+  opens at the later finalization, after the decision commits** — the standalone entry's revision
+  advance is here the decision transaction's own; no double advance. Exercised through the real
+  decision route in B-T10, **including the mixed tier-plus-regeneration round**.
 
 **Overrides never waive** speaker counting, the voice requirement or identity coverage (V3R-4).
 
@@ -649,9 +758,10 @@ events and replay rules are inherited, not restated):**
 
 | Entry | Writes · jobs · events beyond A1's `approval.recorded`/`gate.decided`/`track.advanced` |
 |---|---|
-| STORY LOCK **Approve** (season / extension branch) | W: episodes + `episode_tracks` + accounts (A2 §7 / §5.5) + `v3_episode_story_bindings` + the planning advance + the `content_revision` bump · J: **none** (B1 §8's row; step 4 is C's) · E: `episode.created` + `track.created` per episode (A2's) |
-| STORY LOCK **Revise**, non-tier targets | W: the notes rows (A1's) · J: the regeneration rounds for exactly the noted units (`plan_episode(n)` / scoped `story_v3.bible` / the seam round), enqueued in the decision transaction · E: none beyond A1's |
-| STORY LOCK **Revise**, tier-only target | W: the tier change + affected document versions (profile/demand/critic) — **no fence bump, no supersede, no open** · J: `story_v3.season_critic` (origin `human-revise`) in the decision transaction · E: none beyond A1's; the successor opens at finalization, after the decision commits |
+| STORY LOCK **Approve** (season / extension branch) | W: episodes + `episode_tracks` + accounts (A2 §7 / §5.5) + `v3_episode_story_bindings` + the planning advance + **the lock-approval provenance row (B5R2-4, §2.1 — written before the bump)** + the `content_revision` bump · J: **none** (B1 §8's row; step 4 is C's) · E: `episode.created` + `track.created` per episode (A2's) |
+| STORY LOCK **Revise**, non-tier targets | W: the notes rows (A1's) · J: the regeneration rounds for exactly the noted units (`plan_episode(n)` / scoped `story_v3.bible` / the seam round), enqueued in the decision transaction; the critic's enqueue belongs to the round's last member (phase-B §7.1) · E: none beyond A1's |
+| STORY LOCK **Revise**, tier-only target | W: the tier change + affected document versions (profile/demand/critic) — **no fence bump, no supersede, no open** · J: `story_v3.season_critic` (origin `human-revise`) in the decision transaction — **no asynchronous members, so the direct enqueue is the round's sole critic enqueue (B5R2-5)** · E: none beyond A1's; the successor opens at finalization, after the decision commits |
+| STORY LOCK **Revise**, **mixed targets** (tier + episode/bible/seam; B5R2-5) | W: the notes rows (A1's) + the synchronous tier change + affected document versions — **no fence bump, no supersede, no open** · J: the regeneration rounds for the noted non-tier units, enqueued in the decision transaction — **no critic enqueue here: its sole enqueue belongs to the last regeneration member's completion join** (phase-B §7.1) · E: none beyond A1's; the successor opens at finalization, after the decision commits |
 | STORY LOCK **Reject** | W: nothing beyond A1's row (no episode-creation authority; planning stays `PLANNED`) · J: none · E: none beyond A1's |
 | **Finalization, initial** (inline in the last completer) | W: the findings + demand-list + `story-lock` document writes, the `BIBLE → PLANNED` advance, the activation open · J: §1 step 5's continuation enqueues (promotion join) · E: `gate.opened` (+ `track.advanced`) |
 | **Finalization, re-** (after a Revise/repair round) | W: a fresh findings + `story-lock` version + the activation open — **`PLANNED` retained**, no repeated edge · J: as above, over the round's members · E: `gate.opened` |
@@ -669,11 +779,11 @@ provider-operations/leases → **7** budget (A2 §8.1's stages). Every B5 mutati
 | Season-critic handler — **phase 2: the D5 completion transaction** (B5-5) | on valid completion: **#2** `season_tracks` FOR UPDATE (→ `season_extensions` for an extension scope, A1 §5 step 2's order) **before** job locks → fence/lease/frozen-input validation → **#4** document writes (findings + round persistence; re-plan pack versions) → **#5** its own completion → continuation enqueues commit atomically; runtime does not finish again (`S/workers/runtime.py:245`; `S/core/jobs.py:676`) | conforms (D5; B1 §8's row) |
 | Finalization, **initial** (inline in the last completer; B5-8) | #2 held (the completer's; season → extension for an extension scope) → **#4** demand-list + `story-lock` document writes + binding verification reads → `BIBLE → PLANNED` track update → `open_gate` activation INSERT — one atomic commit with the completion (PB-3: transition before activation) | conforms |
 | Finalization, **re-** after a Revise/repair round (B5-8) | #2 held → **#4** fresh findings + `story-lock` version + activation INSERT — **`PLANNED` retained**, no track-edge write; same atomicity with the completion | conforms (PB5-3-analogue, §2 step 4) |
-| STORY LOCK Revise, non-tier targets (B5-8) | **1** → **2** track FOR UPDATE (→ extension track per scope) → **4** the notes rows → **#5** the regeneration-round enqueues (`plan`/`bible`/seam) inside the decision transaction → single revision advance | conforms (A1 §5 step 8: "handler callback enqueues only") |
-| STORY LOCK Revise, tier-only target (B5-8) | **1** → **2** → **#4** tier change + affected document versions (**no fence bump, no supersede, no open**) → **#5** the `human-revise` season-critic continuation enqueue → single revision advance | conforms (§6b; the standalone entry's supersede/open/advance writes are absent by design) |
+| STORY LOCK Revise, non-tier or mixed targets (B5-8, B5R2-5) | **1** → **2** track FOR UPDATE (→ extension track per scope) → **4** the notes rows (**mixed: the synchronous tier change + affected document versions here, before the enqueues — no fence bump, no supersede, no open**) → **#5** the regeneration-round enqueues (`plan`/`bible`/seam) inside the decision transaction — **no critic enqueue in this transaction when asynchronous members exist; its sole enqueue rides the last member's completion join** (phase-B §7.1) → single revision advance | conforms (A1 §5 step 8: "handler callback enqueues only") |
+| STORY LOCK Revise, tier-only target (B5-8, B5R2-5) | **1** → **2** → **#4** tier change + affected document versions (**no fence bump, no supersede, no open**) → **#5** the `human-revise` season-critic continuation enqueue — **direct: no asynchronous members exist, so this is the round's sole critic enqueue** → single revision advance | conforms (§6b; the standalone entry's supersede/open/advance writes are absent by design) |
 | STORY LOCK Reject (B5-8) | **1** → **2** → **4** the approval/notes rows only → single revision advance; **no #5, no #7** | conforms (A1 §6's row) |
-| STORY LOCK Approve, season branch | **1** → **2** `season_tracks` FOR UPDATE → **4** seasons/approvals/notes → episode + `episode_tracks` INSERTs (A2 §7) → **#7** stage 3 mutex → stage 4 (setup lock → SEASON create → parent set → `EPISODE` accounts → steps — A2 §4) → **#4** binding INSERTs → planning advance + `content_revision` bump → single revision advance; **#5 none** (B1 §8's "no job enqueues at Approve") | conforms (A2 §8.2's row + B1 §8's binding row, composed) |
-| STORY LOCK Approve, extension branch | **1** → **2** `season_tracks` → **2** `season_extensions` (A1 §5's extension order) → **#4** authorization re-read + seasons/approvals → episode + `episode_tracks` INSERTs (§5.5) → **#7** stage 3 mutex → stage 4 (SEASON lock → `EPISODE`-account INSERTs → envelope validation) → **#4** binding INSERTs → extension-track advance + `season_extensions.content_revision` bump → single extension-revision advance | conforms — the same subsequence; inserts of not-yet-existing rows serialise under #2/#7 (A1 §9's justification) |
+| STORY LOCK Approve, season branch | **1** → **2** `season_tracks` FOR UPDATE → **4** seasons/approvals/notes → episode + `episode_tracks` INSERTs (A2 §7) → **#7** stage 3 mutex → stage 4 (setup lock → SEASON create → parent set → `EPISODE` accounts → steps — A2 §4) → **#4** binding INSERTs → planning advance → **#4 the lock-approval provenance INSERT (B5R2-4, before the bump)** → `content_revision` bump → single revision advance; **#5 none** (B1 §8's "no job enqueues at Approve") | conforms (A2 §8.2's row + B1 §8's binding row, composed) |
+| STORY LOCK Approve, extension branch | **1** → **2** `season_tracks` → **2** `season_extensions` (A1 §5's extension order) → **#4** authorization re-read + seasons/approvals → episode + `episode_tracks` INSERTs (§5.5) → **#7** stage 3 mutex → stage 4 (SEASON lock → `EPISODE`-account INSERTs → envelope validation) → **#4** binding INSERTs → extension-track advance → **#4 the lock-approval provenance INSERT (B5R2-4, before the bump)** → `season_extensions.content_revision` bump → single extension-revision advance | conforms — the same subsequence; inserts of not-yet-existing rows serialise under #2/#7 (A1 §9's justification) |
 | `edit_tier` | B1 §8's row: **1** → **2** FOR UPDATE → **#4** document versions + binding rebuild → `supersede_gate` → one revision advance → `open_gate` | conforms (B1-8) |
 | `create_extension` | **1** → **2** `season_tracks` → **#4** seasons + authorization (with snapshot + calendar) + `season_extensions` INSERT + the initial `seam:<extension>` document → **#5** the first `plan_episode` enqueue (OQ-1 resolved) | conforms (B1 §8 + one #5 tail after #4) |
 | `reopen_v3_gate` (STORY LOCK) | **1** → **2** track (season; or `season_tracks` then `season_extensions`) → `open_gate` admission checks → activation INSERT | conforms (A1 §6's row) |
@@ -690,8 +800,8 @@ before #4/#5/#7, and the seam mandates #2 before job locks. No inversion.
 | **B-T7** (V3-AT-3 family) | every clause: all-24-pack renderability fixtures (B4 planned them; the critic catches each injected defect through typed-effect derivation — wardrobe-day both halves, unknown `debt_id`, RESOLVED-in-finale); the 6-vs-7 repair-membership boundary with impact preview; **the B5-5 boundary: waits/defers/lease-loss during the critic's phase-1 LlmStep leave no completion-transaction write, and the phase-2 completion transaction runs only on valid completion — malformed-output content attempts never consume the episode-repair budget** | none |
 | **B-T8** (V3-AT-4) | every clause: demand completeness two ways; ID stability across a Revise; one promotion → one `promote_profile` call; the `EXTRAS_ROLE`→`CHARACTER` merge; post-promotion re-validation; **the D5 join clauses re-run for B5's joins: two concurrent last-promote completions → exactly one finalization; commit-boundary death → recovery re-evaluates over persisted members** (B-T6's seam clauses, exercised on B5's join set) | none (B3's promotion handler is a shipped prerequisite, not a co-owner) |
 | **B-T9** | all N rows + tracks + accounts + bindings in one transaction; forced-failure rollback; `content_revision` bump; the cadence selector never creates V3 episodes (`S/scheduling/service.py:199` guarded, A1 §7); `edit_tier` revalidation incl. the refused demotion; the compatibility read; the pack byte-unchanged (PB-10) | none in the row; **step 4 (casting) starts only when C's handler registers** — B5 asserts `NOT_AVAILABLE` for CAST_LOCK, never opens it |
-| **B-T10** | scoped Revise on *k*; `continuity-dependent` blocking; post-Revise reporting without regeneration (PB-4); bible-section/seam/tier revises (C-M18) with the tier revise through the real decision route (PB-5); the PB-11 blocker split; Reject → `reopen_v3_gate` → Revise on a fresh activation | none |
-| **B-T11** | eligibility refusals (incl. the wrong-account/non-funding amendment, PB5-4); atomic creation rollback; builder-admission and extension-approval authorization refusals; the count exclusively from the authorization; stale `season_extensions.revision` refused (PB5-1); the builder on pinned authorities + a **synthetic** published canon; the extension Approve branch incl. rollback and untouched priors (PB-7); the §6.2 reinterpretations; **the B5-2/B5-4/B5-7 additions: creation persists authorization + context snapshot (calendar + pinned authorities) + initial seam atomically — rollback leaves none of them; a job whose `context_sha256` mismatches the snapshot is refused; approval requires exactly the authorized pack-number set; and the approval → reader → extension-pin chain resolves the prior binding through the activation's pre-approval revision, never the post-bump fence** | the **real** published-canon source and the extension decision screen/viewership windows are **F's** (phase-F §8.4); calendar mode semantics (`CONTINUED`/`RESUMED`) are F's — B5 validates presence only (and persists the input verbatim in the snapshot) |
+| **B-T10** | scoped Revise on *k*; `continuity-dependent` blocking; post-Revise reporting without regeneration (PB-4); bible-section/seam/tier revises (C-M18) with the tier revise through the real decision route (PB-5) **and the mixed tier-plus-pack round through the same route (B5R2-5): the tier update lands synchronously in the decision transaction, the pack re-plans asynchronously, and the critic starts only at the last member's completion — never before**; the PB-11 blocker split; Reject → `reopen_v3_gate` → Revise on a fresh activation | none |
+| **B-T11** | eligibility refusals (incl. the wrong-account/non-funding amendment, PB5-4); atomic creation rollback; builder-admission and extension-approval authorization refusals; the count exclusively from the authorization; stale `season_extensions.revision` refused (PB5-1); the builder on pinned authorities + a **synthetic** published canon; the extension Approve branch incl. rollback and untouched priors (PB-7); the §6.2 reinterpretations; **the B5-2/B5-4/B5-7 additions: creation persists authorization + context snapshot (calendar + pinned authorities) + initial seam atomically — rollback leaves none of them; a job whose `context_sha256` mismatches the snapshot is refused; approval requires exactly the authorized pack-number set; the B5R2 additions — the serial-planning boundary (B5R2-1): the creation-time first enqueue and each serial `plan_episode` enqueue/dispatch pass the per-job predicate while the planned set is partial, and the complete authorized pack-number set is required at the extension's initial season-critic admission and at approval; the altered-authority negative case (B5R2-2): a job input with the correct `context_sha256` but one authority field changed against the snapshot is refused; and the approval → provenance → reader → extension-pin chain (B5R2-4) resolves the exact approved binding-document `(record_id, version, content_sha256)` + `binding_sha256` through the lock-approval provenance row — never the post-bump fence, never an unqualified current version — including approval after multiple same-fence binding versions (a tier edit between finalization and Approve)** | the **real** published-canon source and the extension decision screen/viewership windows are **F's** (phase-F §8.4); calendar mode semantics (`CONTINUED`/`RESUMED`) are F's — B5 validates presence only (and persists the input verbatim in the snapshot) |
 
 Beyond the rows: the STORY LOCK screen's cost forecast and image-volume projection stay
 `NOT_AVAILABLE` until C (phase-B §4.3); `text_zh` remains a planning aid — delivered captions are
@@ -722,6 +832,7 @@ registry-prompt clause extends to B5's season-critic `FrozenLlmCall`s (§1.5).
 | Builder admission at enqueue only (§5.3) | Dispatch-only checks | enqueue-time refusal keeps a bad job out of the queue and the semantic-key space; dispatch re-validation is the defense in depth (A1's replay guard shape) |
 | The extension-context snapshot as columns on the authorization row (§5.2) | A separate snapshot table, or a `v3_story_documents` record | the authorization and its context are one creation fact with one guard and one atomicity unit; a new slug would cross B1's enforced CHECK vocabulary (D6), and a second table would re-state the append-only guard for no gain |
 | The critic's LlmStep outside the completion transaction (§1) | All handler steps inside one caller transaction (v0.1) | A0's protocol commits durable intent before submission and returns waits across executions — a caller transaction cannot return a wait; holding #2 track locks across a minutes-long Opus call would serialize every decision on the scope (B5-5) |
+| The lock-approval provenance as its own append-only table (B-6, §2.1) | Selecting the binding version by matching `binding_sha256` against the activation, or adding document columns to `gate_activations` | B5R2-4: the activation stores no document version (A1 §2.3) and tier edits create multiple same-fence binding versions — hash-matching re-derives identity at every reader instead of recording it once in the approval's own transaction, before the fence bump; B never edits an A table's enforced shape (D6), so the association is a B-owned append-only fact every downstream reader and extension pin resolves through |
 
 ## 13. Open questions
 
@@ -746,7 +857,10 @@ extension, §5.4); C-M9 (§1.1); C-M12 (§2.1, §1 step 5); C-M13d (§2 step 2);
 C-M19 (§1.1); PB-6 (§1.5); PB-1/D5 joins (§1, §2, §9); O-B1..O-B6 n/a here (B1's). **Round-1
 critique findings integrated (all ACCEPTED, `b5-critique-rulings.md`):** B5-1 (§2.1); B5-2 (§5.1,
 §5.2, §5.3, §5.4); B5-3 (§5.1, §5.4); B5-4 (§5.2, §5.3, §5.5); B5-5 (§1, §2, §9, §10);
-B5-6 (§0, §5.3, §8, §13 OQ-1); B5-7 (§2.1, §3.1 step 4); B5-8 (§3.2, §6, §8, §9). **B1
+B5-6 (§0, §5.3, §8, §13 OQ-1); B5-7 (§2.1, §3.1 step 4); B5-8 (§3.2, §6, §8, §9). **Round-2
+rulings integrated (all 5 ACCEPTED, `b5-recritique-rulings.md`):** B5R2-1 (§5.3, §5.5, §10);
+B5R2-2 (§5.2, §5.3, §10); B5R2-3 (§5.2, §5.3); B5R2-4 (§0, §2.1, §3.1, §5.2, §5.3, §5.4, §5.5,
+§9, §10, §12); B5R2-5 (§1, §3.2, §6, §8, §9, §10). **B1
 consumed:** §2.1 slugs, §2.2 store, §2.4 generation rounds, §2.5 registry, §2.6 bindings, §6 job
 registrations, §7 command rows, §8 audit. **Downstream:** C §8's `cast_lock_hash` reads
 `story-lock:<scope>:<content_revision>` (§2.1); E ED2 reads packs through B1 §4's reader; F §8.4
