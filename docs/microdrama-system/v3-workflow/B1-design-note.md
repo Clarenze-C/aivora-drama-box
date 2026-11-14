@@ -1,8 +1,12 @@
 # B1 design note: V3 story records, stores, prompt registry, and the B contract base
 
-**Version 0.1 DRAFT, 14 Nov 2026. Author: GLM (design note only; one file, no code).**
-Awaiting the Codex pre-code critique (phase-B §11 B1: "critiqued first"); nothing here builds until
-the note is accepted and A0–A3 have shipped.
+**Version 0.2 DRAFT, 14 Nov 2026. Author: GLM (design note only; one file, no code).**
+**Round-1 critique applied:** [codex-b1-note-critique.md](codex-b1-note-critique.md) (B1-1..B1-12) —
+**all 12 ACCEPTED** per [b1-critique-rulings.md](b1-critique-rulings.md) (GLM ruling, Opus re-check
+Mon); each finding integrated individually per its Replacement paragraphs, B1-1's document-DDL
+immutability enforcement first. No acceptance row weakened; no BLOCKED finding left unapplied.
+Round-2 critique follows (phase-B §11 B1: "critiqued first"); nothing here builds until the note is
+accepted and A0–A3 have shipped.
 
 **Binding inputs:** [phase-B-spec.md](phase-B-spec.md) **v0.6 (ACCEPTED)** §0–§13, esp. §2/§2.1–§2.4,
 §5.4, §7, §9, §11 (B1 row), §12 (B-T1/B-T2); [phase-A-spec.md](phase-A-spec.md) v0.3 §1–§7;
@@ -18,8 +22,11 @@ relative to `microdrama/`: `S/` = `src/microdrama/`, `M/` = `migrations/`, `X/` 
 
 **Facts:** re-verified read-only on `feat/microdrama-m0-m4` @ `a34a9ff` (the applied migration tail,
 the V1/V2 contract anchors, the store and runtime shapes, and every consumer module named in §4
-below). Where this note cites an A-phase object that is specced but not yet merged, the citation
-names the note section that defines it.
+below). The v0.2 pins add round-1 anchors verified the same way: `S/contracts/build.py:41-44/:139`
+(the classifier), `S/rendering/routing.py:262/:279`, `S/qa/observation.py:366`,
+`S/qa/comparison.py:642`, `S/references/v2_planning.py:174/:239/:295/:366/:550`,
+`S/core/jobs.py:478` (`claim`), and the §4 call-site pins. Where this note cites an A-phase object
+that is specced but not yet merged, the citation names the note section that defines it.
 
 ---
 
@@ -73,10 +80,12 @@ bytes (the single existing-table edit B needs — none — is deliberately empty
 Ordering: B-1..B-4 are mutually independent (no forward references); they land after 0035 (A3).
 Guard pattern everywhere: `md_forbid_mutation` (row DELETE + statement TRUNCATE), the
 `md_forbid_non_integer_numbers`-style integer guard on INSERT OR UPDATE via the 0026-style DO loop
-over the new tables, and `md_immutable_columns` on identity columns — the A1 §2 pattern; the catalog
-tests (`X/integration/persistence/test_schema_catalog.py:22-37`, `relkind='r'` only) then cover every
-new table automatically. `EXPECTED_TABLES` (`X/integration/persistence/test_migrations.py:32`) grows
-by the four names; the fresh-create tail assertions extend to B1's last applied number.
+over the new tables, and `md_immutable_columns` — on identity columns for the counter table (§2.4),
+and on **all columns except `current`** for the document table (§2.2, B1-1) — the A1 §2 pattern; the
+catalog tests (`X/integration/persistence/test_schema_catalog.py:22-37`, `relkind='r'` only) then
+cover every new table automatically. `EXPECTED_TABLES`
+(`X/integration/persistence/test_migrations.py:32`) grows by the four names; the fresh-create tail
+assertions extend to B1's last applied number.
 
 ## 2. Records: identity, vocabulary, DDL
 
@@ -135,26 +144,47 @@ CREATE TABLE v3_story_documents (
   record_id           uuid NOT NULL,
   version             integer NOT NULL CHECK (version >= 1),
   payload             jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object'
+                                           AND payload ? 'schema_version'
+                                           AND jsonb_typeof(payload->'schema_version') = 'string'
                                            AND payload->>'schema_version' = '3.0'),
   content_sha256      text NOT NULL CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
   planning_scope_id   uuid NOT NULL,   -- the season id or the extension id; no FK: extensions
                                        -- are created later (A1 0030), and the scope-resolution
                                        -- rule is enforced in Python at write time (§8)
+  valid_from          timestamptz NOT NULL,
+  valid_until         timestamptz,
   current             boolean NOT NULL DEFAULT true,
   created_at          timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (contract_type, record_id, version)
+  PRIMARY KEY (contract_type, record_id, version),
+  CHECK (valid_until IS NULL OR valid_until > valid_from)
 );
 CREATE UNIQUE INDEX v3_story_documents_one_current
   ON v3_story_documents (contract_type, record_id) WHERE current;
 CREATE TRIGGER v3_story_documents_identity_immutable BEFORE UPDATE ON v3_story_documents
-  FOR EACH ROW EXECUTE FUNCTION md_immutable_columns('contract_type','record_id','version',
-                                                     'created_at');
+  FOR EACH ROW EXECUTE FUNCTION md_immutable_columns(
+      'contract_type','record_id','version','payload','content_sha256',
+      'planning_scope_id','valid_from','valid_until','created_at');
 CREATE TRIGGER v3_story_documents_no_delete BEFORE DELETE ON v3_story_documents
   FOR EACH ROW EXECUTE FUNCTION md_forbid_mutation();
 -- + statement TRUNCATE refusal and the integer-number guard via the §1 DO loop.
--- Row UPDATE is legal only for the current-flag flip and updated_at; the payload and
--- content_sha256 are frozen per (type, id, version) by the store + the immutable trigger above.
+-- Only `current` may change on an existing row (the supersede flag flip): the trigger's
+-- argument list is exhaustive over the column set minus `current` (B1-1).
 ```
+
+**Immutability is enforced by the DDL itself, not by store discipline (B1-1).** Only `current` may
+change on an existing document row. The trigger freezes **every** other column: identity
+(`contract_type`, `record_id`, `version`), content (`payload`, `content_sha256`), scope
+(`planning_scope_id`), and the timestamp/validity columns (`created_at`, `valid_from`, `valid_until`)
+— `md_immutable_columns` checks exactly its named arguments, so the list is exhaustive over the
+column set minus `current`. The schema-version CHECK requires an **explicitly present JSON string**:
+`payload ? 'schema_version'` fails a missing key, `jsonb_typeof(payload->'schema_version') =
+'string'` fails a JSON null and any non-string value, and the equality pins `'3.0'` — the v0.1 form
+(`payload->>'schema_version' = '3.0'` alone) passed SQL NULL through when the key was absent. B1
+tests all of this through **direct SQL** (B-T2): UPDATE attempts on each frozen column fail; the
+`current` flip succeeds; INSERTs with a missing, null or non-string `schema_version` fail. The
+validity-window columns mirror `v2_contract_documents` (`M/0019…sql:19-21`) — V3 **retains**
+`valid_from`/`valid_until` with the same semantics, so the model definition (§2.3) and the §3
+envelope mapping agree (B1-9).
 
 Differences from the V2 mirror, each pinned: (a) slugs instead of class names (§2.1); (b)
 `content_sha256` (the V3 field name, phase-B §2) instead of `payload_sha256`; (c)
@@ -174,10 +204,11 @@ dict; a payload whose slug is unknown to Python is refused (the CHECK is the SQL
 ### 2.3 The record models (`S/contracts/v3_story.py`, new)
 
 All V3 story records extend one base mirroring `V2Record` (`S/contracts/v2.py:45-85`): `record_id`,
-`version`, `content_sha256`, `created_at`/`updated_at`, `schema_version = '3.0'`, the same
-seal/hash-match machinery (`seal()`, `calculated_content_sha256()`, `content_hash_matches()`), and
-append-only semantics. Field-level content per record = phase-B §2/§2.1 **verbatim**; this section
-pins only what that table leaves to B1:
+`version`, `content_sha256`, `created_at`/`updated_at`, **`valid_from`/`valid_until | None` (the
+validity window is retained — the full `V2Record` envelope, §2.2/§3; B1-9)**, `schema_version =
+'3.0'`, the same seal/hash-match machinery (`seal()`, `calculated_content_sha256()`,
+`content_hash_matches()`), and append-only semantics. Field-level content per record = phase-B
+§2/§2.1 **verbatim**; this section pins only what that table leaves to B1:
 
 - **`V3ProductionLimits`** (frozen config, V3 records only — the V1 `ProductionLimits`
   (`S/contracts/primitives.py:54`) is never edited, AT-19/V3C-5):
@@ -217,11 +248,19 @@ pins only what that table leaves to B1:
   wardrobe-assignment IDs), `estimated_runtime_ms` in `105_000–135_000`, **no** `scoped_map_only`
   (R-3.1), `cta` with no `template_id`.
 
-**Contract bump (A1 §4 loop, extended):** the new models generate under `schemas/v3` + `examples/v3`
-through A1's manifest loop with `V3_STORY_VALID_BUILDERS` beside `V2_VALID_BUILDERS`
-(`S/contracts/examples.py:694`); validation manifest discovery learns them; V1/V2 generated bytes are
-asserted byte-identical to the accepted A-phase baseline (A1's frozen-baseline test extended to the
-B1 diff — drift fails the build).
+**Contract bump (A1 §4 loop, explicitly extended to the new module — B1-2):** A1's classifier change
+covers only models in `contracts.v3` — `_schema_generation` (`S/contracts/build.py:41-44`) classifies
+everything non-v2 as v1 and the manifest loop (`:139`) spans only `("v1","v2")`, so a
+`contracts.v3_story` model would silently generate — and validate — as V1. B1 therefore classifies
+**every model defined in `contracts.v3_story` as V3**: the module joins the schema-generation
+classification and the manifest loop, its models generate under `schemas/v3` + `examples/v3` with
+their own manifest, **validation manifest discovery learns them** (v3 examples are validated against
+their manifest, not merely emitted), and its examples and negatives register through
+`V3_STORY_VALID_BUILDERS` beside `V2_VALID_BUILDERS` (`S/contracts/examples.py:694`). Asserted in
+B-T2: **no B1 model or example appears under V1/V2** — the v1/v2 schema sets, example trees and
+manifests are disjoint from `v3_story`'s, and the test asserts the disjointness — and V1/V2 generated
+bytes are asserted byte-identical to the accepted A-phase baseline (A1's frozen-baseline test
+extended to the B1 diff — drift fails the build).
 
 ### 2.4 Migration B-2 — the generation-round identity store (PB-2)
 
@@ -253,6 +292,23 @@ under the scope track lock FOR UPDATE (§8), so `UPDATE … SET generation_round
 RETURNING` is race-free, and the returned value is stamped into the enqueued job's semantic key and
 any proposal IDs the round mints.
 
+**Durable generation linkage (B1-6).** A mutable scope counter alone does not tie work to the inputs
+it governs, so every generation persists its exact provenance. **Job inputs:** each of the five
+`story_v3.*` input models (§6) embeds the frozen intake reference `(record_id, version,
+content_sha256)`, the `generation_round` identity it runs under, and its applicable work `round`
+(§6's allocation) — every job row is therefore self-describing about which intake version and which
+generation identity produced it, and the enqueue-time semantic-key check (`S/core/jobs.py:429-438`,
+which refuses a same-key/different-input re-enqueue with `IdempotencyConflict`) is faced with frozen,
+linkable inputs rather than repairing an ambiguity. **Records:** `ProposalRoundV3` persists the
+intake reference and `generation_round` that produced it — every proposal version is durably linked
+to the exact generation it answered, the record-side twin of PB-2's "proposal IDs never repeat".
+**Recovery semantics:** transport recovery reuses the frozen inputs and identity (same
+`logical_call_id`, §7.4 mapping); a terminal-failure retry reuses the frozen inputs under an advanced
+generation round (fresh execution-attempt key, unchanged `logical_work_id`, §2.4); intentional new
+work (a replacement intake, a Revise round) gets a fresh attempt key by construction. B-T3 exercises
+changed-input collisions, replacement intake, terminal retry, and the retention of successful
+siblings over this linkage (§9).
+
 ### 2.5 Migration B-3 — the B1 LLM prompt registry (PB-6)
 
 Asset-independent, own storage (phase-B §7.3); the V2 render `PromptManifest`
@@ -274,15 +330,22 @@ CREATE TRIGGER v3_llm_prompts_append_only BEFORE UPDATE OR DELETE ON v3_llm_prom
 -- + statement TRUNCATE refusal and the integer-number guard (§1 DO loop).
 ```
 
-**Mechanism:** each prompt is a module constant in its owning package (`S/story_v3/prompts_*.py`);
-registration is an idempotent `INSERT … ON CONFLICT (prompt_id, version) DO NOTHING` followed by a
-byte-compare of the conflicting row — a different text under the same `(prompt_id, version)` is a
-`Conflict` (a prompt never silently changes meaning; a change is `version + 1`). Lookup:
-`resolve_prompt(tx, prompt_id, version) -> (canonical_text, text_sha256)`; every `FrozenLlmCall`
-B mints carries the pinned prompt ID + sha256 (A0 §5.1; phase-B §7.4), and B's tests assert the
-registry contains each referenced prompt (B-T6 clause, prepared here). The `owner_package` CHECK is
-advisory provenance (which package's diff introduced it), not an enforced workflow — it keeps the
-registry auditable against §7.3's ownership table.
+**Mechanism:** each prompt is a module constant in its owning package (`S/story_v3/prompts_*.py`).
+**Canonical encoding and hash calculation (B1-12):** canonical text is UTF-8, Unicode NFC, `\n` line
+endings — the normalisation is defined once in the registry module — and `text_sha256` is
+**calculated** as the SHA-256 of that encoding at registration; no constant carries a hand-written
+hash. Registration is an idempotent `INSERT … ON CONFLICT (prompt_id, version) DO NOTHING` followed
+by a comparison of the **complete immutable registration** — canonical text, `text_sha256`,
+`owner_package` — against the conflicting row; any difference is a `Conflict` (a prompt never
+silently changes meaning; a change is `version + 1`). Lookup: `resolve_prompt(tx, prompt_id,
+version) -> (canonical_text, text_sha256)` **re-verifies text/hash agreement on every read** (the
+hash is recomputed over the stored canonical text; a mismatch refuses), and it resolves **by the
+pinned version** — a `FrozenLlmCall` carries the pinned prompt ID + version + sha256 (A0 §5.1;
+phase-B §7.4), resolution never chooses a latest version, and a frozen call resolves its exact
+prompt identity/hash without consulting any "current" pointer. B's tests assert the registry
+contains each referenced prompt (B-T6 clause, prepared here). The `owner_package` CHECK is advisory
+provenance (which package's diff introduced it), not an enforced workflow — it keeps the registry
+auditable against §7.3's ownership table.
 
 ### 2.6 Migration B-4 — `v3_episode_story_bindings` (phase-B §5.4, PB-10)
 
@@ -315,6 +378,8 @@ link lives only here. Writes happen inside the B5 STORY LOCK decision transactio
 
 Phase-B §2.3's mapping extended to **every** field, with the verified source anchors. "Dropped"
 always carries a reason. V3-new fields are omitted from these tables (they are phase-B §2/§2.1).
+B1-9: the nested beat fields and the inherited envelope fields are disposed of individually below —
+no source field of the three models is left implicit.
 
 **V1 `EpisodePlan` (`S/contracts/season.py:313`) → `EpisodePackV3`:**
 
@@ -367,39 +432,67 @@ always carries a reason. V3-new fields are omitted from these tables (they are p
 | `scenes[].visible_character_ids` (`:314`) | `visible_cast[]` with framing |
 | `scenes[].prop_ids` | `props[]` (demand ID + holder + state; proof-prop flag in the demand list, C-N2) |
 | `scenes[].wardrobe_assignment_ids` (V2 asset rows, `M/0019…sql` `SceneWardrobeAssignment`) | **logical** outfit + appearance-state demands for every visible character (asset binding is C's `CastBinding`) |
-| `scenes[].beats[]` (`PackBeat`) | `beats[]` + `effects[]` (typed, PB-12) |
-| `scenes[].dependency_scene_ids` / `state_in` / `state_out` | dropped — V3 continuity is the explicit `ContinuityStateV3` chain + deterministic critics, not intra-pack state deltas |
+| `scenes[].scene_number` (`:310`) | dropped — the `scenes[]` array order is the episode's scene order and `scene_id` is the identity; a positional number is derivable (index + 1) and no V3 validator or consumer reads one |
+| `scenes[].beats[]` (`PackBeat`, `:297`) — per field below | `beats[]` + `effects[]` (typed, PB-12) |
+| `PackBeat.beat_id` | `beats[].beat_id` |
+| `PackBeat.visible_action` | `beats[].text` (the beat's on-screen content) |
+| `PackBeat.function` | dropped — a free-text structural label; V3 derives beat structure from the typed effects and the deterministic critics, and no V3 validator consumes it |
+| `PackBeat.reveal_ids` | `beats[].reveals[]` (secret IDs, ledger-bound) |
+| `PackBeat.proof_object_ids` | the referenced props' **proof flag** on their demands in `SeasonDemandListV3` (C-N2) — not a beat field; demand completeness (B-T8) checks it |
+| `PackBeat.required_asset_ids` | dropped — asset IDs are absent by design (phase-B §2.1); the V2 "required asset" relation becomes the scene's wardrobe/props demands, bound to assets only in C (`CastBinding`) |
+| `PackBeat.dependency_beat_ids` | dropped — with the scene-level dependency graph (below): V3 ordering authority is the explicit `ContinuityStateV3` chain + deterministic critics, not an intra-pack dependency graph |
+| `PackBeat.state_in` / `state_out` | dropped — per-character `psychology[]` start/end states (C-M13a) plus the `ContinuityStateV3` chain carry V3 state; `StateValue` deltas are not stored |
+| `scenes[].dependency_scene_ids` / scene `state_in` / `state_out` | dropped — V3 continuity is the explicit `ContinuityStateV3` chain + deterministic critics, not intra-pack state deltas |
 | `scoped_map_only` (`:363`, rule `S/story/script_maker.py:818`) | **absent by design** (R-3.1: every pack is full) |
-| `record_id` / `version` / `content_sha256` / validity window | the V3 append-only document envelope (§2.2), same semantics |
+| `record_id` / `version` / `content_sha256` / `valid_from` / `valid_until` | the V3 append-only document envelope (§2.2) — **the validity window is retained** with the same semantics (`V2Record` envelope mirrored, §2.3; B1-9) |
 
 ## 4. Readers and `WORKFLOW_MISMATCH` guards (C-M10)
 
 **The compatibility reader** (new, `S/story_v3/reader.py`): `read_episode_story(tx, episode_id) ->
 EpisodeStoryView` returns the version-tagged view — `V1(EpisodePlan, Script)`, `V2(EpisodePack)` or
-`V3(EpisodePackV3)` — resolved through `episodes.season_id → seasons.workflow_version` (A1 0028),
-each payload validated under **its own** schema version and hash rules; V2 pack reads reuse
-`read_v1_manifest` (`S/contracts/v2.py:1041`) where it applies. A missing V3 binding/episode row is
-`NotFound`; a corrupt hash is `Conflict` (the store discipline). **A V1 or V2 consumer given a V3
-episode raises `WORKFLOW_MISMATCH`** (phase-A §1) — enforced at the consumer entry points below, not
-inside the reader (the reader itself is version-aware by contract).
+`V3(EpisodePackV3)` — selected through `episodes.season_id → seasons.workflow_version` (A1 0028),
+whose **enforced vocabulary is exactly `v1`/`v3`** (the 0028 CHECK): there is no `v2` workflow —
+historical V2 packs are the legacy partition under `v1` seasons, so the reader never resolves a
+"v2" workflow version (B1-4). Selection:
+
+- **`v3`:** select the binding at the episode track's **current `content_revision`** (§2.6 — the
+  row at the episode's current fence value), then load the pack by the binding's exact
+  `pack_record_id`/`pack_version`/`pack_sha256` and verify the record's recomputed hash plus the
+  `planning_scope_id` and `episode_number` against the binding. A missing binding or episode row is
+  `NotFound`; a hash or scope mismatch is `Conflict` (the store discipline).
+- **`v1`:** explicitly select a **qualifying V2 pack when one exists** (the episode's current
+  `EpisodePack` document in `v2_contract_documents`, validated under schema `2.0`; V2 pack reads
+  reuse `read_v1_manifest` (`S/contracts/v2.py:1041`) where it applies), **otherwise** the V1
+  `EpisodePlan` + `Script` pair, validated under schema `1.0`.
+- **No fallback:** a corrupt **selected** V2 or V3 record fails — `Conflict`/`NotFound` as above —
+  and never triggers fallback to the other variant; each payload is validated under **its own**
+  schema version and hash rules.
+
+**A V1 or V2 consumer given a V3 episode raises `WORKFLOW_MISMATCH`** (phase-A §1) — enforced at the
+consumer entry points below, not inside the reader (the reader itself is version-aware by contract).
 
 **One pinned guard site per §2.3 consumer** (phase-B §2.3 requires the B1 note to confirm the qa
 trio per module and pin exactly one site each — an existing A1 guard, a dispatch guard, or a new
-module guard B1 adds). All modules verified present @ `a34a9ff`:
+module guard B1 adds). **B1-3: each row pins an exact callable and the transaction/workflow context
+available there** — a `require_workflow` guard needs a transaction, so pure functions over
+already-loaded records are never named as guard sites; they are preserved **behind** an explicitly
+guarded boundary. All callables verified present @ `a34a9ff`:
 
-| Consumer (phase-B §2.3) | Pinned guard site | Class |
-|-------------------------|-------------------|-------|
-| D: `S/story/directing.py` (`compile_episode_pack`, `:101`) | new module guard: `require_workflow(expected='v1')` at `compile_episode_pack` entry, after the caller's episode read | B1 module guard |
-| D: `S/references/v2_planning.py` (+ `v2_binding.py`, `v2_dispatch_context.py`) | new module guard at the planning entry (`validate_episode_reference_state` and the `V2ReferenceRepository` read paths) | B1 module guard |
-| D: `S/rendering/routing.py` (`RoutingPolicy`, `:146`) | new module guard at the routing-policy entry the D compiler calls | B1 module guard |
-| D: `S/qa/continuity_sources.py` (`_verified_doc`/`_current_script`, `:38/:76`) | new module guard at the module's tx-entry readers | B1 module guard |
+| Consumer (phase-B §2.3) | Pinned guard site — exact callable (context) | Class |
+|-------------------------|---------------------------------------------|-------|
+| D: `S/story/directing.py` (`compile_episode_pack` `:101`, `invalidated_shot_ids` `:418`) | the module is **pure** (verified: every callable takes loaded records; no transaction anywhere, and `compile_episode_pack` has no caller in `src/` today) — its only transaction-bearing loaders are A1's guarded story-service compile boundary `compile_season` (`S/story/service.py:473`) / `_claim_episode` (`:733`) / `_persist_success` (`:1321`); the pure compiler stays behind that boundary, and D's single-shot compiler entry takes its own module guard in D's note | existing A1 guard (boundary) |
+| D: `S/references/v2_planning.py` (+ `v2_binding.py`, `v2_dispatch_context.py`) | new module guards at `V2ReferenceRepository`'s transaction-bearing planning entries — `prepare_demands` (`:239`), `persist_generated` (`:295`), `persist_document` (`:366`; the repository holds the db, `:174`). `validate_episode_reference_state` (`:550`) is pure over already-loaded records and stays behind the boundary (no separate guard); the binding/dispatch modules are enumerated separately in the shared fixture (below) | B1 module guard |
+| D: `S/rendering/routing.py` (`ShotRouter` `:262`) | new module guard at `ShotRouter.route_shot` (`:279`) — the routing entry the D compiler calls; it persists its decision durably, so the caller's transaction is available there. `RoutingPolicy` (`:146`) is configuration, not an entry — no guard | B1 module guard |
+| D: `S/qa/continuity_sources.py` | new module guard at the module's transaction-entry readers `_verified_doc` (`:38`) / `_current_script` (`:76`) — both take `tx` | B1 module guard |
 | E: `S/editing/service.py` (`_claim` `:638`, `_persist` `:994`, `rebuild_caption_outputs` `:226` — A1 §7 inventory) | **existing A1 refusal guards** — B1 adds nothing | existing |
-| E: `S/editing/edl.py` (`build_edl`, `:102`) | new module guard at `build_edl` entry | B1 module guard |
-| E: `S/editing/captions.py` (`spot_caption_track`, `:49`) | new module guard at the caption-build entry | B1 module guard |
+| E: `S/editing/edl.py` (`build_edl`, `:102`) | `build_edl` is pure over loaded sources (no transaction) — guarded at its transaction-bearing caller `S/editing/service.py assemble_episode` (calls `build_edl` at `:605`): new module guard at `assemble_episode` entry; the builder stays behind it | B1 module guard (service entry) |
+| E: `S/editing/captions.py` (`spot_caption_track`, `:49`) | `spot_caption_track` is pure (no transaction) — guarded at its transaction-bearing caller `S/editing/service.py _execute` (calls it at `:791`): new module guard at `_execute` entry; the variants path `S/editing/variants_service.py _export_hooks` (calls it at `:1845`) is enumerated in the shared fixture's dispatch section with the same refusal | B1 module guard (service entry) |
 | F: `S/review/packages.py` (`store_release_package`, `:216`) | **existing A1 refusal guard** (A1 §7 boundary table) | existing |
 | F: `S/review/intake.py` progress views | **existing A1 refusal guards** (`_status`/`_phase`/`_workbench`, A1 §7 inventory) | existing |
-| F: `S/community/grounding.py` (`load_facts`, `:179`) | new module guard at `load_facts` (the tx entry; `validate_claims` is pure over its facts) | B1 module guard |
-| qa trio: `S/qa/coverage.py`, `S/qa/comparison.py`, `S/qa/observation.py` | **dispatch guard** — pure functions over records already loaded inside job/review execution behind A1's replay guard (`S/workers/runtime.py:216`); no module guard added (phase-B §2.3's ruling) | existing dispatch |
+| F: `S/community/grounding.py` (`load_facts`, `:179`) | new module guard at `load_facts` — takes `tx` (the transaction entry); `validate_claims` is pure over its facts and stays behind the boundary | B1 module guard |
+| qa: `S/qa/coverage.py` | **dispatch guard only** — pure functions over records already loaded inside job/review execution behind A1's replay guard (`S/workers/runtime.py:216`); the one qa module that qualifies for the pure-helper treatment (B1-3) | existing dispatch |
+| qa: `S/qa/observation.py` (`ObservationService.observe_media`, `:366`) | new module guard at `observe_media` — a direct service entry point that reads the database and performs effects (build → replay-check → reserve → dispatch → freeze); covered **as well as** worker dispatch, not only behind it | B1 module guard |
+| qa: `S/qa/comparison.py` (`ComparisonService.compare`, `:642`) | new module guard at `compare` — likewise a direct database-reading, reserving service entry (load → replay-check → reserve); covered as well as worker dispatch | B1 module guard |
 
 New module guards follow A1 §7's shape: refusal after owner access, **before** projection or
 package interpretation — `WORKFLOW_MISMATCH` (409), never a filtered-away NotFound. B migrates no
@@ -407,10 +500,14 @@ consumer (phase-B §2.3): the guards make the listed D/E/F entries refuse V3 row
 phase moves them to the V3 reader.
 
 **Shared fixture (B-T2):** the guard inventory lives in one imported module —
-`X/integration/v3/guard_inventory.py` holds the entry-point table (A1's A-T5 rows + the seven B1
-rows above); A1's `test_discriminator.py` and B1's `test_guard_sites.py` both **import** it. No
-re-edited copy of A1's A-T5; refusals never hard-code D/E/F future state (each site asserts only
-"V3 episode → `WORKFLOW_MISMATCH`; V1 episode → unchanged behaviour").
+`X/integration/v3/guard_inventory.py` holds **two enumerations** (B1-3): the entry-point table (A1's
+A-T5 rows + the B1 rows above), and a **separate list of the binding/dispatch modules** that carry
+no module guard of their own — `S/references/v2_binding.py`, `S/references/v2_dispatch_context.py`,
+the `_export_hooks` caption path (`S/editing/variants_service.py:1845`), and the workers dispatch
+boundary — each asserted reachable only through a guarded entry. A1's `test_discriminator.py` and
+B1's `test_guard_sites.py` both **import** it. No re-edited copy of A1's A-T5; refusals never
+hard-code D/E/F future state (each site asserts only "V3 episode → `WORKFLOW_MISMATCH`; V1 episode
+→ unchanged behaviour").
 
 ## 5. The contract-delta register (D1..D6; C-B1, first-class deliverable)
 
@@ -422,11 +519,11 @@ B2–B6 will cross, so they are registered now.
 | # | Delta | Contract touched | Mechanism / vocabulary match |
 |---|-------|------------------|------------------------------|
 | **D1** | Step keys `step_01` = Script Maker, `step_02` = bible, `step_03` = episodes | A2's `budget_steps` CHECK (`step_01..step_10`, `launch`, `episode_production`) and `md_reservation_step_rules` (A2 §2.2) | **Adopt; no CHECK amendment.** Verified against A2 §2.2's enforced trigger: `SEASON_SETUP` accounts admit reservations under `step_01..step_04`/`step_10`/`launch` — B's three keys are inside the enforced set. Pilot calls are unmetered (`llm.subscription`): **B writes no reservation and posts no charge**; when a metered adapter ships (O-5), B's flows name these keys against the `SEASON_SETUP` account. B1 builds no admission logic |
-| **D2** | Decision-target kinds `PROPOSAL`, `EPISODE_PLAN`, `BIBLE_SECTION`, `SEAM`, `TIER` | A1's `RevisionTargetKind` + validators (A1 §4, `S/contracts/v3.py`) and `V3DecisionCommand`; targets are jsonb validated in Python (A1 §2.3), never a SQL CHECK | **Contract-code delta, no SQL DDL** (see OQ-1): `RevisionTargetKind` gains the five values; `V3DecisionCommand` gains an optional typed `target: RevisionNoteTarget | None = None` — **absent for A1's existing gates**, so A1's behaviour, note and build are not reopened (phase-B §2.4). Regenerated `schemas/v3` ship in B1's contract bump. Target-ID derivations (uuid5, §2.1's namespace): `PROPOSAL` → the slot's `proposal_id`; `EPISODE_PLAN` → the pack record `uuid5(STORY_V3_NS, "episode:<scope>:<n>")`; `SEAM` → `uuid5(STORY_V3_NS, "seam:<scope>")`; `BIBLE_SECTION` → `uuid5(STORY_V3_NS, "bible-section:<scope>:<section_path>")` over the dotted section path in master §4.2 Joey order (`premise`, `thesis`, `timeline`, `era_aesthetics`, `world_rules`, `locations`, `factions`, `characters`, `relationships`, `story_engines`, `production_rules`, plus the V3 sections `camera_package`, `palette`, `lighting_language`, `pacing_rule`, `ledgers`, `initial_continuity`); `TIER` → `uuid5(STORY_V3_NS, "tier:<scope>:<character_key>")`. Validation stays A1's: every target is checked at decision time against the **activation's recomputed binding units** (A1 §4/§5) |
+| **D2** | Decision-target kinds `PROPOSAL`, `EPISODE_PLAN`, `BIBLE_SECTION`, `SEAM`, `TIER` | A1's `RevisionTargetKind` + validators (A1 §4, `S/contracts/v3.py`) and `V3DecisionCommand`; targets are jsonb validated in Python (A1 §2.3), never a SQL CHECK | **Contract-code delta, no SQL DDL** (ruled at critique — OQ-1): `RevisionTargetKind` gains the five values **with explicit serialized wire values** (`proposal`, `episode_plan`, `bible_section`, `seam`, `tier`) beside A1's unchanged existing lowercase values (`episode`, `character`, `voice`, `reference`, `story_unit`, `note` — A1 §4 serializes kinds as lowercase; B1-7); `V3DecisionCommand` gains an optional typed `target: RevisionNoteTarget | None = None` that is **absent for A1's existing gates by enforcement, not convention** (B1-7): the validator **requires** the proposal target `{kind: PROPOSAL, id: proposal_id}` on a LOCK Approve (phase-B §3.3) and **rejects a non-null decision target on every gate/action combination that does not define one** — A1's existing gates therefore admit only `None`, so A1's behaviour, note and build are not reopened (phase-B §2.4). Regenerated `schemas/v3` ship in B1's contract bump. Target-ID derivations (uuid5, §2.1's namespace): `PROPOSAL` → the slot's `proposal_id`; `EPISODE_PLAN` → the pack record `uuid5(STORY_V3_NS, "episode:<scope>:<n>")`; `SEAM` → `uuid5(STORY_V3_NS, "seam:<scope>")`; `BIBLE_SECTION` → `uuid5(STORY_V3_NS, "bible-section:<scope>:<section_path>")` over the dotted section path in master §4.2 Joey order (`premise`, `thesis`, `timeline`, `era_aesthetics`, `world_rules`, `locations`, `factions`, `characters`, `relationships`, `story_engines`, `production_rules`, plus the V3 sections `camera_package`, `palette`, `lighting_language`, `pacing_rule`, `ledgers`, `initial_continuity`); `TIER` → `uuid5(STORY_V3_NS, "tier:<scope>:<character_key>")`. Validation stays A1's and extends to notes: every decision and note target is checked at decision time against the **activation's recomputed binding units** (A1 §4/§5; phase-B §3.3's Revise note targets included) |
 | **D3** | `edit_tier` command-table row | A1 §6 command format | The full row is §7 below (actor, revision owner, prerequisites, supersede/reopen via A1's `supersede_gate`/`open_gate`, replay); **ships in B5** (C-M3) with the shared internal tier-update/revalidation operation (PB-5) |
 | **D4** | Citation convention | — | This note's header (phase-B §2.4 D4); swept with the note |
 | **D5** | B's caller-transaction completion seam | A1/A3 job lifecycle + lock order (runtime calls the handler first, finishes after — verified `S/workers/runtime.py:245` handler call, `:259` finish; `finish` at `S/core/jobs.py:676`) | **Registered here; ships in B2** (PB5-2): proposal completion + LOCK opening, incl. the B2 commit-boundary crash case; B3 uses it for bible completion + continuation; B4/B5 add the joins. B1 creates everything the seam persists into — `logical_work_id`/`replaces_job_id` (A1 0031), the document store (§2.2), the generation-round store (§2.4) — and **no** seam code |
-| **D6** (B1-added) | B1's own enforced vocabularies for B2–B6 | new: `v3_story_documents.contract_type` CHECK (§2.2); `v3_llm_prompts` identity + `owner_package` CHECK (§2.5); the five `story_v3.*` job types (§6) and their enqueue/dispatch split; `STORY_V3_NS` + the uuid5 derivations (§2.1); `V3ProductionLimits` values (§2.3) | Registered so later B packages cross **this** note's enforced vocabularies the same way B crosses A's: a B2+ identifier touching any of these is checked against it before that package's build, and a change is a new register row, not a silent edit |
+| **D6** (B1-added) | B1's own enforced vocabularies for B2–B6 | new: `v3_story_documents.contract_type` CHECK (§2.2); `v3_llm_prompts` identity + `owner_package` CHECK (§2.5); the five `story_v3.*` job types (§6) and their enqueue/dispatch split; the **`intake.replaced` event name + payload shape** (§7; B1-10); `STORY_V3_NS` + the uuid5 derivations (§2.1); `V3ProductionLimits` values (§2.3) | Registered so later B packages cross **this** note's enforced vocabularies the same way B crosses A's: a B2+ identifier touching any of these is checked against it before that package's build, and a change is a new register row, not a silent edit |
 
 **Standing-rule compliance beyond the table** (phase-B §2.4): the LOCK Approve target and Revise
 note targets ride D2 (validated against the activation's binding units, A1 §5); `edit_tier`'s
@@ -445,11 +542,11 @@ phase-B §7.2).
 
 | Job type | Input model (extends `V3ScopedStepInput`, A3 §2.2) | Extra input fields | Handler ships |
 |----------|------------------------------------------------------|--------------------|---------------|
-| `story_v3.propose` | `ProposeStepInput` | `round` (per intake), `generation_round`, intake record ref | B2 |
-| `story_v3.bible` | `BibleStepInput` | `round`, `generation_round`, `lock_authority` | B3 |
-| `story_v3.promote_profile` | `PromoteProfileStepInput` | `character_key`, `generation_round` | B3 |
-| `story_v3.plan_episode` | `PlanEpisodeStepInput` | `episode_number`, `round`, `generation_round`, `lock_authority`, `bible_version` | B4 |
-| `story_v3.season_critic` | `SeasonCriticStepInput` | `round`, `generation_round`, repair origin + authorized episode set (PB-4) | B5 |
+| `story_v3.propose` | `ProposeStepInput` | `round` (per intake), `generation_round`, the frozen intake ref `(record_id, version, content_sha256)` | B2 |
+| `story_v3.bible` | `BibleStepInput` | `round`, `generation_round`, `lock_authority`, the frozen intake ref | B3 |
+| `story_v3.promote_profile` | `PromoteProfileStepInput` | `character_key`, **`round`** (B1-6 — the key formula needs one; allocation below), `generation_round`, the frozen intake ref | B3 |
+| `story_v3.plan_episode` | `PlanEpisodeStepInput` | `episode_number`, `round`, `generation_round`, `lock_authority`, `bible_version`, the frozen intake ref | B4 |
+| `story_v3.season_critic` | `SeasonCriticStepInput` | `round`, `generation_round`, the frozen intake ref, repair origin + authorized episode set (PB-4) | B5 |
 
 All carry `expected_content_revision` (the 0035 fence CHECK enforces its presence on `track`-bearing
 rows; A3 §2.1) and `track='planning'`; `paid=False` (pilot calls are unmetered `llm.subscription`;
@@ -463,15 +560,31 @@ B posts no charge — D1). Owner module `story_v3`.
 advanced generation round (§2.4); a deliberate re-plan therefore never dedupes to a no-op (C-M1),
 and replacements chain through `replaces_job_id` under the unchanged `logical_work_id`.
 
-**Dispatch availability (the C-M20 mechanism, pinned with the runtime's real behaviour).** Verified:
+**Round allocation for all five job types (B1-6 — every key formula needs a round; v0.1's
+`PromoteProfileStepInput` had none):**
+
+| Job type | Applicable `round` (source) |
+|----------|------------------------------|
+| `story_v3.propose` | the per-intake proposal round: 1 on a fresh or replacement intake; *k+1* on each LOCK Revise (repair attempts are call-level, not round-level — C-N9) |
+| `story_v3.bible` | the scoped bible generation round: 1 on the initial post-Approve run; *k+1* on each bible regeneration (a bible-section Revise) |
+| `story_v3.promote_profile` | the round of the scoped bible generation whose finalization promoted the role — first promotion carries that bible round; a re-promotion after a later bible revision carries the later round (PB-13) |
+| `story_v3.plan_episode` | the episode's planning round: 1 on the initial plan; *k+1* on each re-plan (episode Revise, repair-round membership, deliberate re-plan — C-M1) |
+| `story_v3.season_critic` | the season-critic round: 1 on the initial pass; *k+1* for each repair round and each post-Revise critic pass (C-N13: the work ID's fourth component is this round) |
+
+**Dispatch availability (the C-M20 mechanism, with its runtime contract pinned — B1-11).** Verified:
 a claimed job whose type has no handler in the deployment **fails** — `Failed("NO_HANDLER")`
-(`S/workers/runtime.py:237-241`). Between B2 (enqueue) and B3 (handler) that would burn a round and
-project `BLOCKED (failed)` on healthy work. B1 therefore adds one V3-scoped claim-boundary rule: a
-job whose type is **enqueue-registered but handler-unregistered in this deployment** is **not
-claimable** — skipped like a queue the deployment does not serve, left QUEUED (`run_after`
-untouched) until its package's deployment arrives. The rule applies only to B1-registry types with
-`track IS NOT NULL`; a V1 job with no handler keeps today's `NO_HANDLER` failure byte-identically.
-(See OQ-2.)
+(`S/workers/runtime.py:237-241`) — and `JobService.claim` (`S/core/jobs.py:478`) today receives no
+deployment-handler information at all. Between B2 (enqueue) and B3 (handler) that would burn a round
+and project `BLOCKED (failed)` on healthy work. B1 therefore pins the concrete contract: **`claim`
+gains an immutable deployment handler-availability set** (the frozen set of handler-registered job
+types, built once per worker at startup and passed in), and candidate selection **excludes
+unavailable B1-registry types (`story_v3.*` with `track IS NOT NULL`) before any candidate row is
+locked** — an unavailable head-of-queue candidate is skipped, the next runnable work claims, and the
+skipped job stays QUEUED with `run_after` untouched until its package's deployment arrives. The rule
+applies only to B1-registry types; **legacy unknown-handler behaviour is preserved byte-identically**
+— a V1 job with no handler still fails `NO_HANDLER`. B-T2 asserts: (a) an unavailable head candidate
+followed by runnable work — the runnable job claims; (b) the skipped job's attempts and events are
+unchanged; (c) after the handler is installed, the job claims. (See OQ-2.)
 
 ## 7. The command rows (phase-B §9; A1 §6 format)
 
@@ -482,11 +595,24 @@ row's effect.
 
 | Command | Actor | Scope / revision owner | Prerequisites | Effect (edges) | Writes · jobs · events | Activation |
 |---|---|---|---|---|---|---|
-| `submit_v3_intake(mode, idea_line, hints, requested_count)` | Operator (human session + CSRF) | season / — (via A2's `create_v3_season`) | `mode = TITLE` only (`TREND` → `MODE_UNAVAILABLE` **before any write**, C-N12); `idea_line` 1–300; `requested_count` 20–30 (default 24, O-B2) | `ConceptIntakeV3` v1; generation-round row created (§2.4); enqueue `story_v3.propose` round 1; planning `IDEA → PROPOSED` runs **only on the scope's initial proposal completion** (PB5-3, via the D5 seam) — not in this command | W: seasons + `season_tracks` + setup account (A2's command), intake document, generation-round row · J: `story_v3.propose` · E: A1's creation events + `season.created_v3`, `track.created` | **B2** (phase-B §11 B2 "Intake + Mode A refusal"; needs A2's `create_v3_season`) |
-| `replace_v3_intake(season, mode, idea_line, hints, requested_count)` | Operator (human session + CSRF; owner scope enforced, PB5-1) | season / `season_tracks.revision` | an uncancelled V3 season in `PROPOSED` whose latest concept activation was REJECTED; no open activation; no unfinished proposal work; mode/count rules; expected revision matches | appends a new `ConceptIntakeV3` version (prior decisions preserved, PB-14); **advances the generation-round identity** (§2.4); resets the displayed round; enqueues `story_v3.propose` round 1 of the new intake; scope **retains `PROPOSED`** (PB5-3) | W: intake version, generation-round advance · J: `story_v3.propose` · E: intake-replacement event | **B2** (PB-14) |
+| `submit_v3_intake(mode, idea_line, hints, requested_count)` | Operator (human session + CSRF) | season / — (via the shared creation helper, B1-5) | `mode = TITLE` only (`TREND` → `MODE_UNAVAILABLE` **before any write**, C-N12); `idea_line` 1–300; `requested_count` 20–30 (default 24, O-B2) | **One outer intake idempotency transaction owns season creation, ownership, setup state, intake, generation identity and proposal enqueue** (B1-5): the composition calls the **shared caller-transaction season-creation helper** carrying A2 §7's audited writes (seasons + `season_tracks` + `season_budget_mutex` + `SEASON_SETUP` account + `season_owners` creator link); A2's `create_v3_season` **delegates to the same helper without nesting `execute`** (its own `execute` opens the transaction and calls it — A2's standalone behaviour, exact event set and replay semantics unchanged). Then: `ConceptIntakeV3` v1; generation-round row created (§2.4); enqueue `story_v3.propose` round 1; planning `IDEA → PROPOSED` runs **only on the scope's initial proposal completion** (PB5-3, via the D5 seam) — not in this command | W: the helper's audited creation writes + intake document + generation-round row, all in the one outer transaction · J: `story_v3.propose` · E: **exactly one `season.created` with payload `{season_id, workflow_version}`** — A2 v1.3 §7's exact creation event, on first success only; **a matching replay emits none** (no `season.created_v3`, no `track.created` — A2 replaced that older set; B1-10) | **B2** (phase-B §11 B2 "Intake + Mode A refusal"; needs A2's `create_v3_season` refactored onto the helper) |
+| `replace_v3_intake(season, mode, idea_line, hints, requested_count)` | Operator (human session + CSRF; owner scope enforced, PB5-1) | season / `season_tracks.revision` | an uncancelled V3 season in `PROPOSED` whose latest concept activation was REJECTED; no open activation; no unfinished proposal work; mode/count rules; expected revision matches | appends a new `ConceptIntakeV3` version (prior decisions preserved, PB-14); **advances the generation-round identity** (§2.4); resets the displayed round; enqueues `story_v3.propose` round 1 of the new intake; scope **retains `PROPOSED`** (PB5-3) | W: intake version, generation-round advance · J: `story_v3.propose` · E: **exactly one `intake.replaced`** with payload `{season_id, intake_record_id, intake_version, generation_round}` — named and registered (D6; B1-10); first success only, none on matching replay | **B2** (PB-14) |
 | `reopen_v3_gate(gate, scope)` | Operator (human session + CSRF; owner scope enforced, PB5-1) | season: `season_tracks.revision`; extension: `season_extensions.revision` (never the season's for an extension scope, PB5-1) | the gate's scope was rejected with its planning state (`PROPOSED` at LOCK, `PLANNED` at STORY LOCK) and required work completed; refused after Approve / during Revise regeneration; expected revision matches (a stale extension revision refused); the gate's phase handler registered; no activation already open for the (gate, scope) | opens a fresh activation over the **recomputed current binding** via A1's `open_gate`, preserving every prior decision — the re-entry path after Reject at either gate | W: `gate_activations` row · J: none · E: `gate.opened` | **B2** (LOCK gate; PB-14); the STORY LOCK gate becomes decidable with **B5**'s handler |
-| `edit_tier(character_key, tier)` | Operator (human session + CSRF) | season / `season_tracks.revision` | a STORY LOCK activation is open | (standalone entry, PB-5) supersedes the activation (`supersede_gate`), runs **tier revalidation** (the shared internal operation: promotion validation, demand derivation, season critic deterministic checks), refuses V3R-4-violating demotions (a speaker losing its voice demand; a recognisable character losing its identity demand), opens a new activation (`open_gate`) | W: `gate_activation_events` SUPERSEDED + new `gate_activations` row · J: none (revalidation is deterministic) · E: `gate.superseded`, `gate.opened` | **B5** (C-M3) |
+| `edit_tier(character_key, tier)` | Operator (human session + CSRF) | season / `season_tracks.revision` | a STORY LOCK activation is open | (standalone entry, PB-5) **all atomically, under owner access, the workflow/cancellation guards and the expected-revision check** (B1-8): run **tier revalidation** (the shared internal operation: promotion validation, demand derivation, season critic deterministic checks — refusing V3R-4-violating demotions: a speaker losing its voice demand, a recognisable character losing its identity demand), then persist the tier change and every affected document version (the `CharacterProfile` version; the revised demand/critic/binding records), rebuild the binding over the revised records, supersede the activation (`supersede_gate`), **advance the scope revision once**, and open the successor activation (`open_gate`) stamped with the final revisions; **no `content_revision` bump** | W: `gate_activation_events` SUPERSEDED + new `gate_activations` row + the persisted document versions (profile/demand/critic/binding) + one track revision advance · J: none (revalidation is deterministic) · E: `gate.superseded`, `gate.opened` | **B5** (C-M3) |
 | `create_extension(season, range, calendar, amendment_id)` | Operator (human session + CSRF) | season / `season_tracks.revision` | release `RELEASING`/`COMPLETE`; contiguous range beyond the current count; **the named amendment is an approved `SEASON` amendment of this season's `SEASON` account funding the requested appended count** (phase-A §5.4, PB5-4); calendar explicit | atomically creates the **immutable extension authorization** (exact appended range + cumulative count + amendment ID + human provenance; append-only, guarded; symbolic migration `B-…` allocated in the B5 note — B1 allocates no table for it, see OQ-6) and the `season_extensions` scope (A1 0030); a creation rollback leaves neither (B-T11) | W: authorization row + `season_extensions` row · J: none · E: `extension.opened` + authorization provenance | **B5** (phase-B §11 B5; A1 §12 OQ-1 ruled "phase B") |
+
+**Revision effects and replay refusal, stated per command (B1-10).** `submit_v3_intake`: creates
+the season — `season_tracks` starts at its initial revision and the command advances no revision of
+its own. `replace_v3_intake`: verifies `season_tracks.revision` under the held track lock and does
+**not** advance it (intake replacement is not a gate decision or planning transition; PB5-3 keeps the
+scope `PROPOSED`) — its identity effect is the generation-round advance (§2.4). `reopen_v3_gate`:
+the revision effect is A1 `open_gate`'s own (this command adds no extra advance). `edit_tier`:
+advances the scope revision **exactly once**, inside the atomic sequence above; no `content_revision`
+bump. `create_extension`: verifies `season_tracks.revision`, creates the extension scope at its
+initial revision (A1 0030), and advances neither. For **every** row: a matching replay (same
+idempotency key, same parameters) returns the stored response and writes and emits nothing; the same
+key with different parameters raises `IdempotencyConflict` (A2 §7's rule, restated for each B
+command).
 
 All five rows' transactions are audited in §8. The D5 seam's ordering rule (phase-B §2.4 D5:
 scope track FOR UPDATE **before** job locks; validate fence and lease; persist outputs and
@@ -508,10 +634,10 @@ UPDATE (phase-A §6). Every B1-owned mutation, and every command row §7 pins fo
 | Generation-round lazy create | **#2** held → `INSERT … ON CONFLICT DO NOTHING` | conforms |
 | Prompt registration (B2–B5, at composition/import) | own short transaction; PK-conflict-tolerant INSERT; **no** track/job/budget locks (registry rows are not scope state) | conforms — no ordering interaction; the byte-compare refusal is conflict-free under the PK |
 | `v3_episode_story_bindings` insert (B5 STORY LOCK Approve) | inside the A1 decision transaction: **1** idempotency → **2** `season_tracks` → **4** seasons/approvals → episode/track INSERTs (A2's `create_v3_episodes`) → binding INSERT (a domain row) → **5** no job enqueues at Approve (step 4 is C's) → single revision advance | conforms — the binding is one more #4-class write in the audited A1/A2 chain |
-| `submit_v3_intake` (B2) | **1** idempotency → A2's `create_v3_season` chain (its own audited order: track + account under **#2/#7**) → **#4** intake document + generation-round row → **5** `story_v3.propose` enqueue (fence SHARE absorbed by the held **#2** FOR UPDATE, A3 §7) | conforms |
+| `submit_v3_intake` (B2) | **one outer intake idempotency transaction** (B1-5): **1** idempotency row → the shared caller-transaction creation helper (A2 §7's audited writes — seasons + `season_tracks` + `season_budget_mutex` + `SEASON_SETUP` account + `season_owners`; `create_v3_season` delegates to the same helper, never a nested `execute`) → **#4** intake document + generation-round row → **5** `story_v3.propose` enqueue | conforms — the complete outer sequence is **new-row INSERTs for a brand-new season**: it takes no lock on any pre-existing row, and the phase-A §6 / A2 §8.1 order governs locks on **existing** rows (a transaction must keep the relative order of the locks it takes), so a creation-only transaction has nothing to invert — that is the new-row exception behind v0.1's blanket verdict (B1-5); the enqueue's semantic-key check is a plain read (`S/core/jobs.py:429-438`) |
 | `replace_v3_intake` (B2) | **1** → **2** `season_tracks` FOR UPDATE (owner scope + revision check under it) → **#4** intake version append + generation-round advance → **5** enqueue round 1 | conforms |
 | `reopen_v3_gate` (B2/B5) | **1** → **2** track (or extension track after `season_tracks`, A1 §6-#2 order) → A1's `open_gate` admission checks under it → activation INSERT | conforms — A1's `open_gate` row plus the preflight |
-| `edit_tier` (B5) | **1** → **2** → `supersede_gate` + tier revalidation reads → `open_gate` INSERTs | conforms |
+| `edit_tier` (B5) | **1** → **2** track FOR UPDATE (owner scope + expected revision under it) → **#4** document version persists (profile; revised demand/critic/binding records) + binding rebuild → `supersede_gate` → one track revision advance → `open_gate` INSERTs — one atomic sequence (§7; B1-8) | conforms — the #4 domain writes precede the activation/revision writes inside the same held-**#2** transaction; no `content_revision` bump |
 | `create_extension` (B5) | **1** → **2** `season_tracks` → **#4** seasons + authorization + `season_extensions` INSERT (A1 0030 table) | conforms |
 | D5 completion seam (B2 ships) | handler's caller transaction: **#2** scope track FOR UPDATE **before** job locks → fence/lease validation → **#4** output persists → **#5** job completion write → continuation/gate creation commits atomically; runtime does not finish again (`S/workers/runtime.py:245/:259`, `S/core/jobs.py:676`) | conforms by construction (phase-B §2.4 D5); the B2 commit-boundary crash case is B-T3's |
 | B1 guard/reader reads (`require_workflow`, `read_episode_story`, registry lookups) | plain reads, no locks | n/a |
@@ -535,17 +661,27 @@ the claim-boundary skip (§6) takes no lock at all (a candidate filter, A1 §7 c
   byte-identical; no row deleted or rewritten; applied 0001–0035 checksums unchanged; V1/V2
   generated contracts AST-identical (committed `ast.dump` fixtures); the four new tables guarded
   and in the catalog; fresh-create tail asserts B1's numbers.
-- **B-T2 — version selection + guard enumeration.** `V3ProductionLimits` rejects a V3 record at
-  180_000 ms and a 10-episode V3 intake (20–30 enforced); V1/V2 validators unchanged
-  (AST-identical source, as B-T1); every guarded entry point from §4 — A1's A-T5 rows **and** the
-  seven new B1 module guards — enumerated through the shared `guard_inventory.py` fixture, each
-  refusing a V3 episode with `WORKFLOW_MISMATCH` while V1 rows pass unchanged.
+- **B-T2 — version selection + guard enumeration + DDL/classification/claim behaviour.**
+  `V3ProductionLimits` rejects a V3 record at 180_000 ms and a 10-episode V3 intake (20–30
+  enforced); V1/V2 validators unchanged (AST-identical source, as B-T1); every guarded entry point
+  from §4 — A1's A-T5 rows **and** the B1 module guards — enumerated through the shared
+  `guard_inventory.py` fixture (the entry table **and** the separate binding/dispatch list), each
+  refusing a V3 episode with `WORKFLOW_MISMATCH` while V1 rows pass unchanged; the **direct-SQL DDL
+  tests** (B1-1): UPDATE on each frozen `v3_story_documents` column fails, the `current` flip
+  succeeds, and INSERTs with a missing, null or non-string `schema_version` fail; the
+  **schema-classification assertions** (B1-2): no `v3_story` model or example appears under V1/V2;
+  the **reader selection tests** (B1-4): `v3` resolves through the current-`content_revision`
+  binding with exact pack ID/version/hash and scope/episode-number verification, `v1` prefers a
+  qualifying V2 pack over the V1 pair, and a corrupt selected V2/V3 record fails without fallback;
+  the **claim-availability tests** (B1-11): an unavailable head candidate followed by runnable work
+  claims, the skipped job's attempts/events are unchanged, and the job claims after its handler is
+  installed.
 
 **Prepared but not gated by B1** (the clause each later package's gate exercises):
 
 | Clause (owner) | B1's preparation |
 |----------------|------------------|
-| B-T3 (B2): D5 seam, LOCK decisions, intake/replacement/reopen lifecycle, PB-2 retry identity | the document store, generation-round store, D2 targets, job registration, §7 rows |
+| B-T3 (B2): D5 seam, LOCK decisions, intake/replacement/reopen lifecycle, PB-2 retry identity, **generation-linkage recovery (B1-6)** — changed-input collisions (`IdempotencyConflict` on a same-key/different-input enqueue), replacement intake, terminal retry, retention of successful siblings | the document store, generation-round store, the frozen intake references + `ProposalRoundV3` linkage (§2.4), D2 targets, job registration, §7 rows |
 | B-T4 (B3): bible critic, tiers/promotion | `SeasonBibleV3`/`CharacterProfile` records; `character:` standalone key; prompts registry capacity |
 | B-T5/B-T6 (B4): DB-role isolation; `LlmStep` per-call behaviour; registry-referenced prompts | record models free of asset/voice fields (§3 drops verified); `v3_llm_prompts` + `resolve_prompt`; `FrozenLlmCall` prompt pinning surface |
 | B-T7/B-T8 (B4/B5): typed-effect findings; demand completeness | `BeatEffect` union; demand-ID derivations; ledger sibling bound to `PayoffDebt.debt_id` |
@@ -557,7 +693,7 @@ the claim-boundary skip (§6) takes no lock at all (a candidate filter, A1 §7 c
 | Risk | Mitigation | Owner |
 |------|------------|-------|
 | The A-phase builds slip, moving B's real migration numbers | symbolic B-1..B-4 with a build-time tail re-audit (§0); purposes and order fixed | orchestrator |
-| A queued, handlerless `story_v3.*` job fails `NO_HANDLER` in the B2→B3 window | the claim-boundary skip (§6), V3-scoped; V1 behaviour unchanged | B1 builder |
+| A queued, handlerless `story_v3.*` job fails `NO_HANDLER` in the B2→B3 window | the claim-boundary exclusion via the immutable handler-availability set passed into `claim` (§6), V3-scoped, applied before candidate row locking; V1 behaviour byte-identical | B1 builder |
 | Slug-vs-class-name divergence from the V2 store pattern confuses later readers | one vocabulary for CHECK + uuid5 + store registry (§2.1/§2.2); OQ-5 records the alternative | B1 |
 | Continuity drift between the bound packs and standalone states | `source_pack_version`/`source_pack_sha256` + binding-time verification (§2.3, PB-9) | B1 |
 | Prompt registry rows drift from the code constants | append-only PK + byte-compare refusal; text changes are `version + 1` (§2.5) | B2–B5 |
@@ -577,8 +713,8 @@ the claim-boundary skip (§6) takes no lock at all (a candidate filter, A1 §7 c
 
 | # | Question | Recommendation |
 |---|----------|----------------|
-| OQ-1 | Phase-B §2.4 D2 says "B1 owns a migration in B's range: contract code + regenerated v3 schemas" — but targets are jsonb validated in Python (A1 §2.3), so D2 needs no SQL DDL. Reading? | Read it as: the delta lands **in B1** (contract code + regenerated `schemas/v3` artifacts) inside B's migration range, with **no** SQL object; B-1..B-4 (§1) are B1's actual migrations. If the critique reads "a migration" literally, the empty-purpose file is worse than no file — confirm at critique |
-| OQ-2 | The claim-boundary skip (§6) is a runtime change in B1 — is a claim filter the right shape, vs. per-deployment queue filtering? | Ship the skip: it is V3-scoped (`track IS NOT NULL` + registry membership), keeps V1 `NO_HANDLER` byte-identical, and needs no new queue lanes. B-T2 asserts a handlerless registered job stays QUEUED and a V1 unknown-type job still fails |
+| OQ-1 | Phase-B §2.4 D2 says "B1 owns a migration in B's range: contract code + regenerated v3 schemas" — but targets are jsonb validated in Python (A1 §2.3), so D2 needs no SQL DDL. Reading? | **Ruled at critique (round 1, closing note: "D2 can be a contract/schema migration without an empty SQL file")**: the delta lands **in B1** (contract code + regenerated `schemas/v3` artifacts) inside B's migration range, with **no** SQL object and no empty-purpose file; B-1..B-4 (§1) are B1's actual migrations |
+| OQ-2 | The claim-boundary skip (§6) is a runtime change in B1 — is a claim filter the right shape, vs. per-deployment queue filtering? | Ship the skip with the concrete runtime contract (§6, B1-11): the immutable handler-availability set is passed into `claim`, unavailable B1 types are excluded **before candidate row locking**, and V1 `NO_HANDLER` stays byte-identical — no new queue lanes. B-T2's clauses (skip-to-runnable with untouched attempts/events; claimability after install) pin it |
 | OQ-3 | Should a Revise round also advance the generation-round identity? | No (§2.4): the round number already freshens the semantic key; advancing on Revise would needlessly change proposal-ID inputs mid-intake. Advance only on `replace_v3_intake` and terminal-failure retry |
 | OQ-4 | `STORY_V3_NS` value | `uuid5(NAMESPACE_URL, "https://microdrama.invalid/story/v3")` (§2.1) — the script-maker convention; a contract test asserts the constant and one derived ID for stability |
 | OQ-5 | `contract_type` slugs vs V2's class-name keying | Slugs (§2.2); the store's model registry is the single translation point. Class names would double the vocabulary with no gain |
@@ -591,6 +727,10 @@ the claim-boundary skip (§6) takes no lock at all (a candidate filter, A1 §7 c
 C-M11/C-N22 (§0 deviations: none; the gate checklist = §5 register, §7 rows, §10/§11, §0); C-M20
 (§6); C-N5 (§3 field mapping); C-N7 (§2.1); PB-1/D5 (§5, §8); PB-2 (§2.1, §2.4, §6); PB-6 (§2.5);
 PB-9 (§2.3); PB-10 (§2.6); PB5-5 (§2.3); PB-14's storage side (§7); O-B1..O-B3, O-B6 (§2.2/§2.3).
+
+**Round-1 critique map (v0.2 — all 12 ACCEPTED per `b1-critique-rulings.md`):** B1-1 → §1/§2.2 +
+B-T2; B1-2 → §2.3 + B-T2; B1-3 → §4; B1-4 → §4 + B-T2; B1-5 → §7/§8; B1-6 → §2.4/§6 + B-T3; B1-7 →
+§5 D2; B1-8 → §7/§8; B1-9 → §2.2/§2.3/§3; B1-10 → §5 D6/§7; B1-11 → §6 + B-T2; B1-12 → §2.5.
 
 **Requirement coverage (phase-B §14):** R-1.2/R-2.1/R-2.2/R-3.2/R-3.3 record shapes (§2); R-3.1
 (no `scoped_map_only`, §3); R-2.3 ledger sibling (§2.3). B1 gates no R-ID end to end — the R-IDs
