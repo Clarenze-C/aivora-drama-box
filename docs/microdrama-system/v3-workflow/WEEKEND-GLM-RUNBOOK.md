@@ -400,6 +400,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   `a1-note-rev3-brief.md` written — folds the never-applied round-2 findings N1R-1..12; A1's R3
   verification follows, then its build can start once A0-D is accepted). Phase A day-plan on record:
   r5 → A3/A2 docs → a0d-fix2 → A0-D R3+gate → A1 build (evening). Running: r5-build.
+- 14 Nov 08:24Z (GLM, operator directive — fill the z.ai window): 2-job allowance restored until
+  the 10:14Z reset; **no new GLM job after ~09:30** (mid-build kill guard). Launched: a3-note-rev3
+  (docs, beside r5-build) + g-factmap swarm. Queue in the window: A2-rev3 on A3's exit, A1-rev3 if it
+  fits before ~09:30; A3/A2 R4 critiques go to Codex as they land. E-spec draft opens the NEXT window
+  (10:14Z) first, G-spec draft behind it.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
