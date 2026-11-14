@@ -602,6 +602,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 22:03Z (GLM): **fix4 verification GREEN by GLM: 198 passed** (both suites, matching the
   builder). **Solo gate running at `15ce674`** (`a0d-gate4`, unit `dramabox-a0d4-gate`); R5 review
   running. A0-D acceptance = R5 ACCEPT + gate green.
+- 14 Nov 22:08Z (GLM): **A0-D R5 = FIX-REQUIRED, converging** (2/4 closed; AD8-1 BLOCKING + AD8-2
+  SF; trajectory 13->10->7->4->2). **fix5 launched** (AD8-1/2 only); R6 + solo gate follow. The
+  gate at `15ce674` still running as evidence. Running: a0d-fix5 + the gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an

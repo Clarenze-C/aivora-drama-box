@@ -1,0 +1,11 @@
+**Verdict: FIX-REQUIRED.** Reviewed `a4e9913...15ce674`, scoped to AD7-1–4 and regressions from their fixes. No files changed.
+
+- **AD7-1 — CLOSED:** [step.py:1062](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/src/microdrama/llm/step.py:1062). DONE validation uses the persisted frozen identity. In-memory probes accepted identity A under configuration B and rejected a B result for that A invocation.
+
+- **AD7-2 — PARTIAL. AD8-1, BLOCKING:** [step.py:235](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/src/microdrama/llm/step.py:235). The result hash excludes raw quota and concurrency fields. After attempts 1 and 2 settle, adding quota readings to attempt 1’s previously quota-less payload raises no Conflict and inserts a new quota observation. Changing `quota_after` reset timing can also pass because normalization selects the corresponding `quota_before` value. **Fix:** hash raw quota/concurrency evidence, including field presence; add historical-replay tests for additions and changed reset timing.
+
+- **AD7-3 — CLOSED:** [gateway.py:1470](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/deployment/llm-gateway/gateway.py:1470). Receipt generation requires probe authorization. Recovery settlement reaches the same guard. The in-memory probe retained quarantine for an unmarked ledger and issued a receipt for an authorized probe.
+
+- **AD7-4 — PARTIAL. AD8-2, SHOULD-FIX — regression:** [gateway.py:1362](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/deployment/llm-gateway/gateway.py:1362), [gateway.py:1445](/root/AIVORA/drama-box/.scratch/a0d-gateway/microdrama/deployment/llm-gateway/gateway.py:1445). Newly frozen probes survive configuration changes, but a genuine queued probe from `a4e9913` lacks `probe_request_hash`. HEAD rejects it even with unchanged configuration; requalification returns it unchanged, and every pump returns false. This reproduces the report’s acknowledged queued-ledger deviation. **Fix:** safely migrate or cancel/rearm legacy never-launched probes while preserving rejection of unauthorized ledgers; add an upgrade-state test.
+
+Verification: **36 validator tests passed**; `git diff --check` clean. Additional in-memory probes reproduced AD8-1–2. PostgreSQL/systemd suites and full gates were not rerun; the 3,222-unit/80-integration totals remain builder-reported evidence.
