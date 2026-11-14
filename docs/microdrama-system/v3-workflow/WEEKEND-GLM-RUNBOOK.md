@@ -379,6 +379,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 07:59Z (GLM): **A6b r3 = APPROVE** (both blocking recovery gaps closed) ↓ A6b note
   v1.2 ACCEPTED. `a3-note-r3` launched (Codex 1/2). Accepted so far: **B v0.6, C v0.4.1, A6b v1.2**.
   Pending: A3 r3 (running), A2 r3 (queued); a0d-fix2 waits for r5-build (one-build rule).
+- 14 Nov 08:03Z (GLM): **e-factmap done and verified** (128 lines, 63 citations, 9 NOT FOUNDs —
+  incl. loudness/cue-sharing/derivative gaps the spec will define). Phase E spec brief written
+  (`phase-e-spec-brief.md`) — **launch held** per the one-GLM-job rule (r5-build holds the slot);
+  it queues behind a0d-fix2 / between builds. Running: r5-build + a3-note-r3.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
