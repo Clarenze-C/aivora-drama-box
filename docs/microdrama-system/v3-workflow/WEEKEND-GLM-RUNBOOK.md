@@ -610,6 +610,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   accepted cross-version hash-vocabulary break — flagged to R6 to weigh). Acceptance chain running:
   GLM verification + **R6 review**; fresh solo gate at `1e43b70` after verification. The stale
   a0d4 gate (at 15ce674) becomes evidence only.
+- 14 Nov 22:31Z (GLM): **fix5 verification GREEN by GLM: 207 passed** (123 unit-llm + 84
+  gateway-integration). **Solo gate running at `1e43b70`** (`a0d-gate5`, unit `dramabox-a0d5-gate`).
+  A0-D acceptance now hangs on R6 + this gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
