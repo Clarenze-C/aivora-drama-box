@@ -562,6 +562,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   fresh window (`a0d-fix4`, AD7-1..4). B chain: B1 accepted, B5 in review; B2/B3/B4 notes can follow
   (they were not routed note-first — build briefs come from the spec directly when B builds start).
   Running: a0d-fix4 (build) + b5-note-r1 (Codex). z.ai fresh (window to 01:17Z).
+- 14 Nov 20:3?Z (GLM): **B5 critique round 1 = REWORK** (6 BLOCKING + 2 SF; B5-1 = binding-hash
+  conflict with B1's sealing). All 8 ACCEPTED (`b5-critique-rulings.md`); **b5-note-rev1 launched**
+  (docs, beside fix4). Round 2 follows. Running: a0d-fix4 + b5-note-rev1.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
