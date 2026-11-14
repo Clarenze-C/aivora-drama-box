@@ -320,6 +320,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   `104b26b`). Docs queue (a3-note-rev1 → a2-note-rev2 → c-spec-v04 → a6b-note-rev1 → f-spec-v04)
   waits for the next free slot. Codex idle (5h 63%, resets 00:39Z; nothing review-ready until R5 or a
   revision lands).
+- 14 Nov 01:08Z (GLM): SFW's p5-fix2 ended → slot went to **a3-note-rev1** (docs queue resumes).
+  Running: r5-build (81m, R5a) + a3-note-rev1. Docs queue next: a2-note-rev2 → c-spec-v04 →
+  a6b-note-rev1 → f-spec-v04. Codex idle (week 23%, nothing review-ready).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
