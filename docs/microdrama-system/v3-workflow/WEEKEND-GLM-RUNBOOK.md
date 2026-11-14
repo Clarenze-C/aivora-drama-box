@@ -383,6 +383,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   incl. loudness/cue-sharing/derivative gaps the spec will define). Phase E spec brief written
   (`phase-e-spec-brief.md`) — **launch held** per the one-GLM-job rule (r5-build holds the slot);
   it queues behind a0d-fix2 / between builds. Running: r5-build + a3-note-r3.
+- 14 Nov 08:06Z (GLM): **A3 r3 = REWORK** (2 blockers; "rulings only partly integrated" — confirms
+  the quota-killed round-2 apply was incomplete; the orchestrator's rescue-commit of an unverified
+  edit is the root cause, noted for Monday). **A3 PARKED for Opus** per the agreed rule.
+  `a2-note-r3` launched (last r3). Accepted: B, C, A6b. Running: r5-build + a2-note-r3.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -432,3 +436,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   v1.2, no round 3 (rule 7). Monday: Opus re-checks `a3-recritique-rulings.md`; accept v1.2 vs round 3.
 - A6b note: round 2 REWORK after 7/12 closed (2 BLOCKING recovery gaps remain). GLM applied all
   round-2 rulings as v1.2, no round 3 (rule 7). Monday: Opus re-checks `a6b-recritique-rulings.md`.
+- A3 note (Mon): round-3 REWORK confirmed the round-2 apply (quota-killed, orchestrator-committed)
+  was partial. The note needs one careful completion pass over `codex-a3-note-recritique.md`
+  N3R2-1..7 + the two round-3 blockers in `codex-a3-r3.md`, then verification. GLM did NOT rerun a
+  4th review (rule: park after a failed r3).
