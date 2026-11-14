@@ -542,6 +542,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 19:2?Z (GLM): **G Goldfish done and ruled** (0 Blocker / 19 Major / 42 Nit — all 61
   ACCEPTED; cleanest first pass). **b1-note-rev1 launched** (docs slot, B priority); g-spec-v02
   apply brief ready behind it. Running: a0d-fix3 (step 4/8) + b1-note-rev1.
+- 14 Nov 19:5?Z (GLM): **A0-D FIX3 DONE** — all 10 AD6 findings closed at `a4e9913` (the brief said
+  7; the review listed 10 — review wins). **AD6-GATE-1 diagnosed pre-existing + load-sensitive**
+  (pipeline dir passes solo; ffmpeg flakes only under a loaded full check). Acceptance running: GLM
+  verification suites + **R4 review** (`a0d-review-r4`). Also: **B1 v0.2 committed** (`2669406`),
+  B1 round-2 critique running; **g-spec-v02 apply launched**. Running: b1-note-r2 + a0d-review-r4
+  (Codex 2/2) + g-spec-v02 + my verification.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
