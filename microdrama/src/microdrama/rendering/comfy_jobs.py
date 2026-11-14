@@ -178,6 +178,9 @@ class ComfyAttemptStatus:
     error_code: str | None = None
     settled_micro_usd: int = 0
     replayed: bool = False
+    # T031 R5b (R5C-12): genuine sampler timing evidence carried through the
+    # transport when the provider history has it; None otherwise.
+    sampler_ms: int | None = None
 
 
 def render_client_token(semantic_key: str) -> str:
@@ -331,6 +334,7 @@ class ComfyRenderService:
         *,
         progress: ComfyProgressEvent | None = None,
         replayed: bool = False,
+        sampler_ms: int | None = None,
     ) -> ComfyAttemptStatus:
         return ComfyAttemptStatus(
             operation_id=op_row["id"],
@@ -342,6 +346,7 @@ class ComfyRenderService:
             error_code=(op_row["last_result"] or {}).get("error_code"),
             settled_micro_usd=self._settled_amount(op_row["reservation_id"]),
             replayed=replayed,
+            sampler_ms=sampler_ms,
         )
 
     # --- reservation -------------------------------------------------------------------
@@ -1051,7 +1056,7 @@ class ComfyRenderService:
                 now=self._now(),
             )
         self._settle_if_needed(self._load_row(operation_id))
-        return self._status(self._load_row(operation_id))
+        return self._status(self._load_row(operation_id), sampler_ms=history.sampler_ms)
 
     def reconcile_unknown(self, operation_id: UUID) -> ComfyAttemptStatus:
         """H-2 (2026-11-10, GLM harness review): the §E provider-operation reconciler.

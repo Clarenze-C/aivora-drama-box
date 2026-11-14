@@ -1179,6 +1179,50 @@ class LeaseService:
 
     # --- operation ---------------------------------------------------------------------
 
+    def boot_heartbeat(self, lease_id: UUID) -> datetime:
+        """T031 R5b (R5C-8): lease liveness DURING the boot window.
+
+        A provisioning boot can legitimately outlive the heartbeat timeout (a
+        25-minute weight download while the default timeout is 5 minutes), and
+        the lease is still CLAIMED while ``ensure_pod``'s verification waits -
+        the ordinary ``heartbeat`` refuses that state. This refreshes
+        ``heartbeat_at`` for a lease that is either ACTIVE or CLAIMED WITH a
+        bound pod, WITHOUT extending the hard deadline and WITHOUT reviving a
+        fenced/terminal lease: ``lease_expires_at`` still bounds everything,
+        and every other state refuses.
+        """
+        now = self._now()
+        with self._db.transaction() as tx:
+            row = tx.fetchone(
+                "SELECT l.*, e.state AS episode_state FROM pod_leases l "
+                "LEFT JOIN episodes e ON e.id=l.owner_episode_id "
+                "WHERE l.id = %s FOR UPDATE OF l",
+                (lease_id,),
+            )
+            if row is None:
+                raise NotFound("pod lease not found", lease_id=str(lease_id))
+            if row["episode_state"] in HUMAN_WAIT_STATES:
+                raise PolicyDenied(
+                    "episode is in a human wait; the lease cannot be heartbeated",
+                    lease_id=str(lease_id),
+                    episode_state=row["episode_state"],
+                )
+            live = row["lease_state"] in ("CLAIMED", "ACTIVE")
+            if not live or (row["lease_state"] == "CLAIMED" and not row["pod_id"]):
+                raise InvalidTransition(
+                    "boot liveness applies only to a pod-bound or active lease",
+                    state=row["lease_state"],
+                )
+            if row["lease_expires_at"] <= now:
+                raise InvalidTransition(
+                    "the lease deadline has passed; boot waiting cannot extend it",
+                    state=row["lease_state"],
+                )
+            update_with_revision(
+                tx, "pod_leases", lease_id, row["revision"], {"heartbeat_at": now}, now=now
+            )
+        return now
+
     def heartbeat(self, lease_id: UUID) -> datetime:
         """Proof of life. The janitor treats a stale heartbeat as a dead worker."""
         now = self._now()

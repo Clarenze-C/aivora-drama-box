@@ -131,19 +131,28 @@ from microdrama.contracts.errors import (
 from microdrama.contracts.hashing import canonical_hash
 from microdrama.core.clock import SystemClock, UuidIds
 from microdrama.persistence.db import jsonb
+
+# T031 R5b: typed pre-sample boot failures (R5C-2) and the attempt cap (R5C-11).
+from microdrama.pipeline.experimental_world import BootFailure  # noqa: E402
 from microdrama.rendering.benchmark_experiments import (
     SCREEN_IDS,
     TERMINAL_SAMPLES,
     BenchmarkRepository,
     ExperimentBudgetService,
+    acquisition_coverage,
     blocking,
     discovered_resource_billing_final,
     document,
     experiment_row,
     gpu_ms,
+    merge_acquisition_coverage,
+    merge_sample_coverage,
     unresolved_items,
 )
 from microdrama.rendering.leases import LIVE_LEASE_STATES, RENDERING_NAMESPACE
+
+BOOT_FAILURE_STATES = ("PROVISION_FAILED", "BOOT_TIMEOUT")
+MAX_BOOT_ATTEMPTS_PER_PHASE = 3
 
 RECOVERY_GRACE_MAX_S = 600  # §5.4: the documented maximum recovery grace
 
@@ -572,7 +581,7 @@ class BenchmarkService:
                 tx, experiment_id, action, coordinator_token=coordinator_token, **scope
             )
 
-    def _acquisition(self, experiment_id: UUID, world: Any, quote: Any):
+    def _acquisition(self, experiment_id: UUID, world: Any, quote: Any, *, phase: str = "screen"):
         # Account/category locks precede experiment/slot locks in every admission.
         with self.db.transaction() as tx:
             exp = experiment_row(tx, experiment_id)
@@ -613,6 +622,22 @@ class BenchmarkService:
             # Fresh admission: every admission-blocking kind refuses (U1, U2,
             # U3, U3p, U3u, U4, U5 - §4.1 R2). U6 never blocks other work.
             self._gate_in_tx(tx, experiment_id, "admission")
+            # T031 R5b (R5C-2/R5C-11): the three-boot-attempt cap per phase,
+            # enforced UNDER the admission locks from the durable,
+            # acquisition-keyed incident records. An upper bound conditional on
+            # exposure/GPU time (the gate above already refuses the rest), not
+            # a completion promise.
+            boot_attempts = sum(
+                1
+                for record in acquisition_coverage(tx, experiment_id).values()
+                if (record.get("incident") or {}).get("phase") == phase
+                and (record.get("incident") or {}).get("reason") in BOOT_FAILURE_STATES
+            )
+            if boot_attempts >= MAX_BOOT_ATTEMPTS_PER_PHASE:
+                raise Conflict(
+                    f"boot attempt limit reached for phase {phase} "
+                    f"({boot_attempts} typed boot failures recorded)"
+                )
             generation = int(
                 tx.fetchval(
                     "SELECT COALESCE(MAX(generation),0)+1 FROM benchmark_acquisitions WHERE experiment_id=%s",
@@ -630,13 +655,17 @@ class BenchmarkService:
             # lacks the frozen flag, before the immutable row is written.
             from microdrama.pipeline.benchmark_authorization import BenchmarkSeal
             from microdrama.pipeline.experimental_world import validate_provision_intent
+            from microdrama.rendering.benchmark_experiments import decode_seal
 
-            seal_manifest = tx.fetchone(
-                "SELECT manifest FROM benchmark_seals WHERE experiment_id=%s", (experiment_id,)
+            seal_row = tx.fetchone(
+                "SELECT s.manifest, e.sealed_sha256 FROM benchmark_seals s "
+                "JOIN benchmark_experiments e ON e.experiment_id=s.experiment_id "
+                "WHERE s.experiment_id=%s",
+                (experiment_id,),
             )
-            if seal_manifest is not None:
+            if seal_row is not None:
                 validate_provision_intent(
-                    BenchmarkSeal.model_validate(seal_manifest["manifest"]), intent
+                    BenchmarkSeal.model_validate(decode_seal(seal_row)["manifest"]), intent
                 )
             window = int(intent["claim"]["lease_ttl_ms"]) + world.leases._config.shutdown_margin_ms
             if gpu_ms(tx, experiment_id, self.clock.now()) + window > min(
@@ -701,6 +730,56 @@ class BenchmarkService:
                 "admission requires a recorded operator authorization (run execute first)"
             )
         return sha
+
+    def _record_boot_failure(
+        self,
+        experiment_id: UUID,
+        acquisition: dict,
+        world: Any,
+        failure: Any,
+        *,
+        phase: str,
+    ) -> dict:
+        """T031 R5b (R5C-2/R5C-3): persist a typed boot failure, then clean up.
+
+        The refusal evidence (incident reason, UTC refusal time, phase and
+        attempt identity) commits on the acquisition-keyed coverage record
+        BEFORE cleanup, so it survives the sweep's state transitions
+        (RR-T14). The acquisition row carries the incident value for the open
+        window (state has no CHECK; the sweep transitions it afterwards). NO
+        sample/model failure outcome is set: ``execution_outcome`` stays NULL
+        and every sample stays unclaimed, so a later ``execute`` with a fresh
+        quote is admissible once the canonical blockers clear.
+        """
+        now = self.clock.now()
+        incident = {
+            "reason": failure.reason,
+            "refused_at": now.isoformat(),
+            "phase": phase,
+            "attempt": int(acquisition["generation"]),
+        }
+        with self.db.transaction() as tx:
+            merge_acquisition_coverage(
+                tx,
+                experiment_id,
+                acquisition["acquisition_id"],
+                {"incident": incident},
+            )
+        with self.db.transaction() as tx:
+            tx.execute(
+                "UPDATE benchmark_acquisitions SET state=%s WHERE acquisition_id=%s "
+                "AND state NOT IN ('CLOSED','NO_CREATE_PROVEN')",
+                (failure.reason, acquisition["acquisition_id"]),
+            )
+        try:
+            # The normal verified cleanup: stops compute, releases holds; the
+            # canonical blockers it leaves (if any) gate the next admission.
+            self.sweep(experiment_id, world=world)
+        except Exception:  # noqa: BLE001 - the obligation is durable (U2)
+            pass
+        status = self.status(experiment_id)
+        status["boot_failure"] = incident
+        return status
 
     def _advance(self, experiment_id: UUID, world: Any, phase: str, quote: Any):
         token = self.ids.new_id()
@@ -1098,7 +1177,7 @@ class BenchmarkService:
             s["state"] in TERMINAL_SAMPLES for s in status["samples"] if s["sample_id"] in eligible
         ):
             return self._finish_phase(experiment_id, world, phase)
-        acquisition = self._acquisition(experiment_id, world, quote)
+        acquisition = self._acquisition(experiment_id, world, quote, phase=phase)
         # I3/AT-5: never acquire on an acquisition awaiting finalization.
         if self._needs_finalization(experiment_id, acquisition):
             return self.sweep(experiment_id, world=world)
@@ -1171,6 +1250,14 @@ class BenchmarkService:
             )
             try:
                 world.acquire(acquisition)
+            except BootFailure as boot_failure:
+                # T031 R5b (R5C-2): a typed PRE-SAMPLE boot failure is handled
+                # BEFORE the generic terminal handler - incident + cleanup
+                # obligation persist, NO sample/model failure outcome is set,
+                # and a later execute with a fresh quote stays admissible.
+                return self._record_boot_failure(
+                    experiment_id, acquisition, world, boot_failure, phase=phase
+                )
             except NeedsReconciliation:
                 # §5.1: a create ambiguity labels the acquisition UNKNOWN and
                 # gets NO grace - the sweep's token reconciliation owns it.
@@ -1450,6 +1537,33 @@ class BenchmarkService:
                     "UPDATE benchmark_dispatch_slots SET sample_id=NULL,revision=revision+1 WHERE experiment_id=%s AND sample_id=%s",
                     (experiment_id, sample["sample_id"]),
                 )
+            if state == "SUCCEEDED" and output and output.get("sha256"):
+                # T031 R5b (R5C-12): full_job_ms is the completion duration -
+                # written at the FIRST terminal observation with verified
+                # durable output, preserved across replay (write-if-absent).
+                # A SUBMITTED observation never wrote anything.
+                existing = tx.fetchone(
+                    "SELECT coverage FROM benchmark_samples WHERE experiment_id=%s "
+                    "AND sample_id=%s",
+                    (experiment_id, sample["sample_id"]),
+                )
+                timings = ((existing or {}).get("coverage") or {}).get("t031_timings") or {}
+                submit_at = tx.fetchval(
+                    "SELECT created_at FROM provider_operations WHERE id=%s",
+                    (sample.get("operation_id"),),
+                )
+                payload: dict = {}
+                if timings.get("full_job_ms") is None and submit_at is not None:
+                    payload["full_job_ms"] = int(
+                        (self.clock.now() - submit_at).total_seconds() * 1000
+                    )
+                sampler_ms = getattr(result, "sampler_ms", None)
+                if timings.get("sampler_ms") is None and sampler_ms is not None:
+                    payload["sampler_ms"] = int(sampler_ms)
+                if payload:
+                    merge_sample_coverage(
+                        tx, experiment_id, sample["sample_id"], "t031_timings", payload
+                    )
             if projected == "FAILED":
                 # §7.4 fail-fast: however the failure was observed (normal
                 # polling included), the outcome is set once and generation
@@ -3074,7 +3188,7 @@ class BenchmarkService:
 
     def export(self, experiment_id: UUID):
         status = self.status(experiment_id)
-        return {
+        exported = {
             "experiment_id": str(experiment_id),
             "execution_state": status["execution_state"],
             "execution_outcome": status["execution_outcome"],
@@ -3096,8 +3210,27 @@ class BenchmarkService:
                     "state": s["state"],
                     "output": s["output"],
                     "quality": (s["coverage"] or {}).get("quality", "UNKNOWN"),
+                    # T031 R5b: the recorded timings; values the pipeline does
+                    # not know are None (UNKNOWN), never 0.
+                    "timings": {
+                        "full_job_ms": ((s["coverage"] or {}).get("t031_timings") or {}).get(
+                            "full_job_ms"
+                        ),
+                        "sampler_ms": ((s["coverage"] or {}).get("t031_timings") or {}).get(
+                            "sampler_ms"
+                        ),
+                    },
                     "cost_micro_usd": None,
                 }
                 for s in status["samples"]
             ],
         }
+        # T031 R5b/RR-T14: the acquisition-keyed records (timings, live schema
+        # capture, incidents) from the deterministic coverage carrier.
+        with self.db.transaction(readonly=True) as tx:
+            records = acquisition_coverage(tx, experiment_id)
+        exported["acquisitions"] = [
+            {"acquisition_id": acquisition_id, **record}
+            for acquisition_id, record in sorted(records.items())
+        ]
+        return exported

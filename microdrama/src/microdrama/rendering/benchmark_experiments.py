@@ -1206,3 +1206,58 @@ class BenchmarkRepository:
                 ),
             )
         return digest
+
+
+def merge_acquisition_coverage(
+    tx: Tx, experiment_id: UUID, acquisition_id: UUID, payload: dict[str, Any]
+) -> None:
+    """T031 R5b (R5C-3/RR-T14): the acquisition-keyed durable record carrier.
+
+    Acquisition records (timings, live schema, incidents) land on the
+    DETERMINISTIC first prepared sample row (lowest sample_id) WITHOUT
+    claiming it - boot failures precede claiming - and are keyed by
+    acquisition ID so retries preserve every attempt. The merge is atomic and
+    never replaces existing coverage: the per-acquisition record itself merges
+    key-by-key. Callers hold their own transaction; this writes inside it.
+    """
+    row = tx.fetchone(
+        "SELECT sample_id FROM benchmark_samples WHERE experiment_id=%s ORDER BY sample_id LIMIT 1",
+        (experiment_id,),
+    )
+    if row is None:
+        raise Conflict("experiment has no sample row to carry acquisition coverage")
+    tx.execute(
+        "UPDATE benchmark_samples SET coverage = jsonb_set("
+        "COALESCE(coverage,'{}'::jsonb), '{t031_acquisitions}', "
+        "jsonb_set(COALESCE(coverage->'t031_acquisitions','{}'::jsonb), ARRAY[%s], "
+        "COALESCE(coverage->'t031_acquisitions'->%s,'{}'::jsonb) || %s)) "
+        "WHERE experiment_id=%s AND sample_id=%s",
+        (
+            str(acquisition_id),
+            str(acquisition_id),
+            jsonb(payload),
+            experiment_id,
+            row["sample_id"],
+        ),
+    )
+
+
+def merge_sample_coverage(
+    tx: Tx, experiment_id: UUID, sample_id: str, key: str, payload: dict[str, Any]
+) -> None:
+    """T031 R5b: merge one coverage key on a sample's own row (timings)."""
+    tx.execute(
+        "UPDATE benchmark_samples SET coverage = jsonb_set(COALESCE(coverage,'{}'::jsonb), "
+        "ARRAY[%s], COALESCE(coverage->%s,'{}'::jsonb) || %s) "
+        "WHERE experiment_id=%s AND sample_id=%s",
+        (key, key, jsonb(payload), experiment_id, sample_id),
+    )
+
+
+def acquisition_coverage(tx: Tx, experiment_id: UUID) -> dict[str, Any]:
+    """The acquisition-keyed coverage records (empty when none were written)."""
+    row = tx.fetchone(
+        "SELECT coverage FROM benchmark_samples WHERE experiment_id=%s ORDER BY sample_id LIMIT 1",
+        (experiment_id,),
+    )
+    return ((row or {}).get("coverage") or {}).get("t031_acquisitions") or {}

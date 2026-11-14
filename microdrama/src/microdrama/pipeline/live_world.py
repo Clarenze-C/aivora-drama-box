@@ -334,7 +334,12 @@ def durable_cleanup_guard(db: Database) -> Callable[[str, str], None]:
 def durable_comfy_request_guard(db: Database) -> Callable:
     """Canonical reservation/job/operation guard shared by live benchmark worlds."""
 
-    def comfy_request_guard(path: str, authorization_key: str | None, authorization: Any) -> None:
+    def comfy_request_guard(
+        path: str,
+        authorization_key: str | None,
+        authorization: Any,
+        binding: tuple[str | None, str | None] | None = None,
+    ) -> None:
         with db.transaction(readonly=True) as tx:
             reservation = tx.fetchone(
                 "SELECT state, operation_kind, episode_id, job_id FROM reservations WHERE id = %s",
@@ -368,7 +373,9 @@ def durable_comfy_request_guard(db: Database) -> Callable:
             # Only the catalog read may run before a durable operation exists; the
             # job must still belong to the same episode as the reservation (a canary
             # reserves one hold PER PROMPT, shared by that prompt's bounded attempts).
-            if path != "/object_info":
+            # T031 R5b: the gateway's provisioning readiness read joins the
+            # pre-operation allowlist beside /object_info (boot window).
+            if path not in ("/object_info", "/__drama/ready"):
                 raise EffectDenied("ComfyUI request requires a durable provider operation")
             if job["episode_id"] != authorization.episode_id:
                 raise EffectDenied("ComfyUI catalog read is scoped to a foreign job")

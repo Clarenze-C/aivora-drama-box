@@ -1606,6 +1606,12 @@ class _At17PodComfyTransport:
         if not server.alive:
             # The pod stopped/terminated: its ComfyUI is unreachable.
             raise TimeoutError("pod-side ComfyUI is gone with its pod")
+        if method == "GET" and url.endswith("/__drama/ready"):
+            # T031 R5b: the in-image gateway's provisioning readiness. The at17
+            # pods model the canary/CPU image (no provisioning flag).
+            import json as _json
+
+            return _json.dumps({"state": "NO_PROVISIONING", "provision": None}).encode()
         if method == "GET" and url.endswith("/object_info"):
             return server.schema_bytes
         if method == "POST" and url.endswith("/upload/image"):

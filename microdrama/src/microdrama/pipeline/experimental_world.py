@@ -20,13 +20,20 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid5
 
 from microdrama.contracts.cost import BudgetReservationRequest, RenderRequest
 from microdrama.contracts.enums import EffectKind, ExecutionMode, PodState
-from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation, PolicyDenied
+from microdrama.contracts.errors import (
+    Conflict,
+    EffectDenied,
+    MicrodramaError,
+    NeedsReconciliation,
+    PolicyDenied,
+    TransientProviderError,
+)
 from microdrama.contracts.v2 import (
     PromptManifest,
     ReferenceRole,
@@ -44,6 +51,34 @@ from microdrama.pipeline.benchmark_authorization import (
 )
 from microdrama.rendering.benchmark_experiments import document, experiment_row
 from microdrama.rendering.leases import RENDERING_NAMESPACE, PodLeaseClaimRequest
+
+
+class BootFailure(MicrodramaError):
+    """T031 R5b (R5C-2): a typed PRE-SAMPLE boot failure.
+
+    Raised by the boot window (warmup/endpoint wait, ready gate) BEFORE any
+    upload or prompt exists. The service handles it BEFORE the generic
+    terminal-failure handler: the incident and cleanup obligation are
+    persisted without setting any sample/model failure outcome, so a later
+    ``execute`` with a fresh quote stays admissible.
+    """
+
+    #: "PROVISION_FAILED" (the image reports failed weight provisioning) or
+    #: "BOOT_TIMEOUT" (the boot budget elapsed without readiness).
+    reason: str
+
+    def __init__(self, reason: str, detail: str = ""):
+        message = f"benchmark boot failure: {reason}"
+        if detail:
+            message += f" ({detail})"
+        super().__init__(message)
+        self.reason = reason
+
+
+#: Default boot budget (R5b: 25 minutes covers the 42.03 GB weight download).
+DEFAULT_BOOT_BUDGET_MS = 25 * 60 * 1000
+#: Boot poll cadence (R5b): poll the gateway readiness every 10 s.
+BOOT_POLL_SECONDS = 10.0
 
 
 class CanonicalExperimentWorld:
@@ -73,12 +108,20 @@ class CanonicalExperimentWorld:
         stage_inputs: Callable | None = None,
         billing_readiness: Callable | None = None,
         reconcile_uploads: Callable | None = None,
+        boot_budget_ms: int | None = None,
     ):
         self.db, self.jobs, self.leases, self.comfy, self.budget = db, jobs, leases, comfy, budget
         self.request_factory, self.binding_factory = request_factory, binding_factory
         self.stage_inputs = stage_inputs or (lambda acquisition: None)
         self.reconcile_uploads = reconcile_uploads or (lambda acquisition: None)
         self.billing_readiness = billing_readiness
+        # T031 R5b: the boot window. ``_boot_budget_ms`` overrides the sealed
+        # profile (tests); ``_boot_sleep`` is the wait primitive (tests advance
+        # the fixture clock instead of sleeping).
+        self._boot_budget_ms = boot_budget_ms
+        import time as _time
+
+        self._boot_sleep = _time.sleep
 
     def acquisition_requests(
         self, exp: dict, quote: Any, acquisition_id: UUID, generation: int, now: Any
@@ -178,7 +221,42 @@ class CanonicalExperimentWorld:
                 raise EffectDenied(
                     f"{self._mode.lower()} world cannot enter the pod-create path (I5)"
                 )
-        handle = self.leases.ensure_pod(acquisition["lease_id"])
+            handle = self.leases.ensure_pod(acquisition["lease_id"])
+            pod = self.leases._manager.get(handle.lease.pod_id)
+            if pod is None:
+                raise NeedsReconciliation("owned acquired pod disappeared before endpoint binding")
+            self.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
+            return handle
+        # T031 R5b (R5C-1): pod warmup and endpoint discovery are part of the
+        # boot window INSIDE acquire - pending hardware and a missing endpoint
+        # are positively identified warmup states, waited on as owned reads
+        # against the same durable lease/pod (never a second create; uncertain
+        # create outcomes keep H-2 reconciliation semantics above).
+        from microdrama.rendering.diagnostics import (
+            reset_request_deadline,
+            set_request_deadline,
+        )
+
+        clock = self.leases._clock
+        deadline = self._boot_deadline(acquisition)
+        sleep = self._boot_sleep
+        token = set_request_deadline(deadline, clock.now)
+        try:
+            while True:
+                if clock.now() >= deadline:
+                    raise BootFailure("BOOT_TIMEOUT", detail="warmup window elapsed")
+                try:
+                    handle = self.leases.ensure_pod(acquisition["lease_id"])
+                    break
+                except TransientProviderError:
+                    # Warmup/endpoint: keep waiting inside the boot budget.
+                    self._boot_liveness(acquisition)
+                    remaining = (deadline - clock.now()).total_seconds()
+                    if remaining <= 0:
+                        raise BootFailure("BOOT_TIMEOUT", detail="warmup window elapsed") from None
+                    sleep(min(BOOT_POLL_SECONDS, remaining))
+        finally:
+            reset_request_deadline(token)
         # H-1 (2026-11-10, GLM harness review): the live client MUST bind - the
         # hasattr guard hid a signature drift (one-arg call vs the real
         # (pod_id, endpoint_url)) that crashed every default live execution
@@ -189,7 +267,159 @@ class CanonicalExperimentWorld:
         if pod is None:
             raise NeedsReconciliation("owned acquired pod disappeared before endpoint binding")
         self.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
+        # R5b: the ready gate runs after pod create/bind, before any staging.
+        self.wait_ready(acquisition)
         return handle
+
+    # --- boot window (T031 R5b) -------------------------------------------------
+
+    def _resolved_boot_budget_ms(self) -> int:
+        if self._boot_budget_ms is not None:
+            return int(self._boot_budget_ms)
+        return DEFAULT_BOOT_BUDGET_MS
+
+    def _boot_deadline(self, acquisition: dict):
+        """min(created_at + boot_budget, lease deadline - shutdown margin).
+
+        The budget window opens at the POD CREATE REQUEST (the cold_start
+        anchor). A lease whose create was never sent yet opens its window NOW
+        - the create this acquire is about to send - so a replayed claim on an
+        old intent is never misread as an expired boot (R5C-9's class).
+        """
+        with self.db.transaction(readonly=True) as tx:
+            lease = tx.fetchone(
+                "SELECT lease_expires_at, create_requested_at, owner_episode_id, pod_id "
+                "FROM pod_leases WHERE id=%s",
+                (acquisition["lease_id"],),
+            )
+        if lease is None:
+            raise Conflict(
+                "the acquisition lease is missing", lease_id=str(acquisition["lease_id"])
+            )
+        started = lease["create_requested_at"] or self.leases._clock.now()
+        budget = timedelta(milliseconds=self._resolved_boot_budget_ms())
+        margin = timedelta(milliseconds=self.leases._config.shutdown_margin_ms)
+        return min(started + budget, lease["lease_expires_at"] - margin)
+
+    def _boot_liveness(self, acquisition: dict) -> None:
+        """R5C-8: keep the lease's heartbeat fresh during the boot window."""
+        try:
+            self.leases.boot_heartbeat(acquisition["lease_id"])
+        except MicrodramaError:
+            # A fenced/expired lease is never revived; the deadline checks
+            # below classify the window. Anything else keeps the wait honest.
+            pass
+
+    def _boot_scope(self, acquisition: dict):
+        """The narrowly guarded acquisition-read scope (R5C-10, placement (a)).
+
+        The lease's own reservation IS the acquisition's COMPUTE hold on the
+        canonical path (``claim_pre_reserved`` binds them); the request guard
+        re-verifies the full acquisition/link/lease/pod linkage on every read.
+        """
+        with self.db.transaction(readonly=True) as tx:
+            lease = tx.fetchone(
+                "SELECT pod_id, owner_episode_id, reservation_id FROM pod_leases WHERE id=%s",
+                (acquisition["lease_id"],),
+            )
+        if lease is None or lease["pod_id"] is None or lease["reservation_id"] is None:
+            raise EffectDenied("boot read lacks its acquisition lease/COMPUTE-hold linkage")
+        return self.comfy._client.acquisition_read_scope(
+            acquisition_id=acquisition["acquisition_id"],
+            reservation_id=lease["reservation_id"],
+            lease_id=acquisition["lease_id"],
+            pod_id=lease["pod_id"],
+            episode_id=lease["owner_episode_id"],
+        )
+
+    def wait_ready(self, acquisition: dict) -> None:
+        """R5b: the ready gate - gateway readiness plus the first /object_info.
+
+        Placement (a) (R5C-10): no PROMPT reservation and no sample
+        materialization happened before this point. Only the two boot reads
+        run, through the acquisition-read scope. Successful initial readiness
+        is persisted (the ``cold_start_ms`` marker), so the boot deadline
+        applies ONLY to unfinished initial boot: recovery of already-admitted
+        work (R5C-9) never re-classifies as BOOT_TIMEOUT.
+        """
+        if self._mode != "EXECUTE":
+            return
+        from microdrama.rendering.benchmark_experiments import (
+            acquisition_coverage,
+        )
+        from microdrama.rendering.diagnostics import (
+            reset_request_deadline,
+            set_request_deadline,
+        )
+
+        with self.db.transaction(readonly=True) as tx:
+            records = acquisition_coverage(tx, acquisition["experiment_id"])
+        record = records.get(str(acquisition["acquisition_id"])) or {}
+        if record.get("cold_start_ms") is not None:
+            return  # R5C-9: initial readiness already persisted
+        clock = self.leases._clock
+        deadline = self._boot_deadline(acquisition)
+        sleep = self._boot_sleep
+        scope = self._boot_scope(acquisition)
+        token = set_request_deadline(deadline, clock.now)
+        try:
+            with scope:
+                while True:
+                    # Deadline before EVERY request and after every sleep.
+                    if clock.now() >= deadline:
+                        raise BootFailure("BOOT_TIMEOUT", detail="ready gate elapsed")
+                    ready = self._read_ready()
+                    state = ready.get("state")
+                    if state == "PROVISION_FAILED":
+                        raise BootFailure("PROVISION_FAILED")
+                    if state in ("PROVISIONED", "NO_PROVISIONING"):
+                        if self.comfy._client.boot_object_info() is not None:
+                            self._record_initial_readiness(acquisition, ready)
+                            return
+                    self._boot_liveness(acquisition)
+                    remaining = (deadline - clock.now()).total_seconds()
+                    if remaining <= 0:
+                        raise BootFailure("BOOT_TIMEOUT", detail="ready gate elapsed")
+                    sleep(min(BOOT_POLL_SECONDS, remaining))
+        finally:
+            reset_request_deadline(token)
+
+    def _read_ready(self) -> dict:
+        """One ready poll; every tolerated failure keeps waiting (R5b)."""
+        from microdrama.contracts.errors import ProviderError
+
+        client = self.comfy._client
+        try:
+            value = client.ready_state()
+        except (ProviderError, NeedsReconciliation, OSError):
+            return {"state": "UNREACHABLE", "provision": None}
+        return value if isinstance(value, dict) else {"state": "UNREACHABLE", "provision": None}
+
+    def _record_initial_readiness(self, acquisition: dict, ready: dict) -> None:
+        """Persist the durable initial-readiness marker (R5C-9) + timings."""
+        from microdrama.rendering.benchmark_experiments import merge_acquisition_coverage
+
+        clock = self.leases._clock
+        with self.db.transaction(readonly=True) as tx:
+            lease = tx.fetchone(
+                "SELECT create_requested_at FROM pod_leases WHERE id=%s",
+                (acquisition["lease_id"],),
+            )
+        payload: dict[str, Any] = {"cold_start_ms": None, "provision_ms": None}
+        started = (lease or {}).get("create_requested_at")
+        if started is not None:
+            payload["cold_start_ms"] = int((clock.now() - started).total_seconds() * 1000)
+        provision = ready.get("provision") or {}
+        try:
+            began = datetime.fromisoformat(str(provision.get("started_at")))
+            ended = datetime.fromisoformat(str(provision.get("ended_at")))
+            payload["provision_ms"] = int((ended - began).total_seconds() * 1000)
+        except (TypeError, ValueError):
+            pass
+        with self.db.transaction() as tx:
+            merge_acquisition_coverage(
+                tx, acquisition["experiment_id"], acquisition["acquisition_id"], payload
+            )
 
     def bind_for_recovery(self, acquisition_id: UUID) -> str:
         """§3.4 recovery binding. BOUND, VERIFIED_SOURCE_GONE or INDETERMINATE.
@@ -755,6 +985,21 @@ class _SealedNativeInputs:
                         "SELECT * FROM benchmark_uploads WHERE acquisition_id=%s AND asset_sha256=%s AND media_kind=%s AND role=%s AND subject_id=%s",
                         identity,
                     )
+                    # R5C-5: one verified byte upload reused by distinct
+                    # semantic bindings - a sibling role row that already
+                    # VERIFIED this exact key (same digest) means the bytes
+                    # are on the pod; this row reconciles by checksum readback
+                    # instead of re-POSTing them.
+                    verified_same_key = (
+                        tx.fetchone(
+                            "SELECT upload_key FROM benchmark_uploads "
+                            "WHERE acquisition_id=%s AND upload_key=%s AND state='VERIFIED' "
+                            "LIMIT 1",
+                            (acquisition["acquisition_id"], key),
+                        )
+                        if row is None
+                        else None
+                    )
                     if row is None:
                         tx.execute(
                             "INSERT INTO benchmark_uploads(acquisition_id,asset_sha256,media_kind,role,subject_id,destination_slot,upload_key,state) VALUES(%s,%s,%s,%s,%s,%s,%s,'INTENT')",
@@ -763,7 +1008,21 @@ class _SealedNativeInputs:
                 if row is not None:
                     # INTENT itself may have crossed the network before a crash.
                     # Any durable prior intent is reconciliation-only, never POST.
-                    self.client.reconcile_input(expected_sha256=digest, upload_key=key)
+                    self.client.reconcile_input(
+                        expected_sha256=digest,
+                        upload_key=key,
+                        role=binding.role.value,
+                        subject_id=binding.subject_id,
+                    )
+                elif verified_same_key is not None:
+                    # The reused office binding: the pod already holds these
+                    # exact bytes under this key - readback only, no POST.
+                    self.client.reconcile_input(
+                        expected_sha256=digest,
+                        upload_key=key,
+                        role=binding.role.value,
+                        subject_id=binding.subject_id,
+                    )
                 else:
                     data = self.store.get_bytes(assets[binding.asset_id]["object_key"])
                     validate_input_bytes(data, kind, digest)
@@ -778,7 +1037,14 @@ class _SealedNativeInputs:
                             "UPDATE benchmark_uploads SET state='UNKNOWN' WHERE acquisition_id=%s AND asset_sha256=%s AND media_kind=%s AND role=%s AND subject_id=%s",
                             identity,
                         )
-                    self.client.upload_input(data, kind, digest, key)
+                    self.client.upload_input(
+                        data,
+                        kind,
+                        digest,
+                        key,
+                        role=binding.role.value,
+                        subject_id=binding.subject_id,
+                    )
                 with self.db.transaction() as tx:
                     tx.execute(
                         "UPDATE benchmark_uploads SET state='VERIFIED',locator=%s,verified_readback_sha256=%s WHERE acquisition_id=%s AND asset_sha256=%s AND media_kind=%s AND role=%s AND subject_id=%s",
@@ -810,7 +1076,10 @@ class _SealedNativeInputs:
         with self._scope(acquisition):
             for row in rows:
                 self.client.reconcile_input(
-                    expected_sha256=row["asset_sha256"], upload_key=row["upload_key"]
+                    expected_sha256=row["asset_sha256"],
+                    upload_key=row["upload_key"],
+                    role=row["role"],
+                    subject_id=row["subject_id"],
                 )
                 with self.db.transaction() as tx:
                     tx.execute(
@@ -1302,7 +1571,41 @@ def build_experiment_world(
     canonical_guard = durable_comfy_request_guard(db)
     client = None
 
-    def request_guard(path, key, auth):
+    def request_guard(path, key, auth, binding=None):
+        # T031 R5b (R5C-10, placement (a)): the acquisition-read scope. Boot
+        # reads (the ready poll and the boot-window /object_info) carry exact
+        # acquisition/COMPUTE-hold/lease/pod linkage; a boot read without it is
+        # refused. The sample/operation guards below are unchanged.
+        if hasattr(auth, "acquisition_id"):
+            if path not in ("/__drama/ready", "/object_info"):
+                raise EffectDenied("the boot-read scope carries only readiness reads")
+            with db.transaction(readonly=True) as tx:
+                row = tx.fetchone(
+                    "SELECT l.pod_id, l.owned_tag, l.provider_account_ref, l.lease_state, "
+                    "l.owner_episode_id, r.state AS reservation_state, k.reservation_id "
+                    "FROM benchmark_acquisitions a "
+                    "JOIN pod_leases l ON l.id=a.lease_id "
+                    "JOIN benchmark_reservation_links k ON k.acquisition_id=a.acquisition_id "
+                    "AND k.purpose='COMPUTE' "
+                    "JOIN reservations r ON r.id=k.reservation_id "
+                    "WHERE a.acquisition_id=%s AND a.experiment_id=%s",
+                    (auth.acquisition_id, experiment_id),
+                )
+            if (
+                row is None
+                or row["reservation_state"] != "ACTIVE"
+                or row["reservation_id"] != auth.reservation_id
+                or row["owner_episode_id"] != auth.episode_id
+                or row["lease_state"] not in ("CLAIMED", "ACTIVE")
+                or row["pod_id"] != auth.pod_id
+                or row["pod_id"] != client._bound_pod_id
+                or row["owned_tag"] != owned_tag
+                or row["provider_account_ref"] != authorization.provider_account_ref
+            ):
+                raise EffectDenied(
+                    "boot read lacks exact acquisition/COMPUTE-hold/lease/pod linkage"
+                )
+            return
         # Every HTTP scope must resolve through this experiment's exact canonical
         # sample/hold/job and active acquired lease; arbitrary jobs cannot borrow it.
         with db.transaction(readonly=True) as tx:
@@ -1330,10 +1633,24 @@ def build_experiment_world(
                 if mode != "EXECUTE":
                     raise EffectDenied(f"{mode.lower()} world cannot upload generation inputs")
                 policy.validate(db, settings, live_clock, quote)
+            # R5C-5: the lookup is scoped by acquisition + key + role + subject
+            # - NEVER key alone. Distinct semantic bindings share one
+            # digest-derived key; a key-only fetch could select another role's
+            # row and refuse a legitimate UNKNOWN intent (or authorize the
+            # wrong one).
+            if not (
+                binding
+                and isinstance(binding[0], str)
+                and isinstance(binding[1], str)
+                and binding[0]
+                and binding[1]
+            ):
+                raise EffectDenied("input route requires its exact role/subject binding")
             with db.transaction(readonly=True) as tx:
                 row = tx.fetchone(
-                    "SELECT * FROM benchmark_uploads WHERE acquisition_id=%s AND upload_key=%s",
-                    (sample["acquisition_id"], key),
+                    "SELECT * FROM benchmark_uploads WHERE acquisition_id=%s AND upload_key=%s "
+                    "AND role=%s AND subject_id=%s",
+                    (sample["acquisition_id"], key, binding[0], binding[1]),
                 )
             if row is None:
                 raise EffectDenied("input key lacks exact durable acquisition upload intent")
@@ -1393,6 +1710,8 @@ def build_experiment_world(
         stage_inputs=native.stage,
         billing_readiness=lambda lease_id: lease_billing_readiness(db, lease_id),
         reconcile_uploads=native.readback,
+        # R5b: the plan's runtime profile carries boot_budget (default 25 min).
+        boot_budget_ms=(seal.runtime_profile or {}).get("boot_budget_ms"),
     )
     world._native = native
     world._provider = provider

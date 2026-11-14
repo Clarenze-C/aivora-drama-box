@@ -285,6 +285,9 @@ class ComfyHistoryEntry(ContractModel):
     status_str: Identifier = Field(description="e.g. success / error")
     outputs: list[ComfyOutputFile] = Field(default_factory=list)
     error_message: str | None = Field(default=None, max_length=4000)
+    # T031 R5b (R5C-12): genuine sampler timing evidence WHEN the provider's
+    # history carries it; null otherwise (exported UNKNOWN, never 0).
+    sampler_ms: int | None = Field(default=None, ge=0)
     provenance: Provenance
 
 

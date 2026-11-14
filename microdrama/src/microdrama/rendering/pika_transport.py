@@ -59,6 +59,36 @@ def mapped_schema_sha256(raw: dict[str, Any], classes) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _sampler_ms_from_history(entry) -> int | None:
+    """Genuine sampler timing evidence from one history entry, else None.
+
+    Recognized shapes (R5C-12): a ``["nodeexec", {"node": ..., "exec_time_ms":
+    N}]`` message whose node is the workflow's sampler node, or an explicit
+    numeric ``sampler_ms`` the payload carries. Anything else - including
+    submission acknowledgements - is NOT sampler timing.
+    """
+    status = entry.get("status") if isinstance(entry, dict) else None
+    messages = status.get("messages") if isinstance(status, dict) else None
+    if isinstance(messages, list):
+        for message in messages:
+            if not (isinstance(message, list) and len(message) == 2):
+                continue
+            kind, data = message
+            if kind != "nodeexec" or not isinstance(data, dict):
+                continue
+            node = str(data.get("node") or "")
+            if not node.lower().startswith(("sampler", "ksampler")):
+                continue
+            value = data.get("exec_time_ms")
+            if type(value) in (int, float) and value >= 0:
+                return int(value)
+    if isinstance(entry, dict):
+        value = entry.get("sampler_ms")
+        if type(value) in (int, float) and value >= 0:
+            return int(value)
+    return None
+
+
 def upload_key_for(
     experiment_id: UUID, acquisition_id: UUID, asset_sha256: str, media_kind: str
 ) -> str:
@@ -177,11 +207,16 @@ class PikaHttpClient(ComfyHttpClient):
                 )
             )
         status = entry.get("status", {})
+        # T031 R5b (R5C-12): preserve GENUINE sampler timing evidence when the
+        # provider's history carries it (a nodeexec message with the sampler
+        # node's execution time, or an explicit sampler_ms field); else null -
+        # never a fabricated zero.
         return ComfyHistoryEntry(
             prompt_id=prompt_id,
             completed=bool(status.get("completed")),
             status_str=str(status.get("status_str", "unknown")),
             outputs=outputs,
+            sampler_ms=_sampler_ms_from_history(entry),
             provenance=Provenance.LIVE_PROVIDER,
         )
 
@@ -211,7 +246,14 @@ class PikaHttpClient(ComfyHttpClient):
             raise SchemaInvalid("input locator is not a deterministic acquisition key")
         return upload_key.rsplit("/", 1)
 
-    def reconcile_input(self, *, expected_sha256: str, upload_key: str) -> str:
+    def reconcile_input(
+        self,
+        *,
+        expected_sha256: str,
+        upload_key: str,
+        role: str | None = None,
+        subject_id: str | None = None,
+    ) -> str:
         subfolder, filename = self._input_key(upload_key)
         if self._bound_pod_id is None:
             raise EffectDenied("Pika input readback requires an owned pod")
@@ -220,13 +262,21 @@ class PikaHttpClient(ComfyHttpClient):
             "/view",
             query={"filename": filename, "subfolder": subfolder, "type": "input"},
             authorization_key=upload_key,
+            binding=(role, subject_id) if role is not None else None,
         )
         if len(data) > MAX_INPUT_BYTES or hashlib.sha256(data).hexdigest() != expected_sha256:
             raise NeedsReconciliation("Pika input readback is absent, unverifiable or differs")
         return upload_key
 
     def upload_input(
-        self, data: bytes, media_kind: str, expected_sha256: str, upload_key: str
+        self,
+        data: bytes,
+        media_kind: str,
+        expected_sha256: str,
+        upload_key: str,
+        *,
+        role: str | None = None,
+        subject_id: str | None = None,
     ) -> str:
         validate_input_bytes(data, media_kind, expected_sha256)
         subfolder, filename = self._input_key(upload_key)
@@ -238,7 +288,15 @@ class PikaHttpClient(ComfyHttpClient):
         if self._endpoint is None or self._bound_pod_id is None or auth is None:
             raise EffectDenied("Pika upload requires owned pod and durable authorization scope")
         self.attest_schema()
-        self._request_guard("/upload/image", upload_key, auth)
+        # R5C-5: the guard lookup is scoped by acquisition + key + role +
+        # subject - never key alone (role rows sharing one digest-derived key
+        # must not collapse into one ambiguous row). The binding rides the
+        # guard call only when the caller names it; the experiment-world guard
+        # REFUSES input routes without it.
+        if role is not None and subject_id is not None:
+            self._request_guard("/upload/image", upload_key, auth, binding=(role, subject_id))
+        else:
+            self._request_guard("/upload/image", upload_key, auth)
         boundary = "t031_" + hashlib.sha256(upload_key.encode()).hexdigest()
         parts = []
         for name, value in (("subfolder", subfolder), ("type", "input"), ("overwrite", "false")):
@@ -265,7 +323,12 @@ class PikaHttpClient(ComfyHttpClient):
                 "input",
             ):
                 raise NeedsReconciliation("Pika upload returned a different locator")
-            return self.reconcile_input(expected_sha256=expected_sha256, upload_key=upload_key)
+            return self.reconcile_input(
+                expected_sha256=expected_sha256,
+                upload_key=upload_key,
+                role=role,
+                subject_id=subject_id,
+            )
         except NeedsReconciliation:
             raise
         except Exception:

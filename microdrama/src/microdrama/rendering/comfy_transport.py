@@ -56,6 +56,27 @@ class ComfyRequestAuthorization:
     operation_id: UUID | None
 
 
+@dataclass(frozen=True)
+class AcquisitionReadAuthorization:
+    """T031 R5b (placement (a), R5C-10): the narrowly guarded boot-read scope.
+
+    Authorizes ONLY the two boot reads (``/__drama/ready`` and the boot-window
+    ``/object_info``) through exact acquisition / COMPUTE-hold / lease / pod
+    linkage, BEFORE any sample job or PROMPT hold exists. The sample-job scope
+    (``ComfyRequestAuthorization``) stays unchanged beside it.
+    """
+
+    acquisition_id: UUID
+    reservation_id: UUID
+    lease_id: UUID
+    pod_id: str
+    episode_id: UUID
+
+
+#: The only paths the acquisition-read scope may carry (R5b/R5C-10).
+BOOT_READ_PATHS = ("/__drama/ready", "/object_info")
+
+
 class UrllibTransport:
     """Small stdlib transport; no retries, bounded sanitized diagnostics."""
 
@@ -105,7 +126,7 @@ class ComfyHttpClient:
         endpoint: str | None = None,
         credential_ref: str | None,
         credential_resolver: Callable[[str], str | None],
-        request_guard: Callable[[str, str | None, ComfyRequestAuthorization], None],
+        request_guard: Callable[..., None],
         dispatch_guard: Callable[[ComfyRequestAuthorization], None],
         transport: HttpTransport | None = None,
     ) -> None:
@@ -119,6 +140,11 @@ class ComfyHttpClient:
         self._transport = transport or UrllibTransport()
         self._authorization: ContextVar[ComfyRequestAuthorization | None] = ContextVar(
             f"comfy_auth_{id(self)}", default=None
+        )
+        # T031 R5b: the boot-read scope (AcquisitionReadAuthorization) lives
+        # BESIDE the sample-job scope; a boot read never fabricates a job.
+        self._acquisition_read: ContextVar[AcquisitionReadAuthorization | None] = ContextVar(
+            f"comfy_acq_read_{id(self)}", default=None
         )
 
     def bind_pod_endpoint(self, pod_id: str, endpoint_url: str | None) -> None:
@@ -148,6 +174,30 @@ class ComfyHttpClient:
             return
         self._endpoint = expected
         self._bound_pod_id = pod_id
+
+    @contextmanager
+    def acquisition_read_scope(
+        self,
+        *,
+        acquisition_id: UUID,
+        reservation_id: UUID,
+        lease_id: UUID,
+        pod_id: str,
+        episode_id: UUID,
+    ):
+        """Bind the boot-read authorization to the reads made in this scope."""
+        auth = AcquisitionReadAuthorization(
+            acquisition_id=acquisition_id,
+            reservation_id=reservation_id,
+            lease_id=lease_id,
+            pod_id=pod_id,
+            episode_id=episode_id,
+        )
+        token = self._acquisition_read.set(auth)
+        try:
+            yield auth
+        finally:
+            self._acquisition_read.reset(token)
 
     @contextmanager
     def authorization_scope(
@@ -198,6 +248,7 @@ class ComfyHttpClient:
         query: Mapping[str, str] = (),
         body: Any = None,
         authorization_key: str | None = None,
+        binding: tuple[str | None, str | None] | None = None,
     ) -> bytes:
         # Every route is a live effect boundary. Refuse the effect and check the caller's
         # reservation/operation context before resolving a credential or touching HTTP.
@@ -208,8 +259,19 @@ class ComfyHttpClient:
             raise EffectDenied("the Comfy endpoint is not bound; it is derived from the leased Pod")
         authorization = self._authorization.get()
         if authorization is None:
-            raise EffectDenied("ComfyUI request has no scoped durable reservation/operation")
-        self._request_guard(path, authorization_key, authorization)
+            # T031 R5b: the boot reads may run under the acquisition-read
+            # scope before any sample job/operation exists - through the SAME
+            # guard, with the acquisition-read authorization shape.
+            acquisition_read = self._acquisition_read.get()
+            if acquisition_read is None or path not in BOOT_READ_PATHS:
+                raise EffectDenied("ComfyUI request has no scoped durable reservation/operation")
+            authorization = acquisition_read
+        if binding is not None:
+            # R5C-5: the role/subject binding scopes upload/readback guard
+            # lookups; callers without one keep the three-argument contract.
+            self._request_guard(path, authorization_key, authorization, binding=binding)
+        else:
+            self._request_guard(path, authorization_key, authorization)
         headers = self._headers()
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -218,6 +280,25 @@ class ComfyHttpClient:
             url += "?" + urlencode(query)
         payload = None if body is None else json.dumps(body, separators=(",", ":")).encode()
         return self._transport.request(method, url, headers=headers, body=payload)
+
+    def ready_state(self) -> dict[str, Any]:
+        """T031 R5b: the gateway's provisioning readiness (GET /__drama/ready).
+
+        Answered from the pod's state file by the in-image gateway; never
+        proxied to ComfyUI. Requires the acquisition-read scope.
+        """
+        value = json.loads(self._request("GET", "/__drama/ready"))
+        if not isinstance(value, dict):
+            raise ProviderError("gateway ready state must be an object")
+        return value
+
+    def boot_object_info(self) -> dict[str, Any] | None:
+        """T031 R5b: one boot-window /object_info read; None while ComfyUI is
+        still unreachable (the caller keeps waiting inside its boot budget)."""
+        try:
+            return json.loads(self._request("GET", "/object_info"))
+        except (ProviderError, NeedsReconciliation, OSError):
+            return None
 
     def object_info(self) -> dict[str, ComfyNodeInfo]:
         data = json.loads(self._request("GET", "/object_info"))
@@ -363,6 +444,8 @@ class ComfyHttpClient:
 
 
 __all__ = [
+    "AcquisitionReadAuthorization",
+    "BOOT_READ_PATHS",
     "ComfyHttpClient",
     "ComfyRequestAuthorization",
     "HttpTransport",

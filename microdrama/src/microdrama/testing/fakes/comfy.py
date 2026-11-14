@@ -218,6 +218,24 @@ class FakeComfyClient(FakeBase):
     def bind_pod_endpoint(self, pod_id: str, endpoint_url: str | None) -> None:
         self.bound_pod_endpoint = (pod_id, endpoint_url)
 
+    # --- T031 R5b: the boot-read surface the ready gate drives -----------------
+    #
+    # The fake pod models the canary/CPU image (no provisioning flag): the
+    # gateway answers NO_PROVISIONING and ComfyUI is up immediately. Tests
+    # script real provisioning by overriding ``ready_state``/``boot_object_info``.
+
+    def ready_state(self) -> dict:
+        return {"state": "NO_PROVISIONING", "provision": None}
+
+    def boot_object_info(self) -> dict | None:
+        self.state.require_alive()
+        return {"fake": True}
+
+    def acquisition_read_scope(self, **_kwargs):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
     def find_prompt_id_by_client(self, client_id: str) -> str | None:
         self.state.require_alive()
         """H-2: the fake server remembers the deterministic client id per prompt
