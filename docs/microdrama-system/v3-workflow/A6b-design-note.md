@@ -1,10 +1,14 @@
 # A6b design note: the V3 scheduler — singleton, durable periods, calendar triggers
 
-**Version 1.1, 13 Nov 2026. Author: GLM (design note only; no code).** Revision 1 applies the
-round-1 critique [codex-a6b-note-critique.md](codex-a6b-note-critique.md) (verdict REWORK;
-N6-1..6 BLOCKING, N6-7..12 SHOULD-FIX) per [a6b-critique-rulings.md](a6b-critique-rulings.md)
-— every ruled finding ACCEPTED, replacement wording binding. §11 maps each finding to its
-section. Requirements: [phase-A-spec.md](phase-A-spec.md) v0.3 §0, §1, §6, §9.1, §9.2
+**Version 1.2, 14 Nov 2026. Author: GLM (design note only; no code).** Revision 2 applies the
+round-2 recritique [codex-a6b-note-recritique.md](codex-a6b-note-recritique.md) (verdict
+REWORK; N6R2-1/2 BLOCKING, N6R2-3..5 SHOULD-FIX) per
+[a6b-recritique-rulings.md](a6b-recritique-rulings.md) — all five ACCEPTED, replacement
+wording binding; **round-2 rulings applied (GLM); awaiting Opus re-check — no round 3 run.**
+§11 maps each finding, rounds 1 and 2, to its section. Revision 1 applied the round-1 critique
+[codex-a6b-note-critique.md](codex-a6b-note-critique.md) (verdict REWORK; N6-1..6 BLOCKING,
+N6-7..12 SHOULD-FIX) per [a6b-critique-rulings.md](a6b-critique-rulings.md) — every ruled
+finding ACCEPTED, replacement wording binding. Requirements: [phase-A-spec.md](phase-A-spec.md) v0.3 §0, §1, §6, §9.1, §9.2
 (scheduler startup only), §10 (A6b row), §11 (A-T14); binding wording AC-20
 ([codex-a-critique.md](codex-a-critique.md)) and **AR-5**
 ([codex-a-recritique.md](codex-a-recritique.md)); master [SPEC-v3.md](SPEC-v3.md) v0.4.6 §1,
@@ -239,18 +243,29 @@ overlapping dispatchers cannot both mint the next attempt).
    `finished_at = now` and an error entry naming it.
 3. Read-only: per trigger, the **durable watermark** — its latest claimed period and that row's
    `fired_at` — from `scheduler_firings`; compute due candidates (§5).
-4. For each due trigger in catalog order (today's declaration order, `S/scheduling/service.py:118`):
+4. **Bounded recovery pass (N6R2-2):** resolve unfinished obligations — `scheduler_effect_intents`
+   rows still `PENDING`, or `FAILED` with `failure_kind = 'RETRYABLE'` — **independently of
+   new-period eligibility and firing claims**: an obligation whose period is already claimed, or
+   whose schedule is not due again until its interval elapses, is still recovered here, so
+   same-period recovery does not wait for the next due period. The pass reuses each obligation's
+   canonical recovery identity (§4 table) without reclaiming the firing, and **completes the
+   original intent, or supersedes it only after durable successor coverage** (§4 lifecycle).
+   `TERMINAL` obligations are never re-run — they remain operator-owned. The pass is bounded: one
+   re-scan of unfinished obligations, never a replay of missed periods. Each recovery action is
+   independently started → `still_held()` or abort; recovery failures propagate into `errors`
+   individually and count against success (step 6) exactly like sweep items (N6-11).
+5. For each due trigger in catalog order (today's declaration order, `S/scheduling/service.py:118`):
    `still_held()` or abort; then fire per its mode (§4). One trigger's failure still never kills
    the tick (`S/scheduling/service.py:126-133`) — but it is recorded on the tick row and **counts
-   against success** (step 5). Sweep-item failures (a janitor item, one shot's dispatch, one
+   against success** (step 6). Sweep-item failures (a janitor item, one shot's dispatch, one
    reconcile action) propagate into `errors` individually, never buried in an action summary
    (N6-11).
-5. Close the tick with an explicit success definition (N6-11): **`SUCCEEDED` iff the tick ran to
-   completion with no trigger failure and no sweep-item failure.** Any trigger failure, any
-   sweep-item failure, or a tick-level exception → `FAILED`, with every failure in `errors`. A
-   tick in which every trigger fails is therefore never successful. `report` =
-   `FireReport.as_dict()` (`S/scheduling/service.py:47-54`).
-6. `finally` releases the lock; the connection closes even if unlock fails (§3 acquisition
+6. Close the tick with an explicit success definition (N6-11): **`SUCCEEDED` iff the tick ran to
+   completion with no trigger failure, no recovery failure and no sweep-item failure.** Any
+   trigger failure, any recovery failure, any sweep-item failure, or a tick-level exception →
+   `FAILED`, with every failure in `errors`. A tick in which every trigger fails is therefore
+   never successful. `report` = `FireReport.as_dict()` (`S/scheduling/service.py:47-54`).
+7. `finally` releases the lock; the connection closes even if unlock fails (§3 acquisition
    helper).
 
 The `only=` filter stays (test seam, `S/scheduling/service.py:119-120`). `__main__.py` stays
@@ -266,7 +281,10 @@ and fail-closed exits are A6c's.
 **Claim rule (every trigger):** the firing transaction inserts the `scheduler_firings` row with
 `INSERT … ON CONFLICT (trigger_id, period_key) DO NOTHING RETURNING id` — `period_key` is the raw
 token (§5). **No row returned → the period is already claimed → skip** (a crash-restart race after
-lock release settles here: the loser skips; the winner's effects are already committed).
+lock release settles here: the loser skips; the winner's effects are already committed). **A
+claimed period is never re-fired (N6R2-2): its unfinished obligations are the §3 step 4 recovery
+pass's input — recovery runs independently of eligibility and claims — never a reason to claim the
+period again.**
 `load_last_fired`/`record_fired` (`S/scheduling/service.py:57-69`) leave the fire path after the
 §5 cutover retires `schedule_state` (OQ-1).
 
@@ -277,7 +295,7 @@ lock release settles here: the loser skips; the winner's effects are already com
 | `w05-render-dispatch` | interval | **INTENTS** | Claim + intent `render_dispatch`, committed first; then the existing multi-transaction flow runs (read-only manifest scan `:720-732`, pod-lease claim `:747-753`, `ensure_pod` `:755`, per-shot router dispatch), with `still_held()` before each independently started action (§3). |
 | `w05-render-poll` | interval | **INTENTS** | Claim + intent `render_poll`; then the existing reconciliation flow, ownership-checked per action. |
 | `w12-workers-janitor` | interval | **INTENTS** | Claim + intent `workers_janitor_sweep`; then `WorkersJanitor.sweep` — each step its own transaction (`S/workers/janitor.py:91-133`; `requeue_expired` `S/core/jobs.py:706`, `expire_stale`, telemetry read, evidence write). |
-| `w12-gpu-janitor` | interval | **INTENTS** | Claim + intent `gpu_janitor_sweep`; then `Janitor.sweep` — per-lease cleans and evidence events, each its own transaction (`S/rendering/janitor.py:183-193`, `:236-269`, `:166-179`), evidence deduplicated by deterministic `event_id` (§4). |
+| `w12-gpu-janitor` | interval | **INTENTS** | Claim + intent `gpu_janitor_sweep`; then `Janitor.sweep` — per-lease cleans and evidence events, each its own transaction (`S/rendering/janitor.py:183-193`, `:236-269`, `:166-179`), evidence deduplicated by deterministic `event_id` through the append-once path (§4, N6R2-1). |
 | `llm-reconciler` (new, N6-6) | interval (120 s, bucket eligibility) | **INTENTS** | Claim + intent `llm_reconcile`; then `LlmReconciler.reconcile_due()` (A0 §5.3; scratch A0 ships `S/llm/reconciler.py:76`, `:126`) under A0's audited contract: RESUME under **its own worker identity and lease** (A0S-1), never requeueing a job whose linked operation is in flight, reconciling only through legal `ALLOWED_MOVES` (A0S-2), `UNKNOWN`/vanished work left to the operator (A0's boundary table), and **A3's fence validating `expected_content_revision` before any adopted result is installed** (spec §7.1 names reconciliation adoption). Cleanup and accounting for stale work stay recoverable through the ordinary job/operation paths. Each per-job reconcile action is independently started → ownership-checked (§3). |
 | `v3-daily-summary` (new) | calendar 09:00 | **ATOMIC** | Firing claim + `summary.daily` event (and `buffer.low` / `slo.below` when breaching) via `append_event` **on the same caller transaction** (`S/core/events.py:69-144`) — event emission is a database effect, so it is atomic with the period identity. Payloads are A6a's registered schemas, integer-only (§6; N6-5). |
 
@@ -299,13 +317,25 @@ its canonical recovery identity and path at each interruption boundary:
 | `render_dispatch` | pod-lease semantic key `pod.lease:{episode}:render` (`S/scheduling/service.py:750`); per-shot attempt identity `(episode, shot, attempt n)` bound to its provider operation | killed before dispatch → the next sweep rediscovers un-dispatched shots (`attempts_used`, `:738`) and re-enters **at the original attempt identity** (§3, N6-1); killed mid-dispatch → the provider operation's request/recovery identity (A0 §5.3, A-T18 discipline); after completion → no-op | pod/gateway transient → RETRYABLE; `UNKNOWN` operation → TERMINAL (operator) |
 | `render_poll` | the polled provider operations and job states | killed anywhere → next period re-polls from the operation's current state; no replay of missed periods needed (coalesced) | transient → RETRYABLE; `UNKNOWN` → TERMINAL |
 | `workers_janitor_sweep` | durable job rows (expired claims/holds) re-found by `requeue_expired` (`S/core/jobs.py:706`) | each step its own transaction; killed mid-sweep → next period re-scans and finishes | RETRYABLE (durable rows); none terminal |
-| `gpu_janitor_sweep` | non-terminal leases re-found by the candidate query (`S/rendering/janitor.py:236-246`); **evidence events keyed by a deterministic `event_id = uuid5(NAMESPACE, f"janitor:{subject}:{action}")` passed to `append_event`** | killed mid-clean → next sweep re-finds the lease; a replayed evidence append is a **primary-key no-op** (`domain_events.event_id` is the PK, `M/0001:116`) — today `_evidence` omits `event_id` so `append_event` mints a fresh UUID (`S/core/events.py:87`) and the `uuid5` aggregate at `S/rendering/janitor.py:169` only keys the sequence: **aggregate identity alone is not effect deduplication** (N6-2) | transient → RETRYABLE; `UNKNOWN` provider state → TERMINAL (operator) |
+| `gpu_janitor_sweep` | non-terminal leases re-found by the candidate query (`S/rendering/janitor.py:236-246`); canonical event occurrences keyed by a deterministic `event_id = uuid5(NAMESPACE, f"janitor:{subject}:{action}")`, appended through the **transaction-safe append-once path** (paragraph below) | killed mid-clean → the recovery pass (§3 step 4) re-finds the lease; a replayed canonical append **returns the stored event** — no second sequence increment, no transaction failure (N6-2, N6R2-1; today `append_event` increments `aggregate_sequences` then plain-INSERTs into `domain_events`, `S/core/events.py:101-144`, so a duplicate `event_id` raises and aborts: **a deterministic id alone is not a no-op**) | transient → RETRYABLE; `UNKNOWN` provider state → TERMINAL (operator) |
 | `llm_reconcile` | the job's `NEEDS_RECONCILIATION` state + its linked `llm.subscription` operation id | killed anywhere → the job (or its in-flight operation) is exactly as A0 left it; the next 2-minute period re-finds it (A0S-1: never requeued while in flight) | gateway unreachable → RETRYABLE (no change, next tick); `UNKNOWN`/vanished → TERMINAL (operator, A0's table) |
 
-So a killed sweep leaves at most unfinished-but-idempotent work: the recurring sweep **coalesces
-recovery** — one re-scan of unfinished obligations — **without replaying every missed period**
-(N6-2), and **crash replay of a direct action is a no-op** (A-T14). The marker exists for
-observability and the supersede bookkeeping, not for recovery correctness.
+**Append-once for canonical events (N6R2-1).** Provide a transaction-safe append-once path for
+each canonical event occurrence: a replay whose deterministic `event_id` **matches the stored
+event returns it** — without another sequence increment and without a transaction failure —
+while **conflicting reuse of the same `event_id` (a different payload) fails explicitly**. The
+path covers **every canonical scheduler event occurrence, the janitor's actual lease-clean events
+included**: those are built by `_lease_event` (`S/rendering/janitor.py:153-163`, called on the
+clean path at `:351` and the other lease-lifecycle sites `:396-538`), which today passes no
+`event_id` at all — so equipping `_evidence` (`:166`) alone would not deduplicate them. Replay
+tests assert successful recovery, an unchanged aggregate sequence, and exactly one canonical
+event (S3).
+
+So a killed sweep leaves at most unfinished-but-idempotent work: the tick's bounded recovery
+pass (§3 step 4) **coalesces recovery** — one re-scan of unfinished obligations, every tick —
+**without replaying every missed period** (N6-2, N6R2-2), and **crash replay of a direct action
+is a no-op** (A-T14; through the append-once path above for events, N6R2-1). The marker exists
+for observability and the supersede bookkeeping, not for recovery correctness.
 
 **Command/effect contract (N6-10).** Every trigger's effect, as rows:
 
@@ -324,9 +354,13 @@ and the reconciler's adoption included) routes through A3's fence — `expected_
 validated under the track SHARE lock **before** job locks — and STORY/CAST authority (gate
 activations) is never bypassed by scheduler-driven work**; the V1 cadence inserts no V3 tracks.
 **Event emission is transactional only**: `append_event` inside the firing transaction, delivery
-exclusively through A6a's dispatcher → sender chain (no inline dispatch); A6a's payload schemas
-are pinned against this note **before A6b code starts** (OQ-5 — integer representations, scope,
-timestamps, deep links).
+exclusively through A6a's dispatcher → sender chain (no inline dispatch). The **A6a event
+contract must be pinned and recorded here before A6b code starts** (OQ-5, N6R2-4): the accepted
+A6a schema identifier/version for each of `summary.daily`, `buffer.low`, `slo.below`, plus
+complete field types — the unavailable-metric representation, reporting scope and claimed
+summary date, execution timestamps, aggregate/correlation identity, and deep-link inputs
+(integer representations stay mandatory, N6-5). **Until that contract is supplied, OQ-5 remains
+open and blocks A6b code.**
 
 ## 5. Calendar triggers, eligibility and the cutover
 
@@ -347,16 +381,19 @@ class CalendarTrigger:
   `fire(now=…)` parameter) — including SQL: metric queries take parameterised timestamps, never
   `now()`. The calendar candidate is the **latest period whose scheduled instant ≤ injected now**;
   **its `period_key` is that candidate's scheduled local date** — before 09:00 the candidate is
-  *yesterday's* date. The date changes at midnight; the latest-due summary period advances at
-  09:00. Scheduled instant = `datetime.combine(local_date, local_time, ZoneInfo(tz))` as UTC —
+  *yesterday's* date. **Midnight leaves the latest-due summary candidate unchanged (N6R2-5): at
+  00:30 Wednesday the latest scheduled instant ≤ now is still Tuesday 09:00, so the candidate's
+  date is still Tuesday — the candidate advances only at 09:00**; only the raw calendar date is
+  a midnight-rolling quantity. Scheduled instant = `datetime.combine(local_date, local_time, ZoneInfo(tz))` as UTC —
   09:00 Bangkok = 02:00 UTC. All persisted instants remain `timestamptz` (UTC), per the event
   contract's `UtcDateTime` (`S/contracts/events.py:27`); no naive datetimes anywhere. Bangkok is
   DST-free, so local dates map stably onto instants.
 - **Execution time ≠ claimed date (N6-8).** `fired_at` records when the tick ran; the payload's
   `date` is the **claimed summary date** (the period's local date), and its reporting day is the
-  claimed date's previous calendar day — a catch-up run on Wednesday 10:00 for Tuesday's period
-  reports Monday's releases, bounded measurement windows computed **from the claimed date**, never
-  from execution time.
+  claimed date's previous calendar day — a catch-up run on **Wednesday 08:00** claims **Tuesday's**
+  period and reports Monday's releases; a **Wednesday 10:00** run claims **Wednesday's** period
+  (09:00 passed — the latest-due rule selects Wednesday, N6R2-5) and reports Tuesday's releases;
+  bounded measurement windows are computed **from the claimed date**, never from execution time.
 - **Watermark (N6-8).** Per trigger, the durable watermark is its latest claimed period. **A
   candidate older than the watermark never fires** — clock rollback cannot resurrect an older
   period "skipped forever", for either kind: calendar candidates compare as dates, interval
@@ -398,7 +435,9 @@ class CalendarTrigger:
   `summary.daily` event, plus `buffer.low` / `slo.below` only while breaching (definitions §6) —
   at most one of each per period, guaranteed by the firing claim in the same transaction. Event
   names follow the dotted-letter rule (`S/contracts/events.py:21`); payload schemas are registered
-  by **A6a**, pinned against this note before A6b code (OQ-5).
+  by **A6a** and pinned against this note before A6b code — accepted schema identifier/version
+  plus complete field types (§4 binding rows); **until supplied, OQ-5 remains open and blocks A6b
+  code** (N6R2-4).
 - **Registry:** `Schedule(schedule_id, workflow, interval_or_trigger, description)` accepts a
   `timedelta` (coerced to `IntervalTrigger`, eligibility `'elapsed'`) so existing constructions
   keep working (`X/integration/pipeline/test_scheduler_driven_path.py:57-59`);
@@ -418,20 +457,33 @@ shared by the summary trigger, serve readiness (A6c) and tests. Every query filt
 derived from the injected clock and the claimed summary date — never SQL `now()`** (N6-8).
 
 **SLO window — rolling 7 days (spec §9.1.5; master §9.4), integer-only (N6-5).** "Approved
-episode" = an episode with **current effective approval authority** — its latest `EPISODE_FINAL`
-`APPROVE` decision not superseded (A4's `effective_approval`, spec §7.2; N6-9). Distinct episodes
-are counted, so reapproving one episode never counts it twice and superseded approvals drop out:
+episode" = an episode whose **effective approval** — A4's `effective_approval(tx, gate, scope)`
+rule, spec §7.2: the latest non-superseded decision for the scope/gate (N6-9, N6R2-3) — exists,
+is an `APPROVE`, and **falls inside the window by that effective approval's own timestamp**.
+Authority is resolved through A4's rule: the query below is its SQL expression, and if the two
+ever drift, A4's reader rules. Distinct episodes are counted, so reapproving one episode never
+counts it twice, superseded approvals drop out, and supersede → reapprove restores the episode
+under the replacement approval's timestamp — a historical supersession never excludes it.
+**Cancelled scopes are excluded: cancelled episode scopes, and episodes under cancelled season
+ancestors** (`season_tracks.cancelled_at` / `episode_tracks.cancelled_at`, A1 §2.3):
 
 ```sql
 SELECT count(DISTINCT e.id) FROM episodes e
 JOIN seasons s ON s.id = e.season_id
+JOIN season_tracks st ON st.season_id = s.id
+JOIN episode_tracks et ON et.episode_id = e.id
+CROSS JOIN LATERAL (                  -- A4's effective_approval rule, as SQL (N6R2-3):
+  SELECT ae.action, ae.created_at FROM approval_events ae    -- latest non-superseded
+  WHERE ae.entity_type = 'episode' AND ae.entity_id = e.id   -- EPISODE_FINAL decision;
+    AND ae.gate_type = 'EPISODE_FINAL'                       -- none → not approved
+    AND NOT EXISTS (SELECT 1 FROM approval_supersessions sup
+                    WHERE sup.approval_event_id = ae.id)
+  ORDER BY ae.created_at DESC LIMIT 1) ea
 WHERE s.workflow_version = 'v3'
-  AND EXISTS (SELECT 1 FROM approval_events ae
-              WHERE ae.entity_type = 'episode' AND ae.entity_id = e.id
-                AND ae.gate_type = 'EPISODE_FINAL' AND ae.action = 'APPROVE'
-                AND ae.created_at >= %s AND ae.created_at < %s      -- window bounds, injected
-                AND NOT EXISTS (SELECT 1 FROM approval_supersessions sup
-                                WHERE sup.approval_event_id = ae.id));
+  AND st.cancelled_at IS NULL          -- cancelled season ancestors excluded (A1 §2.3)
+  AND et.cancelled_at IS NULL          -- cancelled episode scopes excluded (A1 §2.3)
+  AND ea.action = 'APPROVE'
+  AND ea.created_at >= %s AND ea.created_at < %s;             -- window bounds, injected
 ```
 
 **Rates are persisted as integers, never floats** (N6-5: canonical JSON and the persistence
@@ -444,29 +496,39 @@ rate) are rendered for display only. `slo.below` carries `approved_count`, `wind
 `catchup_window_days = 2`). Catch-up capacity is **reported, never alerted on**.
 
 **Buffer (spec §9.1.5; master §9.4).** Current **approved full-episode obligations** ahead of
-today, measured in days: distinct future Bangkok dates of scheduled posts bound to a full-episode
-release obligation that is under current approval authority — superseded authority excluded,
-**unrelated slot kinds excluded** (promo/hook/teaser slots never inflate the buffer; until phase F
-defines V3 slot kinds, only posts carrying a full-episode publish obligation count), **cancelled
-scopes excluded** (a cancelled season's or episode's scheduled posts stop counting from the
-cancellation, the reporting scope being non-cancelled V3 scopes):
+today, measured in days: distinct future Bangkok dates of scheduled posts **bound to the
+episode's effective approval** — each post's `approval_event_id` must equal that effective
+approval (`platform_posts.approval_event_id`, `M/0005:46`), so **stale-bound posts (bound to a
+superseded approval) never count, while a replacement post bound to the current effective
+approval does** (N6-9, N6R2-3) — **unrelated slot kinds excluded** (promo/hook/teaser slots never
+inflate the buffer; until phase F defines V3 slot kinds, only posts carrying a full-episode
+publish obligation count), **cancelled scopes excluded** (a cancelled season's or episode's
+scheduled posts stop counting, the reporting scope being non-cancelled V3 scopes):
 
 ```sql
 SELECT count(DISTINCT (p.scheduled_utc AT TIME ZONE 'Asia/Bangkok')::date)
 FROM platform_posts p
 JOIN episodes e ON e.id = p.episode_id
 JOIN seasons s ON s.id = e.season_id
+JOIN season_tracks st ON st.season_id = s.id
 JOIN episode_tracks et ON et.episode_id = e.id
+CROSS JOIN LATERAL (                  -- A4's effective_approval rule, as SQL (N6R2-3):
+  SELECT ae.id FROM approval_events ae                       -- latest non-superseded
+  WHERE ae.entity_type = 'episode' AND ae.entity_id = e.id   -- EPISODE_FINAL decision;
+    AND ae.gate_type = 'EPISODE_FINAL'                       -- none → nothing binds
+    AND NOT EXISTS (SELECT 1 FROM approval_supersessions sup
+                    WHERE sup.approval_event_id = ae.id)
+  ORDER BY ae.created_at DESC LIMIT 1) ea
 WHERE s.workflow_version = 'v3'
+  AND st.cancelled_at IS NULL          -- cancelled season ancestors excluded (A1 §2.3)
+  AND et.cancelled_at IS NULL          -- cancelled episode scopes excluded (A1 §2.3)
   AND et.production_state = 'APPROVED'
   AND et.release_state IN ('UNSCHEDULED','SCHEDULED')
   AND p.state IN ('RELEASE_APPROVED','SCHEDULED')
   AND p.slot_kind = 'FULL_EPISODE'             -- promo/hook/parts never inflate the buffer (N6-9;
                                                -- M/0005:43 slot kinds; phase F owns V3 slot semantics)
   AND (p.scheduled_utc AT TIME ZONE 'Asia/Bangkok')::date > %s   -- injected local today
-  AND NOT EXISTS (SELECT 1 FROM approval_supersessions sup        -- current authority only
-                  JOIN approval_events ae ON ae.id = sup.approval_event_id
-                  WHERE ae.entity_type = 'episode' AND ae.entity_id = e.id);
+  AND p.approval_event_id = ea.id;             -- posts bind to the effective approval (N6R2-3)
 ```
 
 Target ≥ 3 days; **`buffer.low` when < 2** (master §9.4). Slots are read from today's
@@ -546,14 +608,14 @@ pytest `--basetemp` under the session scratchpad. `make check` and V1 `make pilo
 | ID | File | Cases |
 |----|------|-------|
 | S1 | `X/integration/v3/test_scheduler_singleton.py` | **concurrent ticks**: two `Database` pools, two schedulers, one slow test trigger (~2 s) — exactly one tick row `SUCCEEDED` with firings; the other returns **without blocking** (returns well inside the first's hold, no writes, skipped report). **lost ownership mid-sweep (N6-1)**: `still_held()` flips False after the sweep's first lease action → no subsequent lease/pod action and no shot dispatch starts; the started action finishes via canonical recovery; the tick is `ABORTED_LOST_OWNERSHIP`. **no double-paid attempt**: seed a pending shot, lose ownership during dispatch, re-enter through recovery → the **original attempt identity** is reused (one provider operation, `attempt n` once — `attempts_used + 1` at `S/scheduling/service.py:758-765` never mints `n+1` twice). **claim race after release**: lock released without recording, two ticks race one period → one claims, other skips, effects once. **ATOMIC rollback**: a failing enqueue mid-list → no firing row, no partial jobs. **success definition (N6-11)**: one trigger failing → tick `FAILED` with the error; a sweep-item failure → `FAILED` with the item error; all green → `SUCCEEDED`. |
-| S2 | `X/integration/v3/test_scheduler_singleton.py` (process module) | **real process death releases the lock**: a subprocess acquires through `Database.try_advisory_lock` and sleeps; `SIGKILL` it (no unlock ran); an in-process acquirer gets the lock within a bounded wait. **real holder-backend death, scheduler alive (N6-12)**: terminate the dedicated lock connection's backend (`pg_terminate_backend`) mid-sweep while the scheduler process lives → `still_held()` False → no subsequent sweep item starts. **kill before/after canonical effects and before intent completion (N6-12)**: `SIGKILL` a subprocess running the real `fire()` with a test world whose `w12-gpu-janitor` sweep blocks on a file event — kill before the intent commits, after the claim, after the first canonical effect, and mid-dispatch; recover **within the same period and after rollover**; assert stable operation identities via **counters/evidence surviving subprocess death** (deterministic `event_id`, `attempts_used`, lease semantic keys): firing row + intent states exact, **canonical effects exactly once** (lease cleaned once — one evidence event; no duplicate provider operation). |
-| S3 | `X/integration/v3/test_scheduler_recovery.py` | **unfinished effect recovered without the marker**: seed an expired lease + a hand-written `PENDING` intent + firing row for a past period → next sweep's recovery pass completes the clean **and only then** marks the intent `SUPERSEDED` (`summary.covered_by`); re-firing the claimed period is refused by the unique key. **independent of period claims (N6-2)**: an obligation whose period is already claimed is still recovered by the recurring sweep. **retryable vs terminal**: a transient sweep failure → intent `FAILED`/`RETRYABLE`, recovered next period; an `UNKNOWN` operation → `FAILED`/`TERMINAL`, never re-run, surfaced in tick errors. **evidence dedup by `event_id` (N6-2)**: replay the GPU janitor's clean → the deterministic `event_id` collides with the PK (`M/0001:116`) → exactly one evidence event. **crash replay of a direct action is a no-op**: replay `w05-render-dispatch` through the recovery path → `attempts_used` finds every shot (`S/scheduling/service.py:738`), no second provider operation, no second lease (semantic key `:750`). |
-| S4 | `X/integration/v3/test_scheduler_calendar.py` | **period_key = the candidate's scheduled local date (N6-8)**: before 09:00 the candidate is *yesterday's* date; the date flips at midnight Bangkok, the summary period advances at 09:00 (02:00 UTC); `period_start` = local midnight. **boundaries**: 08:59 local with yesterday claimed → not due; 09:00:00 → due; midnight rollover → new candidate date. **execution ≠ claim (N6-8)**: a catch-up run on Wed 10:00 for Tue's period reports Tue's date and Mon's releases (window bounded by the claimed date, injected timestamps only — no SQL `now()`). **backward clock (N6-8/N6-12)**: clock rolled back below the watermark → candidate rejected, no resurrection of skipped periods (calendar and interval). **catch-up fires only the latest missed period**: 3-day downtime → exactly one new firing; interval multi-bucket jump → one firing; first run → one firing. **semantic-key collision (N6-3/N6-12)**: same bucket across `w09-publish-submit` and `w09-publish-poll` → keys stay `sched:{id}:{bucket}:{post}` — namespaced, no `IdempotencyConflict`. **V1 cutover (N6-4/N6-12)**: seeded `schedule_state` → first start transfers watermarks exactly (`fired_at` verbatim, `effect_mode='CUTOVER'`) → no immediate replay, **no extra cadence episode**, `schedule_state` untouched afterwards, job keys unchanged; a schedule absent from `schedule_state` fires as today. **summary once per period**: re-fire the same day → no second `summary.daily`; breaching seeds → `buffer.low`/`slo.below` exactly once; non-breaching → absent. |
-| S5 | `X/integration/v3/test_scheduler_metrics.py` | **authority (N6-9)**: SLO counts distinct episodes under effective approval — reapproval counts once; a superseded approval is excluded; a cancelled scope is excluded; multiple seasons aggregate. **buffer scope (N6-9)**: distinct future Bangkok dates, not post counts; promo/hook (non-full-episode) slot kinds excluded; superseded authority excluded; cancelled scopes excluded; `< 2` alerts, `≥ 3` silent. **gating (OQ-4)**: buffer reported only under `LAUNCH_APPROVED`/`RELEASING`, SLO only under `RELEASING`; otherwise unavailable, no alert. **integers (N6-5)**: payloads carry `approved_count`, `window_days`, `required_numerator=5`, `required_denominator=4`; the 1.25/day boundary both sides via `4 × approved_count < 5 × window_days`; every emitted payload passes canonical JSON and the persistence guards (no float survives). **health (N6-11)**: `SUCCEEDED` within 3 × the injected interval passes; stale fails; a **future** timestamp fails; a skip neither refreshes nor overrides; orphaned `RUNNING` closed at the next tick's open; `errors` counts per tick, trigger and sweep-item failures included. All against seeded V3 rows (A1 test handlers + `platform_posts`/`approval_events` seeds). |
+| S2 | `X/integration/v3/test_scheduler_singleton.py` (process module) | **real process death releases the lock**: a subprocess acquires through `Database.try_advisory_lock` and sleeps; `SIGKILL` it (no unlock ran); an in-process acquirer gets the lock within a bounded wait. **real holder-backend death, scheduler alive (N6-12)**: terminate the dedicated lock connection's backend (`pg_terminate_backend`) mid-sweep while the scheduler process lives → `still_held()` False → no subsequent sweep item starts. **kill before/after canonical effects and before intent completion (N6-12)**: `SIGKILL` a subprocess running the real `fire()` with a test world whose `w12-gpu-janitor` sweep blocks on a file event — kill before the intent commits, after the claim, and after the first canonical effect (the GPU-janitor fixture cannot exercise a render-dispatch interruption — that is the separate scenario below, N6R2-5); recover **within the same period and after rollover, re-entering through the scheduler entry point (`fire()` → the §3 step 4 recovery pass, not a direct sweep call)**; assert stable operation identities via **counters/evidence surviving subprocess death** (deterministic `event_id`, `attempts_used`, lease semantic keys): firing row + intent states exact, **canonical effects exactly once** (lease cleaned once — one evidence event; no duplicate provider operation) and **duplicate-event replay succeeding through the append-once path** (N6R2-1). **Real render-dispatch takeover (N6R2-5)**: a separate real `w05-render-dispatch` subprocess scenario — terminate A's lock backend (`pg_terminate_backend`) while A remains alive, let B recover during A's in-flight dispatch, then assert **one original attempt/provider operation and no later action by A**. |
+| S3 | `X/integration/v3/test_scheduler_recovery.py` | **unfinished effect recovered without the marker**: seed an expired lease + a hand-written `PENDING` intent + firing row for a past period → the tick's recovery pass (§3 step 4) completes the clean and marks the intent `COMPLETED`; where a successor period's sweep durably covered the work, the earlier intent is marked `SUPERSEDED` (`summary.covered_by`) **only then**; re-firing the claimed period is refused by the unique key. **independent of period claims (N6-2, N6R2-2)**: an obligation whose period is already claimed — and whose schedule is not due again — is still recovered by the recovery pass. **retryable vs terminal**: a transient sweep failure → intent `FAILED`/`RETRYABLE`, recovered by the next tick's pass; an `UNKNOWN` operation → `FAILED`/`TERMINAL`, never re-run, surfaced in tick errors (operator-owned). **evidence replay through the append-once path (N6-2, N6R2-1)**: replay the GPU janitor's clean → the deterministic `event_id` matches the stored canonical event → the append-once path returns it: **successful recovery, unchanged aggregate sequence, exactly one canonical event**; a conflicting payload under the same `event_id` fails explicitly; the **lease-clean event (built by `_lease_event`, `S/rendering/janitor.py:153-163`) is covered too**, not just `_evidence`. **crash replay of a direct action is a no-op**: replay `w05-render-dispatch` through the recovery path → `attempts_used` finds every shot (`S/scheduling/service.py:738`), no second provider operation, no second lease (semantic key `:750`). |
+| S4 | `X/integration/v3/test_scheduler_calendar.py` | **period_key = the candidate's scheduled local date (N6-8)**: before 09:00 the candidate is *yesterday's* date; **midnight leaves the latest-due summary candidate unchanged — assert the candidate date at Wed 00:30 Bangkok is still Tue — and 09:00 (02:00 UTC) advances it to Wed (N6R2-5)**; `period_start` = local midnight. **boundaries**: 08:59 local with yesterday claimed → not due; 09:00:00 → due; **midnight rollover → the latest-due summary candidate unchanged (N6R2-5)**. **execution ≠ claim (N6-8)**: a catch-up run on **Wed 08:00** claims Tue's period and reports Tue's date and Mon's releases; a **Wed 10:00** run claims **Wed's** period and reports Wed's date and Tue's releases (window bounded by the claimed date, injected timestamps only — no SQL `now()`; N6R2-5). **backward clock (N6-8/N6-12)**: clock rolled back below the watermark → candidate rejected, no resurrection of skipped periods (calendar and interval). **catch-up fires only the latest missed period**: 3-day downtime → exactly one new firing; interval multi-bucket jump → one firing; first run → one firing. **semantic-key collision (N6-3/N6-12)**: same bucket across `w09-publish-submit` and `w09-publish-poll` → keys stay `sched:{id}:{bucket}:{post}` — namespaced, no `IdempotencyConflict`. **V1 cutover (N6-4/N6-12)**: seeded `schedule_state` → first start transfers watermarks exactly (`fired_at` verbatim, `effect_mode='CUTOVER'`) → no immediate replay, **no extra cadence episode**, `schedule_state` untouched afterwards, job keys unchanged; a schedule absent from `schedule_state` fires as today. **summary once per period**: re-fire the same day → no second `summary.daily`; breaching seeds → `buffer.low`/`slo.below` exactly once; non-breaching → absent. |
+| S5 | `X/integration/v3/test_scheduler_metrics.py` | **authority (N6-9, N6R2-3)**: SLO counts distinct episodes under the **effective approval, windowed by that approval's own timestamp** — reapproval counts once; a superseded approval is excluded; **supersede → reapprove → the episode counts again under the replacement approval (a historical supersession never excludes it)**; multiple seasons aggregate. **cancellation (N6R2-3)**: a cancelled episode scope is excluded, and so is an episode under a **cancelled season ancestor — both without any production-state change** (cancellation is `cancelled_at` only, A1 §2.3). **buffer scope (N6-9, N6R2-3)**: distinct future Bangkok dates, not post counts; promo/hook (non-full-episode) slot kinds excluded; **posts bind to the effective approval — a stale-bound post (bound to a superseded approval) is excluded, a valid replacement post bound to the current effective approval counts**; cancelled scopes excluded; `< 2` alerts, `≥ 3` silent. **gating (OQ-4)**: buffer reported only under `LAUNCH_APPROVED`/`RELEASING`, SLO only under `RELEASING`; otherwise unavailable, no alert. **integers (N6-5)**: payloads carry `approved_count`, `window_days`, `required_numerator=5`, `required_denominator=4`; the 1.25/day boundary both sides via `4 × approved_count < 5 × window_days`; every emitted payload passes canonical JSON and the persistence guards (no float survives). **health (N6-11)**: `SUCCEEDED` within 3 × the injected interval passes; stale fails; a **future** timestamp fails; a skip neither refreshes nor overrides; orphaned `RUNNING` closed at the next tick's open; `errors` counts per tick, trigger and sweep-item failures included. All against seeded V3 rows (A1 test handlers + `platform_posts`/`approval_events` seeds). |
 | S6 | `X/integration/persistence/test_migrations.py` (extend; A-T16 pattern) | A6b-1 applies on the populated phase-A-head database; three new tables in `EXPECTED_TABLES`; applied-below-A6b checksums unchanged; catalog guard tests green on all three tables (TRUNCATE + integer included, `X/integration/persistence/test_schema_catalog.py:57`, `:65`); `failure_kind` and the `'CUTOVER'` `effect_mode` guarded by the same checks. |
 | S7 | `X/contract/pipeline/test_scheduling_contract.py` (extend) | Registry v2 pure-function cases: `CalendarTrigger` period keys across the ICT boundary; **`raw_period` vs prefixed `period_key`** (raw token for firings, prefix preserved for job keys); interval bucket math; **elapsed eligibility for V1 constructions, bucket eligibility only for explicitly-declared new ones**; `SCHEDULES_VERSION = "2"`; existing V1 registry cases stay green (the `schedule_state` read at `:32` swaps to `scheduler_firings`, assertion values unchanged). **fence race (N6-12)**: reconciler adoption vs an amendment that bumps `content_revision` → the adopted result is quarantined under A3's fence, never installed. **A6a fan-out/rollback (N6-12)**: the summary event is atomic with the firing claim (rollback → no event, no firing); once committed, A6a's dispatcher delivers the fan-out exactly once (`notification_intents` unique per `(event_id, channel)`). |
 
-## 10. Open questions — resolved in round 1
+## 10. Open questions — round 1 (OQ-5 reopened in round 2)
 
 | # | Question (v1.0) | Resolution ([critique](codex-a6b-note-critique.md) OQ table + [rulings](a6b-critique-rulings.md)) |
 |---|----------|----------------|
@@ -561,7 +623,7 @@ pytest `--basetemp` under the session scratchpad. `make check` and V1 `make pilo
 | OQ-2 | Source of the health interval (3 × rule)? | **A positive composition parameter for the host timer cadence, default 60 seconds, injected into the health queries now**; carried into `Settings` when A6c lands. |
 | OQ-3 | Record lock-skipped ticks? | **No tick row for skips.** Reported separately (stdout); they confer **no freshness or health** — a skip neither refreshes nor overrides health (§6). |
 | OQ-4 | Buffer/SLO scope before any V3 season reaches release? | **Activation gating accepted:** buffer during `LAUNCH_APPROVED`/`RELEASING`, throughput during `RELEASING`; otherwise report unavailable. Scope applied consistently (§6). |
-| OQ-5 | `summary.daily`/`buffer.low`/`slo.below` payload schemas are A6a's. | **Resolved before A6b code**, against accepted A6a schemas — integer representations, scope, timestamps and deep links (§4, §6). |
+| OQ-5 | `summary.daily`/`buffer.low`/`slo.below` payload schemas are A6a's. | **Reopened by N6R2-4 — open, and it blocks A6b code.** Closing it requires the accepted A6a schema identifier/version plus complete field types for each event — unavailable-metric representation, reporting scope and claimed summary date, execution timestamps, aggregate/correlation identity, deep-link inputs — recorded against this note (§4 binding rows, §6). Integer representations stay mandatory (N6-5). |
 | OQ-6 | Heartbeat granularity: per trigger + per sweep (v1.0) vs per step inside janitors? | **Recommendation rejected.** Ownership is checked before **each individually newly started action inside sweeps** (N6-1); in-flight operations keep their canonical recovery (§3). |
 | OQ-7 | One scheduler process for V1 and V3, or separate lock namespaces per workflow? | **One lock and one catalog is appropriate, with bounded actions.** V1 and V3 do not need separate singleton namespaces (§3, §8). |
 
@@ -587,3 +649,16 @@ carries no separate ruling row and is applied here as the test obligation of the
 (N6-1/2/3/4/8 are untestable without it). The symbolic A6b-1 allocation and the A6c deferral stand;
 A6b-1's numeric filename is resolved at build time after the accepted upstream tail, preserving
 A1's 0028–0031 allocation and all applied bytes.*
+
+### Round 2 — finding → resolution
+
+[N6R2-1..5](codex-a6b-note-recritique.md), all ACCEPTED ([rulings](a6b-recritique-rulings.md));
+replacement wording binding.
+
+| Finding | Section |
+|---------|---------|
+| N6R2-1 transaction-safe append-once path for each canonical event occurrence; matching replay returns the stored event — sequence unchanged, no transaction failure; conflicting reuse fails explicitly; the actual `_lease_event`-built lease-clean events covered, not just `_evidence` | §4 (`gpu_janitor_sweep` trigger row + recovery row + append-once paragraph + coalescing), S2/S3 |
+| N6R2-2 bounded tick recovery pass for unresolved PENDING and FAILED/RETRYABLE obligations, independent of new-period eligibility and firing claims; reuse canonical identities without reclaiming the firing; complete the original intent or supersede only after durable successor coverage; TERMINAL stays operator-owned | §3 (step 4, success definition step 6), §4 (claim rule + coalescing), S2/S3 |
+| N6R2-3 metrics resolve EPISODE_FINAL authority through A4's `effective_approval` and window/count by that approval's timestamp; buffer posts bind to it (stale-bound excluded); cancelled episode scopes and cancelled season ancestors excluded | §6 (SLO + buffer), S5 |
+| N6R2-4 OQ-5 reopened: accepted A6a schema identifier/version plus complete field types recorded here before code; until supplied, OQ-5 remains open and blocks A6b code | §4 (binding rows), §5 (summary trigger), §10, S5 |
+| N6R2-5 Wednesday 08:00 is the Tuesday catch-up, Wednesday 10:00 claims Wednesday; midnight leaves the latest-due summary candidate unchanged, 09:00 advances it; separate real `w05-render-dispatch` takeover scenario (terminate A's lock backend, B recovers mid-dispatch, one original attempt, no later action by A); same-period recovery through the scheduler entry point; successful duplicate-event replay | §5 (candidate derivation, execution ≠ claim), S2/S3/S4 |
