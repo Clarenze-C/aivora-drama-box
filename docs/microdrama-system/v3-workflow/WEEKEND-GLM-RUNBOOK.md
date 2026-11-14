@@ -431,6 +431,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   **A1 v1.3 committed** (`b894bbe`) and its **R3 verification launched** (`a1-note-r3`, Codex 2/2).
   Accepted so far: **B, C, A6b, A3**. Pending: A1 R3 (running), A2 (Opus), r5-build (R5e/R5f).
   Running: r5-build + a1-note-r3 + a3-note-r5-done.
+- 14 Nov 09:12Z (GLM): **A1 R3 = REWORK** (N1R3-1/2 BLOCKING — approval-identity NULL partition;
+  Comfy submit ordering vs the real commit-before-HTTP code — + 4 SF; all with replacements; looks
+  like integration slips, not the A2 loop). **Operator asked: one more A1 cycle (apply → R4)
+  recommended** — it gates today's A1 build. Accepted: B, C, A6b, A3. Running: r5-build (R5e/R5f).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
