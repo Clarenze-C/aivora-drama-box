@@ -215,6 +215,11 @@ class PodCreateRequest(VersionedPayload):
     min_host_ram_gb: PositiveInt
     container_image: ShortText = Field(description="Pinned image reference (digest when live)")
     volume_gb: Count = 0
+    # T031 R5a: request pinned-weight provisioning on the pod (the image's
+    # start.sh downloads models.json when this maps to env
+    # MICRODRAMA_PROVISION_MODELS=1). Default False: a Pika benchmark
+    # acquisition must transfer True explicitly (R5C-4).
+    provision_models: bool = False
 
 
 class PodInfo(ContractModel):

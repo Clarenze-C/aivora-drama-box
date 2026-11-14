@@ -136,6 +136,9 @@ class PodLeaseConfig:
     unbound_grace_ms: int = 60_000
     create_attempts: int = 2
     stop_attempts: int = 2
+    # T031 R5a (R5C-4): benchmark worlds set this from the sealed runtime
+    # profile; _spec_for transfers it into every composed create request.
+    provision_models: bool = False
 
     @classmethod
     def for_mock(cls) -> PodLeaseConfig:
@@ -169,6 +172,8 @@ class PodLeaseClaimRequest:
     job_id: UUID | None = None
     pod_name: str = "microdrama-render"
     lease_ttl_ms: int | None = None
+    # T031 R5a: frozen in the acquisition intent; carried into the claim shape.
+    provision_models: bool = False
 
 
 @dataclass(frozen=True)
@@ -685,6 +690,7 @@ class LeaseService:
             max_hourly_price_micro_usd=self._config.max_hourly_price_micro_usd,
             min_host_ram_gb=self._config.min_host_ram_gb,
             container_image=self._config.container_image,
+            provision_models=self._config.provision_models,
         )
 
     def _load(self, lease_id: UUID) -> dict[str, Any]:

@@ -174,8 +174,14 @@ def _compose(
     return world, plan, authorization, budget, clock, account_id
 
 
-def _claim_and_link(world, plan, budget, clock) -> tuple[UUID, dict[str, Any]]:
-    """Claim the acquisition lease and durably link it as the COMPUTE hold."""
+def _claim_and_link(
+    world, plan, budget, clock, *, intent_claim: dict[str, Any] | None = None
+) -> tuple[UUID, dict[str, Any]]:
+    """Claim the acquisition lease and durably link it as the COMPUTE hold.
+
+    ``intent_claim`` overrides the frozen acquisition intent's claim document
+    (T031 R5a: the provisioning flag rides the intent)."""
+    intent_claim = {"claim": dict(intent_claim or {})}
     from microdrama.contracts.hashing import canonical_hash
     from microdrama.rendering.benchmark_experiments import document
 
@@ -202,7 +208,7 @@ def _claim_and_link(world, plan, budget, clock) -> tuple[UUID, dict[str, Any]]:
                 plan.experiment_id,
                 jsonb(document(quote)),
                 canonical_hash(document(quote)),
-                jsonb({"claim": {}}),
+                jsonb(intent_claim),
                 clock.now(),
                 lease_id,
                 "a" * 64,

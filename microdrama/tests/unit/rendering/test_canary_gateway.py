@@ -193,6 +193,112 @@ def test_without_a_configured_token_the_gateway_fails_closed(
             server.server_close()
 
 
+# ---------------------------------------------------------------------------
+# T031 R5a (RR-T2): GET /__drama/ready reports the provisioning state file only.
+# The gateway never probes ComfyUI; without a token it is as refused as everything
+# else; the body carries no secret and no path outside /opt/pika.
+# ---------------------------------------------------------------------------
+
+
+def _ready_request(server, *, token: str | None = TOKEN) -> tuple[int, bytes]:
+    return _request(server, "GET", "/__drama/ready", token=token)
+
+
+def test_ready_refuses_missing_or_wrong_tokens(gateway) -> None:
+    _module, upstream, server = gateway
+    for token in (None, "synthetic-wrong-token", ""):
+        status, payload = _ready_request(server, token=token or None)
+        assert status == 401
+        assert json.loads(payload) == {"error": "unauthorized"}
+    assert upstream.seen == []
+
+
+def test_ready_reports_no_provisioning_without_state_file(
+    gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flag absent (canary/CPU image): NO_PROVISIONING, provision null."""
+    _module, upstream, server = gateway
+    monkeypatch.delenv("MICRODRAMA_PROVISION_MODELS", raising=False)
+    monkeypatch.delenv("MICRODRAMA_PROVISION_STATE_FILE", raising=False)
+    status, payload = _ready_request(server)
+    assert status == 200
+    assert json.loads(payload) == {"state": "NO_PROVISIONING", "provision": None}
+    # The gateway never proxies the ready read to ComfyUI.
+    assert upstream.seen == []
+
+
+def test_ready_reports_booting_when_the_flag_is_set_but_no_state_file(
+    gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _module, _upstream, server = gateway
+    monkeypatch.setenv("MICRODRAMA_PROVISION_MODELS", "1")
+    monkeypatch.delenv("MICRODRAMA_PROVISION_STATE_FILE", raising=False)
+    status, payload = _ready_request(server)
+    assert status == 200
+    assert json.loads(payload) == {"state": "BOOTING", "provision": None}
+
+
+@pytest.mark.parametrize("state", ["PROVISIONING", "PROVISIONED", "PROVISION_FAILED"], ids=str)
+def test_ready_mirrors_the_state_file(gateway, monkeypatch: pytest.MonkeyPatch, state: str) -> None:
+    _module, upstream, server = gateway
+    # Point the gateway at an explicit state file (the env default is /opt/pika,
+    # which only exists inside the image).
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "state.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "state": state,
+                    "started_at": "2026-11-13T01:02:03Z",
+                    "ended_at": "2026-11-13T01:20:04Z",
+                    "exit_code": 7,
+                    # The state file may carry opaque diagnostics; only the
+                    # whitelisted fields may reach the body.
+                    "stderr_tail_hex": "626f6f6d2f6f70742f436f6d667955492f6d6f64656c73",
+                    "secretish": "token-shaped-value",
+                }
+            )
+        )
+        monkeypatch.setenv("MICRODRAMA_PROVISION_STATE_FILE", str(target))
+        status, payload = _ready_request(server)
+    assert status == 200
+    body = json.loads(payload)
+    assert body["state"] == state
+    assert body["provision"] == {
+        "state": state,
+        "started_at": "2026-11-13T01:02:03Z",
+        "ended_at": "2026-11-13T01:20:04Z",
+        "exit_code": 7,
+    }
+    # No secret values and no paths outside /opt/pika in the body: the raw
+    # serialized body is checked, not just the parsed mirror.
+    text = payload.decode()
+    assert "secretish" not in text and "token-shaped-value" not in text
+    assert "stderr_tail" not in text and "626f6f6d" not in text
+    assert upstream.seen == []
+
+
+def test_ready_survives_a_corrupt_state_file_without_probing_comfyui(
+    gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A torn write is boot-window material, never a crash and never an upstream
+    probe: the read is answered from the flag alone."""
+    _module, upstream, server = gateway
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "state.json"
+        target.write_text('{"state":"PROVISION')  # torn write
+        monkeypatch.setenv("MICRODRAMA_PROVISION_MODELS", "1")
+        monkeypatch.setenv("MICRODRAMA_PROVISION_STATE_FILE", str(target))
+        status, payload = _ready_request(server)
+    assert status == 200
+    assert json.loads(payload)["state"] == "BOOTING"
+    assert upstream.seen == []
+
+
 def test_an_unreachable_upstream_is_a_boot_window_502(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

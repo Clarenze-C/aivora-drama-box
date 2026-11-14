@@ -16,9 +16,11 @@ tests/unit/rendering/test_canary_gateway.py).
 from __future__ import annotations
 
 import hmac
+import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from urllib.request import Request as UpstreamRequest
 from urllib.request import urlopen
 
@@ -30,6 +32,35 @@ _UPSTREAM_TIMEOUT_SECONDS = 120
 _FORWARDED_HEADERS = ("Content-Type", "Accept", "User-Agent")
 _REFUSED_BODY = b'{"error":"unauthorized"}'
 _UNAVAILABLE_BODY = b'{"error":"upstream unavailable"}'
+
+# T031 R5a: the provisioning readiness endpoint. The gateway reports ONLY the
+# state file start.sh owns - it never probes ComfyUI (that is the client's
+# boot-window /object_info retry). The mirrored provision object is
+# field-whitelisted: the state file may carry a stderr tail, which must never
+# reach the body (no secrets, no paths outside /opt/pika).
+PROVISION_FLAG_ENV = "MICRODRAMA_PROVISION_MODELS"
+STATE_FILE_ENV = "MICRODRAMA_PROVISION_STATE_FILE"
+DEFAULT_STATE_FILE = "/opt/pika/state.json"
+READY_PATH = "/__drama/ready"
+_MIRROR_KEYS = ("state", "started_at", "ended_at", "exit_code")
+
+
+def _ready_body() -> dict:
+    state_file = os.environ.get(STATE_FILE_ENV, DEFAULT_STATE_FILE)
+    try:
+        with open(state_file, encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            data = None
+    except (OSError, ValueError):
+        # No state file yet (or a torn write): boot-window material, answered
+        # from the flag alone.
+        data = None
+    if data is None:
+        flag_set = os.environ.get(PROVISION_FLAG_ENV, "") == "1"
+        return {"state": "BOOTING" if flag_set else "NO_PROVISIONING", "provision": None}
+    mirror = {key: data[key] for key in _MIRROR_KEYS if key in data}
+    return {"state": str(data.get("state", "PROVISIONING")), "provision": mirror}
 
 
 class GatewayHandler(BaseHTTPRequestHandler):
@@ -66,6 +97,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._refuse()
             return
+        if self.command in ("GET", "HEAD") and urlsplit(self.path).path == READY_PATH:
+            # Read-only provisioning state; never proxied, never an upstream probe.
+            body = json.dumps(_ready_body(), sort_keys=True).encode()
+            self._respond(200, "application/json", body)
+            return
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -78,7 +114,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 request.add_header(header, value)
         try:
             with urlopen(request, timeout=_UPSTREAM_TIMEOUT_SECONDS) as response:
-                self._respond(response.status, response.headers.get("Content-Type"), response.read())
+                self._respond(
+                    response.status, response.headers.get("Content-Type"), response.read()
+                )
         except HTTPError as exc:
             content_type = exc.headers.get("Content-Type") if exc.headers else None
             self._respond(exc.code, content_type, exc.read())

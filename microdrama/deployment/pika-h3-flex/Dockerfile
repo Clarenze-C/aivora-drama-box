@@ -12,13 +12,21 @@ RUN echo '22ebca008dc6cbc8ab7cf2b456a3580a9195e3d81102f9d07d54c44b889f8257  /tmp
 COPY runtime.lock /opt/pika/runtime.lock
 RUN python -m pip install --no-cache-dir --no-deps -r /opt/pika/runtime.lock && python -m pip check
 COPY models.json source.json provision.py schema_smoke.py /opt/pika/
+# T031 R5a: start.sh is the entrypoint. It starts the token gateway, runs the
+# pinned weight provisioning only when env MICRODRAMA_PROVISION_MODELS=1
+# (set at pod-create time by the pipeline's provisioning flag; no secret), and
+# execs ComfyUI exactly as the pinned base did - never on PROVISION_FAILED.
+COPY start.sh /opt/pika/start.sh
+RUN chmod 0755 /opt/pika/start.sh
 # CN-5 (2026-11-09, canary-night review): the exposed port is a token-checking
 # gateway (stdlib only - the locked runtime gains no dependencies); ComfyUI
 # binds 127.0.0.1:8189 ONLY and the gateway refuses every request without the
 # run's bearer token (env MICRODRAMA_COMFY_TOKEN, set at pod-create time from
-# the pipeline's credential ref - no secret in the image). ComfyUI stays PID 1;
-# the gateway fails closed (401 without a token, 502 while ComfyUI boots).
+# the pipeline's credential ref - no secret in the image). The gateway fails
+# closed (401 without a token, 502 while ComfyUI boots) and serves the
+# provisioning readiness state on /__drama/ready (T031 R5a).
 COPY canary_gateway.py /opt/canary_gateway.py
-# No startup model/dependency downloads, API nodes or third-party custom nodes.
+# No startup model/dependency downloads unless the provisioning flag is set;
+# no API nodes or third-party custom nodes.
 EXPOSE 8188
-ENTRYPOINT ["sh", "-c", "python /opt/canary_gateway.py & exec python /opt/ComfyUI/main.py --listen 127.0.0.1 --port 8189 --disable-api-nodes --disable-all-custom-nodes"]
+ENTRYPOINT ["/opt/pika/start.sh"]

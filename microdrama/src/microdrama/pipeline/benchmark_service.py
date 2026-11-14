@@ -625,6 +625,19 @@ class BenchmarkService:
             intent = world.acquisition_requests(
                 exp, quote, acquisition_id, generation, self.clock.now()
             )
+            # T031 R5a (R5C-4): benchmark-side intent validation - a Pika seal
+            # (runtime_profile.provision_models) refuses an intent whose claim
+            # lacks the frozen flag, before the immutable row is written.
+            from microdrama.pipeline.benchmark_authorization import BenchmarkSeal
+            from microdrama.pipeline.experimental_world import validate_provision_intent
+
+            seal_manifest = tx.fetchone(
+                "SELECT manifest FROM benchmark_seals WHERE experiment_id=%s", (experiment_id,)
+            )
+            if seal_manifest is not None:
+                validate_provision_intent(
+                    BenchmarkSeal.model_validate(seal_manifest["manifest"]), intent
+                )
             window = int(intent["claim"]["lease_ttl_ms"]) + world.leases._config.shutdown_margin_ms
             if gpu_ms(tx, experiment_id, self.clock.now()) + window > min(
                 exp["gpu_limit_ms"], world.budget.authorization_gpu_ms or exp["gpu_limit_ms"]

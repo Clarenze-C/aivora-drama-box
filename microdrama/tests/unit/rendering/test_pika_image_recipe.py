@@ -34,6 +34,21 @@ def test_every_dockerfile_copy_source_is_staged_by_build_sh():
     assert not missing, f"build.sh does not stage {sorted(missing)}"
 
 
+def test_entrypoint_is_the_provisioning_start_script():
+    """T031 R5a: the image boots through start.sh, which owns the gateway
+    start, the optional MICRODRAMA_PROVISION_MODELS provisioning and the
+    ComfyUI exec (never on PROVISION_FAILED)."""
+    text = (RECIPE / "Dockerfile").read_text()
+    assert 'ENTRYPOINT ["/opt/pika/start.sh"]' in text
+    assert "COPY start.sh /opt/pika/start.sh" in text
+    start = (RECIPE / "start.sh").read_text()
+    assert start.startswith("#!/bin/sh")
+    assert "MICRODRAMA_PROVISION_MODELS" in start
+    assert "PROVISION_FAILED" in start
+    # ComfyUI's exec line stays exactly the pinned base's argument line.
+    assert "--listen 127.0.0.1 --port 8189 --disable-api-nodes --disable-all-custom-nodes" in start
+
+
 def test_downloaded_sources_are_fetched_and_hash_checked():
     text = (RECIPE / "build.sh").read_text()
     for name in DOWNLOADED:

@@ -389,6 +389,11 @@ class RunpodRestProvider:
             # CN-5: the in-image gateway's token rides the pod env, set at create
             # time from the credential ref - never baked into the image, never logged.
             payload["env"] = {"MICRODRAMA_COMFY_TOKEN": comfy_token}
+        if request.provision_models:
+            # T031 R5a: start.sh provisions the pinned weights only when this
+            # env is "1" - the world-agnostic mapping of the composed request's
+            # frozen provisioning flag, beside the gateway token.
+            payload.setdefault("env", {})["MICRODRAMA_PROVISION_MODELS"] = "1"
         try:
             created = self._call("POST", "/pods", body=payload)
         except NeedsReconciliation as exc:

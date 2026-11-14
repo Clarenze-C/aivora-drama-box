@@ -105,6 +105,11 @@ class CanonicalExperimentWorld:
             "host_ram_gb": q["host_ram_gb"],
             "lease_ttl_ms": ttl,
         }
+        if self.leases._config.provision_models:
+            # T031 R5a (R5C-4): the frozen intent records the provisioning
+            # flag the composed create request must also carry; the create
+            # guard requires both before any POST.
+            claim["provision_models"] = True
         compute = BudgetReservationRequest(
             request_id=uuid5(RENDERING_NAMESPACE, f"claim:{key}"),
             semantic_key=key,
@@ -932,6 +937,24 @@ class _SealedNativeInputs:
 # --- recovery provenance and the EXPIRED recovery-read exception (spec §3.2/§3.3) ---
 
 
+def validate_provision_intent(seal: BenchmarkSeal, intent: dict) -> None:
+    """T031 R5a (R5C-4): benchmark-side acquisition-intent validation.
+
+    A Pika benchmark seal whose ``runtime_profile`` freezes
+    ``provision_models: true`` demands weights on the pod; an acquisition
+    intent whose claim lacks ``provision_models=True`` would silently compose
+    a default-False create request and boot a pod with no models. Refused
+    here, at admission, before any row is written.
+    """
+    demanded = bool((seal.runtime_profile or {}).get("provision_models"))
+    claim = (intent or {}).get("claim")
+    frozen = isinstance(claim, dict) and claim.get("provision_models") is True
+    if demanded and not frozen:
+        raise PolicyDenied(
+            "a provisioning (Pika) acquisition intent must freeze provision_models=true"
+        )
+
+
 def load_recovery_authorization(db: Any, acquisition_id: UUID) -> BenchmarkAuthorization:
     """§3.2: load THIS acquisition's authorization row and verify it from its bytes.
 
@@ -1187,6 +1210,10 @@ def build_experiment_world(
         lease_ttl_ms=quote.maximum_runtime_ms,
         shutdown_margin_ms=60_000,
         create_attempts=1,
+        # T031 R5a (R5C-4): the sealed runtime profile freezes the provisioning
+        # demand; _spec_for transfers it into every composed create request and
+        # acquisition_requests freezes it into the intent.
+        provision_models=bool((seal.runtime_profile or {}).get("provision_models")),
     )
 
     def owned_lease(pod_id):
@@ -1208,7 +1235,8 @@ def build_experiment_world(
         policy.validate(db, settings, live_clock, quote)
         with db.transaction(readonly=True) as tx:
             row = tx.fetchone(
-                "SELECT l.*,r.state reservation_state,r.account_id FROM benchmark_acquisitions a "
+                "SELECT l.*,r.state reservation_state,r.account_id,a.intent acquisition_intent "
+                "FROM benchmark_acquisitions a "
                 "JOIN pod_leases l ON l.id=a.lease_id JOIN reservations r ON r.id=l.reservation_id "
                 "JOIN benchmark_reservation_links k ON k.reservation_id=r.id AND k.acquisition_id=a.acquisition_id "
                 "WHERE a.experiment_id=%s AND l.client_token=%s AND k.purpose='COMPUTE'",
@@ -1223,6 +1251,22 @@ def build_experiment_world(
         ):
             raise EffectDenied(
                 "resource create lacks its canonical experiment acquisition hold/lease"
+            )
+        # T031 R5a (R5C-4): the benchmark create guard requires the intent AND
+        # the composed request to carry the frozen provisioning flag before any
+        # POST - a default-False field can never silently reach the provider.
+        demanded = config.provision_models
+        intent_claim = (row["acquisition_intent"] or {}).get("claim") or {}
+        intent_flag = intent_claim.get("provision_models") is True
+        if demanded and not (intent_flag and request.provision_models):
+            raise EffectDenied(
+                "benchmark pod create requires provision_models=True in both the "
+                "acquisition intent and the composed request"
+            )
+        if not demanded and (intent_flag or request.provision_models):
+            raise EffectDenied(
+                "benchmark pod create carries provision_models against a seal that "
+                "does not demand it"
             )
 
     def cleanup_guard(kind, pod_id):
