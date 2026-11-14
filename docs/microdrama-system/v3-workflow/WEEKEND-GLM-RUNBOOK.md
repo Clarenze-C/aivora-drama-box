@@ -584,6 +584,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 21:16Z (GLM): **phase G v0.3 committed** (`40c4d13`, all round-1 findings applied, none
   BLOCKED; live/paid steps still operator-gated). **G round-2 critique launched**
   (`phase-g-recritique`). Running: a0d-fix4 (unit sweep) + phase-g-recritique.
+- 14 Nov 21:19Z (GLM): **G round 2 = REWORK** (11+ closed; PG5-1/3 BLOCKING + PG5-2 SF — pause
+  predicate, absent-intent restore case, calibration switch sequence). All 3 ACCEPTED
+  (`phase-g-recritique-rulings.md`); **g-spec-v04 apply running**; R3 follows. Running: a0d-fix4
+  (unit sweep) + g-spec-v04.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
