@@ -574,6 +574,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   follows. Running: a0d-fix4 + b5-note-rev2.
 - 14 Nov 20:56Z (GLM): **B5 v0.3 committed** (`f3a4b11`, 871 lines, 5/5 round-2 rulings, none
   BLOCKED). **B5 R3 verification launched** (`b5-note-r3`). Running: a0d-fix4 (build) + b5-note-r3.
+- 14 Nov 21:0?Z (GLM): **B5 R3 = APPROVE** → **B5 note ACCEPTED** — B's design layer complete
+  (B1 ✓ B5 ✓; B2/B3/B4 build briefs come straight from the spec when B builds start after A).
+  **G Codex critique round 1 launched** (`phase-g-critique`, v0.2 had been waiting). Running:
+  a0d-fix4 (build) + phase-g-critique.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
