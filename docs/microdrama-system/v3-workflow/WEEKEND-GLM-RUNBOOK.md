@@ -491,6 +491,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   one-more-cycle call · F deferred · G fact map done (spec draft next, docs slot) · D last.
   Running: a0d-fix2 (regression sweep). Next: G spec draft beside the build; on a0d-fix2 exit → solo
   t031 gate + a0d-fix2 R3 + gate; r5-fix1 after.
+- 14 Nov 12:52Z (GLM): **A0-D FIX2 DONE** — all ten AD5 findings addressed at `b84a397` (4 commits;
+  AD5-1's producer-vs-admission test included). **R3 review launched** (`a0d-review-r3`) + GLM
+  verification suites running. Gate at `b84a397` runs SOLO after verification (lesson from the
+  resource-starved t031 gate run); **r5-fix1 held until the a0d gate finishes** to avoid gate+build
+  contention. E R3 APPROVE recorded earlier (5 chains accepted).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
