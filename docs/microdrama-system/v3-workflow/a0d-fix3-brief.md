@@ -31,3 +31,13 @@ env vars/keys/tokens. At the z.ai limit: stop clean, commit, update "Resume here
 ## Report
 `a0d-fix3-REPORT.md`: per-AD6 status + commits, red/green, deviations, "Resume here". Top marker:
 `A0-D FIX3: ALL FINDINGS ADDRESSED`. Final message: one line per AD6 id, then the report path.
+
+## Additional finding (from the orchestrator's gate at `b84a397`, run solo)
+
+- **AD6-GATE-1 (BLOCKING for acceptance)** — `tests/integration/pipeline/test_scheduler_driven_path.py::test_scheduler_and_workers_drive_release_with_only_the_two_gates`
+  fails at `b84a397` (810/811 green elsewhere): "the scheduler-driven path never verified a required
+  post — assert []" at `test_scheduler_driven_path.py:236`. The gate receipts are at
+  `.scratch/a0d-gate3/.scratch/gate/check.log`. Reproduce it red, diagnose whether fix2 caused it
+  (reconciler/gateway settlement behavior is the likely interaction), fix, and record red/green. If
+  you determine it is pre-existing at `6974d5a` (check out that file's history, do not rebuild the
+  tree), say so in the report with evidence instead.

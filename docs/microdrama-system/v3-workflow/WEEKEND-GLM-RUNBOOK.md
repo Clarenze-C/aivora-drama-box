@@ -510,6 +510,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 12:58Z (GLM): **phase G spec v0.1 drafted and committed**; **G Goldfish launched**
   (cwd `phase-g-review/`, ~40 min). Q7: C✓ F✓ E✓ G-in-review D-last. Running: the a0d3 gate +
   phase-g-goldfish. fix3 + r5-fix1 queued behind the gate (critical path first).
+- 14 Nov 13:1?Z (GLM): **a0d3 gate at `b84a397` = 1 real failure** (810/811: the scheduler-driven
+  release path never verifies a required post; clean assert, not starvation — receipts kept). The
+  failure was appended to the fix3 brief as **AD6-GATE-1** and **fix3 LAUNCHED** (build slot; AD6-1..7
+  + the gate red). Running: a0d-fix3 + phase-g-goldfish. r5-fix1 still queued (A0-D critical path).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
