@@ -4,7 +4,7 @@
 (`phase-c-goldfish-rulings.md`); v0.3 applies the Codex round-1 critique rulings
 (`phase-c-critique-rulings.md`) — all 16 findings ACCEPTED (PC-1..PC-16); **v0.4 applies the Codex
 round-2 rulings (`phase-c-recritique-rulings.md`)** — all 7 ACCEPTED (PC5-1..PC5-7), replacement
-wording folded into the sections it corrects; two items stay OPEN (OPERATOR)). Author: GLM (spec
+wording folded into the sections it corrects; both operator items decided 14 Nov). Author: GLM (spec
 draft job); orchestrator Opus.
 
 **Status: round-2 rulings applied (GLM); awaiting Opus re-check — no round 3 run.**
@@ -797,12 +797,12 @@ re-auditing the tail. **Applied migration bytes are never edited.**
 
 ## 15. Open questions and decisions
 
-Two items are **OPEN (OPERATOR)** — they are *not* resolved by this spec:
+Both former operator items were **DECIDED by the operator on 14 Nov 2026** (see the table):
 
 | # | Question | Status |
 |---|---|---|
-| **O-C1** | **API V2 vs Studio V4 neutral clip** (DECISIONS: "decide before phase C"). T031's evidence clips are V4 (the S05/S06 scenario runs — [T031-authorization-packet.md](../T031-authorization-packet.md)); the public API serves only V1/V2. | **OPEN (OPERATOR)** — needed before C6/C7 build. Recommendation: keep the **manual Studio upload** as the only P0 intake; run the Thai-listener V2-vs-V4 comparison; if V2 qualifies, an API-generation path can later feed the **same** normalisation/assessment intake unchanged |
-| **O-C9** | **V1 lock carve-out:** V1 `create_episode` sets no lock and `attach_identity_lock` stays unused for V1 — permanent? | **OPEN (OPERATOR)** — the R-12.1 fix covers V3 paths only; making the V1 carve-out permanent needs the operator's nod (Opus Monday) |
+| **O-C1** | **API V2 vs Studio V4 neutral clip** (DECISIONS: "decide before phase C"). T031's evidence clips are V4 (the S05/S06 scenario runs — [T031-authorization-packet.md](../T031-authorization-packet.md)); the public API serves only V1/V2. | **DECIDED by the operator, 14 Nov 2026**: the recorded recommendation is adopted — **manual Studio upload is the only P0 neutral-clip intake**; the Thai-listener V2-vs-V4 comparison runs as a follow-up; an API-generation path may later feed the **same** normalisation/assessment intake unchanged, only if V2 qualifies. C6/C7 unblocked |
+| **O-C9** | **V1 lock carve-out:** V1 `create_episode` sets no lock and `attach_identity_lock` stays unused for V1 — permanent? | **DECIDED by the operator, 14 Nov 2026: YES, permanent.** The R-12.1 fix covers V3 paths only; V1 history is never retro-fitted with locks |
 
 Decisions recorded (were open in v0.1):
 
