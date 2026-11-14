@@ -1051,6 +1051,33 @@ class _SealedNativeInputs:
                         (jsonb({"locator": key}), digest, *identity),
                     )
 
+    def _record_live_schema(self, acquisition, raw: dict) -> None:
+        """R5c: persist the acquisition's live schema capture (RR-T8)."""
+        import hashlib
+
+        from microdrama.rendering.benchmark_experiments import merge_acquisition_coverage
+        from microdrama.rendering.pika_transport import mapped_schema_sha256
+        from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
+
+        encoded = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        record = {
+            "live_schema": {
+                "raw_sha256": hashlib.sha256(encoded).hexdigest(),
+                "mapped_sha256": mapped_schema_sha256(raw, PIKA_TEMPLATE.node_classes),
+                "acquisition_id": str(acquisition["acquisition_id"]),
+                "captured_at": self.clock.now().isoformat(),
+            }
+        }
+        self.store.put_bytes(
+            f"t031/live-schema/{acquisition['acquisition_id']}.json",
+            encoded,
+            media_type="application/json",
+        )
+        with self.db.transaction() as tx:
+            merge_acquisition_coverage(
+                tx, acquisition["experiment_id"], acquisition["acquisition_id"], record
+            )
+
     def readback(self, acquisition):
         """§5.3: existing upload intents reconcile ONLY by checksum readback.
 
@@ -1110,6 +1137,11 @@ class _SealedNativeInputs:
         manifest, _, resolver, _ = self.manifest(sample)
         with self._scope(acquisition):
             raw = self.client.attest_schema()
+        # T031 R5c: durable recording of the live capture - the guarded
+        # comparison above was decisive; the record (raw JSON sha256, mapped
+        # sha256, acquisition id) goes to the t031_live_schema coverage key
+        # and the raw JSON itself to the object store.
+        self._record_live_schema(acquisition, raw)
         with self.db.transaction(readonly=True) as tx:
             rows = tx.fetchall(
                 "SELECT * FROM benchmark_uploads WHERE acquisition_id=%s",

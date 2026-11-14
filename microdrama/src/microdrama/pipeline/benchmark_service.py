@@ -204,7 +204,14 @@ class BenchmarkService:
         if seal is None:
             reasons.append("execution manifest is not sealed")
         else:
-            if seal.get("schema_evidence") != "LIVE_PROVIDER":
+            # T031 R5c: LIVE_PROVIDER stays accepted as in the pinned base;
+            # PREDICTED_FROM_PINNED_IMAGE joins it (validate_for machine-checks
+            # the capture record; the guarded live comparison at readiness
+            # stays mandatory before every acquisition's first upload).
+            if seal.get("schema_evidence") not in (
+                "LIVE_PROVIDER",
+                "PREDICTED_FROM_PINNED_IMAGE",
+            ):
                 reasons.append("actual live node schema attestation is missing")
             if not seal.get("references") or not seal.get("port_map"):
                 reasons.append("actual reference bytes and role map are unresolved")

@@ -169,10 +169,16 @@ class BenchmarkSeal(_Document):
     runtime_profile: dict[str, Any]
     image_ref: str = Field(pattern=IMAGE_PATTERN)
     node_schema_sha256: str = Field(pattern=SHA256_PATTERN)
-    schema_evidence: Literal["UNVERIFIED", "OFFLINE_FIXTURE_ONLY", "LIVE_PROVIDER"] = "UNVERIFIED"
-    schema_attestation_source: Literal["SELF_ASSERTED", "INDEPENDENT_RUNTIME_CAPTURE"] = (
-        "SELF_ASSERTED"
-    )
+    schema_evidence: Literal[
+        "UNVERIFIED", "OFFLINE_FIXTURE_ONLY", "LIVE_PROVIDER", "PREDICTED_FROM_PINNED_IMAGE"
+    ] = "UNVERIFIED"
+    schema_attestation_source: Literal[
+        "SELF_ASSERTED", "INDEPENDENT_RUNTIME_CAPTURE", "MANIFEST_PLACEHOLDER_CAPTURE"
+    ] = "SELF_ASSERTED"
+    # T031 R5c: the prediction tool's capture record (registry manifest digest
+    # only - a local image ID is forbidden - placeholder names, tool version,
+    # UTC). Required for PREDICTED_FROM_PINNED_IMAGE seals.
+    schema_capture: dict[str, Any] = Field(default_factory=dict)
     raw_object_info: dict[str, Any] = Field(default_factory=dict)
     width: StrictInt = 480
     height: StrictInt = 832
@@ -407,17 +413,42 @@ class BenchmarkAuthorization(_Document):
             raise PolicyDenied("benchmark authorization or rights deadline has expired")
         if self.rights_evidence_hash != seal.rights_evidence_hash:
             raise PolicyDenied("benchmark rights evidence differs from the seal")
-        if seal.schema_evidence != "LIVE_PROVIDER":
+        if seal.schema_evidence == "PREDICTED_FROM_PINNED_IMAGE":
+            # T031 R5c: a predicted schema from the pinned image, accepted only
+            # with ALL THREE machine checks (the guarded live comparison at
+            # readiness stays mandatory and decisive before every upload).
+            if seal.schema_attestation_source != "MANIFEST_PLACEHOLDER_CAPTURE":
+                raise PolicyDenied("a predicted schema requires the placeholder capture source")
+            capture = seal.schema_capture or {}
+            digest = capture.get("manifest_digest")
+            if not isinstance(digest, str) or not re.fullmatch(SHA256_PATTERN, digest):
+                raise PolicyDenied(
+                    "the capture record must carry the registry manifest digest "
+                    "(a local image ID is forbidden)"
+                )
+            if digest != seal.image_ref.rsplit("@sha256:", 1)[-1]:
+                raise PolicyDenied("the predicted capture was taken from a different image")
+            if seal.node_schema_sha256 in DENIED_LIVE_SCHEMA_SHA256:
+                raise PolicyDenied(
+                    "the published CPU/no-weights schema hash can never authorize live work"
+                )
+            if not predicted_enums_match_manifest(seal.raw_object_info):
+                raise PolicyDenied(
+                    "the predicted schema's model-name enums differ from the pinned "
+                    "models.json file names"
+                )
+        elif seal.schema_evidence == "LIVE_PROVIDER":
+            if seal.schema_attestation_source != "INDEPENDENT_RUNTIME_CAPTURE":
+                raise PolicyDenied("LIVE schema evidence is only a self-asserted label")
+            # H-6: the CPU/no-weights attestation hash is machine-denied for LIVE
+            # seals regardless of the label - a self-asserted relabel of the
+            # published CPU schema can never qualify a live run.
+            if seal.node_schema_sha256 in DENIED_LIVE_SCHEMA_SHA256:
+                raise PolicyDenied(
+                    "the published CPU/no-weights schema hash can never authorize live work"
+                )
+        else:
             raise PolicyDenied("fixture or unverified schema cannot authorize live benchmark work")
-        if seal.schema_attestation_source != "INDEPENDENT_RUNTIME_CAPTURE":
-            raise PolicyDenied("LIVE schema evidence is only a self-asserted label")
-        # H-6: the CPU/no-weights attestation hash is machine-denied for LIVE
-        # seals regardless of the label - a self-asserted relabel of the
-        # published CPU schema can never qualify a live run.
-        if seal.node_schema_sha256 in DENIED_LIVE_SCHEMA_SHA256:
-            raise PolicyDenied(
-                "the published CPU/no-weights schema hash can never authorize live work"
-            )
         if quote is not None:
             if not quote.captured_at <= now < quote.expires_at:
                 raise PolicyDenied("benchmark acquisition quote is not current")
@@ -438,6 +469,57 @@ class BenchmarkAuthorization(_Document):
                 or quote.maximum_runtime_ms > self.max_gpu_ms
             ):
                 raise PolicyDenied("benchmark quote exposure exceeds the authorized envelope")
+
+
+#: T031 R5c: how each pinned models.json folder surfaces in the schema's
+#: loader-node enums (folder -> (node, input field)). "pixel_space" and other
+#: baked non-file entries are exempt from membership (CON-N4).
+SCHEMA_MODEL_FOLDERS: dict[str, tuple[str, str]] = {
+    "diffusion_models": ("UNETLoader", "unet_name"),
+    "text_encoders": ("CLIPLoader", "clip_name"),
+    "vae": ("VAELoader", "vae_name"),
+    "loras": ("LoraLoaderModelOnly", "lora_name"),
+}
+
+
+def pinned_model_folders() -> dict[str, list[str]]:
+    """The image's models.json folder -> pinned file names (repo deployment copy)."""
+    manifest_path = Path(__file__).resolve().parents[3] / "deployment" / "pika-h3-flex" / "models.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    folders: dict[str, list[str]] = {}
+    for record in manifest["files"]:
+        folder, _, name = record["path"].rpartition("/")
+        folders.setdefault(folder, []).append(name)
+    return folders
+
+
+def _enum_values(raw: dict[str, Any], node: str, field: str) -> list[str] | None:
+    entry = raw.get(node)
+    if not isinstance(entry, dict):
+        return None
+    spec = entry.get("input", {}).get("required", {}).get(field)
+    if not isinstance(spec, list) or not spec or not isinstance(spec[0], list):
+        return None
+    return [str(item) for item in spec[0]]
+
+
+def predicted_enums_match_manifest(raw: dict[str, Any]) -> bool:
+    """R5c (CON-N4): the model-name enums in ``raw_object_info`` carry every
+    pinned models.json file name per folder. Per-folder listing MEMBERSHIP -
+    the weight-free schema's baked non-file entries (e.g. ``pixel_space``)
+    are exempt."""
+    try:
+        folders = pinned_model_folders()
+    except (OSError, ValueError, KeyError):
+        return False
+    for folder, (node, field) in SCHEMA_MODEL_FOLDERS.items():
+        enum = _enum_values(raw, node, field)
+        if enum is None:
+            return False
+        for name in folders.get(folder, []):
+            if name not in enum:
+                return False
+    return True
 
 
 def load_document(path: str | Path, model: type[_Document]) -> _Document:

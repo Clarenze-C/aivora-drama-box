@@ -38,7 +38,9 @@ pytestmark = pytest.mark.db
 T0 = datetime(2026, 11, 13, 15, tzinfo=UTC)
 
 
-def _office_compose(db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _office_compose(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, seal_overrides: dict | None = None
+):
     """The authored R5d role table through the real composed world.
 
     A2.png is BOTH character_identity:A and outfit:A-office (the R5C-5 byte
@@ -324,6 +326,7 @@ def _office_compose(db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
             "runtime_profile": {"profile": "fixture"},
             "image_ref": "registry.example/drama@sha256:" + "b" * 64,
             "node_schema_sha256": mapped_schema_sha256(raw_schema, PIKA_TEMPLATE.node_classes),
+            **(seal_overrides or {}),
             "rights_evidence_hash": rights_hash,
             "schema_evidence": "LIVE_PROVIDER",
             "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
