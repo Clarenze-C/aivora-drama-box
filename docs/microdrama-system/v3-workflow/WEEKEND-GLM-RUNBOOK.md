@@ -396,6 +396,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   run on Codex in parallel) → A1 revision → A0-R1 fix → E spec draft → G fact map/draft → F1/F2/F4/
   F7/F8 notes. D stays last (needs E/G + R5 real results). Briefs `a3-note-rev3-brief.md` +
   `a2-note-rev3-brief.md` written, ready to fire.
+- 14 Nov 08:22Z (GLM, operator): **A1-note R3 waiver logged** (revision brief
+  `a1-note-rev3-brief.md` written — folds the never-applied round-2 findings N1R-1..12; A1's R3
+  verification follows, then its build can start once A0-D is accepted). Phase A day-plan on record:
+  r5 → A3/A2 docs → a0d-fix2 → A0-D R3+gate → A1 build (evening). Running: r5-build.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
