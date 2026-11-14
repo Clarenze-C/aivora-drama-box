@@ -376,6 +376,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   → C spec ACCEPTED. `a6b-note-r3` launched (Codex 1/2). Running: r5-build (GLM, sole build slot)
   + e-factmap (swarm). Queued: A3 r3, A2 r3 (Codex as slots free); a0d-fix2 (brief ready, launches
   when r5-build ends — one-build rule); then A1 note revision, A0-R1 fix.
+- 14 Nov 07:59Z (GLM): **A6b r3 = APPROVE** (both blocking recovery gaps closed) ↓ A6b note
+  v1.2 ACCEPTED. `a3-note-r3` launched (Codex 1/2). Accepted so far: **B v0.6, C v0.4.1, A6b v1.2**.
+  Pending: A3 r3 (running), A2 r3 (queued); a0d-fix2 waits for r5-build (one-build rule).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
