@@ -627,12 +627,28 @@ def _validate_model_rights(db, settings, clock, profile, record, territories):
     ):
         raise PolicyDenied("current model-output rights pins are required before benchmark effects")
     with db.transaction(readonly=True) as tx:
+        # T031 R5d: read the decision columns the rights_registry table actually
+        # carries (there is no ``payload`` column) and rebuild the exact stored
+        # form RightsRegistry.record fingerprints, so the sealed pin binds to
+        # the recorded decision content itself.
         row = tx.fetchone(
-            "SELECT version,payload FROM rights_registry WHERE rights_route_id=%s "
-            "AND subject_kind=%s AND subject_ref=%s AND current",
+            "SELECT version, status, territories, commercial_use, output_release_allowed, "
+            "required_disclosures, expires_at, evidence FROM rights_registry "
+            "WHERE rights_route_id=%s AND subject_kind=%s AND subject_ref=%s AND current",
             (record.rights_route_id, RightsSubjectKind.MODEL_OUTPUT.value, subject),
         )
-    if row is None or row["version"] != version or canonical_hash(row["payload"]) != evidence_hash:
+    payload = None
+    if row is not None:
+        payload = {
+            "status": row["status"],
+            "territories": row["territories"],
+            "commercial_use": row["commercial_use"],
+            "output_release_allowed": row["output_release_allowed"],
+            "required_disclosures": row["required_disclosures"],
+            "expires_at": row["expires_at"],
+            "evidence": row["evidence"],
+        }
+    if row is None or row["version"] != version or canonical_hash(payload) != evidence_hash:
         raise PolicyDenied("model-output rights evidence/version differs from sealed profile")
     decision = RightsRegistry(db, clock, settings).evaluate(
         rights_route_id=record.rights_route_id,
@@ -1059,7 +1075,9 @@ class _SealedNativeInputs:
         from microdrama.rendering.pika_transport import mapped_schema_sha256
         from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
 
-        encoded = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        encoded = json.dumps(
+            raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
         record = {
             "live_schema": {
                 "raw_sha256": hashlib.sha256(encoded).hexdigest(),

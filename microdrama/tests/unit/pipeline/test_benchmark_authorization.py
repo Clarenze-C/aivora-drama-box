@@ -489,3 +489,81 @@ def test_missing_model_rights_never_queries_registry():
         _validate_model_rights(
             RefusingDatabase(), Settings(), None, {}, SimpleNamespace(rights_route_id=None), ["TH"]
         )
+
+
+@pytest.mark.db
+def test_model_rights_pins_resolve_against_the_real_registry_columns(db) -> None:
+    """T031 R5d prerequisite: with the pins present, the check reads the
+    rights_registry columns that actually exist and binds the profile's
+    evidence sha to the exact recorded decision payload."""
+    from datetime import UTC, datetime
+    from uuid import NAMESPACE_URL, uuid5
+
+    from microdrama.contracts.enums import (
+        EvidenceSource,
+        Provenance,
+        RightsStatus,
+        RightsSubjectKind,
+    )
+    from microdrama.contracts.hashing import canonical_hash
+    from microdrama.contracts.primitives import EvidenceRef
+    from microdrama.contracts.registries import RightsRecord
+    from microdrama.core.clock import SystemClock
+    from microdrama.core.registry._common import canonical_document
+    from microdrama.core.registry.rights import RightsRegistry
+    from microdrama.pipeline.experimental_world import _validate_model_rights
+
+    route = "t031-model-output-test"
+    subject = "minimax-h3:community-license-private-benchmark"
+    record = RightsRecord(
+        record_id=str(uuid5(NAMESPACE_URL, "r5d-model-rights")),
+        rights_route_id=route,
+        version=1,
+        subject_kind=RightsSubjectKind.MODEL_OUTPUT,
+        subject_ref=subject,
+        territories=["SG", "TH"],
+        commercial_use=True,
+        output_release_allowed=True,
+        required_disclosures=[],
+        expires_at=None,
+        evidence=[
+            EvidenceRef(
+                source=EvidenceSource.LICENSE_DOCUMENT,
+                ref="minimax-h3-community-license:operator-attested-2026-11-12",
+            )
+        ],
+        status=RightsStatus.ELIGIBLE,
+        recorded_at=datetime.now(UTC),
+    )
+    RightsRegistry(db, SystemClock(), Settings()).record(
+        record, source_provenance=Provenance.LIVE_PROVIDER
+    )
+    payload = {
+        "status": record.status.value,
+        "territories": canonical_document(list(record.territories)),
+        "commercial_use": record.commercial_use,
+        "output_release_allowed": record.output_release_allowed,
+        "required_disclosures": canonical_document(
+            [item.value for item in record.required_disclosures]
+        ),
+        "expires_at": record.expires_at,
+        "evidence": canonical_document(record.evidence),
+    }
+    profile = {
+        "model_rights_subject_kind": "MODEL_OUTPUT",
+        "model_rights_subject_ref": subject,
+        "model_rights_version": 1,
+        "model_rights_evidence_sha256": canonical_hash(payload),
+    }
+    preset = type("Preset", (), {"rights_route_id": route})()
+
+    class Clock:
+        def now(self):
+            return datetime.now(UTC)
+
+    # Accepted with the exact recorded payload hash...
+    _validate_model_rights(db, Settings(), Clock(), profile, preset, ["SG", "TH"])
+    # ...and refused when the sealed pin no longer matches the recorded row.
+    drifted = dict(profile, model_rights_version=2)
+    with pytest.raises(PolicyDenied, match="evidence/version"):
+        _validate_model_rights(db, Settings(), Clock(), drifted, preset, ["SG", "TH"])

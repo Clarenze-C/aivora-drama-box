@@ -20,6 +20,7 @@ from uuid import UUID
 import pytest
 from test_benchmark_authorization import plan_data, seal_data
 from test_benchmark_world_composition import (
+    ReadyServingComfyTransport,
     _claim_and_link,
     _compose,
     _quote,
@@ -106,7 +107,10 @@ def _pika_compose(
     world, plan, authorization, budget, clock, account_id = _compose(
         db,
         tmp_path,
-        comfy_transport=_NoComfy(),
+        # T031 R5b: acquire() now runs the ready gate through the comfy client
+        # after the create POST, so the composed path scripts a gateway that is
+        # already provisioned (the create payload is still what is asserted).
+        comfy_transport=ReadyServingComfyTransport(),
         seal_overrides={
             "schema_evidence": "LIVE_PROVIDER",
             "schema_attestation_source": "INDEPENDENT_RUNTIME_CAPTURE",
@@ -139,7 +143,11 @@ def _pika_compose(
     }
     transport = RecordingRunpodTransport(pod)
     world._provider._transport = transport
-    acquisition = {"acquisition_id": acquisition_id, "lease_id": lease_row["id"]}
+    acquisition = {
+        "acquisition_id": acquisition_id,
+        "lease_id": lease_row["id"],
+        "experiment_id": plan.experiment_id,
+    }
     return world, plan, transport, acquisition
 
 

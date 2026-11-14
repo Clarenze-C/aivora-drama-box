@@ -36,7 +36,6 @@ from microdrama.pipeline.benchmark_authorization import (
 )
 from microdrama.pipeline.benchmark_service import BenchmarkService
 from microdrama.pipeline.experimental_world import (
-    CanonicalExperimentWorld,
     build_experiment_world,
 )
 from microdrama.rendering.leases import PodLeaseClaimRequest
@@ -84,6 +83,33 @@ class FailingComfyTransport:
 
     def request(self, *args: Any, **kwargs: Any) -> bytes:
         raise AssertionError("comfy transport must not be called during acquire")
+
+
+class ReadyServingComfyTransport:
+    """T031 R5b: acquire() now runs the ready gate (GET /__drama/ready plus the
+    boot-window /object_info) through the real client before it returns, so the
+    composed H-1 tests script a gateway that is already provisioned."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def request(self, method: str, url: str, *, headers: Any, body: bytes | None = None) -> bytes:
+        self.calls.append((method, url))
+        if method == "GET" and url.endswith("/__drama/ready"):
+            return json.dumps(
+                {
+                    "state": "PROVISIONED",
+                    "provision": {
+                        "state": "PROVISIONED",
+                        "started_at": "2026-11-14T01:00:00Z",
+                        "ended_at": "2026-11-14T01:05:00Z",
+                        "exit_code": 0,
+                    },
+                }
+            ).encode()
+        if method == "GET" and url.endswith("/object_info"):
+            return json.dumps({"UNETLoader": {}}).encode()
+        raise AssertionError(f"unexpected comfy call: {method} {url}")
 
 
 def _settings() -> Settings:
@@ -234,7 +260,7 @@ def test_default_factory_acquire_binds_the_pika_client_with_the_real_signature(
         lambda *args, **kwargs: None,
     )
     world, plan, authorization, budget, clock, account_id = _compose(
-        db, tmp_path, comfy_transport=FailingComfyTransport()
+        db, tmp_path, comfy_transport=ReadyServingComfyTransport()
     )
     acquisition_id, lease_row = _claim_and_link(world, plan, budget, clock)
     pod = {
@@ -249,7 +275,13 @@ def test_default_factory_acquire_binds_the_pika_client_with_the_real_signature(
     }
     transport = ScriptedRunpodTransport(pod)
     world._provider._transport = transport
-    handle = world.acquire({"acquisition_id": acquisition_id, "lease_id": lease_row["id"]})
+    handle = world.acquire(
+        {
+            "acquisition_id": acquisition_id,
+            "lease_id": lease_row["id"],
+            "experiment_id": plan.experiment_id,
+        }
+    )
     assert handle.lease.pod_id == "pod-h1-1"
     # The REAL PikaHttpClient bound the pod endpoint with the real signature.
     client = world.comfy._client
@@ -309,41 +341,46 @@ def test_preflight_uses_the_same_policy_as_the_default_factory(
     assert "authorization or sealed-manifest validation failed" in result["reasons"]
 
 
-def test_acquire_fails_loudly_when_the_client_cannot_bind() -> None:
+def test_acquire_fails_loudly_when_the_client_cannot_bind(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """H-1: the hasattr escape hatch is gone - a comfy client without
     bind_pod_endpoint must fail loudly at acquire instead of silently skipping
-    the endpoint binding that gates every later authenticated call."""
+    the endpoint binding that gates every later authenticated call.
 
-    class NoBindClient:
-        provider_id = "comfyui"
-
-    class Pod:
-        pod_id = "pod-x"
-        endpoint_url = "https://pod-x-8188.proxy.runpod.net"
-
-    class Handle:
-        class lease:  # noqa: N801 - minimal handle surface
-            pod_id = "pod-x"
-
-    class FakeLeases:
-        def ensure_pod(self, lease_id):
-            return Handle()
-
-        class _manager:
-            @staticmethod
-            def get(pod_id):
-                return Pod()
-
-    class FakeComfyService:
-        _client = NoBindClient()
-
-    world = CanonicalExperimentWorld(
-        db=None,
-        jobs=None,
-        leases=FakeLeases(),
-        comfy=FakeComfyService(),
-        budget=None,
-        request_factory=None,
+    T031 R5b: acquire() now opens the boot window (a durable lease read)
+    before it binds, so the loud-failure proof composes the real world and
+    strips bind_pod_endpoint from the real client - the binding failure is
+    still what must surface."""
+    monkeypatch.setattr(
+        "microdrama.pipeline.experimental_world.ExperimentalPresetPolicy.validate",
+        lambda *args, **kwargs: None,
     )
+    world, plan, authorization, budget, clock, account_id = _compose(
+        db, tmp_path, comfy_transport=ReadyServingComfyTransport()
+    )
+    acquisition_id, lease_row = _claim_and_link(world, plan, budget, clock)
+    pod = {
+        "id": "pod-h1-2",
+        "name": pod_name(authorization.namespace, lease_row["client_token"]),
+        "image": BenchmarkSeal.model_validate(seal_data(plan)).image_ref,
+        "status": "RUNNING",
+        "cost": "0.500000",
+        "createdAt": clock.now().isoformat(),
+        "gpu": {"id": "NVIDIA A40", "count": 1, "memory": 48, "vcpuCount": 16},
+        "runtime": {"ports": [{"private": 8188, "public": 8188, "type": "http"}]},
+    }
+    world._provider._transport = ScriptedRunpodTransport(pod)
+    # Strip the binding from the class that actually defines it (the composed
+    # client is a PikaHttpClient subclass; bind_pod_endpoint lives on the base).
+    from microdrama.rendering.comfy_transport import ComfyHttpClient
+
+    monkeypatch.delattr(ComfyHttpClient, "bind_pod_endpoint")
     with pytest.raises(AttributeError, match="bind_pod_endpoint"):
-        world.acquire({"lease_id": UUID(int=1)})
+        world.acquire(
+            {
+                "acquisition_id": acquisition_id,
+                "lease_id": lease_row["id"],
+                "experiment_id": plan.experiment_id,
+            }
+        )
