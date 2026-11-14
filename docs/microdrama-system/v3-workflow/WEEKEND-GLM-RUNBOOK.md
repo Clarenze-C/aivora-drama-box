@@ -536,6 +536,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   phase-g-goldfish + b1-note. On A0-D acceptance → A1 build takes the build slot.
 - 14 Nov 19:00Z (GLM): **B1 design note v0.1 drafted** (`b3343a8`, 599 lines). **B1 Codex critique
   round 1 launched** (`b1-note-r1`). Running: a0d-fix3 + phase-g-goldfish + b1-note-r1.
+- 14 Nov 19:2?Z (GLM): **B1 critique round 1 = REWORK** (6 BLOCKING + 6 SF, all with replacements).
+  All 12 ACCEPTED (`b1-critique-rulings.md`); revision brief ready — **launches when the G-Goldfish
+  frees the docs slot**. Running: a0d-fix3 + phase-g-goldfish.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
