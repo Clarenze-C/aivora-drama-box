@@ -347,6 +347,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   N6R2-3..5 SHOULD-FIX). Rule 7 → all 5 ACCEPTED, applied as **v1.2** (brief `a6b-note-rev2-brief.md`,
   queued last), **no round 3**; Opus decides Monday (queued). Running: r5-build + f-spec-v04; Codex
   idle. Docs queue: a3-note-rev2 → a6b-note-rev2.
+- 14 Nov 02:12Z (GLM): **phase F v0.4 committed** (`2a0b01c`, 1100 lines, 7/7 round-2 rulings,
+  none BLOCKED — F's spec chain complete pending Monday's Opus call). Launched `a3-note-rev2` (docs).
+  Running: r5-build + a3-note-rev2. Docs queue last: a6b-note-rev2. Codex idle.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
