@@ -338,6 +338,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 01:52Z (GLM): **phase C v0.4 committed** (`deb850c`, 871 lines, 7/7 round-2 rulings,
   none BLOCKED — C's spec chain complete pending Monday's Opus call). Launched `a6b-note-rev1` (docs).
   Running: r5-build + a6b-note-rev1. Docs queue next: f-spec-v04 → a3-note-rev2. Codex idle.
+- 14 Nov 02:0?Z (GLM): **A6b note v1.1 committed** (`8cd4453`, 589 lines, none BLOCKED). The job
+  flagged that the critique carried a 12th finding (N6-12, pure A-T14 test-plan expansion) with no
+  ruling row — it applied it as the direct test obligation of the accepted findings; **GLM ratifies
+  that application** (strengthens only; Opus can strike §9's additions Monday with a two-line revert).
+  Launched `f-spec-v04` (docs). Running: r5-build + f-spec-v04. Docs queue next: a3-note-rev2 (last).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
