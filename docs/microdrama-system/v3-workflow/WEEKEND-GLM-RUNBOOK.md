@@ -370,7 +370,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   — no second GLM-5.3 build until the current one ends (avoid mid-build quota kills like R5's 2h33m
   cut). Swarms (1/3 cost) and Codex jobs unaffected. Launched: phase-c-r3 + phase-b-r3 (Codex 2/2);
   r5-build holds the single GLM build slot; e-factmap swarm running.
-- 14 Nov 08:0?Z (GLM): **ROUND-3 RESULTS**: **phase B APPROVE** (5/5 closed, no new findings)
+- 14 Nov 07:56Z (GLM): **ROUND-3 RESULTS**: **phase B APPROVE** (5/5 closed, no new findings)
   → B spec v0.6 ACCEPTED; B1/B5 design notes become ready work. **phase C APPROVE-WITH-CHANGES**
   (6/7 closed, PC5-2 partial resolved by PC6-1 clarification — applied by orchestrator as v0.4.1)
   → C spec ACCEPTED. `a6b-note-r3` launched (Codex 1/2). Running: r5-build (GLM, sole build slot)
