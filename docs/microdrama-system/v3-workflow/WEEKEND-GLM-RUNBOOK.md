@@ -503,6 +503,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   161 passed (fix round added ~46 tests). **Full gate running SOLO at `b84a397`** (`a0d-gate3`
   checkout, unit `dramabox-a0d3-gate`; no build running beside it — r5-fix1 held). Running:
   a0d-review-r3 + phase-g-spec + the gate.
+- 14 Nov 12:49Z (GLM): **A0-D R3 = FIX-REQUIRED, converging** (new findings 13→10→7; AD6-1..7:
+  5 BLOCKING + 2 SF, all with Fix lines; AD6-1 = persist the frozen identity once). Fix3 brief
+  written (`a0d-fix3-brief.md`) — **launches when the solo gate finishes** (no build beside a gate).
+  Running: the a0d3 gate + phase-g-spec. r5-fix1 re-queues behind fix3 (A0-D is the critical path).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
