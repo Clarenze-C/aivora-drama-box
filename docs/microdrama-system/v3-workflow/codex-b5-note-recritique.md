@@ -1,0 +1,24 @@
+**REWORK.** Reviewed B5 v0.2 at `0fbd642`, scoped to B5-1..8 and defects introduced by those edits. Read-only; no tests run.
+
+1. **B5-1 — CLOSED.** [B5 §2.1:228](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:228) separates whole-record `content_sha256` from member-preimage `binding_sha256`, consistent with B1 §2.3 and `contracts/v2.py:66–68`.
+
+2. **B5-2 — CLOSED.** [B5 §5.2:475](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:475) gives calendar and authorities an immutable, scope-owned snapshot. C deployment explicitly cannot replace an existing CAST sentinel.
+
+3. **B5-3 — CLOSED.** [B5 §5.1:414](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:414) atomically creates the initial extension seam; lines 431–439 define effective bible/profile resolution and preserve prior documents.
+
+4. **B5-4 — PARTIAL.** Ancestry, count equality, amendment identity, round authority and approval-set checks are added, but two enforcement details remain:
+   - **B5R2-1:** [B5 §5.3:505–520](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:505) applies the complete, gap-free planned-set predicate at every enqueue/dispatch. Creation enqueues only the first episode before any extension packs exist; phase-B §5.1 requires serial planning.
+     **Replacement:** “At enqueue/dispatch, authorization range equals the immutable extension range, and each job’s episode membership lies within its authorized initial or regeneration round. Require the complete authorized pack-number set at initial critic admission and STORY LOCK approval.”
+   - **B5R2-2:** [B5 §5.3:515–536](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:515) treats equality of the supplied `context_sha256` as proof that separately supplied authority fields match. Copying the correct hash does not establish that agreement.
+     **Replacement:** “Load authorities exclusively from the verified snapshot identified by authorization ID and context hash. If inputs duplicate authority fields, compare every field against that snapshot before use.” Add a negative case changing one authority while retaining the correct context hash.
+
+5. **B5-5 — CLOSED.** [B5 §1:107](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:107) separates resumable `LlmStep` execution from D5 completion, preserves A0 outcome handling, and validates fence/lease/frozen inputs under the completion lock. Lines 158–168 separate content attempts from episode-repair counters.
+
+6. **B5-6 — PARTIAL — B5R2-3.** [B5 §5.3:532](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:532) amends only `PlanEpisodeStepInput` and `SeasonCriticStepInput`. Yet §5.2 requires snapshot enforcement for **all extension jobs**; extension bible Revise and profile promotion also run. B1 §6 registers their separate `BibleStepInput` and `PromoteProfileStepInput` models.
+   **Replacement:** “Register the conditional extension-context addition and enqueue/dispatch validation for all four affected inputs: bible, promoted profile, episode plan and season critic. Regenerate their schemas/examples.” The atomic first enqueue and explicit `J: none` amendment are otherwise closed.
+
+7. **B5-7 — PARTIAL — B5R2-4.** [B5 §2.1:263](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:263) correctly uses the activation’s pre-approval fence, but says to verify an exact document **version** against an activation that stores no document version ([A1 §2.3:253](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/A1-design-note.md:253)). Tier edits can create multiple binding-document versions under the same fence. §5.2:480 also substitutes `binding_sha256` for the document-reference seal.
+   **Replacement:** “Before the approval fence bump, durably associate the approved activation with the exact binding-document `(record_id, version, content_sha256)` and its separate `binding_sha256`. Register that provenance contract and resolve downstream readers and extension pins through it.” Test approval after multiple same-fence binding versions.
+
+8. **B5-8 — PARTIAL — B5R2-5.** The tier-only callback and audit rows are corrected. However, [B5 §3.2:342–354](/root/AIVORA/drama-box/docs/microdrama-system/v3-workflow/B5-design-note.md:342) immediately enqueues the critic whenever a tier target exists, while other notes enqueue asynchronous regeneration. A mixed tier-plus-episode/bible/seam Revise can therefore start the critic before those required members complete, violating phase-B §7.1’s join.
+   **Replacement:** “Apply tier updates synchronously and collect all regeneration members for the decision’s round. Enqueue the critic directly only when no asynchronous members remain; otherwise its sole enqueue belongs to the last-member completion join.” Add the mixed-target row and acceptance case.
