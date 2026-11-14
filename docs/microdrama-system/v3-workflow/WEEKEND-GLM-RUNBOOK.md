@@ -520,6 +520,13 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   AD6-GATE-1; resumes from report if any) + **G-Goldfish relaunched** (G v0.1 draft had committed
   before the earlier refusal). z.ai 1% (window to 20:17Z); Codex 0%/25%. Lesson re-confirmed: idle
   wakeups must always re-arm.
+- 14 Nov 18:2?Z (GLM, operator autonomy window ≈12h while driving): directives — manage quota so
+  no window wastes, maximum work, "if A is finished run B". Quota discipline for the window: exactly
+  one GLM-5.3 build + one docs/goldfish job; never start a job that can't finish in the window with
+  margin (resumable jobs excepted); Codex used freely (0%/25%); **every tick re-arms a wakeup**;
+  gates run solo. Priority: fix3→R4→gate4→A0-D accept → A1 build (whole window) → B1/B5 notes →
+  r5-fix1 → G chain → D last. **A1 v1.4 revision launched** (the held "go" now given). Running:
+  a0d-fix3 + phase-g-goldfish + a1-note-rev4.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
