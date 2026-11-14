@@ -557,6 +557,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 20:03Z (GLM): **phase G v0.2 committed** (`e76bda3`, 760 lines, 19/19 Majors + nits, none
   BLOCKED). **b1-note-rev2 launched** (docs slot). G critique round 1 next (Codex, as slots free).
   Running: b1-note-rev2. fix4 launches at the 20:17Z reset.
+- 14 Nov 20:23Z (GLM): **B1 R3 = APPROVE** → **B1 note ACCEPTED**. **B5 note v0.1 drafted**
+  (`e8849ef`) + its **Codex critique round 1 launched** (`b5-note-r1`). **a0d-fix4 launched** on the
+  fresh window (`a0d-fix4`, AD7-1..4). B chain: B1 accepted, B5 in review; B2/B3/B4 notes can follow
+  (they were not routed note-first — build briefs come from the spec directly when B builds start).
+  Running: a0d-fix4 (build) + b5-note-r1 (Codex). z.ai fresh (window to 01:17Z).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
