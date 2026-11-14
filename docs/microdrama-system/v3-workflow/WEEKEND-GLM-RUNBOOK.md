@@ -361,6 +361,15 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   all six two-round chains at final weekend state: B v0.6, C v0.4, F v0.4, A2 v1.2, A3 v1.2, A6b v1.2).
   **Phase E fact-map swarm launched** (`e-factmap`; Q7 order C→F→**E**→G→D). Running: r5-build +
   e-factmap (swarm). E spec draft follows the fact map; G after; D waits on R5's real run.
+- 14 Nov 07:55Z (GLM, operator directives): (1) **O-8 APPROVED as recommended** (YT caption tracks
+  post-publish; TT/FB Thai-only; per-destination flip after T032) — binding text to be written into
+  phase-F-spec §1.9, F5 unblocked. (2) **Rule-7 waiver granted by operator**: round-3 verifications
+  approved for C, B (running), then A6b, A3, A2 as Codex slots free; F stays deferred per plan.
+  (3) **A-track fixes approved** (A0-D fix round 2, A0-R1 fix round, A1 note revision) — queued.
+  (4) **NEW OPERATOR QUOTA RULE (overrides rule 3's 2-job allowance): one GLM-5.3 build at a time**
+  — no second GLM-5.3 build until the current one ends (avoid mid-build quota kills like R5's 2h33m
+  cut). Swarms (1/3 cost) and Codex jobs unaffected. Launched: phase-c-r3 + phase-b-r3 (Codex 2/2);
+  r5-build holds the single GLM build slot; e-factmap swarm running.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
