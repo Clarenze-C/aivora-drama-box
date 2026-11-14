@@ -448,6 +448,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   `104b26b..6bcdbfa`) + **a0d-fix2** (build slot) + GLM's own two verification suites (chained).
   Full gate in a pinned checkout follows the verification. Running: a0d-fix2 + phase-e-goldfish +
   r5-review (Codex 1/2).
+- 14 Nov 11:14Z (GLM): first verification attempt used wrong suite paths (`tests/*/t031` —
+  "no tests ran"); corrected to the real files (`tests/unit/pipeline/test_t031_r5a_flag.py`,
+  `rendering/test_t031_r5b_boot.py`, `pipeline/test_t031_r5d_prepare_run.py`,
+  `pipeline/test_t031_r5f_billing_verify.py`) and re-running.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
