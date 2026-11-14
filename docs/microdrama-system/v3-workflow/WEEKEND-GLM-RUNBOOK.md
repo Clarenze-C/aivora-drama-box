@@ -442,6 +442,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 10:51Z (GLM): **phase E spec v0.1 drafted** (546 lines; committed by orchestrator — the
   docs-job pattern has no self-commit for first drafts). **E Goldfish launched** (cwd `phase-e-review/`,
   ~40 min). Running: r5-build (make check) + phase-e-goldfish. Q7 drafting order C→F→**E**✓→G→D.
+- 14 Nov 11:1?Z (GLM): **R5 BUILD COMPLETE** — `R5: ALL PACKAGES DONE` at `6bcdbfa` (R5a–R5f;
+  base repairs red-first; make check green 275). **RR-T3 image rebuild disk-blocked** (needs ≥12GiB,
+  5.5G free; refused safely, no push). Launched: **R5 Codex review** (`r5-review`, full range
+  `104b26b..6bcdbfa`) + **a0d-fix2** (build slot) + GLM's own two verification suites (chained).
+  Full gate in a pinned checkout follows the verification. Running: a0d-fix2 + phase-e-goldfish +
+  r5-review (Codex 1/2).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -501,3 +507,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   (R4: baseline capture rejects SEASON amendments; invoice verification omits 451047; Stage-2 order
   reversed). Needs Opus to design the lock table once, properly — not another wording round.
   Reports: `codex-a2-r4.md` (+ lineage).
+- Disk for T031's image rebuild (RR-T3): the builder needs ≥12GiB free and the volume has 5.5G.
+  GLM cannot delete anything (rule 1). Free ≥12GiB (or name what may go) and the rebuild + local
+  verification resumes; the push + paid run remain yours regardless.
