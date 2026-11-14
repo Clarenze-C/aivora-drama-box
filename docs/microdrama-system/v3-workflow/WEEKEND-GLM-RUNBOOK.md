@@ -331,6 +331,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   paid-op lock order among them; N3R2-5..7 SHOULD-FIX). Rule 7 → all 7 ACCEPTED, applied as **v1.2**
   (brief `a3-note-rev2-brief.md`, queued), **no round 3**; Opus decides Monday (queued). Running:
   r5-build + a2-note-rev2; Codex idle. Docs queue: c-spec-v04 → a6b-note-rev1 → f-spec-v04 → a3-note-rev2.
+- 14 Nov 01:33Z (GLM): **A2 note v1.2 committed** (`8bb2089`; all 10 round-2 rulings applied, none
+  BLOCKED — barrier tests now rendezvous-safe, per-category delta validation, unfinished-residual
+  arithmetic pinned). Launched `c-spec-v04` (docs). Running: r5-build + c-spec-v04. Docs queue next:
+  a6b-note-rev1 → f-spec-v04 → a3-note-rev2. Codex idle.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
