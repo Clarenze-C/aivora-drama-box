@@ -613,6 +613,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 22:31Z (GLM): **fix5 verification GREEN by GLM: 207 passed** (123 unit-llm + 84
   gateway-integration). **Solo gate running at `1e43b70`** (`a0d-gate5`, unit `dramabox-a0d5-gate`).
   A0-D acceptance now hangs on R6 + this gate.
+- 14 Nov 22:39Z (GLM): **A0-D R6 = FIX-REQUIRED by ONE SHOULD-FIX** (AD8-1 CLOSED; AD9-1 = memory-only
+  repair progress can launch stale prompt bytes after an interrupted repair + restart — exact repro
+  in the report). Trajectory 13→10→7→4→2→1. **fix6 launched** (single finding, durable repair
+  completeness); R7 + final solo gate follow. The a0d5 gate (at 1e43b70) continues as evidence.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
