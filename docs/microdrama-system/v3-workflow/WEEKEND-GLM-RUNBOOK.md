@@ -405,6 +405,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   (docs, beside r5-build) + g-factmap swarm. Queue in the window: A2-rev3 on A3's exit, A1-rev3 if it
   fits before ~09:30; A3/A2 R4 critiques go to Codex as they land. E-spec draft opens the NEXT window
   (10:14Z) first, G-spec draft behind it.
+- 14 Nov 08:33Z (GLM): **A3 v1.3 committed by its own job** (`68f906b` — the completion pass closed
+  both round-3 blockers, verified lock rows against the real provider_ops sites; no BLOCKED items).
+  Launched: `a2-note-rev3` (GLM slot) + **A3 R4** (`a3-note-r4`, Codex). Running: r5-build +
+  a2-note-rev3 + g-factmap (swarm) + a3-note-r4. A1-rev3 next if a slot frees before ~09:30.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
