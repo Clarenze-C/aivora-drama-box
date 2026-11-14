@@ -581,6 +581,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 21:0?Z (GLM): **G critique round 1 = REWORK** (PG-1..14+: the LIVE pilot's LAUNCH
   reachability + others; all with replacements). All ACCEPTED (`phase-g-critique-rulings.md`);
   **g-spec-v03 apply running** (docs, beside fix4). Round 2 follows. Running: a0d-fix4 + g-spec-v03.
+- 14 Nov 21:16Z (GLM): **phase G v0.3 committed** (`40c4d13`, all round-1 findings applied, none
+  BLOCKED; live/paid steps still operator-gated). **G round-2 critique launched**
+  (`phase-g-recritique`). Running: a0d-fix4 (unit sweep) + phase-g-recritique.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an

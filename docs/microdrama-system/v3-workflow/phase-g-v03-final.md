@@ -1,0 +1,18 @@
+Phase G spec v0.3 landed — commit `40c4d13`, `docs/microdrama-system/v3-workflow/phase-G-spec.md`, 952 lines (+310/−118). One line per finding:
+
+- **PG-1 — applied:** new §7.0 states the honest reach (4 episodes cannot LAUNCH; publication blocked until 5+teaser approvals; extension only via a separately approved plan and envelope, O-G9); no approval seeded, F's gate untouched.
+- **PG-2 — applied:** §7.4/§7.5/§9/LIVE row read first-approval counts from complete F-6 intervals, mark span rates preliminary, keep sustained/catch-up UNMEASURED; no confirmation converts evidence to PASS.
+- **PG-3 — applied:** GD4 register row + §4 rewrite — A0 extension (launch-free quota refresh, one freshness policy, dispatch-independent recovery, isolation→requalification, reset time vs clamped retry kept separate).
+- **PG-4 — applied:** decision 4 + §7.1 + G6 + G-T6 — every-adission authorization validation (campaign/phase/immutable workload/quote/effect/envelope) on worker/scheduler/harness/retry paths; direct-dispatch, stale-plan, expired-authorization, retry tests added.
+- **PG-5 — applied:** §5.5 nightly proof is a credential-free restore composition, all transports faked, zero real transport calls asserted (incl. reconciliation/janitors/cancellation); source deployment separate.
+- **PG-6 — applied:** §5.1 post-snapshot provider acceptance seeded (external state preserved), §5.4 claim scoped to recovered identities + fence-and-reconcile real-recovery procedure; G-T3 updated.
+- **PG-7 — applied:** §3.3 backup manifest (keys/sizes/hashes/metadata), immutable-object rule documented, closure verified before resume; §5.2/G-T3 failure cases.
+- **PG-8 — applied:** §4/GD1 — G evaluation audit records in the transactional event log, atomic evaluation+firing+alert commit, episode reconstruction; G-T2(e) rollback/restart on both edges.
+- **PG-9 — applied:** §7.2 — cast dispatch disabled (image switch off) until calibration completes and its checkpoint export is committed; calibration a separately bounded workload; C's calibration-only provisional-price exception registered; 24-episode demand-list fit checked before enabling.
+- **PG-10 — applied:** §2.1b — hash-manifested evidence closure verifiable without source DB/volumes; operator-signed terminal closure for PASS/FAIL/ABORTED; equivalent retention for scratch restore proofs.
+- **PG-11 — applied:** §7.6 + §10 `record_live_claim` — QUALIFIED requires signed report + closure + LIVE acceptance + current T032 + verified posts bound to release identities; missing ⇒ HELD only; hashes + config identity stored.
+- **PG-12 — applied:** §10 + §7.3 + G-T6 — `confirm_live_thresholds(stage=P1_SCREEN|FINAL)`; screen gates P2 after financial clearance; screen can never complete final throughput acceptance.
+- **PG-13 — applied:** decision 3 + §7.3/§7.1 + G-T7 + O-G8 — operator-authorized leg-boundary choreography (stop admission → reconcile → stop → switch → restart), sends/publication only in public-action legs, neither mode's effects widened.
+- **PG-14 — applied:** §8 verifies the submission cutoff with C's actual semantics (never release protection around unfinished work; restart leaves accepted work active, competitor blocked until reconciliation); §7.4/§7.5 per-provider quota units/source/window/concurrency/uncertainty or explicit NOT_APPLICABLE/UNAVAILABLE, charges retained separately.
+
+No finding BLOCKED; no acceptance row weakened (G-T3/T6/T7 and the LIVE row each gained assertions); live/paid steps remain operator-gated throughout. Cross-checks against F v0.4 (§6.2/§9/§6.3), C v0.4.1 (§3/§4/§5), A0 v0.4 (§5.6/§5.7), A6b, and `S/config.py`/M/0008 all confirmed the critique's factual basis before applying.
