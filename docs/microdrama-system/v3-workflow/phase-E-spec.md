@@ -1,6 +1,20 @@
-# Phase E: Edit — native-audio assembly, derivatives, captions, loudness, the edit gate (v0.3 DRAFT)
+# Phase E: Edit — native-audio assembly, derivatives, captions, loudness, the edit gate (v0.4 DRAFT)
 
-Status: **v0.3 DRAFT**, 14 Nov 2026, GLM (weekend runbook). v0.2 → v0.3 applies the Codex round-1
+Status: **v0.4 DRAFT**, 14 Nov 2026, GLM (weekend runbook). v0.3 → v0.4 applies the Codex round-2
+recritique ([codex-phase-e-recritique.md](codex-phase-e-recritique.md): 9/13 findings closed; four
+partials carry PE5-1..PE5-4 — PE5-1/PE5-2 BLOCKING (from PE-4/PE-7), PE5-3/PE5-4 SHOULD-FIX (from
+PE-9/PE-12); **all 4 ACCEPTED** — every ruling a GLM ruling, Opus re-check Mon) per
+[phase-e-recritique-rulings.md](phase-e-recritique-rulings.md), each finding integrated per its
+Replacement paragraph: the **complete outcome digest** now includes every locale's caption/SRT
+recipe alongside layout/mix, so an EN-only text change or a tool-only change is a new outcome
+(PE5-1); the simultaneous-speech fix is reconciled with the caption contract through the
+E1-declared ED6 crossing and E3's overlap-aware V3 validation (PE5-2); the burned master reuses the
+clean master's finalised audio **and applied gain** yet is measured again after muxing (PE5-3); and
+the package gates' forward dependencies are removed — E2 proves atomic outcome/replay on explicitly
+identified immutable fixture records, E4 the recovery descriptor, E6 registers `adjust_mix`'s mix
+dependencies before E-T8, and E7 proves the complete production bundle and integrated recovery
+(PE5-4). No acceptance row was weakened — every v0.3 assertion stands; the new replay, roundtrip and
+recovery assertions only add. v0.2 → v0.3 applied the Codex round-1
 critique ([codex-phase-e-critique.md](codex-phase-e-critique.md): PE-1..13 — seven BLOCKING
 (PE-1..6, PE-8), six SHOULD-FIX (PE-7, PE-9..13); **all 13 ACCEPTED**) per
 [phase-e-critique-rulings.md](phase-e-critique-rulings.md), each finding integrated individually per
@@ -192,7 +206,7 @@ authority, caption **delivery** (F — E produces the tracks F delivers, F §1.9
     `expected_content_revision`); date-bearing work (CTA) also carries the calendar revision and is
     fenced on it.
 15. **Crash-resume is replay of a durably recorded outcome, not regeneration (SPEC §10.5:720-728)
-    — and the execution identity covers the mix and every output-changing input (B-1; PE-1..PE-4).**
+    — and the execution identity covers the mix and every output-changing input (B-1; PE-1..PE-4, PE5-1).**
     V3 assembly identity is the **execution identity**:
     - the **V3 layout hash** — one hash over the episode's layout decisions: ordered source
       bindings (`clip_id`, `source_asset_id`, the native-audio binding), source spans (`in/out`),
@@ -205,17 +219,28 @@ authority, caption **delivery** (F — E produces the tracks F delivers, F §1.9
     - the **mix digest** — a `canonical_hash` over the music cue-sheet version, the SFX cue-sheet
       version, the gap-fill config **and the loudness/normalisation configuration** (PE-4) —
       **replaces V1's `line_sha`** (which mapped V1's separate line-audio assets; V3 creates none).
-    - **applicable artifact recipe inputs** (PE-4): the caption/burn recipe (text source,
-      alignment, style, font inputs) for burned renders; the crop/variant spec for variants; the
-      hook window spec for hooks. Caption/burn recipes are covered by the burned artifact's own
-      identity, not by the layout hash.
+    - **applicable artifact recipe inputs** (PE-4, PE5-1): **every locale's caption/SRT recipe**
+      (text source, alignment, style, font inputs — `th-TH`, `en-US` and `zh-CN` alike), the burn
+      recipe for the burned render, the crop/variant spec for variants and the hook window spec
+      for hooks — the derivative recipes. Caption/SRT/burn recipes are covered by the owning
+      artifacts' identities, not by the layout hash, so an EN-only or ZH-only text change is a new
+      outcome even when the Thai burn inputs, layout and mix are unchanged.
     - the **tool recipe** (the pinned ffmpeg build and its filter/encoder arguments, phase G's
       composition) is part of the execution identity (PE-4): tool drift is a **new execution
       identity**, never a silent replay under the old one.
 
-    **Output identities derive from the execution identity (PE-1).** V3 manifest execution IDs,
-    output asset IDs and object keys distinguish `(layout hash, mix digest)` and the applicable
-    artifact recipe inputs — they never collide across a mix-only change the way V1's do
+    **The complete outcome digest (PE5-1).** The complete outcome digest includes every locale's
+    caption/SRT recipe, the burn recipe, the derivative recipes and the tool recipe alongside
+    layout/mix. Lookup maps that digest to **one exact immutable outcome version**; it never
+    selects CURRENT by layout/mix alone. Equal **complete execution inputs** — not layout hash
+    alone — identify reproducible outputs: an EN-only text change or a tool-only change is a new
+    digest and a new outcome version with the layout hash and mix digest unchanged (asserted in
+    E-T2).
+
+    **Output identities derive from the execution identity (PE-1, PE5-1).** V3 manifest execution
+    IDs, output asset IDs and object keys distinguish the complete outcome digest — `(layout hash,
+    mix digest)` plus every locale's caption/SRT recipe, the burn recipe, the derivative recipes
+    and the tool recipe — they never collide across a mix-only change the way V1's do
     (`master_asset_id_for` depends only on the EDL hash, `S/editing/edl.py:39-41`; burned IDs add
     only the caption hash, `:43-45`; object keys hash only the EDL, `S/editing/service.py:1069-1072`;
     and persistence reuses an existing manifest ID for changed bytes, `S/editing/service.py:1155-1179`).
@@ -228,7 +253,7 @@ authority, caption **delivery** (F — E produces the tracks F delivers, F §1.9
     **inside the replayed outcome** (the `LoudnessReportV3` document), never in any key.
 
     **The replayed outcome is a durable record, not a reconstruction (PE-3).** An immutable
-    **`AssemblyOutcomeV3`** (§2) is persisted — indexed by its complete execution identity and
+    **`AssemblyOutcomeV3`** (§2) is persisted — indexed by its complete outcome digest (PE5-1) and
     written **atomically with canonical artifact installation** — naming the exact manifest,
     asset, caption-track and report versions plus the recorded checks/findings. Replay verifies
     those references and current authority; it **never substitutes arbitrary CURRENT tracks or
@@ -271,7 +296,7 @@ are embedded clips, decision 2); `caption_tracks.locale` is unconstrained text (
 | `MusicCueSheetV3` | `music:<episode_number>` | `MusicCue[]`: library asset ref (id/version/sha), timeline in/out, loop/duration target, gain_millibel (bounds `S/contracts/media.py:95`), duck profile (depth/ramp), derivation of the duck envelope; the sheet's **version is an input to the mix digest** (decision 15) |
 | `SfxCueSheetV3` | `sfx:<episode_number>` | `SfxAsset[]`: library-or-filled asset ref, timeline point/span, gain, the gap key (for fills: the generation-unit reference with attempt id + receipt ref); the sheet's **version is an input to the mix digest** (decision 15) |
 | `LoudnessReportV3` | `loudness:<artifact asset_id>` | artifact kind + asset ref, measured integrated LUFS + true peak (pre), applied gain dB, measured post values, analyser tool + version, streams analysed, pass/fail vs targets |
-| `AssemblyOutcomeV3` | `outcome:<layout hash>:<mix digest>` | the complete durable assembly outcome (decision 15, PE-3), written **atomically with canonical artifact installation**: exact manifest id/version, output asset ids + shas (clean, burned, variants, hooks, preview), caption-track ids + body hashes per locale, loudness report ids, the recorded `TechnicalCheck`s and findings, the job id; indexed by the complete execution identity. Replay reads this record and verifies every named reference (asset sha, track body hash) and current authority — it never substitutes arbitrary CURRENT tracks or clears findings |
+| `AssemblyOutcomeV3` | `outcome:<complete outcome digest>` (layout hash + mix digest + every locale's caption/SRT, burn, derivative and tool recipes — decision 15, PE5-1) | the complete durable assembly outcome (decision 15, PE-3), written **atomically with canonical artifact installation**: exact manifest id/version, output asset ids + shas (clean, burned, variants, hooks, preview), caption-track ids + body hashes per locale, loudness report ids, the recorded `TechnicalCheck`s and findings, the job id; indexed by the complete execution identity. **Lookup maps the digest to one exact immutable outcome version — never CURRENT by layout/mix alone; equal complete execution inputs, not layout hash alone, identify reproducible outputs (PE5-1).** Replay reads this record and verifies every named reference (asset sha, track body hash) and current authority — it never substitutes arbitrary CURRENT tracks or clears findings |
 
 **Reused as the single implementation, extended (M-1):** `edit_manifests`, `caption_tracks`,
 `assets` + `asset_lineage` (append-only, FM §7), `hook_experiments` (FM §3), `FFmpegRunner`
@@ -305,6 +330,8 @@ accepted**; declared rows are requests to the owning phase's register, not edits
 | ED3 | E consumes C's accepted music/SFX libraries and, for gap fills, C's qualified SFX route seam + `media` lane | C §0 item 7, C §10 (`phase-C-spec.md:698-699`), C §2 pick kinds | declared for C: E needs a **library manifest shape** (per-cue mood/duration/loop metadata) — O-E4; E's `sfx_fill` jobs ride C's `media` lane with E-owned `step_07` metering |
 | ED4 | F embeds E's outputs: recap/CTA previews + readiness blockers on the Gate 2 page; `deliver_captions` binds E's exact track assets; F8's BLOCKED edges unblock; **the teaser's loudness owner is pinned (M-7): F's `release_v3.teaser_cut` reuses E's `ebur128`/`LoudnessReportV3` measurement pattern, declared as a reusable seam — `phase-F-spec.md` v0.4 contains no loudness content (verified), so without this pin the PROMO_CUT teaser is the one released audio-bearing artifact with no loudness owner** | F §4 item (d), F §1.9, F §10 `deliver_captions` (`phase-F-spec.md:931`), F §8.2 PF-10 | declared for F: E pins the track-asset contract (locale tags, SRT bytes, CURRENT state, `derived_from_audio_sha256`), the readiness-blocker vocabulary, and the teaser-loudness seam reuse (a 30–60 s multi-episode re-cut measures its own integrated LUFS — §5's per-artifact rule); F's F5/F8 wire their side |
 | ED5 | E consumes D's `ShotPlanV3`, the shot→asset binding evidence, and clip-QA utterance/word timings | D's contracts (no phase-D spec yet — FM §8) | declared for D: E requires per-shot binding evidence {asset_id, sha256, duration, speaker count 0/1/2} plus **D's exact shot/render acceptance correspondence** — which accepted render belongs to which shot, its source SHA and its required media streams (the native audio stream above all; PE-11) — and, **before E1** (PE-7), the full **line-addressable observation contract** (M-8, decision 4 — not "ideally"): per clip, source-audio identity, observed text, speaker/line association, measured **source-relative** utterance/word spans and coverage — word timings alone do not establish timestamp capability or line association — since SPEC §4.6:439 already requires Thai ASR word match per shot. E validates defensively and blocks with a typed blocker (`edit.binding_incomplete` / `edit.alignment_missing`, §9) on any gap — it never guesses a binding and never falls back to script timing |
+
+| ED6 | V3 caption tracks may contain **overlapping cues** (simultaneous speech keeps independent windows) and clamp-to-next never truncates an overlap | `CaptionTrack._cues` validation (`S/contracts/media.py:206-208`) and the spotter's clamp rule (`S/editing/captions.py:109-113`) — E-owned seam **validators**, declared here per the standing rule (PE5-2) | E1 declares the V3 caption-contract crossing; E3 implements **overlap-aware V3 validation and readers while preserving V1/V2 validation** (V1 rows still reject overlaps); E-T4 roundtrips overlapping tracks through persistence, SRT serialization and the Thai burn |
 
 **Standing rule:** any further E identifier crossing an enforced contract (enum, CHECK, trigger,
 validator) joins this register before the E1 note is accepted.
@@ -341,7 +368,9 @@ validator) joins this register before the E1 note is accepted.
    shape (`libx264`/`aac`, FM §1) — **source assets are never re-encoded into intermediates**.
    **Export discipline (PE-9):** analysis/pre-measurement runs on immutable source bytes; the
    final **normalised** export encodes each artifact's audio **once**; the burned render **copies
-   the clean master's finalised audio stream** into its video re-encode (`-c:a copy`, FM §1).
+   the clean master's finalised audio stream** — reusing the clean master's finalised audio **and
+   applied gain** — into its video re-encode (`-c:a copy`, FM §1), and is measured again after
+   muxing (§5, PE5-3).
    Variants/hooks/preview are cropped re-encodes — today's cropped exporter already encodes AAC
    independently (`S/editing/variants.py:497-538`) — so each carries its **own** final audio
    encode, measurement and gain (§5). E pins, per artifact kind in the session, whether it copies
@@ -352,8 +381,11 @@ validator) joins this register before the E1 note is accepted.
 gap fill reuses the seeded `anoisesrc` pattern, FM §1). The **mix digest** — a `canonical_hash`
 over the music cue-sheet version, the SFX cue-sheet version, the gap-fill config and the
 normalisation configuration (PE-4) — is the execution identity's second component (decision 15):
-the pair (layout hash, mix digest) plus the applicable recipes identifies one complete stored mix,
-and the measured loudness gain rides inside the stored outcome, never in a key. CPU: ffmpeg runs are
+the pair (layout hash, mix digest) plus the applicable recipes — every locale's caption/SRT recipe,
+the burn recipe, the derivative recipes and the tool recipe — forms the **complete outcome digest**
+(PE5-1) that identifies one complete stored outcome: lookup maps that digest to one exact immutable
+outcome version and never selects CURRENT by layout/mix alone. The measured loudness gain rides
+inside the stored outcome, never in a key. CPU: ffmpeg runs are
 the heaviest E work; the production composition runs the E worker under the workspace CPU quota
 (phase G — the SPEC §15 phase that completes and qualifies the production composition and its live
 switches, `SPEC-v3.md:871`; offline tests use small fixtures — §14 build constraints).
@@ -368,11 +400,19 @@ switches, `SPEC-v3.md:871`; offline tests use small fixtures — §14 build cons
   model) — through trims and transitions into Thai master cues, then **copies those windows** to
   `en-US`/`zh-CN`. Repeated placements of one line and predecessor (recap) line ids get **distinct
   cue-id namespaces** (PE-7). Simultaneous speech in a two-speaker clip: each utterance keeps its
-  own measured span and its own cue — overlapping cues overlap; they are never merged and never
-  dropped (exact serialization pinned in the E3 note). Missing alignment for any included
+  own measured span and its own cue — simultaneous utterances retain their **independent windows**;
+  overlapping cues overlap; they are never merged and never dropped (PE-7, PE5-2). **Caption
+  contract (PE5-2):** today `CaptionTrack._cues` rejects overlapping cues
+  (`S/contracts/media.py:206-208`) and clamp-to-next truncates simultaneous utterances
+  (`S/editing/captions.py:109-113`) — E1 declares the V3 caption-contract crossing (ED6) and E3
+  implements **overlap-aware V3 validation and readers while preserving V1/V2 validation**;
+  **clamp-to-next never truncates overlapping speech** — it clamps only within a cue's own
+  non-overlapping tail. E-T4 roundtrips overlapping tracks through persistence, SRT serialization
+  and the Thai burn. Missing alignment for any included
   utterance **blocks** with the typed blocker `edit.alignment_missing` (§9) — E never falls back
   to script timing (PE-7). The existing spotter's floor/clamp rules (`min_cue_ms`, tail pad,
-  clamp-to-next; FM §4) apply **within** the aligned window. Thai is the master timing;
+  clamp-to-next; FM §4) apply **within** the aligned window, never across an overlap. Thai is the
+  master timing;
   `en-US`/`zh-CN` tracks reuse the identical windows.
 - **Text:** `th-TH` = B's Thai line text; `en-US`/`zh-CN` = B's pack text verbatim. **Mismatch
   carve-out (decision 4, M-4):** when the Thai observation mismatches, **every** locale's cue —
@@ -406,10 +446,12 @@ is pinned in ED4.
   bytes** (target −14 LUFS integrated), clamp (config-owned bound), apply as the final `volume=`
   stage before the encoder in that artifact's export; re-measure each output. Integrated LUFS over
   a re-cut sub-span is not the episode's integrated LUFS, so the 20–40 s hooks and the preview
-  carry **their own measured gain**. Copy versus encode is explicit per kind (PE-9, §3): the
-  burned master copies the clean master's **finalised** audio stream and therefore its
-  post-normalisation measurement; independently encoded artifacts (variants, hooks, preview —
-  cropped re-encodes, `S/editing/variants.py:497-538`) normalise on their **own** measured gain.
+  carry **their own measured gain**. Copy versus encode is explicit per kind (PE-9, §3; PE5-3):
+  **the burned master reuses the clean master's finalised audio and applied gain** — but after
+  muxing, E analyses the burned artifact itself and persists **its own report bound to its asset
+  id/SHA**; independently encoded artifacts (variants, hooks, preview — cropped re-encodes,
+  `S/editing/variants.py:497-538`) normalise on their **own** measured gain. **Every final
+  audio-bearing artifact receives a post-export measurement** (PE5-3).
   Still deterministic — a pure function of the measured bytes. A true peak above −1 dBTP after the
   gain clamp fails typed (blocker `edit.loudness_fail` with measurements) rather than silently
   limiting.
@@ -636,12 +678,12 @@ Items are marked **Create / Modify / Reuse** (the phase-F §13 idiom; the seam-l
 | Package | Builds | Gate | Design note |
 |---|---|---|---|
 | **E1** | **Create**: `E-1`/`E-2` migrations, the `EditV3Store` accessor (§2), contracts bump (documents, readiness-blocker vocabulary), the §2.1 crossing register delivered, `require_workflow` guards on the V3 branch. **Reuse**: A §4's queue-checklist plumbing | E-T1 | **Critiqued first** (migrations + crossings) |
-| **E2** | Native-audio EDL + export graph. **Modify**: the `S/editing` seam planners in place (`edl`/`export` — V3 branches beside unchanged V1 paths; V1 outputs byte-identical, asserted at every gate). **Create**: `S/editing_v3` adapters, clip-audio sources, synchronised trims, gap fill, transitions in both exporters, the `UtteranceAligner` offline fake, session/binding validation, the execution identity (layout hash + mix digest, decision 15), the durable `AssemblyOutcomeV3` replay record (§2, PE-3), the frozen-payload/job-identity rules (§10, PE-2), the provenance-completeness gate (§15 — O-E1's recommendation, now assigned) | E-T2, E-T3 | **Critiqued first** (the deterministic core; decision 15 pinned in the note before build) |
-| **E3** | Captions V3. **Modify**: `S/editing/captions.py` in place (window source; V1 byte-identical). **Create**: the `zh-CN` locale wiring and the mismatch carve-out (decision 4). **Reuse**: `caption_tracks` + the SRT asset path; staleness rules | E-T4 | With the diff |
-| **E4** | Loudness. **Create**: measurement, `LoudnessReportV3`, the `edit.loudness_fail` blocker wiring; **normalisation/report generation is proven on supplied fixture artifacts at this gate — complete every-artifact coverage and readiness are proven at E7** (PE-12). **Modify**: the V3 export branch (the per-artifact gain stage, §5) | E-T5 | With the diff |
+| **E2** | Native-audio EDL + export graph. **Modify**: the `S/editing` seam planners in place (`edl`/`export` — V3 branches beside unchanged V1 paths; V1 outputs byte-identical, asserted at every gate). **Create**: `S/editing_v3` adapters, clip-audio sources, synchronised trims, gap fill, transitions in both exporters, the `UtteranceAligner` offline fake, session/binding validation, the execution identity and **complete outcome digest** (decision 15, PE5-1), the durable `AssemblyOutcomeV3` replay record (§2, PE-3) **proven with explicitly identified immutable fixture records standing in for later-package outputs** (PE5-4), the frozen-payload/job-identity rules (§10, PE-2), the provenance-completeness gate (§15 — O-E1's recommendation, now assigned) | E-T2, E-T3 | **Critiqued first** (the deterministic core; decision 15 pinned in the note before build) |
+| **E3** | Captions V3. **Modify**: `S/editing/captions.py` in place (window source; V1 byte-identical) **and the V3 branch of the `CaptionTrack._cues` contract (`S/contracts/media.py`) — overlap-aware V3 validation and readers while V1/V2 validation is preserved (ED6, PE5-2)**. **Create**: the `zh-CN` locale wiring and the mismatch carve-out (decision 4). **Reuse**: `caption_tracks` + the SRT asset path; staleness rules | E-T4 | With the diff |
+| **E4** | Loudness. **Create**: measurement, `LoudnessReportV3` (every final audio-bearing artifact's **post-export** report, including the burned master's own post-mux report — PE5-3), the `edit.loudness_fail` blocker wiring; **normalisation/report generation is proven on supplied fixture artifacts at this gate, and E4 proves the recovery descriptor — `rebuild_edit_media` exposure — with command execution asserted at E7; complete every-artifact coverage and readiness are proven at E7** (PE-12, PE5-4). **Modify**: the V3 export branch (the per-artifact gain stage, §5) | E-T5 | With the diff |
 | **E5** | Recap + CTA. **Create**: bindings (predecessor pack hash + line text via ED2), templates, calendar dependency, duration validators, previews — recap **binding/rendering** is proven here; its registered rebuild edge is proven at E7 (PE-12) | E-T6 | With the diff |
-| **E6** | Music/SFX cue sheets, ducking, `sfx_fill` on C's seam. **Create**: the `adjust_mix` command (§11) — the **command→enqueue→new-output path** is proven here (PE-12); the second-key behavior itself is already proven at E2 with immutable cue-sheet fixtures | E-T8, E-T9 | **Critiqued first** (money) |
-| **E7** | Derivation checks, variants/hooks V3 wiring (hooks.py + the cropped exporter, PE-6), readiness — **the complete required artifact/check inventory (§9, PE-10)** — + production-track transition, A4 edge registration + `edit_v3.rebuild` (PF-10). **Re-register**: the `qa.technical` job for V3 + the ASR caption cross-check (§15) | E-T7, E-T10 | **Critiqued first** (amendment races) |
+| **E6** | Music/SFX cue sheets, ducking, `sfx_fill` on C's seam. **Create**: the `adjust_mix` command (§11) — E6 **registers the mix dependencies `adjust_mix` requires with A4 before E-T8** (PE5-4), and the **command→enqueue→new-output path** is proven here (PE-12); the second-key behavior itself is already proven at E2 with immutable cue-sheet fixtures | E-T8, E-T9 | **Critiqued first** (money) |
+| **E7** | Derivation checks, variants/hooks V3 wiring (hooks.py + the cropped exporter, PE-6), readiness — **the complete required artifact/check inventory (§9, PE-10)** — + production-track transition, A4 edge registration (**the remaining decision-13 edges — the mix dependencies were registered at E6, PE5-4**) + `edit_v3.rebuild` (PF-10); **E7 proves the complete production bundle** (E2's fixture-proven atomic outcome/replay over the real outputs) **and tests integrated recovery** (the E-T5 recovery descriptor's command executes end-to-end — PE5-4). **Re-register**: the `qa.technical` job for V3 + the ASR caption cross-check (§15) | E-T7, E-T10 | **Critiqued first** (amendment races) |
 | **E8** | **Create**: tab 7 UI | E-T11 | With the diff |
 
 **Routing:** GLM builds each package (`ai-route build -w` — the note/critique loop of
@@ -653,20 +695,21 @@ and SFX-route fakes; no network in tests.
 
 ## 14. Acceptance (offline; real PostgreSQL for every transaction test)
 
-**Partial labels (PE-12):** the V3-AT-10 / V3-AT-25 tags on E-T2/E-T4/E-T5/E-T6 are **partial at
-their own gates** — each row's phase-level assertion completes only when the combined E7 assertions
-(E-T7/E-T10) pass.
+**Partial labels (PE-12, PE5-4):** the V3-AT-10 / V3-AT-25 tags on E-T2/E-T4/E-T5/E-T6 are
+**partial at their own gates** — each row's phase-level assertion completes only when the combined
+E7 assertions (E-T7/E-T10) pass; likewise E2's fixture-proven atomic outcome/replay and E4's
+recovery descriptor complete over the real production bundle and executed recovery at E7 (PE5-4).
 
 | Test | Package | Proves |
 |---|---|---|
 | E-T1 | E1 | `E-1`/`E-2` apply on a populated V1+V2 database; V1 `edit_manifests`/`caption_tracks` rows and their triggers are byte-identical **before and after the E migrations** and still refuse V3 rows through the legacy path (`WORKFLOW_MISMATCH`); `reservations.queue`'s CHECK is untouched and edit-lane jobs never reserve (the E-2 invariant); V3 documents roundtrip through the store with hash re-verification; generated contracts show zero drift |
-| **E-T2 (V3-AT-10, audio half)** | E2 | A two-speaker episode assembles with **clip audio only**: the export plan contains per-clip audio sources and **no** dialogue-line audio assets; no whole-timeline room tone (gap fill only, never under a clip); transitions render in master **and** variant/burned planners with paired A/V timing; a mid-word trim boundary is refused; **execution identity (decision 15)**: a restart mid-export replays on (layout hash, mix digest) and never re-renders a stored outcome — the replay returns the **stored `AssemblyOutcomeV3`** with its recorded findings/checks and report references, never substituted CURRENT tracks (PE-3); a crash **before installation** leaves nothing registered, and a crash **after installation / before job finish** replays the stored complete outcome without re-render (PE-3); a mix change driven by **immutable cue-sheet fixtures** (the E6 command is not required at this gate — PE-12) — cue-sheet version bumped, layout hash unchanged — produces **new outputs under a new manifest version with prior outputs preserved, never a replay** (PE-1); **job identity (PE-2)**: changed input under the same semantic key is refused through real `JobService.enqueue` (`IdempotencyConflict`), and replacing an already-successful assembly enqueues a new job with the same `logical_work_id` recording `replaces_job_id` |
+| **E-T2 (V3-AT-10, audio half)** | E2 | A two-speaker episode assembles with **clip audio only**: the export plan contains per-clip audio sources and **no** dialogue-line audio assets; no whole-timeline room tone (gap fill only, never under a clip); transitions render in master **and** variant/burned planners with paired A/V timing; a mid-word trim boundary is refused; **execution identity (decision 15)**: a restart mid-export replays on (layout hash, mix digest) and never re-renders a stored outcome — the replay returns the **stored `AssemblyOutcomeV3`** with its recorded findings/checks and report references, never substituted CURRENT tracks (PE-3); a crash **before installation** leaves nothing registered, and a crash **after installation / before job finish** replays the stored complete outcome without re-render (PE-3); a mix change driven by **immutable cue-sheet fixtures** — explicitly identified immutable fixture records standing in for later-package outputs (PE-12, PE5-4) — cue-sheet version bumped, layout hash unchanged — produces **new outputs under a new manifest version with prior outputs preserved, never a replay** (PE-1); **job identity (PE-2)**: changed input under the same semantic key is refused through real `JobService.enqueue` (`IdempotencyConflict`), and replacing an already-successful assembly enqueues a new job with the same `logical_work_id` recording `replaces_job_id`; **complete outcome digest (PE5-1)**: an EN-only caption-text change (Thai burn inputs, layout and mix unchanged) and a tool-only change (pinned ffmpeg recipe bumped, layout and mix unchanged) each yield a **new complete outcome digest and a new immutable outcome version** — never a replay, never a lookup hit on the old outcome, and never CURRENT tracks selected by layout/mix alone |
 | **E-T3 (V3-AT-25)** | E2 | Binding: every plan shot is bound to an accepted asset (sha + duration recorded); a missing or rejected shot, or one whose measured duration is shorter than the plan requires, ⇒ typed `edit.binding_incomplete`; **correspondence (PE-11)**: an unrelated accepted VIDEO offered for a shot, and a source whose SHA differs from D's acceptance evidence, each ⇒ typed refusal; zero- and one-speaker clips pass the same path; provenance completeness: a clip or card asset without C-side inspection evidence + `ProvenanceRecord` ⇒ typed `edit.provenance_incomplete`, **and an E-created output (master/derivative/SRT/card/gap fill) registered without its own complete `ProvenanceRecord` ⇒ typed `edit.provenance_incomplete`** (§15, PE-13) |
-| **E-T4 (V3-AT-10, caption half)** | E3 | `th-TH`/`en-US`/`zh-CN` CURRENT tracks with identical cue windows (Thai is the timing master); cues inside measured utterance windows; **line-addressable mapping (PE-7)**: a two-speaker clip with several lines yields per-utterance cues through trims/transitions (not the first line only), repeated placements and predecessor recap lines carry distinct cue-id namespaces, simultaneous utterances keep separate spans, and missing alignment for an included utterance ⇒ typed `edit.alignment_missing` — never script timing; SRT assets content-addressed; the mismatch case carries the observed spoken text in **every** locale's cue — including `en-US`/`zh-CN` — plus the CRITICAL finding (decision 4); burned render is Thai-only; **no** burned `en-US`/`zh-CN` variant exists |
-| **E-T5 (V3-AT-10)** | E4 | **Normalisation/report generation on supplied fixture artifacts (PE-12)**: a fixture master measuring −17 LUFS normalises to −14 LUFS integrated ±1 LU with the persisted gain; a hook fixture normalises on **its own** measured gain (per-artifact rule, §5); a peak-clamping case — a derivative that remains outside peak/loudness limits after the permitted scalar gain — fails typed with measurements (never silently limited, never a bigger clamp: PE-8) and the recorded failure exposes the pre-Gate-2 recovery verb; every supplied artifact carries its own post-export measurement and report (the readiness-blocking half of this proof completes at E7 — E-T7) |
+| **E-T4 (V3-AT-10, caption half)** | E3 | `th-TH`/`en-US`/`zh-CN` CURRENT tracks with identical cue windows (Thai is the timing master); cues inside measured utterance windows; **line-addressable mapping (PE-7)**: a two-speaker clip with several lines yields per-utterance cues through trims/transitions (not the first line only), repeated placements and predecessor recap lines carry distinct cue-id namespaces, simultaneous utterances keep separate spans, **and overlapping tracks roundtrip through persistence, SRT serialization and the Thai burn with their independent windows intact (PE5-2), while V1/V2 validation still rejects overlapping rows (ED6)**, and missing alignment for an included utterance ⇒ typed `edit.alignment_missing` — never script timing; SRT assets content-addressed; the mismatch case carries the observed spoken text in **every** locale's cue — including `en-US`/`zh-CN` — plus the CRITICAL finding (decision 4); burned render is Thai-only; **no** burned `en-US`/`zh-CN` variant exists |
+| **E-T5 (V3-AT-10)** | E4 | **Normalisation/report generation on supplied fixture artifacts (PE-12)**: a fixture master measuring −17 LUFS normalises to −14 LUFS integrated ±1 LU with the persisted gain; a hook fixture normalises on **its own** measured gain (per-artifact rule, §5); a peak-clamping case — a derivative that remains outside peak/loudness limits after the permitted scalar gain — fails typed with measurements (never silently limited, never a bigger clamp: PE-8) and the recorded failure exposes the pre-Gate-2 **recovery descriptor** (`rebuild_edit_media`; its command execution is asserted at E7 — E-T7, PE5-4); every supplied artifact — including a copied-audio burned fixture that reuses the clean master's finalised audio and gain — carries its **own post-export measurement and report bound to its asset id/SHA** (PE5-3; the readiness-blocking half of this proof completes at E7 — E-T7) |
 | **E-T6 (R-7.7, R-12.8)** | E5 | **Recap binding/rendering (PE-12)**: recap ≤10 000 ms sourced from the predecessor's packaged shots, hash-bound to **the predecessor's** effective approval, with the predecessor pack hash recorded and recap cues carrying the predecessor pack's line text per locale (ED2); **a predecessor pack text revision before a replacement approval supersedes the binding ⇒ `edit.recap_pending` — the recap is never rebound to unapproved text (PE-11); under an effective replacement approval the recap rebinds to the new approved package** (the registered rebuild edge's end-to-end firing is asserted at E7 — E-T10, PE-12); episode 1 has no recap; `recap_pending` resolves by splicing a new manifest version; CTA ≤5 000 ms resolves next-air-time/continuation/finale from the calendar revision and **refuses** to promise an extension without a decision record; missing calendar ⇒ typed blocker; **render coverage (M-9)**: the assembled master containing the recap prefix and the composited CTA decodes with correct streams, duration and A/V alignment |
-| **E-T7 (V3-AT-25)** | E7 | Derivatives: variant/hook/burned/preview derivation checks pass (constant-offset spans, shifted cues, same burn body); **hooks/preview native audio (PE-6)**: decoded source audio is retained exactly once per selected clip, cue timing survives reordered windows and crossfades, and a source cut that would bisect speech is refused; an injected desync ⇒ CRITICAL finding; a Gate 2 Revise timecode payload maps to exactly the noted units — untouched units' manifest versions and asset hashes byte-identical after rebuild; **readiness inventory (PE-10)**: readiness resolves the complete required artifact/check inventory for the installed assembly — a missing/stale artifact or report, caption IDs not matching the installed assembly, an UNKNOWN/incomplete required check and a failing loudness report each block (the readiness half of E-T5 completes here — PE-12) |
-| **E-T8 (R-7.3, R-7.4)** | E6 | Cue sheets place accepted library assets only (missing provenance ⇒ typed refusal); ducking envelope reproducible from the session; music never rises above the duck bound under dialogue — the per-cue profile depth when the cue sheet sets one, else the config default (`MusicCueSheetV3`, §2); **`adjust_mix` proves the command→enqueue→new-output path (PE-12)**: it appends a cue-sheet version through A4's amendment path (PE-5), enqueues `edit_v3.assemble` exactly once (idempotency key) under a new execution identity, and the new outputs install; **an older worker completing after the mix change is quarantined by the fence (stale result never installed), and an adjustment against approved content routes through the amendment path (supersession), never a side channel (PE-5)**; a repeated identical edit is a no-op |
+| **E-T7 (V3-AT-25)** | E7 | Derivatives: variant/hook/burned/preview derivation checks pass (constant-offset spans, shifted cues, same burn body); **hooks/preview native audio (PE-6)**: decoded source audio is retained exactly once per selected clip, cue timing survives reordered windows and crossfades, and a source cut that would bisect speech is refused; an injected desync ⇒ CRITICAL finding; a Gate 2 Revise timecode payload maps to exactly the noted units — untouched units' manifest versions and asset hashes byte-identical after rebuild; **readiness inventory (PE-10)**: readiness resolves the complete required artifact/check inventory for the installed assembly — a missing/stale artifact or report, caption IDs not matching the installed assembly, an UNKNOWN/incomplete required check and a failing loudness report each block (the readiness half of E-T5 completes here — PE-12); **the complete production bundle and integrated recovery (PE5-4)**: E2's fixture-proven atomic outcome/replay holds over the real complete production bundle, and the E-T5 recovery descriptor's command executes end-to-end — `rebuild_edit_media` regenerates the dependent artifacts and reports as new versions through the §11 path |
+| **E-T8 (R-7.3, R-7.4)** | E6 | Cue sheets place accepted library assets only (missing provenance ⇒ typed refusal); ducking envelope reproducible from the session; music never rises above the duck bound under dialogue — the per-cue profile depth when the cue sheet sets one, else the config default (`MusicCueSheetV3`, §2); **`adjust_mix` proves the command→enqueue→new-output path (PE-12)**: it appends a cue-sheet version through A4's amendment path (PE-5; the mix dependencies it touches were registered with A4 at E6 — PE5-4), enqueues`edit_v3.assemble` exactly once (idempotency key) under a new execution identity, and the new outputs install; **an older worker completing after the mix change is quarantined by the fence (stale result never installed), and an adjustment against approved content routes through the amendment path (supersession), never a side channel (PE-5)**; a repeated identical edit is a no-op |
 | **E-T9 (R-7.4)** | E6 | `sfx_fill`: SPEC §10.5 unit discipline (crash between submit/result/receipt ⇒ resume, no duplicate exposure, no regenerated success); reservation through `step_07`/EPISODE in A §5.2 order; unknown price ⇒ refused |
 | E-T10 | E7 | A4 closure drives **each registered edge of decision 13** — predecessor approval → successor recap; predecessor pack text → successor recap captions; calendar revision → CTA; source shot asset / `ShotPlanV3` revision → assembly; music/SFX library revision → cue sheets; caption source text revision → tracks — asserting new-version rebuild and stale-result quarantine per edge (unpublished episodes only), published media untouched; **positive path (M-11)**: a fixture episode with zero blockers executes the production-track transition closing step 7 (state names per the E1 note) and becomes visible to F's step 8 |
 | E-T11 | E8 | Tab 7: every §12 surface renders per SPEC §3.2 states; one primary action; typed blockers visible; preview cards render through the same document/render path F's Gate 2 page will consume (§12, ED4) — the executable proxy at the E8 gate, since F4 builds after E |
