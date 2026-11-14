@@ -460,6 +460,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   timing, +3 per report; R5V-5..10 SF). All 10 ACCEPTED (`r5-review-rulings.md`); fix brief
   `r5-fix1-brief.md` written — **launches when a GLM build slot frees** (a0d-fix2 holds it; one-build
   rule). Running: a0d-fix2 + phase-e-goldfish + the t031 gate.
+- 14 Nov 11:2?Z (GLM): **E Goldfish done and ruled** (1 Blocker / 21 Major / 43 Nit — all ACCEPTED;
+  B-1 takes the Stage-8 second-key arm: mix digest as replay key, EDL hash pure). `e-spec-v02`
+  apply job launched (docs, beside the one build). Running: a0d-fix2 + e-spec-v02 + the t031 gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
