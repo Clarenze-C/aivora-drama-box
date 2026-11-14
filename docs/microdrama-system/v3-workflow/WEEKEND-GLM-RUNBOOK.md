@@ -527,6 +527,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   gates run solo. Priority: fix3→R4→gate4→A0-D accept → A1 build (whole window) → B1/B5 notes →
   r5-fix1 → G chain → D last. **A1 v1.4 revision launched** (the held "go" now given). Running:
   a0d-fix3 + phase-g-goldfish + a1-note-rev4.
+- 14 Nov 18:41Z (GLM): **A1 note v1.4 committed** (`779099f`, 6/6 round-3 findings, none BLOCKED;
+  the v1.3 StaleRevision expectation corrected per N1R3-6). **A1 R4 verification launched**
+  (`a1-note-r4`). Running: a0d-fix3 + phase-g-goldfish + a1-note-r4 (Codex).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
