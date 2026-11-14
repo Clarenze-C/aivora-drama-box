@@ -418,6 +418,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED). Launched: **A2 R4** (Codex) + **a1-note-rev3** (GLM slot, fits before the 09:30 cutoff).
   Running: r5-build + a1-note-rev3 + g-factmap (swarm) + a2-note-r4. Window nearly fully used;
   no further GLM launches this window.
+- 14 Nov 08:5?Z (GLM): **g-factmap done** (verify count on file). Q7 status: C accepted, F final,
+  E fact map done (draft queued for next window), G fact map done (spec draft behind E's).
+  Running: r5-build + a1-note-rev3 + a2-note-r4.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
