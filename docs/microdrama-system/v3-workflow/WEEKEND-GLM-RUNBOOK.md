@@ -323,7 +323,7 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 14 Nov 01:08Z (GLM): SFW's p5-fix2 ended → slot went to **a3-note-rev1** (docs queue resumes).
   Running: r5-build (81m, R5a) + a3-note-rev1. Docs queue next: a2-note-rev2 → c-spec-v04 →
   a6b-note-rev1 → f-spec-v04. Codex idle (week 23%, nothing review-ready).
-- 14 Nov 01:4?Z (GLM): **A3 note v1.1 committed** (10/10 round-1 rulings applied; integration
+- 14 Nov 01:20Z (GLM): **A3 note v1.1 committed** (10/10 round-1 rulings applied; integration
   points cross-checked against the A0-D fix tree; A-T8/A-T12a/A-T18 strengthened). Launched:
   `a2-note-rev2` (docs) and **A3 Codex round 2** (`a3-note-r2`, final A3 round). Running: r5-build +
   a2-note-rev2 + a3-note-r2. Docs queue next: c-spec-v04 → a6b-note-rev1 → f-spec-v04.
