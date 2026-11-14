@@ -1,10 +1,15 @@
 # A2 design note: budget hierarchy (accounts, steps, amendments, forecasts, costs)
 
-**Version 1.2, 13 Nov 2026. Author: GLM (design note only; one file, no code). Round-2 rulings
-applied per [a2-recritique-rulings.md](a2-recritique-rulings.md): all 10 findings
-(N2R2-1..N2R2-10 from [codex-a2-note-recritique.md](codex-a2-note-recritique.md), 7 BLOCKING +
-3 SHOULD-FIX) ACCEPTED and folded into the sections below — **round-2 rulings applied (GLM);
-awaiting Opus re-check — no round 3 run**. v1.1 (same day): round-1 critique per
+**Version 1.3, 14 Nov 2026. Author: GLM (design note only; one file, no code). Round-3 residuals
+closed per [codex-a2-r3.md](codex-a2-r3.md): the five PARTIAL findings (N2R3-1..N2R3-5 — the
+allocation-baseline evidence, the runtime-role privilege boundary, deferred step-bounds, the SQL
+hierarchy ELSE branch, the service-principal response mapping) are folded in below per their
+replacement wording, and §8's global lock order is restated as an enforceable order table
+(transaction → locks in order → writes) — **round-3 residuals closed (GLM); operator-authorized
+R4 follows**. v1.2 (13 Nov): round-2 rulings per
+[a2-recritique-rulings.md](a2-recritique-rulings.md), all 10 findings (N2R2-1..N2R2-10 from
+[codex-a2-note-recritique.md](codex-a2-note-recritique.md), 7 BLOCKING + 3 SHOULD-FIX) ACCEPTED;
+five were confirmed CLOSED by round 3. v1.1 (same day): round-1 critique per
 [a2-critique-rulings.md](a2-critique-rulings.md), all 15 findings (N2-1..N2-15) ACCEPTED; N2-15
 strengthens §10.** Requirements:
 [phase-A-spec.md](phase-A-spec.md) v0.3 §0, §1, §5 (all), §6, §10 (A2 row + AR-6 activation), §11
@@ -17,7 +22,13 @@ v0.4 §5.2/§5.5/§5.6 (the unmetered `llm.subscription` kind). Facts re-verifie
 0027 = A0, 0028–0031 = A1 — prerequisites, not yet built); v1.1 source references re-verified
 read-only @ `b15bea5`; the round-2 source citations folded in by v1.2 (`S/budget/api.py:24`,
 `S/budget/billing.py:666`/`:753`, `S/budget/ledger.py:428`, `S/budget/service.py:611`) are
-Codex-verified read-only in the round-2 review. `S/` = `microdrama/src/microdrama/`, `M/` = `microdrama/migrations/`,
+Codex-verified read-only in the round-2 review; v1.3's §8 order table is re-verified read-only @
+`dfe67b9` — all seven 451xxx advisory sites (`S/budget/billing.py:256`/`:297`/`:496`/`:828`,
+`S/budget/service.py:611`/`:729`/`:761`), the tag-0 provider-operation advisories
+(`S/core/provider_ops.py:121`/`:124`, the reservation FOR SHARE guard at `:179-181`), the
+janitor's per-pod ingestion call (`S/rendering/janitor.py:1047`; `ingest` opens one self-contained
+transaction per pod, `S/budget/billing.py:207-241`), and `resolve_billing_recovery`'s home
+(`S/budget/service.py:747-831`). `S/` = `microdrama/src/microdrama/`, `M/` = `microdrama/migrations/`,
 `X/` = `microdrama/tests/`.
 
 **A2 builds** the spec §10 A2 row: account kinds and hierarchy serialisation, explicit lookup, step
@@ -37,7 +48,7 @@ never edited — the migrator hashes file bytes and rejects changed checksums (`
 |---|------|---------|
 | 0032 | `0032_v3_budget_accounts.sql` | Account kinds `SEASON_SETUP`/`SEASON`, `parent_account_id` hierarchy, unique indexes, replaced account CHECKs (cap bound; committed-vs-cap on the row's own base cap — the amendment-aware term is swapped in by 0034's function replacement), kind/version guard triggers |
 | 0033 | `0033_v3_budget_mutex_steps.sql` | `season_budget_mutex`, `budget_steps` (+ no-delete/no-truncate/integer guards), `reservations.step_key` (immutable identity + kind rules), `charges.step_key` (+ linkage guard) |
-| 0034 | `0034_v3_cap_amendments.sql` | `account_cap_amendments` (predecessor lineage, server-stamped `xact_id`), `budget_accounts.amendment_revision`, `md_apply_cap_amendment()` (the function-only INSERT boundary, N2R2-3), `md_row_effective_cap()`/`md_effective_cap()` (lineage-ordered), amendment guards (human session **+ season owner**, V3-only, xact-stamp, AFTER ROW deferred consistency), the `md_budget_account_rules` replacement, `budget_steps_cap_amendment_only` (strict value matching, N2R2-6) |
+| 0034 | `0034_v3_cap_amendments.sql` | `account_cap_amendments` (predecessor lineage, server-stamped `xact_id`, **`category_baseline` apply-once evidence — N2R3-1**), `budget_accounts.amendment_revision`, `md_apply_cap_amendment()` (the function-only INSERT boundary, N2R2-3; **SECURITY DEFINER, pinned search path, the `md_runtime` grants/revocations — N2R3-2**), `md_row_effective_cap()`/`md_effective_cap()` (lineage-ordered), amendment guards (human session **+ season owner**, V3-only, xact-stamp, AFTER ROW deferred consistency **incl. baseline, step-application and aggregate-bounds validation — N2R3-1/N2R3-3**), the `md_budget_account_rules` replacement, `budget_steps_cap_amendment_only` (**row-time same-transaction/scope/exact-value matching only — N2R2-6/N2R3-3**), the `md_runtime` group role provisioning |
 
 Ordering: 0032's version guard resolves `seasons.workflow_version` (0028); 0033's step guard reads
 `budget_accounts.scope_kind` (0032); 0034 reads `budget_category_allocations` (0003:36) and
@@ -299,6 +310,10 @@ CREATE TABLE account_cap_amendments (
   old_effective_micro_usd bigint NOT NULL CHECK (old_effective_micro_usd >= 0),
   new_effective_micro_usd bigint NOT NULL CHECK (new_effective_micro_usd >= 0),
   category_deltas         jsonb NOT NULL,   -- {category: delta int}; must sum to new-old
+  category_baseline       jsonb NOT NULL,   -- {category: allocated_micro_usd captured under the
+                                            -- function's category locks BEFORE any delta is
+                                            -- applied}; SQL-visible apply-once evidence bound to
+                                            -- this row (N2R3-1); '{}' only on the SEASON aggregate
   step_deltas             jsonb NOT NULL DEFAULT '{}',  -- {step_key: new cap}; optional, same tx
   actor_owner_id          uuid NOT NULL REFERENCES owners(id),
   actor_session_id        uuid NOT NULL REFERENCES human_sessions(id),
@@ -380,17 +395,32 @@ consistency guard is not a BEFORE trigger):
      `new_effective ≤ md_effective_cap(parent) − (parent.committed − account.committed)` (the §5
      rule, SQL-enforced);
    - spending accounts: `Σ category_deltas = new − old`, every category named exactly once with
-     an integer delta, and **each category's final allocation checked per category**
-     (`final allocated(c) = baseline(c) + delta_c`, the baseline being the value the sanctioned
-     path locked before applying) **plus** `(SELECT SUM(allocated_micro_usd) FROM
-     budget_category_allocations WHERE account_id = …) = new_effective` — the CostPolicy
-     "allocation sums to the cap" invariant (`S/contracts/season.py:117-118`) on effective caps.
-     Per-category equality is what catches a skipped or doubled **zero-net** redistribution (a
-     `+x/−x` pair leaves the sum untouched while breaking both categories; N2R2-2); the sum
-     invariant catches everything else. An inserter that applied the deltas twice, not at all,
-     or only in part fails one of the two (deltas validated once, never added twice);
-   - the aggregate `SEASON` account: `category_deltas = '{}'` and its allocations remain 0 (no
-     reservation ever lands there).
+     an integer delta, and **each category's final allocation checked per category against the
+     row's stored baseline** — `final allocated(c) = category_baseline(c) + delta_c`
+     (**N2R3-1**: the baseline is captured under the function's category locks before any delta
+     is applied and stored on the amendment row itself, so the deferred trigger reads
+     SQL-visible evidence, never a value a caller held in memory) **plus** `(SELECT
+     SUM(allocated_micro_usd) FROM budget_category_allocations WHERE account_id = …) =
+     new_effective` — the CostPolicy "allocation sums to the cap" invariant
+     (`S/contracts/season.py:117-118`) on effective caps. **Missing evidence refuses**: the
+     column is NOT NULL, and the deferred trigger additionally requires the baseline to cover
+     every category of the account exactly once with integer values (an absent, empty or short
+     baseline on a spending account raises at commit). Per-category equality against the stored
+     baseline is what catches a skipped or doubled **zero-net** redistribution (a `+x/−x` pair
+     leaves the sum untouched while breaking both categories; N2R2-2/N2R3-1); the sum invariant
+     catches everything else. An inserter that applied the deltas twice, not at all, or only in
+     part fails one of the two (deltas validated once, never added twice);
+   - **step application and aggregate bounds — deferred, never row-time (N2R3-3):** every
+     `step_deltas` key's `budget_steps.cap_micro_usd` equals its approved value in the completed
+     transaction state (a partially applied amendment — some named steps updated, others not —
+     refuses at commit), and the completed state passes `Σ setup step caps ≤ setup effective
+     cap` and `Σ(step_05..step_09 caps) ≤ episode_production cap` (§2.2). These live here, on
+     the amendment's final state, because a row-time check inside
+     `budget_steps_cap_amendment_only` rejects a valid multi-step reduction: lowering a setup
+     cap 100→50 while its steps go 50/50→25/25 leaves an intermediate total of 75 at the first
+     step update — commit-time state is the only sound witness (N2R3-3);
+   - the aggregate `SEASON` account: `category_deltas = '{}'`, `category_baseline = '{}'`, and
+     its allocations remain 0 (no reservation ever lands there).
 
 The sanctioned write path is one SQL function, so the serialisation is not caller-dependent
 (N2-4). `md_apply_cap_amendment(p_account_id, p_predecessor_id, p_old_effective, p_new_effective,
@@ -398,10 +428,12 @@ p_category_deltas, p_step_deltas, p_actor_owner_id, p_actor_session_id, p_reason
 p_idempotency_key, p_amendment_id) RETURNS integer`, called by the §5 command inside its
 transaction. The function runs the **same protocol as §3.2's helper** — fetch and verify the
 mutex row, re-read kind and attachment under it (N2R2-1) — then validates the prior tip under
-locks before inserting (N2R2-2):
+locks, locks the affected step/category rows and captures the **category baseline** under those
+locks (N2R3-1), before inserting (N2R2-2):
 
 ```sql
 -- §6-#7 order throughout: mutex → SEASON (child amendments) → account → amendment tip
+-- → budget_steps → categories — the baseline is captured HERE, under these locks (N2R3-1)
 SELECT 1 INTO STRICT v_mutex FROM season_budget_mutex WHERE season_id = v_season FOR UPDATE;
 -- SELECT … INTO STRICT: a missing mutex row RAISES (never a silent PERFORM pass; N2R2-1)
 SELECT scope_kind, parent_account_id INTO v_acct FROM budget_accounts WHERE id = p_account_id;
@@ -411,24 +443,37 @@ IF v_acct.scope_kind = 'SEASON' THEN
 ELSIF v_acct.parent_account_id IS NOT NULL THEN
   v_parent := v_acct.parent_account_id;      -- attached child: lock its CURRENT parent
   PERFORM 1 FROM budget_accounts WHERE id = v_parent FOR UPDATE;
-ELSIF EXISTS (SELECT 1 FROM budget_accounts WHERE season_id = v_season
-              AND scope_kind = 'SEASON') THEN
-  RAISE EXCEPTION 'budget hierarchy detached';  -- parentless child after LOCK: corruption
+ELSIF v_acct.scope_kind = 'SEASON_SETUP'
+      AND NOT EXISTS (SELECT 1 FROM budget_accounts WHERE season_id = v_season
+                      AND scope_kind = 'SEASON') THEN
+  v_parent := NULL;               -- ONLY a pre-LOCK SEASON_SETUP may lack a parent (N2R3-4)
 ELSE
-  v_parent := NULL;               -- only pre-LOCK SEASON_SETUP may lack a parent
+  RAISE EXCEPTION 'budget hierarchy detached';
+  -- every OTHER parentless kind refuses even before the aggregate exists (N2R3-4): the SQL
+  -- branch matches the Python helper exactly — a parentless V3 EPISODE is corruption,
+  -- never a tolerated pre-LOCK state
 END IF;
 SELECT * INTO v_account FROM budget_accounts WHERE id = p_account_id FOR UPDATE;
 SELECT * INTO v_tip FROM account_cap_amendments WHERE account_id = p_account_id
   ORDER BY account_revision DESC LIMIT 1 FOR UPDATE;
 -- validate the PRIOR tip under these locks (N2R2-2): predecessor = tip (NULL only when no
 -- tip); old_effective = tip.new_effective else base (the caller surfaces StaleRevision);
--- commitment floor; ancestor limit; then INSERT the amendment row and advance the account
--- revision atomically with the insert:
+-- commitment floor; ancestor limit; then the §6-#7 tail:
+PERFORM 1 FROM budget_steps s WHERE s.season_id = v_season AND s.step_key IN
+  (SELECT jsonb_object_keys(p_step_deltas)) FOR UPDATE;
+PERFORM 1 FROM budget_category_allocations WHERE account_id = p_account_id FOR UPDATE;
+SELECT COALESCE(jsonb_object_agg(category, allocated_micro_usd), '{}'::jsonb)
+  INTO v_baseline FROM budget_category_allocations WHERE account_id = p_account_id;
+-- ^ CAPTURE THE BASELINE (N2R3-1): every category's allocation, read under the row locks
+--   taken above, BEFORE any delta is applied — stored on the amendment row as SQL-visible
+--   apply-once evidence the deferred trigger reads at commit
+-- INSERT the amendment row (carrying category_baseline) and advance the account revision
+-- atomically with the delta application; category deltas and step_deltas apply ONCE (one
+-- UPDATE per named key — each step UPDATE passes 0034's budget_steps_cap_amendment_only row
+-- guard because the amendment row of THIS transaction names it; the aggregate bounds are
+-- proven deferred against the completed state, N2R3-3):
 UPDATE budget_accounts SET amendment_revision = v_rev  -- = COALESCE(tip.account_revision,0) + 1
   WHERE id = p_account_id;
--- lock the affected budget_steps rows and category rows (§6-#7 tail), then apply category
--- deltas and step_deltas ONCE (one UPDATE per named key — the step UPDATE passes 0034's
--- budget_steps_cap_amendment_only because the amendment row of THIS transaction names it);
 RETURN v_rev;
 ```
 
@@ -437,27 +482,46 @@ RETURN v_rev;
 was inserted **by the same transaction** (matched against the **server-stamped** `xact_id`,
 guard 3) for a budget account of this step's season **whose kind owns the step** (permitted step
 scope: `SEASON_SETUP` amendments move the setup steps, episode-count/`SEASON` amendments move the
-production steps and the envelope, §5), **the new cap equals the amendment's
-`step_deltas[step_key]` exactly**, and the post-change state passes the final bounds —
-`Σ setup step caps ≤ setup effective cap` and `Σ(step_05..step_09 caps) ≤ episode_production
-cap` (§2.2). Strict value matching (N2R2-6): naming the step in a same-transaction amendment
-permits **only the approved value** — an update of a named step to a different, unapproved
-amount is refused, and §10's direct-SQL tests reject exactly that. Initial caps are INSERTs and
-are untouched by the guard.
+production steps and the envelope, §5), and **the new cap equals the amendment's
+`step_deltas[step_key]` exactly**. Strict value matching (N2R2-6): naming the step in a
+same-transaction amendment permits **only the approved value** — an update of a named step to a
+different, unapproved amount is refused, and §10's direct-SQL tests reject exactly that. The
+**row-time final-bounds check is gone by design (N2R3-3)**: `Σ setup step caps ≤ setup
+effective cap` and `Σ(step_05..step_09 caps) ≤ episode_production cap` (§2.2) are validated
+**deferred, against the amendment's completed transaction state**, by guard 4 above — a row-time
+aggregate bound would reject the valid multi-step reduction (the first of two step updates
+crosses the new total before the second lands) and refuse a legal amendment. Initial caps are
+INSERTs and are untouched by the guard.
 
 **Direct INSERTs are unavailable — an explicitly enforced function-only write boundary
-(N2R2-3).** Locks, predecessor/revision validation and `amendment_revision` advancement live in
-`md_apply_cap_amendment`; guards that merely authenticate and check final state cannot conjure
-those locks. 0034 therefore `REVOKE`s INSERT on `account_cap_amendments` from the application
-role; only `md_apply_cap_amendment` (SECURITY DEFINER, owned by the migration owner) retains it.
-Every amendment INSERT — whatever the caller — then runs inside the one function that acquires
-the verified hierarchy chain (mutex verified, attachment re-read under it, N2R2-1), re-reads the
-prior tip, validates revision/floor/ancestor limits and advances the account's
-`amendment_revision` atomically with the insert: **equivalent serialization for every writer**
-(N2R2-3 ruling). Defense in depth for a privileged session that regains INSERT: guards 1–2
-authenticate and scope, guard 3 server-stamps `xact_id`, guard 4 refuses inconsistent final
-state, lineage error, or a second same-account row in one transaction — the money backstop is
-SQL-side either way (N2-4).
+(N2R2-3/N2R3-2).** Locks, predecessor/revision validation and `amendment_revision` advancement
+live in `md_apply_cap_amendment`; guards that merely authenticate and check final state cannot
+conjure those locks. **The boundary needs a real privilege separation to enforce (N2R3-2), so a
+distinct non-superuser runtime role is an explicit prerequisite:** 0034 idempotently provisions
+the group role `md_runtime` (`NOLOGIN`, `NOSUPERUSER`, never a member of — and never granted —
+the migration-owner role), `REVOKE`s `INSERT, UPDATE, DELETE ON account_cap_amendments FROM
+PUBLIC` and from `md_runtime`, and grants the runtime role exactly what the application needs:
+`SELECT`/`UPDATE` on the working tables and `EXECUTE` on `md_apply_cap_amendment` — nothing that
+carries table INSERT. Ownership stays with the migration owner; because role membership is the
+only inherited path to the owner's table privileges, **runtime INSERT is unavailable through
+every inherited grant**. The application's login roles (and the test harness's second DSN) get
+`GRANT md_runtime TO <login>` — membership in `md_runtime` only. `md_apply_cap_amendment` is
+`SECURITY DEFINER`, owned by the migration owner, `SET search_path = pg_catalog`, with every
+table/function reference **schema-qualified** (`public.account_cap_amendments`, …) — a pinned
+trusted search path that a hostile session `search_path` cannot redirect. Today's harness gaps
+are recorded, not inherited: the test fixtures migrate and run services through one superuser
+DSN (`X/conftest.py:42`) and staging runs the PostgreSQL bootstrap user
+(`deployment/compose.staging.yaml:33`) — A2's conftest provisions `md_runtime`, a login role in
+it, and runs the boundary negatives **through that login's DSN** (§10; provisioning the runtime
+role in the staging composition is a deployment prerequisite of the A2 build). Every amendment
+INSERT — whatever the caller — then runs inside the one function that acquires the verified
+hierarchy chain (mutex verified, attachment re-read under it, N2R2-1), re-reads the prior tip,
+captures the baseline (N2R3-1), validates revision/floor/ancestor limits and advances the
+account's `amendment_revision` atomically with the insert: **equivalent serialization for every
+writer** (N2R2-3 ruling). Defense in depth for a privileged session that regains INSERT: guards
+1–2 authenticate and scope, guard 3 server-stamps `xact_id`, guard 4 refuses inconsistent final
+state, missing baseline evidence, lineage error, or a second same-account row in one transaction
+— the money backstop is SQL-side either way (N2-4).
 
 `md_effective_cap` is the **one** deterministic effective cap used by the SQL guards
 (0034's replaced committed trigger) **and** by Python ledger loading. Every `AccountRow`
@@ -801,7 +865,8 @@ re-checked by the §2.3 SQL constraint trigger — the backstop is not Python-on
   `new_effective` (§2.3 re-checks the final state); `step_deltas` may only move caps of steps owned
   by that account, and for the setup account `Σ step caps ≤ new_effective` after the change;
   production step raises additionally respect `Σ(step_05..step_09 caps) ≤ episode_production cap`
-  (§2.2).
+  (§2.2). The Python checks compute the **completed amendment state**, and §2.3's deferred guard
+  re-proves them at commit — no row-time aggregate bound exists anywhere (N2R3-3).
 
 **Responses (exact, N2-10):** `approve_setup_budget` and `amend_account_cap` return
 `{amendment_id, account_id, old_effective_micro_usd, new_effective_micro_usd, account_revision,
@@ -872,16 +937,22 @@ second subtraction anywhere (`setup_committed` is shown separately for the UI).
 
 **Costs data API.** One V3 read route, `GET /v3/seasons/{season_id}/costs`
 (`S/budget/api.py` gains a sibling router). **Access before detail, in that order
-(N2-9/N2R2-7):** the route resolves the season and requires `require_season_access`
-(`S/review/scope.py:79-84`) **first** — a foreign scope is `NotFound` and never learns the
-workflow version — and only then runs `require_workflow(expected='v3')` (an authorized principal
-on a V1 season sees `WORKFLOW_MISMATCH`). The V1 route `GET /episodes/{id}/costs`
-(`S/budget/api.py:21`), which today accepts a principal and discards it (`:24`) while its reader
-resolves EPISODE accounts without workflow filtering, gains exactly one V3-only check: for a
-**V3 episode id** it resolves the episode's season and requires the same access — an owner of
-another season, or service credentials without it, gets `NotFound` **before any financial read**;
-V1 episode ids keep today's behaviour unchanged (N2R2-7). §10 tests both endpoints with another
-season's owner and with service credentials. Response `SeasonCostsV3` (generated contracts, §2.4),
+(N2-9/N2R2-7/N2R3-5):** the route resolves the season; **non-human service principals are
+mapped to `NotFound` explicitly, first** — before the ownership helper and before any financial
+read — because `require_season_access` (`S/review/scope.py:79-84`) bottoms out in
+`owner_id_in_tx` (`S/core/auth.py:174`), whose human-principal check raises `Unauthorized` for
+service credentials; the V3 Costs contract promises `NotFound`, and the explicit mapping makes
+the promised response the real one (N2R3-5). Human principals then require
+`require_season_access` — a foreign scope is `NotFound` and never learns the workflow version —
+and only then `require_workflow(expected='v3')` (an authorized principal on a V1 season sees
+`WORKFLOW_MISMATCH`). The V1 route `GET /episodes/{id}/costs` (`S/budget/api.py:21`), which
+today accepts a principal and discards it (`:24`) while its reader resolves EPISODE accounts
+without workflow filtering, gains exactly one V3-only check: for a **V3 episode id** it resolves
+the episode's season and applies the same two-step rule — service credentials map to `NotFound`,
+an owner of another season gets `NotFound` — **before any financial read**; V1 episode ids keep
+today's authentication behaviour unchanged (N2R2-7/N2R3-5). §10 tests both endpoints with
+another season's owner and with service credentials, asserting the exact response (404
+`NOT_FOUND`, never 401). Response `SeasonCostsV3` (generated contracts, §2.4),
 one REPEATABLE READ READ ONLY transaction (`S/budget/reports.py:3-5` pattern). Separate
 quantities, each its exact ledger query — unknowns stay unknown, never COALESCEd to zero (N2-13):
 
@@ -941,55 +1012,94 @@ actor_owner_id, revision}`. The `create_v3_season` response is defined here with
 The §6 table (A1 §9) row 7 in full: `season_budget_mutex → SEASON → child accounts (id order) →
 budget_steps → categories → reservations → charges/receipts`, the audit including provider-operation
 advisory locks and caller-owned billing transactions — **complete outer transactions, not just the
-shared helpers' interiors** (N2-5; N2R2-4 closes the remaining outer cycles). Every transaction
-A2 adds or touches:
+shared helpers' interiors** (N2-5; N2R2-4). v1.3 states the order as an **enforceable table**
+(N2R2-4's "one ordered sequence", made concrete): §8.1 defines the global order; §8.2 binds every
+A2-touched transaction to it and lists its writes.
 
-| Transaction | Locks in order | Verdict |
-|---|---|---|
-| `reserve` (V3) | policy checks (no locks) → tx: mutex → SEASON → child → step row → categories → replay read → all admission checks → atomic tail (transfer + reservation insert + counters) | conforms (§3.3; N2-14) |
-| `release` (`S/budget/service.py:484-543`) | mutex → SEASON → child (`:500`) → categories (`:501`) → reservation (`:502`) — today's order preserved, hierarchy prepended | conforms |
-| `expire_stale` (`:545-577`) | **today: per distinct account in `:557` id order: mutex → SEASON → child (`:562`) → categories (`:563`) → reservations (`:566`) — a second season's mutex is taken after the first season's budget locks, contradicting the all-season-mutex pre-acquisition rule (N2R2-4).** Fix: a multi-season batch acquires **every required `season_budget_mutex` in `season_id` order first**, then per account in id order: SEASON → child → categories → reservations FOR UPDATE id order | **fixed** — multi-season-expiry race §10 |
-| `record_usage_in_transaction` (`:864-880`) | mutex → SEASON → child (`:872`) → categories (`:873`) → linked reservation (`_linked_reservation`, `:1068-1080`) → charge insert | conforms |
-| `_record_gpu_interval` (`:882-956`) | mutex → SEASON → child (`:912`) → categories (`:913`) → lease read → overlap check → charge + interval inserts; the pod EXCLUDE gist 40P01 mapping (`:997-1006`) unchanged | conforms |
-| `settle_billed_lease` (`S/budget/billing.py:1269`) | **today: child account (`:1296`) → reservation (`:1297`) → `record_usage_in_transaction` (`:1367`) — child-before-parent, the inversion the spec names.** Fix: `lock_budget_hierarchy` before `:1296`; the rest unchanged | **fixed** — competing test §10 |
-| billing ingestion (`ingest` → `_ingest_in_transaction`, `S/budget/billing.py:208-…`) | **today: query advisory (451045, `:256`) → per bucket: bucket advisory (451046, `:297`) → budget chain → next bucket advisory — `#6 → #7 → #6`, the outer-billing cycle (N2-5/N2R2-4).** Fix: the ingest core takes the query advisory, then **all** of the batch's bucket advisories in `bucket_identity_sha256` order **before** the first budget lock, then every required season mutex in `season_id` order; buckets then post through the chain with no lock reacquisition. When ingestion runs inside invoice verification (next row), the bucket set is the verification transaction's union, planned before any budget lock | **fixed** — competing-ingestion + invoice-vs-ingestion tests §10 |
-| `verify_invoice_period` (`S/budget/billing.py:449-…`) | **today: loops bucket revisions at `:666` and invokes `_ingest_in_transaction` per verified bucket at `:753` — each call takes a fresh bucket advisory after earlier budget locks, leaving the outer `#6 → #7 → #6` intact (N2R2-4): an invoice transaction can hold a season mutex and request its next bucket while an ingester holds that bucket and waits for the mutex.** Fix: the verification transaction computes its **full bucket set up front** and acquires the invoice-period advisory (451050, `:496`) **and every bucket advisory it will need** in the global advisory order, plus its evidence rows, before the first budget lock, then all required season mutexes in `season_id` order; the `:666` loop and its `:753` ingestion calls reuse that plan and take no new lock | **fixed** — invoice-vs-ingestion race §10 |
-| `resolve_podless_create` (`S/budget/billing.py:786-895`) | podless advisory (451051, `:828`) → resolution insert → posts the receipt through the budget helper (`:893`) — one advisory, then the chain, no reacquisition | audited — conforms |
-| `resolve_billing_recovery` (`:747-831`) | advisory xact lock on the allocation (`:761`, #6-class, before budget) → hierarchy → child (`:811`) → categories (`:812`) → charge (`:817`) → resolution insert (`:820`) | **fixed** (hierarchy prepended before `:811`) |
-| `reconcile_provider_allocation_in_transaction` (`S/budget/service.py:589-…`) | advisory (`S/budget/service.py:611`, #6-class) → posting row FOR UPDATE (`:615`) → hierarchy → child (`:654`) → categories (`:655`) → `_lease_window_reservation` FOR UPDATE (`:1040-1065`) → charge. The per-call advisory is correct for a standalone call; a caller-owned transaction that will reconcile **after** budget work must carry this advisory in its outer plan before budget entry — reconciliation never takes a new #6 lock below a held #7 lock (N2R2-4) | **fixed** (hierarchy before `:654`; advisory planned at the outermost transaction when composed) |
-| `record_provider_invoice_verification_in_transaction` (`:718-745`) | advisory (`:729`) → finalization row (`:732`) — no account locks (evidence only) | audited — no budget locks, no inversion possible |
-| `transfer` (`:1228-1272`) | mutex → SEASON → child (`:1246`) → categories (`:1247`) → `budget_transfers` insert (at the atomic tail; `S/budget/ledger.py:417-421`) | conforms |
-| `attribute_setup_cost` (V3, §6) | mutex → SEASON → source (setup) → target accounts in id order — allocations only, no counter moves | conforms |
-| `approve_setup_budget` / `amend_account_cap` (§5) | idempotency (#1) → RETRY_WAIT job rows FOR UPDATE (#5) → mutex → SEASON (child amendments) → account → amendment tip → steps → categories → amendment insert + revision advance → job UPDATE | conforms (#5 before #7; no existing path takes job→budget — A3 must preserve this; recorded as A2's only new order, with the §10 race test) |
-| STORY LOCK decision + attach (§4) | A1 §5 order (1 → 2 → 4 → episode/track inserts → 3) then §4's mutex → setup → SEASON create → parent set → episode accounts → steps | conforms (inserts of not-yet-existing rows serialise under the mutex + unique indexes, per A1 §9's justification) |
-| `create_v3_season` | idempotency → A1's creation order (incl. `season_owners` creator link) → mutex row + setup account inserts | conforms |
-| V1 paths | helper is a no-op (no mutex row, `workflow_version='v1'`): lock sequences byte-identical to today | untouched |
+### 8.1 The global lock order (normative)
 
-**Provider-operation and billing advisory locks (N2-5/N2R2-4):** seven `pg_advisory_xact_lock`
-sites, all #6-class — `S/budget/service.py:611`/`:729`/`:761` (451047-9) and, in the caller-owned
-billing transactions, `S/budget/billing.py:256` (451045, billing query), `:297` (451046, billing
-bucket), `:496` (451050, invoice-period evidence), `:828` (451051, podless-create resolution).
-A2 adds none — and the claim "all advisory locks before budget" now holds for the **complete
-outer transactions**, not just single calls (N2R2-4): every outer billing transaction builds its
-**complete lock plan at the outermost boundary** — one ordered sequence over all seven advisory
-families (query, bucket, the three service families, invoice-period, podless; keys sorted within
-each family), acquiring those locks together with the required evidence/provider/lease row locks
-**before budget entry**, then **every required `season_budget_mutex` by `season_id`**, then the
-per-season #7 chains. Inner helpers — the per-bucket ingestion loop inside invoice verification
-(`:666`/`:753`), a reconciliation composed after other budget work — only **reuse** the outer
-plan and never acquire a new family below a held budget lock. Applied to invoice verification,
-ingestion and multi-season expiry (N2R2-4): the `#6 → #7 → #6` cycle is eliminated at the
-transaction level, not just inside one loop. **Cross-season ordering (N2-5):** a transaction that
-needs the budget chains of more than one season (an ingestion batch's buckets can map to episodes
-of several seasons; a multi-bucket invoice verification; a multi-season expiry batch) takes
-**all** required `season_budget_mutex` rows in `season_id` order first — after the advisory
-locks, before any account lock of any of those seasons — then proceeds per
-season down the #7 chain; combined with the bucket pre-acquisition this makes the lock order
+Every transaction that takes any lock named here — a 451xxx advisory, a `season_budget_mutex`, or
+any #7 budget row lock — acquires its locks as a **subsequence of this order**: it may skip every
+family it does not need, but the relative order of the locks it does take must match the table.
+Advisory families are taken in **ascending tag order (451045 → 451051)**, each family's keys as
+one **sorted block** acquired at the outermost transaction boundary, before every stage-2/3/4
+lock.
+
+| Stage | Lock family | Order within the family | Sites |
+|---|---|---|---|
+| 1a | billing-query advisory — `pg_advisory_xact_lock(hashtextextended(key, 451045))` | one key: `query_id` | `S/budget/billing.py:256` |
+| 1b | billing-bucket advisory (…, **451046**) | **all** of the transaction's buckets, `bucket_identity_sha256` ascending | `S/budget/billing.py:297` |
+| 1c | reconciliation advisory (…, **451047**) | all of the transaction's allocation keys, ascending | `S/budget/service.py:611` |
+| 1d | verification-finalization advisory (…, **451048**) | one key | `S/budget/service.py:729` |
+| 1e | billing-recovery advisory (…, **451049**) | one key | `S/budget/service.py:761` |
+| 1f | invoice-period advisory (…, **451050**) | keys `{provider_account_ref}:{pod_id}`, ascending | `S/budget/billing.py:496` |
+| 1g | podless-create advisory (…, **451051**) | one key: `lease_id` | `S/budget/billing.py:828` |
+| 2 | evidence/provider/lease **row** locks — `runpod_billing_queries` → `runpod_billing_buckets` → `pod_leases` → `provider_operations` | rows in identity order within each table; tables in the listed order | `S/budget/billing.py:260`/`:301`/`:830`; `S/core/provider_ops.py:91-95` |
+| 3 | **every** required `season_budget_mutex` | all of the transaction's seasons, `season_id` ascending — before any account lock of any of those seasons | 0033 (§2.2) |
+| 4 | per season, in `season_id` order, the #7 chain: `SEASON` account → child accounts → `budget_steps` → categories → reservations; charge/receipt inserts last | children by `id`, steps by `step_key`, categories by category, reservations by `id` | §3.2; A1 §9 |
+
+**Why this eliminates the `#6 → #7 → #6` cycle (N2R2-4, made concrete).** The two live cycles:
+ingestion reached `:297` again *below* budget locks (bucket advisory → reconcile's advisory +
+budget chain → next bucket advisory), and invoice verification acquired its season mutexes only
+inside the per-bucket ingestion its `:666` loop triggers at `:753` — so an invoice transaction
+could hold a season mutex and request its next bucket while an ingester held that bucket and
+waited for the mutex. Under §8.1 this is impossible **by construction**: the outermost
+transaction plans **every stage-1 advisory it will ever need** — ingestion: its query key, every
+bucket key, every allocation's reconciliation key; verification: its invoice-period key, every
+synthetic query, every bucket the period may verify, its finalization key; expiry: none — and
+takes them as sorted blocks in ascending tag order **before the first stage-2/3/4 lock**. No
+transaction ever requests a stage-1 lock while holding a stage-3/4 lock; all of a transaction's
+bucket keys are held before any of them is used; cross-season transactions hold **all** their
+mutexes (stage 3) before any account lock (stage 4). The wait-for graph is acyclic because every
+edge follows one total order. Inner helpers — the `:666` loop's ingestion calls, a
+reconciliation composed after other budget work, the ingest core inside verification — **reuse
+the outer plan** and acquire nothing new.
+
+**The provider-operation family sits outside the seven.** Tag-0 advisories
+`pg_advisory_xact_lock(hashtextextended('md-job:{job_id}', 0))` then
+`hashtextextended('md-reservation:{reservation_id}', 0)`
+(`S/core/provider_ops.py:121`/`:124`, job before reservation, always in this order) are taken by
+`begin` after a reservation **FOR SHARE** read-guard (`:179-181`) and before the
+`provider_operations` insert. No transaction takes both a tag-0 and a 451xxx advisory; `begin`
+takes no counter lock and no other #7 lock beyond the read-guard; and the read-guard's only
+counterpart (`release`, taking the same row FOR UPDATE inside its own stage-4 chain) can never
+hold-and-wait against `begin` in both directions — the family is unconstrained by the stages and
+cannot join a #6↔#7 cycle (A1 §9 audited; A2 changes nothing there).
+
+### 8.2 Transaction audit (locks in order → writes)
+
+| Transaction | Locks in order (per §8.1) | Writes | Verdict |
+|---|---|---|---|
+| `reserve` (V3) | policy checks (no locks) → tx: stage 3 → stage 4 (SEASON → child → step row → categories) → replay read → all admission checks → atomic tail (§3.3) | `reservations` insert; step/category/account counters (mirrors incl. envelope + parent); spill: `budget_transfers` + category allocations; cleanup: `cost_overruns` rows, `overrun_micro_usd`, blocked flags | conforms (§3.3; N2-14) |
+| `release` (`S/budget/service.py:484-543`) | stage 3 → stage 4: SEASON → child (`:500`) → categories (`:501`) → reservation (`:502`) — today's order preserved, hierarchy prepended | reservation state; counters | conforms |
+| `expire_stale` (`S/budget/service.py:544-576`) | **today: per distinct account in `account_id` order (`:556`): hierarchy (mutex → SEASON, added by A2) → child (`:562`) → categories (`:563`) → reservations (`:566`) — a second season's mutex lands after the first season's account locks (N2R2-4).** Fix: stage 3 — every required mutex, `season_id` order — then per account in id order, stage 4: SEASON → child → categories → reservations | reservation `reserved → accrued`; counters | **fixed** — multi-season-expiry race §10 |
+| `record_usage_in_transaction` (`S/budget/service.py:864-880`) | stage 3 → stage 4: SEASON → child (`:872`) → categories (`:873`) → linked reservation (`_linked_reservation`, `:1068-1080`) | `charges` insert; counters | conforms |
+| `_record_gpu_interval` (`S/budget/service.py:882-956`) | stage 3 → stage 4: SEASON → child (`:912`) → categories (`:913`) → lease read → overlap check; the pod EXCLUDE gist 40P01 mapping (`:997-1006`) unchanged | `charges` + interval inserts; counters | conforms |
+| `settle_billed_lease` (`S/budget/billing.py:1268-1383`) | **today: child account (`:1296`) → reservation (`:1297`) → `record_usage_in_transaction` (`:1367`) — child-before-parent, the inversion the spec names.** Fix: stage 3 → stage 4 hierarchy before `:1296`; the rest unchanged | settlement `charges` insert; counters | **fixed** — competing test §10 |
+| billing ingestion — the janitor's per-pod call (`S/rendering/janitor.py:1047` → `ingest`, `S/budget/billing.py:207-241`: **one self-contained transaction per pod**; the sweep holds no lock across pods) | **today: 451045 (`:256`) → query row (`:260`) → per bucket: 451046 (`:297`) → bucket row (`:301`) → per allocation `reconcile_provider_allocation_in_transaction` (451047 + budget chain, `billing.py:370-373`) → **next** 451046 — the `#6 → #7 → #6` cycle (N2-5/N2R2-4).** Fix: stage 1 in tag order — 451045, then **every** bucket's 451046 (`bucket_identity_sha256` sorted), then **every** allocation's 451047 — then stage 2 (query + bucket rows), then stages 3–4 per season; the bucket loop reuses the plan, no reacquisition | `runpod_billing_queries` / `_query_skipped_buckets` / `_billing_buckets` / `_billing_allocations` inserts; `charges` + counters via reconcile | **fixed** — competing-ingestion + invoice-vs-ingestion tests §10 |
+| `verify_invoice_period` (`S/budget/billing.py:448-693`) | **today: 451050 (`:496`) → evidence reads → MATCHED loop (`:666`) → `_verify_bucket_revision_in_transaction` → inner `_ingest_in_transaction` (`:753`) per bucket, each taking a fresh 451045/451046 and the budget chain below held evidence state — the outer `#6 → #7 → #6` (N2R2-4).** Fix: plan up front, stage 1 in tag order — 451045 (every synthetic query), 451046 (every bucket the period may verify), 451048 (finalization), 451050 (the period) — then stage 2 (evidence + bucket rows), then stages 3–4; the `:666` loop and its `:753` calls reuse the plan and take no new lock | `runpod_billing_period_evidence` insert; verified bucket revisions + `runpod_billing_invoice_verifications` inserts; `charges` + counters (finalization / inner ingest) | **fixed** — invoice-vs-ingestion race §10 |
+| `resolve_podless_create` (`S/budget/billing.py:785-912`) | stage 1g (451051, `:828`) → stage 2 (`pod_leases` row, `:830`) → stages 3–4 via `record_usage_in_transaction` (`:911`) — one advisory, then the chain, no reacquisition | resolution insert; lease window update; `billing.podless_create_resolved` event; BILLED-0 `charges` insert; counters | audited — conforms |
+| `resolve_billing_recovery` (`S/budget/service.py:747-831`) | stage 1e (451049, `:761`, before budget) → stages 3–4: hierarchy → child (`:811`) → categories (`:812`) → charge (`:817`) → resolution insert (`:820`) | recovery `charges` insert; resolution insert; counters | **fixed** (hierarchy prepended before `:811`) |
+| `reconcile_provider_allocation_in_transaction` (`S/budget/service.py:589-…`) | stage 1c (451047, `:611`) → stage 2 (posting row FOR UPDATE, `:615`) → stages 3–4: hierarchy → child (`:654`) → categories (`:655`) → `_lease_window_reservation` FOR UPDATE (`:1040-1065`) → charge. The per-call advisory is correct for a standalone call; a caller-owned transaction that will reconcile **after** budget work carries this advisory in its outer stage-1 plan — reconciliation never takes a new #6 lock below a held #7 lock (N2R2-4/§8.1) | `charges` insert; counters | **fixed** (hierarchy before `:654`; advisory planned at the outermost transaction when composed) |
+| `record_provider_invoice_verification_in_transaction` (`S/budget/service.py:718-745`) | stage 1d (451048, `:729`) → finalization row (`:732`) — no account locks (evidence only) | finalization row | audited — no budget locks, no inversion possible |
+| `transfer` (`S/budget/service.py:1228-1272`) | stage 3 → stage 4: SEASON → child (`:1246`) → categories (`:1247`) | `budget_transfers` insert (atomic tail, `S/budget/ledger.py:417-421`); category allocations; counters | conforms |
+| `attribute_setup_cost` (V3, §6) | stage 3 → stage 4: SEASON → source (setup) → target accounts in id order | `cost_allocations` rows only — no counter moves | conforms |
+| `approve_setup_budget` / `amend_account_cap` (§5) | idempotency row (#1) → RETRY_WAIT job rows FOR UPDATE (#5) → stage 3 → stage 4: SEASON (child amendments) → account → amendment tip → steps → categories (baseline captured here, N2R3-1) → amendment insert + revision advance → step/category deltas → job UPDATE | `account_cap_amendments` row (incl. `category_baseline`); `budget_accounts.amendment_revision`; `budget_steps` caps; category allocations; `jobs.run_after` | conforms (#5 before #7; no existing path takes job→budget — A3 must preserve this; recorded as A2's only new order, with the §10 race test) |
+| STORY LOCK decision + attach (§4) | A1 §5 order (1 → 2 → 4 → episode/track inserts → 3) then stage 3 (mutex) → stage 4: setup lock → SEASON create → parent set → episode accounts → steps | `SEASON` account; `parent_account_id` attach; `EPISODE` accounts; `budget_steps` rows | conforms (inserts of not-yet-existing rows serialise under the mutex + unique indexes, per A1 §9's justification) |
+| `create_v3_season` | idempotency (#1) → A1's creation order (incl. `season_owners` creator link) → mutex row + setup account inserts | seasons + `season_tracks(IDEA)` + `season_budget_mutex` + `SEASON_SETUP` (base 0, categories 0) + `season_owners` | conforms |
+| provider-op `begin` (`S/core/provider_ops.py:144-273`) | reservation FOR SHARE read-guard (`:179-181`) → tag-0 `md-job` advisory (`:121`) → tag-0 `md-reservation` advisory (`:124`) → `provider_operations` insert | `provider_operations` row + its event | audited — outside the seven families (§8.1); no counter lock, no cycle |
+| V1 paths | helper is a no-op (no mutex row, `workflow_version='v1'`): lock sequences byte-identical to today; the stage-1 planning of ingestion/verification/expiry acquires nothing for a V1-only batch (V1 seasons have no mutex rows; single-bucket single-season behaviour unchanged) | unchanged | untouched |
+
+**Cross-season ordering (N2-5)** is stage 3: a transaction needing the budget chains of more than
+one season (an ingestion batch whose buckets map to episodes of several seasons; a multi-bucket
+invoice verification; a multi-season expiry batch) takes **all** required mutexes in `season_id`
+order before any account lock of any of those seasons, then proceeds per season down stage 4.
+Combined with the stage-1 sorted blocks, every lock sequence is a subsequence of one total order —
 deterministic and cycle-free across ingesters, invoice verifiers and expiry. The lease claim's
-two-transaction pattern
-(`S/rendering/leases.py:702-716`: reserve tx, then lease-insert tx) stays; each transaction holds
-one lock class plus the already-held scope track lock (A1 §8/§9). Worker-completion
-job-before-track order remains A3's row (A1 §9 item 1); A2 adds no such transaction.
+two-transaction pattern (`S/rendering/leases.py:702-716`: reserve tx, then lease-insert tx) stays;
+each transaction holds one lock class plus the already-held scope track lock (A1 §8/§9).
+Worker-completion job-before-track order remains A3's row (A1 §9 item 1); A2 adds no such
+transaction.
 
 ## 9. V1 unchanged
 
@@ -1047,16 +1157,18 @@ Every V1 path A2 touches, and why its behaviour and tests stay identical:
 ## 10. Test plan (A-T9..A-T11; real PostgreSQL, ≥2 connections; spec §11 negatives included)
 
 All offline, ephemeral PostgreSQL via the existing conftest, pytest `--basetemp` under the session
-scratchpad, real runtime/composition with fakes; `make check` + V1 `make pilot` stay green.
-**Independent PostgreSQL connections and controlled barriers throughout (N2-15); deadlock or
-lock-wait timeout in any race case is a test failure, not a pass condition.**
+scratchpad, real runtime/composition with fakes; `make check` + V1 `make pilot` stay green. The
+conftest additionally provisions the `md_runtime` group role, a login role in it, and a second
+DSN running as that login (N2R3-2) — additive; every existing test runs unedited through the
+existing DSN. **Independent PostgreSQL connections and controlled barriers throughout (N2-15);
+deadlock or lock-wait timeout in any race case is a test failure, not a pass condition.**
 
 | ID | File (new unless noted) | Cases |
 |---|---|---|
-| A-T9 | `X/integration/v3/test_budget_hierarchy.py` | admission-order matrix: four distinct refusals (unit price `UnknownPrice` → step `BudgetExhausted(step_key)` → child cap → season envelope) at their own thresholds; **the A-T9 arithmetic**: 10 episodes × $10 base, $30 setup approved → LOCK validates at committed 30M ≤ 100M; episode reservations beyond the remaining 70M refused at level 4 while each child cap is still 10M; **no cross-step borrowing**: step_05 capacity cannot fund a step_06 reservation (refused, and only an amendment moves caps — N2-7); **setup mutation racing STORY LOCK attach (stale-parent, N2-1/N2-15)**: two connections with a controlled barrier — the setup `reserve` reads identity, the LOCK decision completes the attach, then the setup mutation proceeds under the mutex: it re-reads the attachment, locks the parent and admits against the attached season (never skips it, never a detached parent); **setup before approval refused** (base 0 → every admission refuses; no reservation, no charge); **setup never touches episode accounts** (after LOCK + spend + attribution: episode accounts hold only their own reservations/charges; allocations exist as rows only); **amendment wakeup**: a `RETRY_WAIT`/`defer_reason='BUDGET'` job gets `run_after=now()` in the amendment transaction; **amendment rollback/replay (N2-15)**: a validation failure mid-amendment leaves no amendment row, no step-cap change, no revision advance, no job wakeup; a replayed amendment returns the stored response with no second row; a same-key/different-parameters replay raises `IdempotencyConflict`; **direct-SQL negatives (all via direct SQL, N2-8/N2-4/N2-9/N2R2-2/N2R2-3/N2R2-6)**: `UPDATE budget_accounts SET cap_micro_usd=…` (immutable trigger); `UPDATE budget_steps SET cap_micro_usd=…` without an amendment (it passing *inside* the amendment transaction, and — N2R2-6 — a same-transaction update of an amendment-named step to a **value different from its approved `step_deltas` value** refused: strict account + step + value matching); `DELETE FROM budget_steps` / `TRUNCATE budget_steps` (refused); non-integer number writes on every new table; amendment INSERT **as the application role** (`permission denied` — the function-only write boundary, N2R2-3); with INSERT privilege regained (table owner, testing depth): amendment INSERT without a live session; amendment INSERT by an authenticated owner of a *different* season (season-owner guard, N2-9); amendment on a V1 account; amendment with deltas not summing to the change; amendment not applying its category deltas (deferred consistency trigger refuses at commit); amendment whose zero-net category redistribution (`+x/−x`) is skipped or doubled — per-category final-allocation equality refuses where the sum alone would pass (N2R2-2); a **second** amendment row for one account in one transaction (refused, N2R2-2); a **forged `xact_id`** (server-stamped over it, N2R2-6); reservation `step_key` UPDATE (immutable identity); charge insert whose step disagrees with its reservation's; `episode_production` reservation refused on any account; helper negatives (N2R2-1): `lock_budget_hierarchy` on the **SEASON account** returns no parent (no spurious "detached"), and a **missing mutex row** raises instead of passing silently |
+| A-T9 | `X/integration/v3/test_budget_hierarchy.py` | admission-order matrix: four distinct refusals (unit price `UnknownPrice` → step `BudgetExhausted(step_key)` → child cap → season envelope) at their own thresholds; **the A-T9 arithmetic**: 10 episodes × $10 base, $30 setup approved → LOCK validates at committed 30M ≤ 100M; episode reservations beyond the remaining 70M refused at level 4 while each child cap is still 10M; **no cross-step borrowing**: step_05 capacity cannot fund a step_06 reservation (refused, and only an amendment moves caps — N2-7); **setup mutation racing STORY LOCK attach (stale-parent, N2-1/N2-15)**: two connections with a controlled barrier — the setup `reserve` reads identity, the LOCK decision completes the attach, then the setup mutation proceeds under the mutex: it re-reads the attachment, locks the parent and admits against the attached season (never skips it, never a detached parent); **setup before approval refused** (base 0 → every admission refuses; no reservation, no charge); **setup never touches episode accounts** (after LOCK + spend + attribution: episode accounts hold only their own reservations/charges; allocations exist as rows only); **amendment wakeup**: a `RETRY_WAIT`/`defer_reason='BUDGET'` job gets `run_after=now()` in the amendment transaction; **amendment rollback/replay (N2-15)**: a validation failure mid-amendment leaves no amendment row, no step-cap change, no revision advance, no job wakeup; a replayed amendment returns the stored response with no second row; a same-key/different-parameters replay raises `IdempotencyConflict`; **direct-SQL negatives (all via direct SQL, N2-8/N2-4/N2-9/N2R2-2/N2R2-3/N2R2-6)**: `UPDATE budget_accounts SET cap_micro_usd=…` (immutable trigger); `UPDATE budget_steps SET cap_micro_usd=…` without an amendment (it passing *inside* the amendment transaction, and — N2R2-6 — a same-transaction update of an amendment-named step to a **value different from its approved `step_deltas` value** refused: strict account + step + value matching; **a multi-step cap reduction** — setup cap 100→50 with step caps 50/50→25/25 — **commits** (no row-time aggregate bound refuses the intermediate 75), while a `step_deltas`-named step left un-updated, or a completed state breaking `Σ setup caps ≤ setup effective`, refuses at commit (N2R3-3)); `DELETE FROM budget_steps` / `TRUNCATE budget_steps` (refused); non-integer number writes on every new table; amendment INSERT **connected through the provisioned runtime role's login DSN** (`permission denied` — the function-only write boundary holds for the role the app actually runs as, N2R2-3/N2R3-2; the harness also asserts `md_runtime` holds no membership in the migration-owner role and that `md_apply_cap_amendment` succeeds under a session `search_path` pointing at a hostile schema — the pinned definer path cannot be redirected); with INSERT privilege regained (table owner, testing depth): amendment INSERT without a live session; amendment INSERT by an authenticated owner of a *different* season (season-owner guard, N2-9); amendment on a V1 account; amendment with deltas not summing to the change; amendment not applying its category deltas (deferred consistency trigger refuses at commit); amendment whose zero-net category redistribution (`+x/−x`) is skipped or doubled — per-category final-allocation equality against the **stored baseline** refuses where the sum alone would pass (N2R2-2/N2R3-1); amendment INSERT with missing or short `category_baseline` (NOT NULL / deferred refusal — apply-once evidence is mandatory, N2R3-1); a **second** amendment row for one account in one transaction (refused, N2R2-2); a **forged `xact_id`** (server-stamped over it, N2R2-6); reservation `step_key` UPDATE (immutable identity); charge insert whose step disagrees with its reservation's; `episode_production` reservation refused on any account; helper negatives (N2R2-1/N2R3-4): `lock_budget_hierarchy` on the **SEASON account** returns no parent (no spurious "detached"), and a **missing mutex row** raises instead of passing silently; `md_apply_cap_amendment` on a **parentless V3 EPISODE account** (aggregate not yet created) raises detached-hierarchy — the SQL branch matches the Python helper |
 | A-T10 | `X/integration/v3/test_budget_concurrency.py` | ≥2 connections, one V3 season post-LOCK: **reserve-vs-reserve boundary (N2-15/N2R2-10)**: sibling admitters (two episode accounts) and same-child admitters — the **start barrier sits before mutex acquisition**; A pauses *after* acquiring the mutex, B is confirmed blocked on that mutex (never a rendezvous inside the lock holder — the order itself would deadlock there, N2R2-10), then A commits and B re-reads and decides against the post-A state; **15 units of remaining capacity, two 10-unit requests: exactly one succeeds**, repeated with only the child limit binding — after every interleaving the stronger invariant holds: `committed ≤ effective` at the admitting level with **no admission-created overrun for ordinary paid admission** (no `cost_overruns` row, no `overrun_micro_usd` growth — overrun arises only from billing; authorized cleanup's admission-recorded overrun is asserted separately, N2R2-5); reserve vs amendment (raise lands between two reserves — second admits against the new effective cap, or `StaleRevision` on a stale `expected_old_effective`); reserve vs settlement vs release vs late billing interleaved on sibling accounts — after every interleaving, invariant asserts `committed ≤ effective + overrun` at child **and** season, `Σ step counters = account counters` (setup and production identities, §2.2), parent counters = Σ children cash exposure; expired holds keep commitment (expire under race); **truthful overrun blocks, child-only vs aggregate separated (N2-15)**: a settlement beyond a *child* cap with the season aggregate still within cap records `cost_overruns` and sets `paid_dispatch_blocked` on that child only — other children keep admitting paid work; a settlement pushing the *season* aggregate over blocks every child; in both cases cleanup is still admitted; **shutdown proceeds with exhausted caps (N2R2-5)**: cleanup reservation on an over-cap V3 account **with no recovery allocation and exhausted categories** is admitted with **no `budget_transfers` row** (no unfunded transfer attempted) and its excess recorded as overrun (child + parent, blocked flags set, `charge_id` NULL for reservation exposure) before the flush, while the same request on a V1 over-cap account is refused (today's behaviour); **the settle-vs-reserve inversion test**: conn A `settle_billed_lease` on episode 1, conn B `reserve` on episode 1's account, both V3 — serialised (no deadlock, no lock-wait inversion); **competing ingestion (N2-5/N2-15/N2R2-4)**: two connections ingesting batches whose bucket sets overlap — both pre-acquire their bucket locks in `bucket_identity_sha256` order before the budget chain; no `#6→#7→#6` cycle, no deadlock, both complete; **invoice-vs-ingestion (N2R2-4)**: an invoice-verification transaction and an ingester with overlapping bucket sets — the verification transaction plans its invoice-period + bucket advisories and season mutexes at the outermost boundary; no outer `#6→#7→#6`, no deadlock (an invoice transaction never holds a season mutex while requesting a bucket an ingester holds); **multi-season expiry (N2R2-4)**: an `expire_stale` batch spanning two seasons races admissions on both seasons — all required season mutexes pre-acquired in `season_id` order, no deadlock; `resolve_billing_recovery` racing a reserve on the target account. **Any raw or translated deadlock or lock-wait timeout in any race case is a failure, never a pass condition (N2R2-10).** |
-| A-T11 | `X/integration/v3/test_cost_ledger.py` | exactly-once per canonical receipt: identical replay returns `replayed=True` (`_replay`), differing content → `IdempotencyConflict`; **multi-receipt operation**: ACCRUAL → SETTLEMENT → late ADJUSTMENT on one GPU reservation — each posts once, the settlement replaces accrued per `S/budget/ledger.py:331-349`, the adjustment adds to settled (`:316-330`); late restated SETTLEMENT refused; **late adjustment on a closed hold** recorded truthfully; **setup counted once**: setup charge + attribution to 3 episodes — cash/accrued/reserved panels unchanged by the attribution, attribution panel shows the shares, no episode counter moved; **expired exposure in its actual bucket (N2-13)**: an EXPIRED hold appears in accrued (not reserved) plus the unresolved-exposure listing, never silently zeroed; **cash/accrued/reserved/attribution/subscription/estimate/quota separate (N2-13)**: `SeasonCostsV3` fields populated from distinct sources — subscription allocation reported with `basis='unavailable'` (no ledger source), `llm.subscription` invocations counted in the subscription panel and never as charges, estimate fields returning `estimated_count`/`estimated_micro_usd`/`unknown_estimate_count` with NULL estimates preserved as unknowns (no COALESCE-to-zero), quota unknowns counted; **provider totals replacement-aware (N2-13)**: grouped totals reflect accrual→settlement replacement (an accrued-then-settled reservation counts once); forecast helper (N2-12/N2R2-9): `committed + Σ_{e ∈ unfinished} (per_ep if committed_e = 0 else max(0, per_ep − committed_e))` — a DIRECTED episode with 2M committed and a 10M estimate contributes 8M, never 12M; a full estimate only at zero commitment; blocker above the effective cap, `plan_source`/`plan_binding_sha256` in the response, pre-LOCK setup-only view; **Costs authorization (N2R2-7)**: the legacy `GET /episodes/{id}/costs` on a **V3** episode returns `NotFound` for another season's owner and for service credentials **before any financial read** (a V1 episode id keeps today's response); the new V3 route returns `NotFound` for a foreign scope **before** any workflow-mismatch or financial detail |
-| A-T16 (A2 part) | `X/integration/persistence/test_migrations.py` (extend; upgrade test at `:122` is the pattern) | 0032–0034 apply on a populated V1 database at 0031 head: every existing row unchanged, applied 0001–0031 checksums unchanged, `step_key` NULL on all V1 reservations/charges, `EXPECTED_TABLES` superset holds, the replaced 0003:27-28 predicate refuses the same V1 overage with the trigger's message (on INSERT **and** UPDATE, N2-2), `amendment_revision=0` on all V1 accounts, catalog tests green on the three new tables (incl. `budget_steps` DELETE/TRUNCATE, N2-8) |
+| A-T11 | `X/integration/v3/test_cost_ledger.py` | exactly-once per canonical receipt: identical replay returns `replayed=True` (`_replay`), differing content → `IdempotencyConflict`; **multi-receipt operation**: ACCRUAL → SETTLEMENT → late ADJUSTMENT on one GPU reservation — each posts once, the settlement replaces accrued per `S/budget/ledger.py:331-349`, the adjustment adds to settled (`:316-330`); late restated SETTLEMENT refused; **late adjustment on a closed hold** recorded truthfully; **setup counted once**: setup charge + attribution to 3 episodes — cash/accrued/reserved panels unchanged by the attribution, attribution panel shows the shares, no episode counter moved; **expired exposure in its actual bucket (N2-13)**: an EXPIRED hold appears in accrued (not reserved) plus the unresolved-exposure listing, never silently zeroed; **cash/accrued/reserved/attribution/subscription/estimate/quota separate (N2-13)**: `SeasonCostsV3` fields populated from distinct sources — subscription allocation reported with `basis='unavailable'` (no ledger source), `llm.subscription` invocations counted in the subscription panel and never as charges, estimate fields returning `estimated_count`/`estimated_micro_usd`/`unknown_estimate_count` with NULL estimates preserved as unknowns (no COALESCE-to-zero), quota unknowns counted; **provider totals replacement-aware (N2-13)**: grouped totals reflect accrual→settlement replacement (an accrued-then-settled reservation counts once); forecast helper (N2-12/N2R2-9): `committed + Σ_{e ∈ unfinished} (per_ep if committed_e = 0 else max(0, per_ep − committed_e))` — a DIRECTED episode with 2M committed and a 10M estimate contributes 8M, never 12M; a full estimate only at zero commitment; blocker above the effective cap, `plan_source`/`plan_binding_sha256` in the response, pre-LOCK setup-only view; **Costs authorization (N2R2-7/N2R3-5)**: the legacy `GET /episodes/{id}/costs` on a **V3** episode returns `NotFound` for another season's owner and for service credentials **before any financial read**, with the **exact response asserted — 404 `NOT_FOUND`, never 401 `Unauthorized`** (the service-principal path maps to NotFound before `require_season_access`, whose `owner_id_in_tx` would otherwise raise Unauthorized, `S/core/auth.py:174`; a V1 episode id keeps today's response); the new V3 route returns `NotFound` for a foreign scope and for service principals **before** any workflow-mismatch or financial detail, same exact-response assertion |
+| A-T16 (A2 part) | `X/integration/persistence/test_migrations.py` (extend; upgrade test at `:122` is the pattern) | 0032–0034 apply on a populated V1 database at 0031 head: every existing row unchanged, applied 0001–0031 checksums unchanged, `step_key` NULL on all V1 reservations/charges, `EXPECTED_TABLES` superset holds, the replaced 0003:27-28 predicate refuses the same V1 overage with the trigger's message (on INSERT **and** UPDATE, N2-2), `amendment_revision=0` on all V1 accounts, `md_runtime` provisioned with exactly the runtime grants (INSERT on `account_cap_amendments` unreachable through any membership path, N2R3-2), catalog tests green on the three new tables (incl. `budget_steps` DELETE/TRUNCATE, N2-8) |
 | contracts | `X/contract/contracts/test_v3_budget_contracts.py` | `BudgetScopeKind` exact; `_scope_and_bound` setup rule (season named, episode forbidden); `UNSUPPORTED_SCOPE` error schema; `UsageReceipt.step_key` (optional; V1 `None`, V3 validated — N2-8); `SeasonCostsV3` split panels + `budget.cap_amended` examples; generated-contract drift check green (`Makefile:33`) |
 
 ## 11. Open questions
