@@ -473,6 +473,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   BLOCKED). **E Codex critique round 1 launched** (`phase-e-critique`). Running: a0d-fix2 (build) +
   phase-e-critique (Codex 1/2). Queue: t031 solo gate rerun + r5-fix1 after a0d-fix2; A1 one-more-cycle
   ask still open.
+- 14 Nov 12:2?Z (GLM): **E critique round 1 = REWORK** (7 BLOCKING + 6 SF; second-key design
+  blessed in principle, persistence/job contracts insufficient). All 13 ACCEPTED
+  (`phase-e-critique-rulings.md`); **e-spec-v03 apply running** (docs, beside the one build).
+  Running: a0d-fix2 + e-spec-v03.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
