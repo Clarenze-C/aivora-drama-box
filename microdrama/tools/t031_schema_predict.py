@@ -12,8 +12,9 @@ guarded live schema comparison at readiness, which stays decisive before
 every acquisition's first upload.
 
 Offline tests cover the pure functions (layout, docker command shape, capture
-record); the docker run itself is the orchestrator's step (spec §7 step 4)
-against the pushed registry digest.
+record - including the capture-time enum verification of the smoke's
+DISCOVERED listings); the docker run itself is the orchestrator's step
+(spec §7 step 4) against the pushed registry digest.
 """
 
 from __future__ import annotations
@@ -86,11 +87,26 @@ def docker_command(image_ref: str, context: Path, output: Path) -> list[str]:
 
 
 def capture_record(image_ref: str, smoke_payload: dict, *, now: datetime | None = None) -> dict:
-    """Build the seal's capture record from one schema-smoke payload."""
+    """Build the seal's capture record from one schema-smoke payload.
+
+    R5V-4: the smoke's DISCOVERED model-name enums are verified against the
+    pinned ``models.json`` HERE, at capture time - the record is only produced
+    when the runtime the smoke exercised really listed the placeholder files
+    (per-folder membership, baked non-file entries exempt). A divergent smoke
+    (wrong mounts, wrong image, a node that ignores the folders) can never
+    yield seal evidence.
+    """
+    from microdrama.pipeline.benchmark_authorization import predicted_enums_match_manifest
     from microdrama.rendering.pika_transport import mapped_schema_sha256
     from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
 
     raw = smoke_payload["schemas"]
+    if not predicted_enums_match_manifest(raw):
+        raise SystemExit(
+            "refused: the smoke's discovered model-name enums do not match the "
+            "pinned models.json file names per folder - the placeholders did not "
+            "populate the loader enums real weights would"
+        )
     manifest = load_manifest()
     return {
         "manifest_digest": registry_manifest_digest(image_ref),
