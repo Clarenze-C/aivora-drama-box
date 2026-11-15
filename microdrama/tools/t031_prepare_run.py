@@ -52,6 +52,9 @@ MODEL_OUTPUT_ROUTE = "t031-minimax-h3-community-private-benchmark"
 MODEL_OUTPUT_SUBJECT = "minimax-h3:community-license-private-benchmark"
 PRESET_ID = "pika-flex-ref2va-480p-candidate"
 TERRITORIES = ["SG", "TH"]
+#: The frozen episode account cap ($10.00, spec §3 R5d): one value the
+#: creation INSERT writes and the replay gate enforces (R5V-9).
+EPISODE_CAP_MICRO_USD = 10_000_000
 #: S05/S06 expression text is frozen here (spec §3 R5d).
 EXPRESSION_FREEZE = {
     "S05": (
@@ -140,6 +143,191 @@ def _rights_evidence(record) -> str:
     return canonical_hash(payload)
 
 
+def _wav_media_info(data: bytes):
+    """R5V-10: MediaInfo derived (and validated) from the ACTUAL WAV bytes.
+
+    Parses the RIFF/WAVE header chunks; refuses anything that is not an
+    uncompressed PCM WAV (compressed fmt, truncated chunks, foreign magic).
+    Fictional fixture metadata (H.264/AAC video fields) never describes a
+    PCM voice reference.
+    """
+    import struct
+
+    from microdrama.contracts.media import MediaInfo
+
+    def _refused(detail: str):
+        raise SystemExit(f"refused: the voice reference is not a PCM WAV ({detail})")
+
+    if len(data) < 12 or data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
+        _refused("not a RIFF/WAVE container")
+    fmt = None
+    data_size = None
+    offset = 12
+    while offset + 8 <= len(data):
+        chunk_id = data[offset : offset + 4]
+        (chunk_size,) = struct.unpack_from("<I", data, offset + 4)
+        body = data[offset + 8 : offset + 8 + chunk_size]
+        if chunk_id == b"fmt ":
+            if chunk_size < 16:
+                _refused("truncated fmt chunk")
+            fmt = struct.unpack_from("<HHIIHH", body)
+        elif chunk_id == b"data":
+            data_size = chunk_size
+        offset += 8 + chunk_size + (chunk_size & 1)
+    if fmt is None or data_size is None:
+        _refused("missing fmt/data chunk")
+    audio_format, channels, sample_rate, _byte_rate, _block_align, bits = fmt
+    if audio_format != 1:
+        _refused(f"audio format {audio_format} is not uncompressed PCM")
+    if channels < 1 or sample_rate < 1 or bits % 8:
+        _refused("implausible PCM framing")
+    frame_bytes = channels * bits // 8
+    duration_ms = int(round((data_size / frame_bytes) / sample_rate * 1000))
+    return MediaInfo(
+        duration_ms=duration_ms,
+        has_audio=True,
+        has_video=False,
+        audio_codec=f"pcm_s{bits}le",
+        sample_rate_hz=sample_rate,
+        channels=channels,
+    )
+
+
+#: R5V-9: the frozen content the replay gate compares, per row type. The
+#: register path constructs its records FROM these same values, so author and
+#: gate can never drift apart. Keyed by the ROLE_TABLE row (role, subject),
+#: since A2/B2 legitimately appear in TWO rows with distinct routes.
+def _expected_binding_grant(role: str, subject: str, ref_id: str) -> dict:
+    from microdrama.contracts.enums import EvidenceSource, RightsSubjectKind
+
+    is_voice = ref_id in ("A-NEUTRAL", "B-NEUTRAL")
+    return {
+        "route": f"t031-rights-{role.replace('_', '-')}-{subject}".lower(),
+        "subject_kind": (
+            RightsSubjectKind.VOICE.value if is_voice else RightsSubjectKind.REFERENCE.value
+        ),
+        "subject_ref": subject,
+        "version": 1,
+        "territories": TERRITORIES,
+        "commercial_use": True,
+        "output_release_allowed": True,
+        "evidence": [
+            {
+                "source": (
+                    EvidenceSource.LICENSE_DOCUMENT.value
+                    if is_voice
+                    else EvidenceSource.CONTROLLED_ACCOUNT_TEST.value
+                ),
+                "ref": (
+                    "botnoi-studio-v4:operator-attested-o11"
+                    if is_voice
+                    else f"vertex-nano-banana-generation-manifest:{subject}"
+                ),
+            }
+        ],
+    }
+
+
+def _expected_model_output_grant() -> dict:
+    from microdrama.contracts.enums import EvidenceSource, RightsSubjectKind
+
+    return {
+        "route": MODEL_OUTPUT_ROUTE,
+        "subject_kind": RightsSubjectKind.MODEL_OUTPUT.value,
+        "subject_ref": MODEL_OUTPUT_SUBJECT,
+        "version": 1,
+        "territories": TERRITORIES,
+        "commercial_use": True,
+        "output_release_allowed": True,
+        "evidence": [
+            {
+                "source": EvidenceSource.LICENSE_DOCUMENT.value,
+                "ref": "minimax-h3-community-license:operator-attested-2026-11-12",
+            }
+        ],
+    }
+
+
+def _expected_preset_pins() -> dict:
+    from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
+    from microdrama.rendering.workflows.templates import (
+        template_sha256 as _template_sha256,
+    )
+
+    return {
+        "version": 1,
+        "workflow_sha256": _template_sha256(PIKA_TEMPLATE),
+        "rights_route_id": MODEL_OUTPUT_ROUTE,
+        "enabled": False,
+        "record": {
+            "tier": "quality_eight_step",
+            "model_mode": "native",
+            "gpu_type": "NVIDIA A40",
+            "min_vram_gb": 24,
+            "host_ram_gb": 64,
+            "precision": "bf16",
+            "width": 480,
+            "height": 832,
+            "frames": 124,
+            "fps": 24,
+            "steps": 8,
+            "attention_backend": "sdpa",
+        },
+    }
+
+
+def _assert_rights_frozen(rows: list) -> None:
+    """R5V-9: every benchmark rights row matches its exact frozen content -
+    named identities, version, territories, commercial/output-release terms
+    and evidence - not merely a count of ELIGIBLE rows (a replacement current
+    version with drifted content keeps the count)."""
+    expected = {
+        grant["route"]: grant
+        for grant in (
+            _expected_binding_grant(role, subject, ref) for role, subject, ref in ROLE_TABLE
+        )
+    }
+    expected[_expected_model_output_grant()["route"]] = _expected_model_output_grant()
+    stored = {row["rights_route_id"]: row for row in rows}
+    if set(stored) != set(expected) or len(rows) != len(expected):
+        raise SystemExit(
+            f"refused: the benchmark rights routes drifted ({sorted(stored)} != {sorted(expected)})"
+        )
+    for route, grant in expected.items():
+        row = stored[route]
+        if (
+            row["subject_kind"] != grant["subject_kind"]
+            or row["subject_ref"] != grant["subject_ref"]
+            or int(row["version"]) != grant["version"]
+            or list(row["territories"] or []) != grant["territories"]
+            or bool(row["commercial_use"]) != grant["commercial_use"]
+            or bool(row["output_release_allowed"]) != grant["output_release_allowed"]
+            or [item["source"] for item in row["evidence"] or []]
+            != [item["source"] for item in grant["evidence"]]
+            or [item["ref"] for item in row["evidence"] or []]
+            != [item["ref"] for item in grant["evidence"]]
+        ):
+            raise SystemExit(f"refused: the benchmark rights content drifted ({route})")
+
+
+def _assert_preset_frozen(row) -> None:
+    """R5V-9: the CURRENT preset row carries the exact registered pins (a
+    replacement current version with different pins is drift). The row
+    columns pin version/workflow/enabled; the ``record`` jsonb pins the rest."""
+    pins = _expected_preset_pins()
+    if row is None:
+        raise SystemExit("refused: the benchmark preset row drifted (no current row)")
+    record = row["record"] or {}
+    if (
+        int(row["version"]) != pins["version"]
+        or row["workflow_sha256"] != pins["workflow_sha256"]
+        or bool(row["enabled"]) != pins["enabled"]
+        or record.get("rights_route_id") != pins["rights_route_id"]
+        or any(record.get(key) != value for key, value in pins["record"].items())
+    ):
+        raise SystemExit("refused: the benchmark preset pins drifted")
+
+
 # --- register -------------------------------------------------------------------
 
 
@@ -155,7 +343,6 @@ def cmd_register(args: argparse.Namespace) -> int:
         RightsStatus,
         RightsSubjectKind,
     )
-    from microdrama.contracts.examples import media_info
     from microdrama.contracts.hashing import sha256_hex
     from microdrama.contracts.media import AssetDescriptor
     from microdrama.contracts.primitives import EvidenceRef
@@ -166,10 +353,6 @@ def cmd_register(args: argparse.Namespace) -> int:
     from microdrama.core.registry.rights import RightsRegistry
     from microdrama.persistence import register_asset
     from microdrama.persistence.object_store import FilesystemObjectStore
-    from microdrama.rendering.workflows.templates import PIKA_TEMPLATE
-    from microdrama.rendering.workflows.templates import (
-        template_sha256 as _template_sha256,
-    )
     from microdrama.testing.seed import seed_episode, seed_season
 
     picks = _load_pick_manifests(args.refs_r1, args.refs_r2, args.voices)
@@ -201,29 +384,54 @@ def cmd_register(args: argparse.Namespace) -> int:
                 "AND e.id <> %s AND a.scope_kind='EPISODE'",
                 (BENCHMARK_EPISODE_ID,),
             )
-            rights_present = tx.fetchval(
-                "SELECT count(*) FROM rights_registry WHERE current AND status='ELIGIBLE' "
+            rights_rows = tx.fetchall(
+                "SELECT rights_route_id, subject_kind, subject_ref, version, territories, "
+                "commercial_use, output_release_allowed, evidence FROM rights_registry "
+                "WHERE current AND status='ELIGIBLE' "
                 "AND (rights_route_id=%s OR rights_route_id LIKE 't031-rights-%%')",
                 (MODEL_OUTPUT_ROUTE,),
             )
-            preset_present = tx.fetchval(
-                "SELECT 1 FROM preset_registry WHERE preset_id=%s AND current AND enabled=false",
+            preset_row = tx.fetchone(
+                "SELECT version, workflow_sha256, enabled, record "
+                "FROM preset_registry WHERE preset_id=%s AND current",
                 (PRESET_ID,),
             )
         # Credentials are validated on every run, first use and replay alike.
         for ref in (args.runpod_credential, args.comfy_credential):
             _credential_check(db, ref)
         if existing is not None:
-            by_sha = {row["sha256"]: row for row in assets}
-            expected = {picks[ref_id]["sha256"] for _, _, ref_id in ROLE_TABLE}
-            if set(by_sha) != expected:
+            # R5V-9: the replay gate enforces the NAMED frozen fields per row
+            # type - identities, the account cap, exact asset fields, the
+            # exact rights versions/content and the preset pins - not just
+            # digest sets, broad state/provenance and counts.
+            if int(existing["cap_micro_usd"]) != EPISODE_CAP_MICRO_USD:
+                raise SystemExit(
+                    "refused: the benchmark episode account cap drifted "
+                    f"({existing['cap_micro_usd']} != {EPISODE_CAP_MICRO_USD})"
+                )
+            expected_shas = {picks[ref_id]["sha256"] for _, _, ref_id in ROLE_TABLE}
+            if {row["sha256"] for row in assets} != expected_shas:
                 raise SystemExit("refused: stored asset bytes drifted from the picked manifests")
-            if any(row["state"] != AssetState.ACCEPTED.value for row in assets) or any(
-                row["provenance"] == Provenance.FAKE_SYNTHETIC.value for row in assets
-            ):
-                raise SystemExit("refused: stored asset state/provenance drifted")
-            if int(rights_present or 0) != len(ROLE_TABLE) + 1 or preset_present is None:
-                raise SystemExit("refused: the benchmark rights records or preset row drifted")
+            expected_kinds = {
+                picks[ref_id]["sha256"]: (
+                    "AUDIO" if ref_id in ("A-NEUTRAL", "B-NEUTRAL") else "IMAGE"
+                )
+                for _, _, ref_id in ROLE_TABLE
+            }
+            for row in assets:
+                want = expected_kinds[row["sha256"]]
+                if (
+                    row["asset_kind"] != want
+                    or row["state"] != AssetState.ACCEPTED.value
+                    or row["provenance"] != Provenance.LIVE_PROVIDER.value
+                ):
+                    raise SystemExit(
+                        "refused: stored asset fields drifted "
+                        f"({row['sha256'][:12]}: kind {row['asset_kind']} != {want}, "
+                        f"state {row['state']}, provenance {row['provenance']})"
+                    )
+            _assert_rights_frozen(rights_rows)
+            _assert_preset_frozen(preset_row)
             print(
                 json.dumps(
                     {
@@ -247,8 +455,8 @@ def cmd_register(args: argparse.Namespace) -> int:
             account = uuid.uuid4()
             tx.execute(
                 "INSERT INTO budget_accounts (id, scope_kind, season_id, episode_id, "
-                "cap_micro_usd) VALUES (%s,'EPISODE',%s,%s,10000000)",
-                (account, season, BENCHMARK_EPISODE_ID),
+                "cap_micro_usd) VALUES (%s,'EPISODE',%s,%s,%s)",
+                (account, season, BENCHMARK_EPISODE_ID, EPISODE_CAP_MICRO_USD),
             )
             for category, allocated, protected in (
                 *(
@@ -296,7 +504,9 @@ def cmd_register(args: argparse.Namespace) -> int:
                     sha256=digest,
                     size_bytes=len(data),
                     media_type=f"{'audio' if audio else 'image'}/{'wav' if audio else 'png'}",
-                    media=media_info() if audio else None,
+                    # R5V-10: validated metadata derived from the ACTUAL WAV
+                    # bytes - never the fixture's fictional H.264/AAC fields.
+                    media=_wav_media_info(data) if audio else None,
                     state=AssetState.ACCEPTED,
                     # Real provenance: Nano Banana via Vertex for PNGs (billed
                     # to ARISA's project, recorded in the manifests), Botnoi
@@ -310,11 +520,10 @@ def cmd_register(args: argparse.Namespace) -> int:
                     register_asset(tx, descriptor)
                 asset_ids[ref_id] = str(asset_id)
             route = f"t031-rights-{role.replace('_', '-')}-{subject}".lower()
+            expected = _expected_binding_grant(role, subject, ref_id)
             grant = {
                 "rights_route_id": route,
-                "subject_kind": (
-                    RightsSubjectKind.VOICE.value if audio else RightsSubjectKind.REFERENCE.value
-                ),
+                "subject_kind": expected["subject_kind"],
                 "subject_ref": subject,
                 "rights_version": 1,
                 "status": "ELIGIBLE",
@@ -347,30 +556,31 @@ def cmd_register(args: argparse.Namespace) -> int:
         # model; release here is the private benchmark's own use recorded
         # under the license, with the operator attestation as the license
         # document evidence.
+        expected_model = _expected_model_output_grant()
         model_output = RightsRecord(
             record_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "t031-rights-model-output")),
-            rights_route_id=MODEL_OUTPUT_ROUTE,
-            version=1,
-            subject_kind=RightsSubjectKind.MODEL_OUTPUT,
-            subject_ref=MODEL_OUTPUT_SUBJECT,
-            territories=TERRITORIES,
-            commercial_use=True,
-            output_release_allowed=True,
+            rights_route_id=expected_model["route"],
+            version=expected_model["version"],
+            subject_kind=RightsSubjectKind(expected_model["subject_kind"]),
+            subject_ref=expected_model["subject_ref"],
+            territories=expected_model["territories"],
+            commercial_use=expected_model["commercial_use"],
+            output_release_allowed=expected_model["output_release_allowed"],
             required_disclosures=[],
             expires_at=None,
             evidence=[
                 EvidenceRef(
-                    source=EvidenceSource.LICENSE_DOCUMENT,
-                    ref="minimax-h3-community-license:operator-attested-2026-11-12",
+                    source=EvidenceSource(item["source"]),
+                    ref=item["ref"],
                 )
+                for item in expected_model["evidence"]
             ],
             status=RightsStatus.ELIGIBLE,
             recorded_at=now,
         )
         rights.record(model_output, source_provenance=Provenance.LIVE_PROVIDER)
-        for binding in bindings:
-            grant = binding["rights"]
-            is_voice = grant["subject_kind"] == RightsSubjectKind.VOICE.value
+        for role, subject, ref_id in ROLE_TABLE:
+            expected = _expected_binding_grant(role, subject, ref_id)
             # Real evidence sources only (PAID_BENCHMARK evaluation refuses
             # records without one): the Botnoi service license carries the
             # operator's O-11 attestation for voices; the Vertex generation
@@ -379,29 +589,23 @@ def cmd_register(args: argparse.Namespace) -> int:
             rights.record(
                 RightsRecord(
                     record_id=str(
-                        uuid.uuid5(uuid.NAMESPACE_URL, f"t031-record:{grant['rights_route_id']}")
+                        uuid.uuid5(uuid.NAMESPACE_URL, f"t031-record:{expected['route']}")
                     ),
-                    rights_route_id=grant["rights_route_id"],
-                    version=1,
-                    subject_kind=RightsSubjectKind(grant["subject_kind"]),
-                    subject_ref=grant["subject_ref"],
-                    territories=TERRITORIES,
-                    commercial_use=True,
-                    output_release_allowed=True,
+                    rights_route_id=expected["route"],
+                    version=expected["version"],
+                    subject_kind=RightsSubjectKind(expected["subject_kind"]),
+                    subject_ref=expected["subject_ref"],
+                    territories=expected["territories"],
+                    commercial_use=expected["commercial_use"],
+                    output_release_allowed=expected["output_release_allowed"],
                     required_disclosures=[],
                     expires_at=None,
                     evidence=[
                         EvidenceRef(
-                            source=EvidenceSource.LICENSE_DOCUMENT
-                            if is_voice
-                            else EvidenceSource.CONTROLLED_ACCOUNT_TEST,
-                            ref=(
-                                "botnoi-studio-v4:operator-attested-o11"
-                                if is_voice
-                                else "vertex-nano-banana-generation-manifest:"
-                                f"{grant['subject_ref']}"
-                            ),
+                            source=EvidenceSource(item["source"]),
+                            ref=item["ref"],
                         )
+                        for item in expected["evidence"]
                     ],
                     status=RightsStatus.ELIGIBLE,
                     recorded_at=now,
@@ -410,23 +614,24 @@ def cmd_register(args: argparse.Namespace) -> int:
             )
 
         # The preset row: disabled and unmeasured (FM §4).
+        pins = _expected_preset_pins()
         PresetRegistry(db, settings).record(
             PresetRecord(
                 preset_id=PRESET_ID,
-                version=1,
-                tier=RenderTier.QUALITY_EIGHT_STEP,
-                workflow_sha256=_template_sha256(PIKA_TEMPLATE),
-                model_mode="native",
-                gpu_type="NVIDIA A40",
-                min_vram_gb=24,
-                host_ram_gb=64,
-                precision="bf16",
-                width=480,
-                height=832,
-                frames=124,
-                fps=24,
-                steps=8,
-                attention_backend="sdpa",
+                version=pins["version"],
+                tier=RenderTier(pins["record"]["tier"]),
+                workflow_sha256=pins["workflow_sha256"],
+                model_mode=pins["record"]["model_mode"],
+                gpu_type=pins["record"]["gpu_type"],
+                min_vram_gb=pins["record"]["min_vram_gb"],
+                host_ram_gb=pins["record"]["host_ram_gb"],
+                precision=pins["record"]["precision"],
+                width=pins["record"]["width"],
+                height=pins["record"]["height"],
+                frames=pins["record"]["frames"],
+                fps=pins["record"]["fps"],
+                steps=pins["record"]["steps"],
+                attention_backend=pins["record"]["attention_backend"],
                 supported_controls=[
                     ControlKind.TEXT_PROMPT,
                     ControlKind.SEED,
@@ -435,10 +640,10 @@ def cmd_register(args: argparse.Namespace) -> int:
                     ControlKind.LOCATION_REFERENCE,
                 ],
                 supports_thai_dialogue=None,
-                rights_route_id=MODEL_OUTPUT_ROUTE,
+                rights_route_id=pins["rights_route_id"],
                 measured=None,
                 evidence=[],
-                enabled=False,
+                enabled=pins["enabled"],
             ),
             source_provenance=Provenance.LIVE_PROVIDER,
         )

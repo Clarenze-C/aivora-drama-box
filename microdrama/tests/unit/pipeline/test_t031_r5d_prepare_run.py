@@ -16,6 +16,7 @@ import csv
 import hashlib
 import json
 import sys
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +31,7 @@ import t031_prepare_run as prepare_run  # noqa: E402
 from microdrama.config import Settings  # noqa: E402
 from microdrama.contracts.enums import ExecutionMode  # noqa: E402
 from microdrama.contracts.hashing import sha256_hex  # noqa: E402
+from microdrama.persistence.db import jsonb  # noqa: E402
 from microdrama.pipeline.benchmark import main as benchmark_main  # noqa: E402
 from microdrama.pipeline.benchmark_authorization import (  # noqa: E402
     AcquisitionQuote,
@@ -56,10 +58,37 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _wav_bytes(sample_rate_hz: int = 24_000, channels: int = 1, ms: int = 1_500) -> bytes:
+    """A real minimal PCM WAV (16-bit), distinct durations per voice."""
+    import struct
+
+    bits = 16
+    frames = int(sample_rate_hz * channels * ms / 1000)
+    data = b"\x00\x01" * frames
+    byte_rate = sample_rate_hz * channels * bits // 8
+    block_align = channels * bits // 8
+    fmt = struct.pack("<HHIIHH", 1, channels, sample_rate_hz, byte_rate, block_align, bits)
+    return (
+        b"RIFF"
+        + struct.pack("<I", 36 + len(data))
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(data))
+        + data
+    )
+
+
+#: The voice fixtures' actual PCM facts (R5V-10): 24 kHz mono 16-bit.
+VOICE_WAV_MS = {"A-NEUTRAL": 1_500, "B-NEUTRAL": 2_500}
+
+
 def _pick_files(tmp_path: Path) -> dict[str, bytes]:
     return {
         **{ref: f"png-bytes-{ref}-r5d".encode() for ref in IMAGE_REF_IDS},
-        **{ref: f"wav-bytes-{ref}-r5d".encode() for ref in VOICE_REF_IDS},
+        **{ref: _wav_bytes(ms=VOICE_WAV_MS[ref]) for ref in VOICE_REF_IDS},
     }
 
 
@@ -336,6 +365,195 @@ def test_rr_t9_register_creates_real_rows_and_reports_canary_spend(
             )
             == 8
         )
+
+
+def test_r5v10_voice_media_derived_from_the_actual_wav_bytes(db, db_dsn, tmp_path) -> None:
+    """R5V-10: the registered voice rows carry metadata derived from the ACTUAL
+    WAV bytes (24 kHz mono PCM, the files' real durations) - never the
+    fixture's fictional four-second H.264/AAC video fields; a non-PCM 'wav'
+    is refused."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    _register(db_dsn, tmp_path, out)
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT sha256, descriptor FROM assets WHERE episode_id=%s",
+            (prepare_run.BENCHMARK_EPISODE_ID,),
+        )
+    files = _pick_files(tmp_path)
+    by_sha = {row["sha256"]: row["descriptor"] for row in rows}
+    for ref in VOICE_REF_IDS:
+        media = by_sha[sha256_hex(files[ref])]["media"]
+        assert media["duration_ms"] == VOICE_WAV_MS[ref], media
+        assert media["sample_rate_hz"] == 24_000
+        assert media["channels"] == 1
+        assert media["has_audio"] is True and media["has_video"] is False
+        assert media["audio_codec"] == "pcm_s16le"
+        assert "video_codec" not in media or media.get("video_codec") is None
+    for ref in IMAGE_REF_IDS:
+        assert by_sha[sha256_hex(files[ref])].get("media") is None
+
+    # Garbage 'wav' bytes (the old fictional fixtures) never validate: the
+    # parser refuses them before any row is written.
+    with pytest.raises(SystemExit, match="not a PCM WAV"):
+        prepare_run._wav_media_info(b"wav-bytes-A-NEUTRAL-r5d")
+    # A RIFF container with a compressed fmt is equally refused.
+    import struct
+
+    fmt = struct.pack("<HHIIHH", 0x55, 2, 44_100, 44_100 * 4, 4, 16)  # MP3 fmt tag
+    mp3_wav = (
+        b"RIFF"
+        + struct.pack("<I", 36 + 4)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", 4)
+        + b"\x00\x00\x00\x00"
+    )
+    with pytest.raises(SystemExit, match="not uncompressed PCM"):
+        prepare_run._wav_media_info(mp3_wav)
+
+
+def test_r5v9_replay_enforces_the_named_frozen_fields(db, db_dsn, tmp_path, monkeypatch) -> None:
+    """R5V-9: replay drift beyond asset hashes is refused - the episode
+    account cap, exact asset fields (kind under the picked sha), the exact
+    rights versions/content (a replacement current version), and the preset
+    pins (a replacement current preset row)."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    _register(db_dsn, tmp_path, out)
+
+    def _register_again() -> None:
+        _register(db_dsn, tmp_path, out)
+
+    files = _pick_files(tmp_path)
+    image_sha = sha256_hex(files["A2"])
+
+    # (a) The account cap drifted (the review's one-uSD probe): the DB column
+    # is trigger-immutable, so the drift is author-side - a tool build whose
+    # frozen cap differs from the stored account must refuse to replay.
+    monkeypatch.setattr(prepare_run, "EPISODE_CAP_MICRO_USD", 1)
+    with pytest.raises(SystemExit, match="account cap drifted"):
+        _register_again()
+    monkeypatch.setattr(prepare_run, "EPISODE_CAP_MICRO_USD", 10_000_000)
+
+    # (b) A replacement current rights version with drifted content (v2
+    # current flips v1; the count stays 11).
+    from microdrama.config import Settings as _Settings
+    from microdrama.contracts.enums import EvidenceSource as _EvidenceSource
+    from microdrama.contracts.enums import Provenance as _Provenance
+    from microdrama.contracts.enums import RightsStatus as _RightsStatus
+    from microdrama.contracts.enums import RightsSubjectKind as _RightsSubjectKind
+    from microdrama.contracts.primitives import EvidenceRef as _EvidenceRef
+    from microdrama.contracts.registries import RightsRecord as _RightsRecord
+    from microdrama.core.clock import SystemClock as _SystemClock
+    from microdrama.core.registry.rights import RightsRegistry as _RightsRegistry
+
+    grant = prepare_run._expected_binding_grant("character_identity", "a", "A2")
+    drifted = _RightsRecord(
+        record_id=str(uuid.uuid5(uuid.NAMESPACE_URL, "t031-record-v2:A2")),
+        rights_route_id=grant["route"],
+        version=2,
+        subject_kind=_RightsSubjectKind(grant["subject_kind"]),
+        subject_ref=grant["subject_ref"],
+        territories=["SG"],
+        commercial_use=True,
+        output_release_allowed=True,
+        required_disclosures=[],
+        expires_at=None,
+        evidence=[
+            _EvidenceRef(
+                source=_EvidenceSource.LICENSE_DOCUMENT,
+                ref="attacker-replaced-evidence",
+            )
+        ],
+        status=_RightsStatus.ELIGIBLE,
+        recorded_at=_utcnow(),
+    )
+    _RightsRegistry(db, _SystemClock(), _Settings()).record(
+        drifted, source_provenance=_Provenance.LIVE_PROVIDER
+    )
+    with pytest.raises(SystemExit, match="rights content drifted|rights routes drifted"):
+        _register_again()
+
+    # (c) Wrong asset kind under a picked sha (a decoy row carrying the same
+    # digest with the wrong kind) - LAST: assets are append-only, so the decoy
+    # stays for the rest of this test.
+    with db.transaction() as tx:
+        decoy = uuid.uuid4()
+        descriptor = {
+            "asset_id": str(decoy),
+            "asset_kind": "AUDIO",
+            "object_key": f"t031/inputs/decoy-{decoy}.wav",
+            "sha256": image_sha,
+            "size_bytes": 4,
+            "media_type": "audio/wav",
+            "media": None,
+            "state": "ACCEPTED",
+            "provenance": "LIVE_PROVIDER",
+            "version": 1,
+        }
+        tx.execute(
+            "INSERT INTO assets (id, asset_kind, object_key, sha256, size_bytes, media_type, "
+            "media, descriptor, state, provenance, episode_id, created_at) VALUES "
+            "(%s,'AUDIO',%s,%s,4,'audio/wav',%s,%s,'ACCEPTED','LIVE_PROVIDER',%s,now())",
+            (
+                decoy,
+                descriptor["object_key"],
+                image_sha,
+                jsonb({"duration_ms": 4, "has_audio": True, "has_video": False}),
+                jsonb(descriptor),
+                prepare_run.BENCHMARK_EPISODE_ID,
+            ),
+        )
+    with pytest.raises(SystemExit, match="asset bytes drifted|asset fields drifted"):
+        _register_again()
+
+
+def test_r5v9_preset_replacement_current_row_is_drift(db, db_dsn, tmp_path) -> None:
+    """R5V-9: a replacement CURRENT preset row (v2) with different pins is
+    drift even though 'a current disabled row' still exists."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    _register(db_dsn, tmp_path, out)
+    pins = prepare_run._expected_preset_pins()
+    from microdrama.config import Settings as _Settings
+    from microdrama.contracts.enums import ControlKind as _ControlKind
+    from microdrama.contracts.enums import Provenance as _Provenance
+    from microdrama.contracts.enums import RenderTier as _RenderTier
+    from microdrama.contracts.registries import PresetRecord as _PresetRecord
+    from microdrama.core.registry.presets import PresetRegistry as _PresetRegistry
+
+    _PresetRegistry(db, _Settings()).record(
+        _PresetRecord(
+            preset_id=prepare_run.PRESET_ID,
+            version=2,
+            tier=_RenderTier(pins["record"]["tier"]),
+            workflow_sha256="f" * 64,  # drifted workflow pin
+            model_mode=pins["record"]["model_mode"],
+            gpu_type=pins["record"]["gpu_type"],
+            min_vram_gb=pins["record"]["min_vram_gb"],
+            host_ram_gb=pins["record"]["host_ram_gb"],
+            precision=pins["record"]["precision"],
+            width=pins["record"]["width"],
+            height=pins["record"]["height"],
+            frames=pins["record"]["frames"],
+            fps=pins["record"]["fps"],
+            steps=pins["record"]["steps"],
+            attention_backend=pins["record"]["attention_backend"],
+            supported_controls=[_ControlKind.TEXT_PROMPT, _ControlKind.SEED],
+            supports_thai_dialogue=None,
+            rights_route_id=pins["rights_route_id"],
+            measured=None,
+            evidence=[],
+            enabled=False,
+        ),
+        source_provenance=_Provenance.LIVE_PROVIDER,
+    )
+    with pytest.raises(SystemExit, match="preset pins drifted"):
+        _register(db_dsn, tmp_path, out)
 
 
 def test_rr_t9_register_refuses_on_asset_drift(db, db_dsn, tmp_path) -> None:
