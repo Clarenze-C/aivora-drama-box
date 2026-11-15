@@ -648,6 +648,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   tests/integration/v3 + persistence) + **A1 Codex review** (`a1-review`, scoped to the note's
   acceptance rows); solo gate at `57df5a9` (`a1-gate` checkout prepped) after verification.
   Opus's Pro week resets 16:00Z — handover to Opus per the runbook is natural after this chain.
+- 15 Nov 13:53Z (GLM): **A1 acceptance step 1 GREEN by GLM: 273 passed** (integration v3 +
+  persistence, matching the builder). **Solo gate running at `57df5a9`** (unit `dramabox-a1-gate`);
+  A1 Codex review also running. A1 accepted = review ACCEPT + gate green.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
