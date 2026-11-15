@@ -667,6 +667,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   gate → A1 decision; then r5-fix1 → R2 → gate; then write the WEEKEND HANDOFF section for Opus
   and end the loop.** The runbook closes Sunday evening with: everything accepted listed, in-flight
   chains resolved or handed over with exact resume points, and Opus's Monday re-check list.
+- 15 Nov 20:19Z (GLM): **A1 FIX1 DONE** — all 11 A1V findings addressed at `3bd8c90` (9 commits;
+  A1V-1's red recorded retroactively per the 429-recovery note, flagged to R2). Acceptance chain
+  running: GLM verification + **R2 review** (`a1-review-r2`); decisive solo gate at `3bd8c90` next.
+  Then r5-fix1, then the final handoff (operator's closing directive).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
