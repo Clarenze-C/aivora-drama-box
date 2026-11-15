@@ -1,0 +1,7 @@
+**A1 FIX2: ALL FINDINGS ADDRESSED** — report at `/root/AIVORA/drama-box/.scratch/a0d-gateway/a1-fix2-REPORT.md`
+
+- **A1V2-1 (BLOCKING)** — `gate_activation_events` now persists `seq` from `md_gate_activation_events_seq` (added inside unshipped 0030, amend-in-place as the brief allows — noted in the report); `v3_require_gate_approval` orders by `e.seq` instead of transaction-start `created_at` + random UUID. Both review reproductions red pre-fix on real two-connection PostgreSQL (reversed tx-start: edge advanced, DID NOT RAISE; equal timestamps with adversarial UUID: same) → green. Commit `03ad598`.
+- **A1V2-2** — `finalize_scope_revision` selects the event's track/state column by gate: new `RELEASE_STATE_GATES = (TEASER_FINAL, LAUNCH)` report `release_state`/track `"release"`; planning/production/extension arms unchanged. Payload, replay and rollback asserted; planning guard green both sides. Commit `f1910fc`.
+- **A1V2-3** — `current_lock_row` resolves season existence first: absent season → `None` (pre-A1 answer, public `current_lock` included), existing V3 season still refuses with `WorkflowMismatch`. Commit `307a81e`.
+
+Verification at tip `307a81e`: integration v3+persistence **318 passed** on the re-migrated schema, discriminator 42, identity-lock-adjacent 63, unit references+review 366, all a1v1/a1v11/a1v2 tests 25, contract spot 4; `make lint` clean at every commit. No new migrations, no pushes/merges, offline only. Round-3 verification can take it from the report.

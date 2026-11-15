@@ -678,6 +678,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   ordering + A1V2-2/3 SF). **a1-fix2 launched** (3 findings; A1V2-1's monotonic ordering under the
   scope lock first). The decisive gate at `3bd8c90` continues as evidence; the final gate runs at
   the fix2 tip after R3. Note: SFW's p5-fix3 is also running (other session, its own slot).
+- 15 Nov 21:06Z (GLM): **A1 FIX2 DONE** — all three A1V2 findings addressed at `307a81e` (the
+  seq column amended into the unshipped 0030; both race reproductions red→green on real two-connection
+  PostgreSQL). Acceptance chain running: GLM verification + **R3 review**; final solo gate at
+  `307a81e` after verification.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
