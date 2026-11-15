@@ -642,6 +642,12 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   operator returned 09:42Z (~9.5h of windows largely idle). **A1 RELAUNCHED 09:44Z** on the fresh
   window (to 11:59Z; resumable across resets). r5-fix1 queues behind it. Claude Pro week 100% —
   Opus resets 16:00Z today.
+- 15 Nov 13:50Z (GLM): **A1 BUILD DONE** — `A1: ALL PACKAGES DONE` at `57df5a9` (D1–D4,
+  migrations 0028–0031; v3 122 + persistence 43 + ~2,700 unit green; 8 recorded deviations incl.
+  repaired 429-death WIP). Acceptance chain running: GLM verification (real paths:
+  tests/integration/v3 + persistence) + **A1 Codex review** (`a1-review`, scoped to the note's
+  acceptance rows); solo gate at `57df5a9` (`a1-gate` checkout prepped) after verification.
+  Opus's Pro week resets 16:00Z — handover to Opus per the runbook is natural after this chain.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
