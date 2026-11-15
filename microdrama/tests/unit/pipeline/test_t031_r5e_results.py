@@ -67,7 +67,7 @@ def _sample(sample_id: str, state: str = "NOT_RUN", **extra) -> dict:
             "full_job_ms": extra.get("full_job_ms"),
             "sampler_ms": extra.get("sampler_ms"),
         },
-        "cost_micro_usd": None,
+        "cost_micro_usd": extra.get("cost_micro_usd"),
     }
 
 
@@ -97,7 +97,7 @@ def test_rr_t10_unstarted_export_reproduces_the_template_exactly(tmp_path) -> No
     assert output.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
 
 
-def test_rr_t10_filled_export_fills_only_known_cells(tmp_path) -> None:
+def test_rr_t10_filled_export_fills_only_known_cells(tmp_path, capsys) -> None:
     template = _template(tmp_path)
     samples = [_sample(s) for s in results.SAMPLE_IDS]
     # S01-R1 succeeded with a durable output and both timings; S02-R1 failed
@@ -108,6 +108,7 @@ def test_rr_t10_filled_export_fills_only_known_cells(tmp_path) -> None:
         output={"sha256": "a" * 64},
         full_job_ms=123_456,
         sampler_ms=987,
+        cost_micro_usd=123_456,
     )
     samples[3] = _sample("S02-R1", "FAILED")
     export = tmp_path / "export.json"
@@ -134,7 +135,15 @@ def test_rr_t10_filled_export_fills_only_known_cells(tmp_path) -> None:
     assert succeeded["output_sha256"] == "a" * 64
     assert succeeded["full_job_ms"] == "123456"
     assert succeeded["sampler_ms"] == "987"
-    assert succeeded["billed_micro_usd"] == "999999"
+    # R5V-7: a per-sample cost appears ONLY when an allocation supports it;
+    # unallocated sample costs stay blank - the experiment's 999,999 µUSD bill
+    # is NEVER repeated into every row (24 x 999,999 = a fabricated bill).
+    assert succeeded["billed_micro_usd"] == "123456"
+    assert rows["S02-R1"]["billed_micro_usd"] == ""
+    assert rows["S03-R1"]["billed_micro_usd"] == ""
+    # The aggregate bill is reported separately, not per row.
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["billed_micro_usd_aggregate"] == 999_999
     assert succeeded["billing_state"] == "BILLED"
     failed = rows["S02-R1"]
     assert failed["execution_state"] == "FAILED"

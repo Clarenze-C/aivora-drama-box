@@ -73,7 +73,6 @@ def map_export(export: dict, configuration_id: str) -> list[dict[str, str]]:
             "refused: the export does not carry exactly the fixed 24 samples "
             f"(missing {missing[:3]}, unexpected {extra[:3]})"
         )
-    billed = export.get("billed_micro_usd")
     billing_state = export.get("billing_state") or "UNKNOWN"
     rows: list[dict[str, str]] = []
     for sample_id in SAMPLE_IDS:
@@ -97,7 +96,11 @@ def map_export(export: dict, configuration_id: str) -> list[dict[str, str]]:
                 "cold_start_ms": "",
                 "full_job_ms": _cell(timings.get("full_job_ms")),
                 "sampler_ms": _cell(timings.get("sampler_ms")),
-                "billed_micro_usd": _cell(billed),
+                # R5V-7 (RR-T10): a sample cost appears ONLY when the export
+                # carries that sample's ALLOCATED cost; an unallocated sample
+                # stays blank - never the experiment's whole bill repeated
+                # into every row (24x the total is a fabricated bill).
+                "billed_micro_usd": _cell(sample.get("cost_micro_usd")),
                 "billing_state": billing_state,
                 # The human judgment columns (Pass A / Pass B): the eight
                 # quality dimensions ship UNKNOWN; the coverage evidence
@@ -139,6 +142,10 @@ def main(argv: list[str] | None = None) -> int:
                 "rows": len(rows),
                 "configuration_id": args.configuration_id,
                 "billing_state": export.get("billing_state"),
+                # R5V-7: the experiment's aggregate bill is reported HERE,
+                # separately - the per-sample rows above carry only allocated
+                # sample costs.
+                "billed_micro_usd_aggregate": export.get("billed_micro_usd"),
             }
         )
     )

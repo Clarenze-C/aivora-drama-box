@@ -45,7 +45,9 @@ PERIOD = (T0.isoformat(), (T0 + HOUR).isoformat())
 OBSERVED_AT = (T0 + 2 * HOUR).isoformat()
 
 
-def _seed_experiment_with_authorization(db) -> UUID:
+def _seed_experiment_with_authorization(
+    db, *, experiment_id: UUID = EXPERIMENT, account_ref: str = ACCOUNT_REF
+) -> UUID:
     """One experiment row plus its durable authorization payload (the account
     the verifier bills) and the episode the per-pod lease hangs from."""
     from microdrama.testing.seed import seed_episode, seed_season
@@ -77,7 +79,7 @@ def _seed_experiment_with_authorization(db) -> UUID:
             "INSERT INTO benchmark_experiments(experiment_id,episode_id,account_id,"
             "plan_sha256,plan,cap_micro_usd,gpu_limit_ms) VALUES(%s,%s,%s,%s,%s,%s,%s)",
             (
-                EXPERIMENT,
+                experiment_id,
                 episode,
                 account,
                 "a" * 64,
@@ -90,11 +92,11 @@ def _seed_experiment_with_authorization(db) -> UUID:
             "schema_version": 1,
             "operator": "operator@aivora",
             "change_ref": "t031-r5f",
-            "experiment_id": str(EXPERIMENT),
+            "experiment_id": str(experiment_id),
             "plan_sha256": "a" * 64,
             "sealed_sha256": "b" * 64,
             "episode_id": str(episode),
-            "provider_account_ref": ACCOUNT_REF,
+            "provider_account_ref": account_ref,
             "max_new_exposure_micro_usd": 8_000_000,
             "max_gpu_ms": 14_400_000,
             "hard_stop_utc": "2026-11-30T00:00:00+00:00",
@@ -114,7 +116,7 @@ def _seed_experiment_with_authorization(db) -> UUID:
             "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,"
             "payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s)",
             (
-                EXPERIMENT,
+                experiment_id,
                 "d" * 64,
                 jsonb(payload),
                 json.dumps(payload).encode(),
@@ -122,6 +124,27 @@ def _seed_experiment_with_authorization(db) -> UUID:
             ),
         )
     return episode
+
+
+def _link_acquisition(db, episode_id: UUID, lease_id: UUID, *, experiment_id: UUID = EXPERIMENT):
+    """R5V-6: the experiment's acquisition (generation 1) owning the pod's
+    lease, admitted under the seeded authorization."""
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO benchmark_acquisitions(acquisition_id,experiment_id,generation,"
+            "quote,quote_sha256,intent,state,create_intent_at,authorization_sha256,lease_id) "
+            "VALUES(%s,%s,1,%s,%s,%s,'CLOSED',%s,%s,%s)",
+            (
+                uuid4(),
+                experiment_id,
+                jsonb({"schema_version": 1}),
+                "f" * 64,
+                jsonb({"schema_version": 1}),
+                T0,
+                "d" * 64,
+                lease_id,
+            ),
+        )
 
 
 def _ingest_pod_billing(db, episode_id: UUID, *, pod_id: str) -> None:
@@ -134,7 +157,7 @@ def _ingest_pod_billing(db, episode_id: UUID, *, pod_id: str) -> None:
     from microdrama.core.clock import SystemClock, UuidIds
 
     with db.transaction() as tx:
-        insert_runpod_lease(
+        lease_id, _reservation = insert_runpod_lease(
             tx,
             episode_id,
             pod_id=pod_id,
@@ -164,6 +187,7 @@ def _ingest_pod_billing(db, episode_id: UUID, *, pod_id: str) -> None:
         account_ref=ACCOUNT_REF,
     )
     repository.ingest(query, [bucket])
+    return lease_id
 
 
 def _run(db_dsn: str, tmp_path: Path, *, amount: int, pod_id: str = "pod-r5f-1") -> int:
@@ -193,7 +217,8 @@ def _run(db_dsn: str, tmp_path: Path, *, amount: int, pod_id: str = "pod-r5f-1")
 
 def test_rr_t17_matched_period_stores_only_the_evidence_sha(db, db_dsn, tmp_path, capsys) -> None:
     episode = _seed_experiment_with_authorization(db)
-    _ingest_pod_billing(db, episode, pod_id="pod-r5f-1")
+    lease_id = _ingest_pod_billing(db, episode, pod_id="pod-r5f-1")
+    _link_acquisition(db, episode, lease_id)
     assert _run(db_dsn, tmp_path, amount=BUCKET_MICRO_USD) == 0
     matched = json.loads(capsys.readouterr().out)
     assert matched["outcome"] == "MATCHED"
@@ -235,7 +260,8 @@ def test_rr_t17_matched_period_stores_only_the_evidence_sha(db, db_dsn, tmp_path
 
 def test_rr_t17_wrong_amount_is_a_loud_mismatch(db, db_dsn, tmp_path, capsys) -> None:
     episode = _seed_experiment_with_authorization(db)
-    _ingest_pod_billing(db, episode, pod_id="pod-r5f-2")
+    lease_id = _ingest_pod_billing(db, episode, pod_id="pod-r5f-2")
+    _link_acquisition(db, episode, lease_id)
     assert _run(db_dsn, tmp_path, amount=BUCKET_MICRO_USD + 1, pod_id="pod-r5f-2") == 1
     mismatch = json.loads(capsys.readouterr().out)
     assert mismatch["outcome"] == "MISMATCHED"
@@ -251,7 +277,13 @@ def test_rr_t17_wrong_amount_is_a_loud_mismatch(db, db_dsn, tmp_path, capsys) ->
 
 
 def test_rr_t17_refuses_without_authorization_or_evidence(db, db_dsn, tmp_path) -> None:
-    _seed_experiment_with_authorization(db)
+    episode = _seed_experiment_with_authorization(db)
+    # The probe pod is this experiment's own acquisition pod, so the refusals
+    # below exercise the AUTHORIZATION/evidence/verifier checks - provenance
+    # (R5V-6) is satisfied here.
+    with db.transaction() as tx:
+        lease_id, _reservation = insert_runpod_lease(tx, episode, pod_id="pod-r5f-x")
+    _link_acquisition(db, episode, lease_id)
     evidence = tmp_path / "console-evidence.json"
     evidence.write_bytes(EVIDENCE)
 
@@ -275,11 +307,113 @@ def test_rr_t17_refuses_without_authorization_or_evidence(db, db_dsn, tmp_path) 
             OBSERVED_AT,
         ]
 
-    # An experiment without a durable authorization cannot name the account.
-    with pytest.raises(SystemExit, match="no durable authorization"):
+    # An experiment with no durable authorization cannot name the account.
+    with pytest.raises(SystemExit, match="no durable authorization|not an acquisition pod"):
         billing_verify.main(argv(str(uuid4()), evidence))
     # A missing evidence file never reaches the verifier.
     with pytest.raises(SystemExit, match="evidence file is missing"):
         billing_verify.main(argv(str(EXPERIMENT), tmp_path / "absent.json"))
     # An empty period is refused by the verifier's own schema checks.
     assert billing_verify.main(argv(str(EXPERIMENT), evidence, period_end=PERIOD[0])) == 2
+
+
+# ---------------------------------------------------------------------------
+# R5V-6 - acquisition-specific provenance
+# ---------------------------------------------------------------------------
+
+
+def test_r5v6_foreign_pod_refused(db, db_dsn, tmp_path) -> None:
+    """A pod that belongs to ANOTHER experiment's acquisition is refused: the
+    tool resolves experiment -> target pod/lease -> acquisition before the
+    verifier, so it can never bill a foreign pod from this experiment's
+    provenance."""
+    episode = _seed_experiment_with_authorization(db)
+    lease_id = _ingest_pod_billing(db, episode, pod_id="pod-r5f-1")
+    _link_acquisition(db, episode, lease_id)
+
+    other = uuid4()
+    other_episode = _seed_experiment_with_authorization(db, experiment_id=other)
+    other_lease = _ingest_pod_billing(db, other_episode, pod_id="pod-foreign-1")
+    _link_acquisition(db, other_episode, other_lease, experiment_id=other)
+
+    evidence = tmp_path / "console-evidence.json"
+    evidence.write_bytes(EVIDENCE)
+    with pytest.raises(SystemExit, match="not an acquisition pod of this experiment"):
+        billing_verify.main(
+            [
+                "--dsn",
+                db_dsn,
+                "--experiment-id",
+                str(EXPERIMENT),
+                "--pod-id",
+                "pod-foreign-1",
+                "--period-start",
+                PERIOD[0],
+                "--period-end",
+                PERIOD[1],
+                "--amount-micro-usd",
+                str(BUCKET_MICRO_USD),
+                "--evidence",
+                str(evidence),
+                "--observed-at",
+                OBSERVED_AT,
+            ]
+        )
+
+
+def test_r5v6_uses_the_target_acquisitions_own_authorization(db, db_dsn, tmp_path, capsys) -> None:
+    """A NEWER experiment authorization with a different provider account
+    never overrides the TARGET acquisition's original admission authorization
+    (R5C-7: the billed account is the acquisition's own provenance)."""
+    episode = _seed_experiment_with_authorization(db)
+    lease_id = _ingest_pod_billing(db, episode, pod_id="pod-r5f-3")
+    _link_acquisition(db, episode, lease_id)
+
+    # A later authorization row for the SAME experiment names a DIFFERENT
+    # account; the pod's acquisition was admitted under the ORIGINAL.
+    newer = {
+        "schema_version": 1,
+        "operator": "operator@aivora",
+        "change_ref": "t031-r5f-rotated",
+        "experiment_id": str(EXPERIMENT),
+        "plan_sha256": "a" * 64,
+        "sealed_sha256": "b" * 64,
+        "episode_id": str(episode),
+        "provider_account_ref": "acct:drama-box-t031-ROTATED",
+        "max_new_exposure_micro_usd": 8_000_000,
+        "max_gpu_ms": 14_400_000,
+        "hard_stop_utc": "2026-12-31T00:00:00+00:00",
+        "allowed_gpu_types": ["NVIDIA A40"],
+        "minimum_host_ram_gb": 64,
+        "max_hourly_micro_usd": 860_000,
+        "max_storage_exposure_micro_usd": 2_000_000,
+        "container_disk_gb": 100,
+        "persistent_volume_gb": 0,
+        "shutdown_reserve_micro_usd": 500_000,
+        "namespace": "t031bench",
+        "runpod_credential_ref": "credref:runpod-t031",
+        "comfy_credential_ref": "credref:comfy-t031",
+        "rights_evidence_hash": "c" * 64,
+    }
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO benchmark_authorizations(experiment_id,authorization_sha256,"
+            "payload,source_bytes,authorized_at) VALUES(%s,%s,%s,%s,%s)",
+            (
+                EXPERIMENT,
+                "e" * 64,
+                jsonb(newer),
+                json.dumps(newer).encode(),
+                datetime.now(UTC) + timedelta(minutes=1),
+            ),
+        )
+
+    assert _run(db_dsn, tmp_path, amount=BUCKET_MICRO_USD, pod_id="pod-r5f-3") == 0
+    matched = json.loads(capsys.readouterr().out)
+    assert matched["outcome"] == "MATCHED", matched
+    with db.transaction(readonly=True) as tx:
+        stored = tx.fetchval(
+            "SELECT provider_account_ref FROM runpod_billing_period_evidence WHERE pod_id=%s",
+            ("pod-r5f-3",),
+        )
+    assert stored == ACCOUNT_REF, "the acquisition's ORIGINAL account was billed"

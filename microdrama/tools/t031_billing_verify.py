@@ -75,17 +75,32 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings.from_env().model_copy(update={"database_url": args.dsn})
     db = Database(args.dsn, min_size=1, max_size=5).open()
     try:
-        # The provider account comes from the experiment's own durable
-        # authorization (stored at execute with its source bytes).
+        # R5V-6 (R5C-7): acquisition-specific provenance. The provider account
+        # comes from the TARGET POD's own acquisition and ITS admission
+        # authorization - never "the experiment's latest" (which could be a
+        # different account, or cover another experiment's pods).
         with db.transaction(readonly=True) as tx:
+            acquisition = tx.fetchone(
+                "SELECT a.authorization_sha256 FROM benchmark_acquisitions a "
+                "JOIN pod_leases l ON l.id = a.lease_id "
+                "WHERE a.experiment_id=%s AND l.pod_id=%s",
+                (args.experiment_id, args.pod_id),
+            )
+            if acquisition is None:
+                raise SystemExit(
+                    "refused: the pod is not an acquisition pod of this experiment "
+                    "(no experiment acquisition lease owns it)"
+                )
             payload = tx.fetchval(
                 "SELECT payload FROM benchmark_authorizations WHERE experiment_id=%s "
-                "ORDER BY authorized_at DESC, authorization_sha256 DESC LIMIT 1",
-                (args.experiment_id,),
+                "AND authorization_sha256=%s",
+                (args.experiment_id, acquisition["authorization_sha256"]),
             )
         if payload is None:
             raise SystemExit(
-                "refused: the experiment has no durable authorization to name its provider account"
+                "refused: the target acquisition's admission authorization is not "
+                "durable - the experiment has no durable authorization to name its "
+                "provider account"
             )
         provider_account_ref = payload.get("provider_account_ref")
         if not isinstance(provider_account_ref, str) or not provider_account_ref:
