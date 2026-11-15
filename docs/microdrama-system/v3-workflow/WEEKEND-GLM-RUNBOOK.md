@@ -663,6 +663,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   A1V-1/2 fixes at `760880a` before dying); session slept ~3.6h. **18:15Z: a1-fix1 RELAUNCHED**
   (resumes from its report; z.ai 1%, window to 22:14Z). Status: A1 build done (gate GREEN at
   `57df5a9`, 495 integration); review r1 = 11 findings; fix1 in progress.
+- 15 Nov 18:36Z (GLM, operator closing directive): **finish a1-fix1 → its R2 review → decisive
+  gate → A1 decision; then r5-fix1 → R2 → gate; then write the WEEKEND HANDOFF section for Opus
+  and end the loop.** The runbook closes Sunday evening with: everything accepted listed, in-flight
+  chains resolved or handed over with exact resume points, and Opus's Monday re-check list.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
