@@ -655,6 +655,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   authorize a gate transition; lock order vs §§8–9; approvals never advance the content fence — +
   A1V-4..11 SF). **a1-fix1 launched** (all 11; A1V-1 first). The solo gate at `57df5a9` continues as
   evidence. Round-2 review + fresh gate follow the fix.
+- 15 Nov 14:35Z (GLM): **A1 solo gate at `57df5a9` GREEN** (overall 0; 495 integration; make check +
+  pilot passed — receipts `.scratch/a1-gate/.scratch/gate/`). The 11 review findings are
+  contract-layer corrections on top of a gate-healthy tree. Fresh gate runs at the fix1 tip after
+  the round-2 review. Running: a1-fix1.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
