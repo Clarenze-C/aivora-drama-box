@@ -762,7 +762,7 @@
     "model": "ProviderOperation"
   },
   "examples/v1/valid/ProviderOperationResult.json": {
-    "canonical_sha256": "c3631a02cae5fb3c2e12f0f1822621441f0d26cccaf7890027c30eac6f01344e",
+    "canonical_sha256": "fac697f908d65358006a2f388958ae18afd2ef1f19569c2c6e56190a4bac68d3",
     "expect": "valid",
     "model": "ProviderOperationResult"
   },

@@ -15,6 +15,7 @@
   "provenance": "FAKE_SYNTHETIC",
   "raw_response_key": null,
   "retry_after_ms": null,
+  "sampler_ms": null,
   "schema_version": "1.0",
   "state": "FAILED",
   "transient": false,
