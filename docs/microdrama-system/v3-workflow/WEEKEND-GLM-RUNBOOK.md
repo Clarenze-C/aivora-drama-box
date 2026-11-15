@@ -682,6 +682,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   seq column amended into the unshipped 0030; both race reproductions red→green on real two-connection
   PostgreSQL). Acceptance chain running: GLM verification + **R3 review**; final solo gate at
   `307a81e` after verification.
+- 15 Nov 21:08Z (GLM): the SUPERSEDED a1-gate2 (at `3bd8c90`) came back red on the known
+  load-flake: 533 passed, 1 failed (`edit.assemble_episode: ffmpeg failed:` — empty detail, third
+  occurrence of the same signature; SFW's concurrent build added load). **The flake is now a
+  pattern worth a Monday item** (test robustness, not code). The DECISIVE A1 gate runs at
+  `307a81e` after verification.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
@@ -750,3 +755,6 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - A0-D (updated): **ACCEPTED 14 Nov 23:38Z** (R7 ACCEPT, decisive gate green at `eea2f79`).
   Still yours when ready: install the gateway's systemd unit + group 64010 + directories; OK the
   live qualification (≤5 calls). No merge/push happened.
+- Monday extra: the `edit.assemble_episode`/`edit.variants_and_hooks` ffmpeg tests failed empty-
+  detail three times this weekend, only under concurrent load (never solo). Test-robustness fix
+  candidate (retry/timeout isolation) — parked for Opus.
