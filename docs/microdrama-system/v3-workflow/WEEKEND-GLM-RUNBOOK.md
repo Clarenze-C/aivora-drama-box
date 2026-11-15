@@ -674,6 +674,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 15 Nov 20:23Z (GLM): **A1 fix1 verification GREEN by GLM: 312 passed** (up from 273 — the fix
   round added 39 tests). **Decisive solo gate running at `3bd8c90`** (unit `dramabox-a1g2-gate`)
   beside the R2 review. A1 accepted = R2 ACCEPT + this gate.
+- 15 Nov 20:26Z (GLM): **A1 R2 = FIX-REQUIRED** (8/11 closed; A1V2-1 BLOCKING terminal-event
+  ordering + A1V2-2/3 SF). **a1-fix2 launched** (3 findings; A1V2-1's monotonic ordering under the
+  scope lock first). The decisive gate at `3bd8c90` continues as evidence; the final gate runs at
+  the fix2 tip after R3. Note: SFW's p5-fix3 is also running (other session, its own slot).
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
