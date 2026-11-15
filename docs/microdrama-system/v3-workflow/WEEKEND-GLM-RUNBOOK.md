@@ -687,6 +687,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   occurrence of the same signature; SFW's concurrent build added load). **The flake is now a
   pattern worth a Monday item** (test robustness, not code). The DECISIVE A1 gate runs at
   `307a81e` after verification.
+- 15 Nov 21:11Z (GLM): **A1 R3 = ACCEPT** (A1V2-1..3 all CLOSED, no regressions). **fix2
+  verification GREEN by GLM: 319 passed.** **DECISIVE solo gate running at `307a81e`** (unit
+  `dramabox-a1g3-gate`, nothing else heavy beside it). Green = **A1 ACCEPTED** → r5-fix1 launches
+  → then the final WEEKEND HANDOFF.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
