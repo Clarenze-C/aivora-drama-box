@@ -135,6 +135,7 @@ from microdrama.persistence.db import jsonb
 # T031 R5b: typed pre-sample boot failures (R5C-2) and the attempt cap (R5C-11).
 from microdrama.pipeline.experimental_world import BootFailure  # noqa: E402
 from microdrama.rendering.benchmark_experiments import (
+    BOOT_FAILURE_STATES,
     SCREEN_IDS,
     TERMINAL_SAMPLES,
     BenchmarkRepository,
@@ -151,7 +152,6 @@ from microdrama.rendering.benchmark_experiments import (
 )
 from microdrama.rendering.leases import LIVE_LEASE_STATES, RENDERING_NAMESPACE
 
-BOOT_FAILURE_STATES = ("PROVISION_FAILED", "BOOT_TIMEOUT")
 MAX_BOOT_ATTEMPTS_PER_PHASE = 3
 
 RECOVERY_GRACE_MAX_S = 600  # §5.4: the documented maximum recovery grace
@@ -765,14 +765,23 @@ class BenchmarkService:
             "phase": phase,
             "attempt": int(acquisition["generation"]),
         }
+        # R5V-3 (R5C-2/3): ONE atomic transaction persists the refusal evidence
+        # AND the cleanup obligation - the acquisition's incident state - under
+        # the row lock. An interruption between the two writes can never leave
+        # the incident recorded without cleanup being owed: the state value
+        # marks exactly the open window the sweep's transition closes.
         with self.db.transaction() as tx:
+            tx.fetchone(
+                "SELECT acquisition_id FROM benchmark_acquisitions "
+                "WHERE acquisition_id=%s FOR UPDATE",
+                (acquisition["acquisition_id"],),
+            )
             merge_acquisition_coverage(
                 tx,
                 experiment_id,
                 acquisition["acquisition_id"],
                 {"incident": incident},
             )
-        with self.db.transaction() as tx:
             tx.execute(
                 "UPDATE benchmark_acquisitions SET state=%s WHERE acquisition_id=%s "
                 "AND state NOT IN ('CLOSED','NO_CREATE_PROVEN')",
@@ -829,8 +838,15 @@ class BenchmarkService:
         AT-5/I3: a CLEANUP_PENDING/UNKNOWN acquisition, or one whose lease is
         terminal, is never acquired again - cleanup and finalization own it, and
         the next generation is admitted only after that completes (U2).
+        R5V-3 (R5C-2/3): a persisted typed boot failure is routed EXCLUSIVELY
+        through cleanup until verified - the incident state is the durable
+        cleanup obligation, so a failed or interrupted sweep never re-acquires
+        the acquisition.
         """
-        if acquisition["state"] in ("CLEANUP_PENDING", "UNKNOWN"):
+        if (
+            acquisition["state"] in ("CLEANUP_PENDING", "UNKNOWN")
+            or acquisition["state"] in BOOT_FAILURE_STATES
+        ):
             return True
         if acquisition["lease_id"] is None:
             return False
@@ -1555,9 +1571,13 @@ class BenchmarkService:
                     (experiment_id, sample["sample_id"]),
                 )
                 timings = ((existing or {}).get("coverage") or {}).get("t031_timings") or {}
+                # R5V-8: the VERIFIED RESULT's operation id, not the sample
+                # row's stale link - recovery can discover the successful
+                # operation while the sample's own operation_id is still NULL
+                # (the worker died before the projection committed).
                 submit_at = tx.fetchval(
                     "SELECT created_at FROM provider_operations WHERE id=%s",
-                    (sample.get("operation_id"),),
+                    (result.operation_id or sample.get("operation_id"),),
                 )
                 payload: dict = {}
                 if timings.get("full_job_ms") is None and submit_at is not None:
@@ -3008,6 +3028,31 @@ class BenchmarkService:
                         operation["sample_id"],
                     ),
                 )
+            if sample_state == "SUCCEEDED" and output and output.get("sha256"):
+                # R5V-8 (R5C-12): recover the timings write-if-absent from the
+                # DURABLE terminal record - this replay exists precisely
+                # because the interruption preceded the sample projection, so
+                # _observe never wrote them. The terminal observation moment is
+                # the operation row's last update; the sampler evidence
+                # persisted with the terminal result.
+                existing = tx.fetchone(
+                    "SELECT coverage FROM benchmark_samples WHERE experiment_id=%s "
+                    "AND sample_id=%s",
+                    (experiment_id, operation["sample_id"]),
+                )
+                timings = ((existing or {}).get("coverage") or {}).get("t031_timings") or {}
+                payload: dict = {}
+                if timings.get("full_job_ms") is None and operation["updated_at"] is not None:
+                    payload["full_job_ms"] = int(
+                        (operation["updated_at"] - operation["created_at"]).total_seconds() * 1000
+                    )
+                persisted_sampler = (operation["last_result"] or {}).get("sampler_ms")
+                if timings.get("sampler_ms") is None and persisted_sampler is not None:
+                    payload["sampler_ms"] = int(persisted_sampler)
+                if payload:
+                    merge_sample_coverage(
+                        tx, experiment_id, operation["sample_id"], "t031_timings", payload
+                    )
             if slot is not None and slot["sample_id"] == operation["sample_id"]:
                 tx.execute(
                     "UPDATE benchmark_dispatch_slots SET sample_id=NULL,revision=revision+1 "

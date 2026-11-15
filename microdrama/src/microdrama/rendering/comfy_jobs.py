@@ -846,6 +846,7 @@ class ComfyRenderService:
         external_id: str | None = None,
         error_code: str | None = None,
         outputs: tuple[OutputRef, ...] = (),
+        sampler_ms: int | None = None,
     ) -> ProviderOperationResult:
         return ProviderOperationResult(
             operation_id=operation_id,
@@ -854,6 +855,8 @@ class ComfyRenderService:
             outputs=list(outputs),
             error_code=error_code,
             provenance=self.provenance,
+            # R5V-8: sampler evidence rides the durable terminal result.
+            sampler_ms=sampler_ms,
         )
 
     def _fail_without_dispatch(self, operation_id: UUID, exc: Exception) -> None:
@@ -940,7 +943,13 @@ class ComfyRenderService:
         state = ProviderOperationState(row["state"])
         if state in _TERMINAL:
             self._settle_if_needed(row)
-            return self._status(self._load_row(operation_id), replayed=True)
+            row = self._load_row(operation_id)
+            # R5V-8: the persisted terminal result carries the sampler
+            # evidence (written with the completion); a replayed terminal
+            # poll reports it again instead of losing it with the transient
+            # completion return.
+            persisted_sampler = (row["last_result"] or {}).get("sampler_ms")
+            return self._status(row, replayed=True, sampler_ms=persisted_sampler)
         if state is ProviderOperationState.UNKNOWN and row["external_id"] is None:
             # H-2 (2026-11-10, GLM harness review): an UNKNOWN submit without a
             # durable prompt id has nothing to re-poll yet - the reconciler
@@ -1052,6 +1061,10 @@ class ComfyRenderService:
                     ProviderOperationState.SUCCEEDED,
                     external_id=prompt_id,
                     outputs=outputs,
+                    # R5V-8: the sampler evidence persists WITH the terminal
+                    # completion, so a replay after an interruption before the
+                    # sample projection still recovers it.
+                    sampler_ms=history.sampler_ms,
                 ),
                 now=self._now(),
             )

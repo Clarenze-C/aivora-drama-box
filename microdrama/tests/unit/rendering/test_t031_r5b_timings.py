@@ -129,6 +129,140 @@ def test_rr_t6_sampler_ms_carried_when_history_has_timestamps(db: Database, tmp_
         world_module.ExperimentalPresetPolicy.validate = original_validate
 
 
+def test_r5v8_recovery_uses_the_result_operation_for_timings(db: Database, tmp_path):
+    """R5V-8: a submit whose projection never committed (the worker died
+    before ``_observe``) leaves the sample's operation link NULL; recovery
+    discovers the successful operation and must time the sample from the
+    RESULT's verified operation id - the stale NULL lookup loses the timing
+    forever."""
+    world, comfy, adapter, plan, authorization, digest, raw, seal = _first_submitted_state(
+        db, tmp_path
+    )
+    # The crash-before-projection durable state, produced NATURALLY: the
+    # submit happens (job, reservation, slot and the in-flight operation all
+    # live) but the projection never commits - the worker died between the
+    # submit and _observe, so the sample row still carries no operation link.
+    original_observe = BenchmarkService._observe
+    BenchmarkService._observe = lambda self, experiment_id, sample, result, **kwargs: None
+    try:
+        with _PatchedPolicy():
+            service = _execute_service(db, comfy, world.ids, adapter)
+            service.execute(
+                plan.experiment_id,
+                phase="screen",
+                authorization=authorization,
+                quote=_screen_quote(world),
+                expected_sha256=digest,
+                source_bytes=raw,
+            )
+    finally:
+        BenchmarkService._observe = original_observe
+    with db.transaction(readonly=True) as tx:
+        probe = tx.fetchone(
+            "SELECT state, operation_id, job_id, reservation_id FROM benchmark_samples "
+            "WHERE experiment_id=%s AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert probe["state"] == "CLAIMED" and probe["operation_id"] is None, dict(probe)
+    comfy.clock.advance(seconds=30)  # the fake pod finishes the prompt
+    last = _drive_resume(
+        db, world, comfy, adapter, plan, authorization, digest, raw, phase="screen", limit=8
+    )
+    assert last["execution_state"] == "SCREEN_REVIEW", last["execution_state"]
+    timings = _sample_coverage(db, plan.experiment_id, "S01-R1")
+    assert timings.get("full_job_ms") is not None, "the recovered timing was lost"
+    with db.transaction(readonly=True) as tx:
+        linked = tx.fetchval(
+            "SELECT operation_id FROM benchmark_samples WHERE experiment_id=%s "
+            "AND sample_id='S01-R1'",
+            (plan.experiment_id,),
+        )
+    assert linked is not None
+
+
+def test_r5v8_sampler_evidence_survives_interruption_before_projection(db: Database, tmp_path):
+    """R5V-8: sampler timing is persisted with the terminal completion (the
+    operation's durable result), so the delayed replay that projects the
+    sample (``finalize_terminal``) still writes it - the transient completion
+    return alone loses it."""
+    from test_t031_r5b_boot import BootReadyClient
+
+    world = RenderWorld(db)
+    ep, plan, service, budget, comfy, adapter = _composed_world(world, tmp_path)
+    client = BootReadyClient(comfy.server)
+    original_history = client.history
+
+    def history_with_sampler(prompt_id):
+        entry = original_history(prompt_id)
+        if entry is not None and entry.completed:
+            entry = entry.model_copy(update={"sampler_ms": 4321})
+        return entry
+
+    client.history = history_with_sampler
+    comfy.service._client = client
+    import microdrama.pipeline.experimental_world as world_module
+
+    original_validate = world_module.ExperimentalPresetPolicy.validate
+    world_module.ExperimentalPresetPolicy.validate = lambda *a, **k: None
+    try:
+        seal, authorization, digest, raw = _authorization_pair(world, plan, tmp_path)
+        BenchmarkService(db, world.settings, clock=comfy.clock).seal(plan.experiment_id, seal)
+        with _PatchedPolicy():
+            boot_service = _execute_service(db, comfy, world.ids, adapter)
+            first = boot_service.execute(
+                plan.experiment_id,
+                phase="screen",
+                authorization=authorization,
+                quote=_screen_quote(world),
+                expected_sha256=digest,
+                source_bytes=raw,
+            )
+        assert first["execution_state"] == "SCREEN_RUNNING", first["execution_state"]
+
+        # The interruption: the terminal observation commits on the operation
+        # row, but the sample projection never runs.
+        comfy.clock.advance(seconds=30)
+        original_observe = BenchmarkService._observe
+
+        def skipping_observe(self, experiment_id, sample, result, **kwargs):
+            return None
+
+        BenchmarkService._observe = skipping_observe
+        try:
+            with _PatchedPolicy():
+                poll_service = _execute_service(db, comfy, world.ids, adapter)
+                poll_service.resume(
+                    plan.experiment_id,
+                    authorization=authorization,
+                    quote=_screen_quote(world),
+                    expected_sha256=digest,
+                    phase="screen",
+                    source_bytes=raw,
+                )
+        finally:
+            BenchmarkService._observe = original_observe
+        with db.transaction(readonly=True) as tx:
+            operation_state = tx.fetchval(
+                "SELECT o.state FROM provider_operations o JOIN benchmark_samples s "
+                "ON s.reservation_id=o.reservation_id "
+                "WHERE s.experiment_id=%s AND s.sample_id='S01-R1'",
+                (plan.experiment_id,),
+            )
+        assert operation_state == "SUCCEEDED", operation_state
+
+        # The delayed replay (reconcile's finalize_terminal) projects the
+        # sample and must recover BOTH timings from durable state.
+        last = _drive_resume(
+            db, world, comfy, adapter, plan, authorization, digest, raw, phase="screen", limit=8
+        )
+        assert last["execution_state"] == "SCREEN_REVIEW", last["execution_state"]
+        timings = _sample_coverage(db, plan.experiment_id, "S01-R1")
+        assert timings.get("full_job_ms") is not None, "the replay lost full_job_ms"
+        assert timings.get("sampler_ms") == 4321, "the replay lost the sampler evidence"
+    finally:
+        world_module.ExperimentalPresetPolicy.validate = original_validate
+
+
 def test_rr_t6_export_carries_timings_and_acquisition_records(db: Database, tmp_path):
     from test_t031_r5b_boot import _acquisition_records
 

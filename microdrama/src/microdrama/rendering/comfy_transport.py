@@ -76,6 +76,28 @@ class AcquisitionReadAuthorization:
 #: The only paths the acquisition-read scope may carry (R5b/R5C-10).
 BOOT_READ_PATHS = ("/__drama/ready", "/object_info")
 
+#: T031 R5b (R5V-5): the gateway/proxy failures a boot read TOLERATES and
+#: keeps waiting through - the canary's documented set through the RunPod
+#: proxy (connection refused maps to NeedsReconciliation, HTTP 404/502/503/
+#: 524 to ProviderError). Every other HTTP failure (401/403/500/...) is
+#: permanent: retrying it is a paid wait that can never succeed.
+BOOT_TOLERATED_HTTP_STATUSES = frozenset({404, 502, 503, 524})
+
+
+def boot_failure_tolerated(exc: BaseException) -> bool:
+    """Whether ONE failed boot read keeps the boot window waiting (R5V-5).
+
+    Connection-layer failures (refused, DNS, uncertain transport) and the
+    tolerated HTTP statuses wait; any other provider failure is permanent and
+    must classify immediately through the typed pre-sample boot path.
+    """
+    if isinstance(exc, (NeedsReconciliation, OSError)):
+        return True
+    if isinstance(exc, ProviderError):
+        status = exc.details.get("status")
+        return status is None or status in BOOT_TOLERATED_HTTP_STATUSES
+    return False
+
 
 class UrllibTransport:
     """Small stdlib transport; no retries, bounded sanitized diagnostics."""
@@ -294,11 +316,18 @@ class ComfyHttpClient:
 
     def boot_object_info(self) -> dict[str, Any] | None:
         """T031 R5b: one boot-window /object_info read; None while ComfyUI is
-        still unreachable (the caller keeps waiting inside its boot budget)."""
+        still unreachable through a TOLERATED failure (the caller keeps
+        waiting inside its boot budget). A permanent gateway failure
+        (R5V-5: e.g. HTTP 401/403) propagates so the boot window classifies
+        it immediately instead of paying to retry it."""
         try:
             return json.loads(self._request("GET", "/object_info"))
-        except (ProviderError, NeedsReconciliation, OSError):
+        except (NeedsReconciliation, OSError):
             return None
+        except ProviderError as exc:
+            if boot_failure_tolerated(exc):
+                return None
+            raise
 
     def object_info(self) -> dict[str, ComfyNodeInfo]:
         data = json.loads(self._request("GET", "/object_info"))

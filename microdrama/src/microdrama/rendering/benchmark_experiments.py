@@ -21,6 +21,13 @@ TERMINAL_SAMPLES = {"SUCCEEDED", "FAILED"}
 TERMINAL_LEASE_STATES = ("RELEASED", "EXPIRED", "ORPHANED")
 TERMINAL_OPERATION_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "NOT_FOUND")
 
+#: T031 R5b/R5V-3: the typed pre-sample boot-failure incident states an
+#: acquisition row may carry. The value marks the OPEN window between the
+#: incident's atomic persistence and the verified cleanup's state transition:
+#: while it is set, cleanup is OWED (U2) - interruption or a failed shutdown
+#: can never leave the incident recorded without its cleanup obligation.
+BOOT_FAILURE_STATES = ("PROVISION_FAILED", "BOOT_TIMEOUT", "GATEWAY_REFUSED")
+
 
 @dataclass(frozen=True)
 class UnresolvedItem:
@@ -411,6 +418,12 @@ def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[Unre
         reasons: list[str] = []
         if row["state"] == "CLEANUP_PENDING":
             reasons.append("cleanup pending")
+        if row["state"] in BOOT_FAILURE_STATES:
+            # R5V-3 (R5C-2/3): a typed pre-sample boot failure persists its
+            # cleanup obligation atomically with the incident; until the
+            # verified cleanup transitions the state, cleanup is owed - a
+            # live lease under it is never re-acquired and never abandoned.
+            reasons.append("typed boot failure awaits verified cleanup")
         if row["state"] == "NO_CREATE_PROVEN" and storage_open.get(row["acquisition_id"], 0):
             # R1: the partial unique index excludes NO_CREATE_PROVEN, but that
             # never authorizes the next acquisition - the original STORAGE

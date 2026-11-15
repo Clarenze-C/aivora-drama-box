@@ -63,8 +63,10 @@ class BootFailure(MicrodramaError):
     ``execute`` with a fresh quote stays admissible.
     """
 
-    #: "PROVISION_FAILED" (the image reports failed weight provisioning) or
-    #: "BOOT_TIMEOUT" (the boot budget elapsed without readiness).
+    #: "PROVISION_FAILED" (the image reports failed weight provisioning),
+    #: "BOOT_TIMEOUT" (the boot budget elapsed without readiness) or
+    #: "GATEWAY_REFUSED" (R5V-5: a PERMANENT gateway failure - e.g. HTTP
+    #: 401/403 - classified immediately instead of a paid wait).
     reason: str
 
     def __init__(self, reason: str, detail: str = ""):
@@ -237,14 +239,28 @@ class CanonicalExperimentWorld:
             set_request_deadline,
         )
 
+        if self._durable_initial_readiness(acquisition):
+            # R5V-1 (R5C-9): initial readiness is already durable - the boot
+            # deadline NEVER applies again, anywhere in acquire(). The pod is
+            # adopted without boot timing; recovery of already-admitted work
+            # keeps H-2's own deadlines (a healthy minute-40 acquisition is
+            # resumed, never reclassified BOOT_TIMEOUT).
+            handle = self.leases.ensure_pod(acquisition["lease_id"])
+            self._bind_acquired_pod(handle)
+            self.wait_ready(acquisition)  # returns on the persisted marker
+            return handle
         clock = self.leases._clock
         deadline = self._boot_deadline(acquisition)
         sleep = self._boot_sleep
+        # R5V-2 (R5C-8): the request deadline bounds the COMPLETE initial
+        # acquisition path - warmup waits, the post-ensure provider GET and
+        # the ready gate - so no provider request outlives the boot budget
+        # (the scope below stays active through wait_ready, whose own equal
+        # deadline nests and restores this one).
         token = set_request_deadline(deadline, clock.now)
         try:
             while True:
-                if clock.now() >= deadline:
-                    raise BootFailure("BOOT_TIMEOUT", detail="warmup window elapsed")
+                self._check_boot_deadline(clock, deadline, "warmup window elapsed")
                 try:
                     handle = self.leases.ensure_pod(acquisition["lease_id"])
                     break
@@ -255,21 +271,57 @@ class CanonicalExperimentWorld:
                     if remaining <= 0:
                         raise BootFailure("BOOT_TIMEOUT", detail="warmup window elapsed") from None
                     sleep(min(BOOT_POLL_SECONDS, remaining))
+            # R5V-2: recheck between requests - the provider GET that binds
+            # the endpoint is itself a boot request and stays inside the bound.
+            self._check_boot_deadline(clock, deadline, "warmup window elapsed")
+            # H-1 (2026-11-10, GLM harness review): the live client MUST bind - the
+            # hasattr guard hid a signature drift (one-arg call vs the real
+            # (pod_id, endpoint_url)) that crashed every default live execution
+            # after the paid pod was already created. A client without the method
+            # now fails loudly instead of silently skipping the binding that gates
+            # every later authenticated call.
+            self._bind_acquired_pod(handle)
+            # R5b: the ready gate runs after pod create/bind, before any staging.
+            self.wait_ready(acquisition)
+        except EffectDenied as exhausted:
+            # R5V-2 (R5C-2/8): a request the transport refused at the deadline
+            # bound inside the boot window is budget exhaustion - typed
+            # BOOT_TIMEOUT - never the generic terminal failure the raw
+            # EffectDenied would produce.
+            self._classify_deadline_exhaustion(clock, deadline, exhausted)
+            raise
         finally:
             reset_request_deadline(token)
-        # H-1 (2026-11-10, GLM harness review): the live client MUST bind - the
-        # hasattr guard hid a signature drift (one-arg call vs the real
-        # (pod_id, endpoint_url)) that crashed every default live execution
-        # after the paid pod was already created. A client without the method
-        # now fails loudly instead of silently skipping the binding that gates
-        # every later authenticated call.
+        return handle
+
+    def _bind_acquired_pod(self, handle: Any) -> None:
         pod = self.leases._manager.get(handle.lease.pod_id)
         if pod is None:
             raise NeedsReconciliation("owned acquired pod disappeared before endpoint binding")
         self.comfy._client.bind_pod_endpoint(pod.pod_id, pod.endpoint_url)
-        # R5b: the ready gate runs after pod create/bind, before any staging.
-        self.wait_ready(acquisition)
-        return handle
+
+    def _durable_initial_readiness(self, acquisition: dict) -> bool:
+        """R5C-9/R5V-1: the persisted initial-readiness marker."""
+        from microdrama.rendering.benchmark_experiments import acquisition_coverage
+
+        with self.db.transaction(readonly=True) as tx:
+            records = acquisition_coverage(tx, acquisition["experiment_id"])
+        record = records.get(str(acquisition["acquisition_id"])) or {}
+        return record.get("cold_start_ms") is not None
+
+    def _check_boot_deadline(self, clock: Any, deadline: Any, detail: str) -> None:
+        """R5C-8/R5V-2: the deadline is checked before EVERY boot request."""
+        if clock.now() >= deadline:
+            raise BootFailure("BOOT_TIMEOUT", detail=detail)
+
+    def _classify_deadline_exhaustion(self, clock: Any, deadline: Any, exc: EffectDenied) -> None:
+        """R5V-2: budget exhaustion inside the boot window is typed BOOT_TIMEOUT.
+
+        Classified only when the clock positively says the deadline passed (a
+        deadline-unrelated EffectDenied - offline-mock refusals, guard denials
+        - propagates unchanged)."""
+        if clock.now() >= deadline:
+            raise BootFailure("BOOT_TIMEOUT", detail="boot request bound exhausted") from exc
 
     # --- boot window (T031 R5b) -------------------------------------------------
 
@@ -366,14 +418,16 @@ class CanonicalExperimentWorld:
             with scope:
                 while True:
                     # Deadline before EVERY request and after every sleep.
-                    if clock.now() >= deadline:
-                        raise BootFailure("BOOT_TIMEOUT", detail="ready gate elapsed")
+                    self._check_boot_deadline(clock, deadline, "ready gate elapsed")
                     ready = self._read_ready()
                     state = ready.get("state")
                     if state == "PROVISION_FAILED":
                         raise BootFailure("PROVISION_FAILED")
                     if state in ("PROVISIONED", "NO_PROVISIONING"):
-                        if self.comfy._client.boot_object_info() is not None:
+                        # R5V-2: recheck between the two boot requests - the
+                        # first read may have consumed the remaining budget.
+                        self._check_boot_deadline(clock, deadline, "ready gate elapsed")
+                        if self._boot_object_info() is not None:
                             self._record_initial_readiness(acquisition, ready)
                             return
                     self._boot_liveness(acquisition)
@@ -381,19 +435,42 @@ class CanonicalExperimentWorld:
                     if remaining <= 0:
                         raise BootFailure("BOOT_TIMEOUT", detail="ready gate elapsed")
                     sleep(min(BOOT_POLL_SECONDS, remaining))
+        except EffectDenied as exhausted:
+            self._classify_deadline_exhaustion(clock, deadline, exhausted)
+            raise
         finally:
             reset_request_deadline(token)
 
     def _read_ready(self) -> dict:
-        """One ready poll; every tolerated failure keeps waiting (R5b)."""
+        """One ready poll; TOLERATED failures keep waiting (R5b), permanent
+        gateway failures classify immediately (R5V-5)."""
         from microdrama.contracts.errors import ProviderError
+        from microdrama.rendering.comfy_transport import boot_failure_tolerated
 
         client = self.comfy._client
         try:
             value = client.ready_state()
-        except (ProviderError, NeedsReconciliation, OSError):
+        except (ProviderError, NeedsReconciliation, OSError) as exc:
+            if not boot_failure_tolerated(exc):
+                status = getattr(exc, "details", {}).get("status")
+                raise BootFailure("GATEWAY_REFUSED", detail=f"HTTP {status}") from exc
             return {"state": "UNREACHABLE", "provision": None}
         return value if isinstance(value, dict) else {"state": "UNREACHABLE", "provision": None}
+
+    def _boot_object_info(self) -> dict | None:
+        """One boot-window ``/object_info`` read; None while a TOLERATED
+        failure keeps the window waiting (R5V-5: a permanent gateway failure
+        classifies immediately through the typed pre-sample path)."""
+        from microdrama.contracts.errors import ProviderError
+        from microdrama.rendering.comfy_transport import boot_failure_tolerated
+
+        try:
+            return self.comfy._client.boot_object_info()
+        except ProviderError as exc:
+            if boot_failure_tolerated(exc):
+                return None
+            status = getattr(exc, "details", {}).get("status")
+            raise BootFailure("GATEWAY_REFUSED", detail=f"HTTP {status}") from exc
 
     def _record_initial_readiness(self, acquisition: dict, ready: dict) -> None:
         """Persist the durable initial-readiness marker (R5C-9) + timings."""
