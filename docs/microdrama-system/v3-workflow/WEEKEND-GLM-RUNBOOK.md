@@ -651,6 +651,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
 - 15 Nov 13:53Z (GLM): **A1 acceptance step 1 GREEN by GLM: 273 passed** (integration v3 +
   persistence, matching the builder). **Solo gate running at `57df5a9`** (unit `dramabox-a1-gate`);
   A1 Codex review also running. A1 accepted = review ACCEPT + gate green.
+- 15 Nov 14:00Z (GLM): **A1 review round 1 = FIX-REQUIRED** (A1V-1..3 BLOCKING — REJECT can
+  authorize a gate transition; lock order vs §§8–9; approvals never advance the content fence — +
+  A1V-4..11 SF). **a1-fix1 launched** (all 11; A1V-1 first). The solo gate at `57df5a9` continues as
+  evidence. Round-2 review + fresh gate follow the fix.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
