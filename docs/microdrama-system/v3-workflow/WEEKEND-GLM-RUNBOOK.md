@@ -671,6 +671,9 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   A1V-1's red recorded retroactively per the 429-recovery note, flagged to R2). Acceptance chain
   running: GLM verification + **R2 review** (`a1-review-r2`); decisive solo gate at `3bd8c90` next.
   Then r5-fix1, then the final handoff (operator's closing directive).
+- 15 Nov 20:23Z (GLM): **A1 fix1 verification GREEN by GLM: 312 passed** (up from 273 — the fix
+  round added 39 tests). **Decisive solo gate running at `3bd8c90`** (unit `dramabox-a1g2-gate`)
+  beside the R2 review. A1 accepted = R2 ACCEPT + this gate.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
