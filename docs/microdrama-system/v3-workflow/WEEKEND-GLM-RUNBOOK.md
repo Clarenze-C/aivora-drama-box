@@ -659,6 +659,10 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   pilot passed — receipts `.scratch/a1-gate/.scratch/gate/`). The 11 review findings are
   contract-layer corrections on top of a gate-healthy tree. Fresh gate runs at the fix1 tip after
   the round-2 review. Running: a1-fix1.
+- 15 Nov 18:15Z (GLM, fourth dormancy gap): a1-fix1 quota-hit 14:38Z (39m/135 turns — committed
+  A1V-1/2 fixes at `760880a` before dying); session slept ~3.6h. **18:15Z: a1-fix1 RELAUNCHED**
+  (resumes from its report; z.ai 1%, window to 22:14Z). Status: A1 build done (gate GREEN at
+  `57df5a9`, 495 integration); review r1 = 11 findings; fix1 in progress.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
