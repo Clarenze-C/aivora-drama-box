@@ -637,6 +637,11 @@ land; then Q6, Q5, Q7 critiques. A code review always jumps ahead of a critique.
   Six fix rounds, seven reviews, findings 13→10→7→4→2→1→0. **A1 BUILD LAUNCHED** (`a1-build`,
   base `eea2f79`, migrations 0028–0031; brief from A1 note v1.4 + phase-A §10). r5-fix1 queues
   behind it (one-build rule). A0-D's install/qualification steps remain OPERATOR-gated.
+- 15 Nov 09:44Z (GLM, third dormancy gap — operator-asked): a1-build quota-hit at 00:05Z after
+  29m/112 turns (no commits — reading phase); keepwarm had expired; NOTHING retried until the
+  operator returned 09:42Z (~9.5h of windows largely idle). **A1 RELAUNCHED 09:44Z** on the fresh
+  window (to 11:59Z; resumable across resets). r5-fix1 queues behind it. Claude Pro week 100% —
+  Opus resets 16:00Z today.
 ## OPERATOR QUEUE (things only the operator can do; GLM appends)
 
 - T031 R5, once accepted: push the rebuilt image; write the Comfy gateway token file (`read -rs`, 0600); capture an
