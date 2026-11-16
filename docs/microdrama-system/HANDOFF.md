@@ -12,9 +12,10 @@ Everything below this section is history. This section is the live state.
   narrow round) **ACCEPT**. `make check` green at `c02e918` and at `45811d3`. RR-T3 PASSED: local
   rebuild `a9c2092d…`, CPU smoke hash `1a6023e2…` byte-identical, real in-image discovery recorded in
   `BUILD_EVIDENCE.md`. Trail: `T031-fix-round/r5-review-rulings.md`.
-- **Operator next (T031):** merge decision for `feat/t031-r5`; re-push `a9c2092d…` to GHCR (the pinned
-  `e4ccc004…` predates R5's gateway) and run `tools/t031_schema_predict.py --image <new digest>`; then
-  token file, A40 quote, authorization, live run.
+- **Done 16 Nov (operator-requested):** `feat/t031-r5` merged (`34185eb`) + pushed; image re-pushed to GHCR,
+  **pinned `ghcr.io/clarenze-c/drama-pika-h3-flex@sha256:4438f721…235ef4`** (CPU hash `1a6023e2…` holds); pinned
+  capture `node_schema_sha256 3fbd5a9a…` in `t031-benchmark/schema-capture-20261116/` (see `BUILD_EVIDENCE.md`).
+- **Operator next (T031):** token file, A40 quote, authorization, live run.
 - Weekend summary + parked items (A2 lock order, A0-R1 fix, F/D specs): `v3-workflow/WEEKEND-HANDOFF.md`.
 
 ### Update, 13 Nov 03:30Z (Opus session e4e3c05c): weekend handover to a GLM orchestrator

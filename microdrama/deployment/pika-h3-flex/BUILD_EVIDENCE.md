@@ -122,3 +122,22 @@ AssetManager signature, without modifying any upstream runtime code.
   - a full `capture-record.json` is still reserved for the PUSHED registry reference
     (`registry_manifest_digest` refuses local image IDs by design) — pending the operator's
     re-push; this section is the local-runtime discovery receipt.
+
+## Re-push to GHCR + pinned capture, 16 November 2026 UTC (Opus orchestrator, operator-requested)
+
+- The 02:32Z build (`a9c2092d…`) and its digest-pulled base were force-removed at 05:45Z by the host's
+  `aivora-memory-monitor.sh` emergency cleanup (disk >80%, `docker rmi -f` of images no container uses).
+  The monitor now keeps `drama-pika-*`, `ghcr.io/clarenze-c/*` and `pytorch/pytorch` (keep-list, 16 Nov).
+- Rebuilt with the documented command at 07:39–07:42Z (a 07:31Z attempt was killed by the host CPU watchdog
+  during `pip install`): local image ID **`sha256:40e7d2e2644a525890805466f8d969c8176389c5ff947324e1a861ae56f42a88`**,
+  9.54 GB. CPU schema smoke `--network none` → `ACTUAL_RUNTIME_CPU_NO_WEIGHTS`, sha256
+  **`1a6023e24ad38cd4ef41e1d3b1c727550a52cba9cd055be2ede8373e487a4c89`**, 16 mapped nodes — byte-identical
+  to `schema-attestation.cpu.json` (RR-T3 holds for the pushed build).
+- Pushed with the operator's `gh` token (`write:packages`; `docker login` via stdin, logged out after):
+  - `ghcr.io/clarenze-c/drama-pika-h3-flex:t031-native` (tag moved off the 12 Nov image);
+  - **pinned reference `ghcr.io/clarenze-c/drama-pika-h3-flex@sha256:4438f721e86f85a09a7768c680758144618ae7d8740c6052ba14cb348d235ef4`**;
+  - anonymous GHCR token + manifest HEAD → HTTP 200. The 12 Nov digest `e4ccc004…` is superseded (predates R5's gateway).
+- Capture from the pinned reference (`tools/t031_schema_predict.py --image …@sha256:4438f721…`, offline, CPUQuota=45%):
+  `node_schema_sha256` **`3fbd5a9aa8b082af90582290ccac2cf88eb14b4eb332317bec03e588f15da29d`** — identical to the fix2
+  in-image discovery receipt on the local build. Files: `docs/microdrama-system/t031-benchmark/schema-capture-20261116/`
+  (`capture-record.json`, `raw_object_info.json`, `schema-smoke.json`; zero-byte placeholders not committed).

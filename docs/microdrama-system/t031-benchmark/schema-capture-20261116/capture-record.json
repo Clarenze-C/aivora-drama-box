@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-11-16T07:46:12.859142+00:00",
+  "evidence_kind": "ACTUAL_RUNTIME_CPU_NO_WEIGHTS",
+  "inference_verified": false,
+  "manifest_digest": "4438f721e86f85a09a7768c680758144618ae7d8740c6052ba14cb348d235ef4",
+  "node_schema_sha256": "3fbd5a9aa8b082af90582290ccac2cf88eb14b4eb332317bec03e588f15da29d",
+  "placeholder_names": {
+    "diffusion_models": [
+      "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+    ],
+    "loras": [
+      "pika_h3_flex_ref2va_v1_bf16.safetensors"
+    ],
+    "text_encoders": [
+      "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+    ],
+    "vae": [
+      "minimax_h3_audio_vae_fp32.safetensors",
+      "minimax_h3_video_vae_int8_convrot.safetensors"
+    ]
+  },
+  "tool_version": "t031-schema-predict/1"
+}
