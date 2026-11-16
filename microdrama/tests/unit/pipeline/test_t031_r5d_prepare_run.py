@@ -81,6 +81,44 @@ def _wav_bytes(sample_rate_hz: int = 24_000, channels: int = 1, ms: int = 1_500)
     )
 
 
+def _pcm_wav(
+    *,
+    bits: int = 16,
+    rate: int = 24_000,
+    channels: int = 1,
+    ms: int = 1_500,
+    data_size_claim: int | None = None,
+    riff_size_claim: int | None = None,
+    block_align_claim: int | None = None,
+    byte_rate_claim: int | None = None,
+    trailing_extra_byte: bool = False,
+) -> bytes:
+    """A hand-built PCM WAV whose header fields can LIE (R5W-1 probes):
+    any claimed size/framing field can be set to a value that contradicts
+    the real payload the file actually holds."""
+    import struct
+
+    frames = rate * ms // 1000
+    frame_bytes = channels * bits // 8
+    data = bytes(frames * frame_bytes) + (b"\x00" if trailing_extra_byte else b"")
+    block_align = frame_bytes if block_align_claim is None else block_align_claim
+    byte_rate = rate * frame_bytes if byte_rate_claim is None else byte_rate_claim
+    fmt = struct.pack("<HHIIHH", 1, channels, rate, byte_rate, block_align, bits)
+    data_size = len(data) if data_size_claim is None else data_size_claim
+    riff_size = 36 + len(data) if riff_size_claim is None else riff_size_claim
+    return (
+        b"RIFF"
+        + struct.pack("<I", riff_size)
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", data_size)
+        + data
+    )
+
+
 #: The voice fixtures' actual PCM facts (R5V-10): 24 kHz mono 16-bit.
 VOICE_WAV_MS = {"A-NEUTRAL": 1_500, "B-NEUTRAL": 2_500}
 
@@ -470,6 +508,69 @@ def test_r5w2_malformed_first_voice_registers_nothing_and_retry_succeeds(
         ) == len(ALL_REF_IDS)
     # A further run replays the now-complete registration without drift.
     _register(db_dsn, tmp_path, out)
+
+
+def test_r5w1_lying_container_lengths_are_refused_not_read_as_100s() -> None:
+    """R5W-1: every declared length is checked against the REAL payload - a
+    two-second payload with an oversized data (or RIFF) header is a lie, not
+    a hundred seconds of audio; a physically truncated file equally refuses."""
+    import struct
+
+    two_seconds = _pcm_wav(ms=2_000)
+    hundred_seconds_of_frames = 24_000 * 100 * 2
+    # The data chunk header claims 100 s of frames; the payload holds 2 s.
+    oversized_data = (
+        two_seconds[:40] + struct.pack("<I", hundred_seconds_of_frames) + two_seconds[44:]
+    )
+    with pytest.raises(SystemExit, match="not a PCM WAV.*payload"):
+        prepare_run._wav_media_info(oversized_data)
+    # The RIFF size header claims 100 s of payload the file does not hold.
+    oversized_riff = (
+        two_seconds[:4] + struct.pack("<I", 36 + hundred_seconds_of_frames) + two_seconds[8:]
+    )
+    with pytest.raises(SystemExit, match="not a PCM WAV.*payload"):
+        prepare_run._wav_media_info(oversized_riff)
+    # The file is physically 10 bytes shorter than the data chunk declares.
+    with pytest.raises(SystemExit, match="not a PCM WAV.*payload"):
+        prepare_run._wav_media_info(two_seconds[:-10])
+
+
+def test_r5w1_truncated_fmt_chunk_is_refused() -> None:
+    """R5W-1: a fmt chunk that lies about its size, or is physically cut
+    short, refuses (the old parser crashed on struct.error or accepted it)."""
+    import struct
+
+    # The fmt header claims 10 bytes of body.
+    short_fmt = struct.pack("<HHIIHH", 1, 1, 24_000, 48_000, 2, 16)[:10]
+    chunks = b"fmt " + struct.pack("<I", len(short_fmt)) + short_fmt
+    wav = b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
+    with pytest.raises(SystemExit, match="truncated fmt"):
+        prepare_run._wav_media_info(wav)
+    # The fmt header claims 16 bytes but the file ends inside the body.
+    cut = _pcm_wav()[: 12 + 8 + 10]
+    with pytest.raises(SystemExit, match="not a PCM WAV"):
+        prepare_run._wav_media_info(cut)
+
+
+def test_r5w1_odd_framing_is_refused() -> None:
+    """R5W-1: the fmt framing must agree with itself and with the payload -
+    block align, byte rate and whole frames over the data chunk."""
+    with pytest.raises(SystemExit, match="block align"):
+        prepare_run._wav_media_info(_pcm_wav(block_align_claim=4))
+    with pytest.raises(SystemExit, match="byte rate"):
+        prepare_run._wav_media_info(_pcm_wav(byte_rate_claim=99_999))
+    with pytest.raises(SystemExit, match="not whole"):
+        prepare_run._wav_media_info(_pcm_wav(trailing_extra_byte=True))
+
+
+def test_r5v10_eight_bit_pcm_is_unsigned_pcm_u8() -> None:
+    """R5W-1/R5V-10: 8-bit PCM is UNSIGNED - pcm_u8, never pcm_s8le; the
+    wider depths stay signed little-endian."""
+    media = prepare_run._wav_media_info(_pcm_wav(bits=8))
+    assert media.audio_codec == "pcm_u8", media
+    assert media.duration_ms == 1_500
+    assert media.sample_rate_hz == 24_000 and media.channels == 1
+    assert prepare_run._wav_media_info(_pcm_wav(bits=16)).audio_codec == "pcm_s16le"
 
 
 def test_r5v9_replay_enforces_the_named_frozen_fields(db, db_dsn, tmp_path, monkeypatch) -> None:

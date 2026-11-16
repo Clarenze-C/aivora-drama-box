@@ -144,12 +144,16 @@ def _rights_evidence(record) -> str:
 
 
 def _wav_media_info(data: bytes):
-    """R5V-10: MediaInfo derived (and validated) from the ACTUAL WAV bytes.
+    """R5V-10/R5W-1: MediaInfo derived (and validated) from the ACTUAL WAV bytes.
 
-    Parses the RIFF/WAVE header chunks; refuses anything that is not an
-    uncompressed PCM WAV (compressed fmt, truncated chunks, foreign magic).
-    Fictional fixture metadata (H.264/AAC video fields) never describes a
-    PCM voice reference.
+    Parses the RIFF/WAVE chunks and validates every DECLARED length against
+    the real payload: the RIFF size, each chunk's bounds (a two-second
+    payload with an oversized data header is a lie, not a hundred seconds of
+    audio) and the PCM framing (block align, byte rate, whole frames).
+    Refuses anything that is not an uncompressed PCM WAV (compressed fmt,
+    truncated chunks, foreign magic); fictional fixture metadata (H.264/AAC
+    video fields) never describes a PCM voice reference. Eight-bit PCM is
+    unsigned (``pcm_u8``); wider depths are signed little-endian.
     """
     import struct
 
@@ -160,12 +164,21 @@ def _wav_media_info(data: bytes):
 
     if len(data) < 12 or data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
         _refused("not a RIFF/WAVE container")
+    (riff_size,) = struct.unpack_from("<I", data, 4)
+    if riff_size + 8 != len(data):
+        _refused(f"RIFF declares {riff_size} payload bytes, the file holds {len(data) - 8}")
     fmt = None
     data_size = None
     offset = 12
     while offset + 8 <= len(data):
         chunk_id = data[offset : offset + 4]
         (chunk_size,) = struct.unpack_from("<I", data, offset + 4)
+        if offset + 8 + chunk_size > len(data):
+            remaining = len(data) - offset - 8
+            _refused(
+                f"chunk {chunk_id.decode('latin-1')!r} declares {chunk_size} bytes, "
+                f"only {remaining} remain in the payload"
+            )
         body = data[offset + 8 : offset + 8 + chunk_size]
         if chunk_id == b"fmt ":
             if chunk_size < 16:
@@ -176,18 +189,24 @@ def _wav_media_info(data: bytes):
         offset += 8 + chunk_size + (chunk_size & 1)
     if fmt is None or data_size is None:
         _refused("missing fmt/data chunk")
-    audio_format, channels, sample_rate, _byte_rate, _block_align, bits = fmt
+    audio_format, channels, sample_rate, byte_rate, block_align, bits = fmt
     if audio_format != 1:
         _refused(f"audio format {audio_format} is not uncompressed PCM")
-    if channels < 1 or sample_rate < 1 or bits % 8:
+    if channels < 1 or sample_rate < 1 or bits < 8 or bits % 8:
         _refused("implausible PCM framing")
     frame_bytes = channels * bits // 8
+    if block_align != frame_bytes:
+        _refused(f"block align {block_align} contradicts {channels}ch x {bits}bit")
+    if byte_rate != sample_rate * frame_bytes:
+        _refused(f"byte rate {byte_rate} contradicts {sample_rate} Hz x {frame_bytes}B")
+    if data_size % frame_bytes:
+        _refused(f"data chunk holds {data_size} bytes, not whole {frame_bytes}-byte frames")
     duration_ms = int(round((data_size / frame_bytes) / sample_rate * 1000))
     return MediaInfo(
         duration_ms=duration_ms,
         has_audio=True,
         has_video=False,
-        audio_codec=f"pcm_s{bits}le",
+        audio_codec="pcm_u8" if bits == 8 else f"pcm_s{bits}le",
         sample_rate_hz=sample_rate,
         channels=channels,
     )
