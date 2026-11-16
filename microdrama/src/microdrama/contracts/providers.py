@@ -215,6 +215,11 @@ class PodCreateRequest(VersionedPayload):
     min_host_ram_gb: PositiveInt
     container_image: ShortText = Field(description="Pinned image reference (digest when live)")
     volume_gb: Count = 0
+    # T031 R5a: request pinned-weight provisioning on the pod (the image's
+    # start.sh downloads models.json when this maps to env
+    # MICRODRAMA_PROVISION_MODELS=1). Default False: a Pika benchmark
+    # acquisition must transfer True explicitly (R5C-4).
+    provision_models: bool = False
 
 
 class PodInfo(ContractModel):
@@ -280,6 +285,9 @@ class ComfyHistoryEntry(ContractModel):
     status_str: Identifier = Field(description="e.g. success / error")
     outputs: list[ComfyOutputFile] = Field(default_factory=list)
     error_message: str | None = Field(default=None, max_length=4000)
+    # T031 R5b (R5C-12): genuine sampler timing evidence WHEN the provider's
+    # history carries it; null otherwise (exported UNKNOWN, never 0).
+    sampler_ms: int | None = Field(default=None, ge=0)
     provenance: Provenance
 
 

@@ -31,7 +31,12 @@ from microdrama.rendering.comfy_jobs import (
 from microdrama.rendering.comfy_transport import ComfyHttpClient, HttpTransport
 from microdrama.rendering.finality import RunpodInvoiceFinality
 from microdrama.rendering.janitor import Janitor, build_janitor
-from microdrama.rendering.leases import LeaseService, PodLeaseConfig, build_lease_service
+from microdrama.rendering.leases import (
+    LeaseService,
+    PodLeaseConfig,
+    build_lease_service,
+    durable_created_pod_recorder,
+)
 from microdrama.rendering.pods import PodManager
 from microdrama.rendering.presets import PresetCatalog
 from microdrama.rendering.runpod_billing import durable_pod_ownership_probe
@@ -326,6 +331,78 @@ def durable_cleanup_guard(db: Database) -> Callable[[str, str], None]:
     return cleanup_guard
 
 
+def durable_comfy_request_guard(db: Database) -> Callable:
+    """Canonical reservation/job/operation guard shared by live benchmark worlds."""
+
+    def comfy_request_guard(
+        path: str,
+        authorization_key: str | None,
+        authorization: Any,
+        binding: tuple[str | None, str | None] | None = None,
+    ) -> None:
+        with db.transaction(readonly=True) as tx:
+            reservation = tx.fetchone(
+                "SELECT state, operation_kind, episode_id, job_id FROM reservations WHERE id = %s",
+                (authorization.reservation_id,),
+            )
+            job = tx.fetchone(
+                "SELECT id, episode_id FROM jobs WHERE id = %s", (authorization.job_id,)
+            )
+            operation = None
+            if authorization.operation_id is not None:
+                operation = tx.fetchone(
+                    "SELECT provider, operation_kind, state, external_id, reservation_id, job_id "
+                    "FROM provider_operations WHERE id = %s",
+                    (authorization.operation_id,),
+                )
+        if (
+            reservation is None
+            or reservation["state"] != "ACTIVE"
+            or reservation["operation_kind"] != "comfy.queue_prompt"
+            or reservation["episode_id"] != authorization.episode_id
+            or job is None
+        ):
+            raise EffectDenied("ComfyUI HTTP request lacks a matching active reservation/job")
+        if reservation["job_id"] is not None and reservation["job_id"] != authorization.job_id:
+            # T045-FIX B-N6: a reservation bound to one job may never be spent under
+            # another job's scope (an unbound hold - the canary reserves it per
+            # prompt before its attempt jobs exist - is shared by that prompt's
+            # bounded attempts only).
+            raise EffectDenied("ComfyUI request job differs from the reservation's job")
+        if authorization.operation_id is None:
+            # Only the catalog read may run before a durable operation exists; the
+            # job must still belong to the same episode as the reservation (a canary
+            # reserves one hold PER PROMPT, shared by that prompt's bounded attempts).
+            # T031 R5b: the gateway's provisioning readiness read joins the
+            # pre-operation allowlist beside /object_info (boot window).
+            if path not in ("/object_info", "/__drama/ready"):
+                raise EffectDenied("ComfyUI request requires a durable provider operation")
+            if job["episode_id"] != authorization.episode_id:
+                raise EffectDenied("ComfyUI catalog read is scoped to a foreign job")
+            return
+        if (
+            operation is None
+            or operation["provider"] != "comfyui"
+            or operation["operation_kind"] != "comfy.queue_prompt"
+            or operation["reservation_id"] != authorization.reservation_id
+            or operation["job_id"] != authorization.job_id
+            or operation["state"] in {"FAILED", "CANCELLED", "SUCCEEDED"}
+        ):
+            raise EffectDenied("ComfyUI HTTP request lacks a matching durable operation")
+        if (
+            authorization_key is not None
+            and operation["external_id"] is not None
+            # The prompt-id equality control applies where the request key names the
+            # prompt (dispatch, status, history). A /view fetch keys its output file
+            # (node:filename), which the operation match above already binds.
+            and (path == "/prompt" or path.startswith("/history") or path == "/queue")
+            and authorization_key != operation["external_id"]
+        ):
+            raise EffectDenied("ComfyUI request key differs from durable prompt ID")
+
+    return comfy_request_guard
+
+
 def build_live_benchmark_world(
     settings: Settings,
     db: Database,
@@ -452,6 +529,12 @@ def build_live_benchmark_world(
         absent_pod_ownership_probe=durable_pod_ownership_probe(
             db, owned_tag=owned_tag, provider_account_ref=attestation.provider_account_ref
         ),
+        # CN-2 (2026-11-09): bind a created pod id to its lease before any
+        # secondary verification GET can fail.
+        created_pod_recorder=durable_created_pod_recorder(db, live_clock.now),
+        # CN-5 (2026-11-09): the pod env carries the Comfy gateway token, resolved
+        # from the same credential ref the ComfyUI client authenticates with.
+        comfy_token_provider=lambda: credential_resolver(comfy_credential_ref),
         transport=runpod_transport,
     )
     manager = PodManager(provider, live_clock, pod_config)
@@ -472,64 +555,7 @@ def build_live_benchmark_world(
         db, budget, manager, live_clock, live_ids, settings, pod_config, finality
     )
 
-    def comfy_request_guard(path: str, authorization_key: str | None, authorization: Any) -> None:
-        with db.transaction(readonly=True) as tx:
-            reservation = tx.fetchone(
-                "SELECT state, operation_kind, episode_id, job_id FROM reservations WHERE id = %s",
-                (authorization.reservation_id,),
-            )
-            job = tx.fetchone(
-                "SELECT id, episode_id FROM jobs WHERE id = %s", (authorization.job_id,)
-            )
-            operation = None
-            if authorization.operation_id is not None:
-                operation = tx.fetchone(
-                    "SELECT provider, operation_kind, state, external_id, reservation_id, job_id "
-                    "FROM provider_operations WHERE id = %s",
-                    (authorization.operation_id,),
-                )
-        if (
-            reservation is None
-            or reservation["state"] != "ACTIVE"
-            or reservation["operation_kind"] != "comfy.queue_prompt"
-            or reservation["episode_id"] != authorization.episode_id
-            or job is None
-        ):
-            raise EffectDenied("ComfyUI HTTP request lacks a matching active reservation/job")
-        if reservation["job_id"] is not None and reservation["job_id"] != authorization.job_id:
-            # T045-FIX B-N6: a reservation bound to one job may never be spent under
-            # another job's scope (an unbound hold - the canary reserves it per
-            # prompt before its attempt jobs exist - is shared by that prompt's
-            # bounded attempts only).
-            raise EffectDenied("ComfyUI request job differs from the reservation's job")
-        if authorization.operation_id is None:
-            # Only the catalog read may run before a durable operation exists; the
-            # job must still belong to the same episode as the reservation (a canary
-            # reserves one hold PER PROMPT, shared by that prompt's bounded attempts).
-            if path != "/object_info":
-                raise EffectDenied("ComfyUI request requires a durable provider operation")
-            if job["episode_id"] != authorization.episode_id:
-                raise EffectDenied("ComfyUI catalog read is scoped to a foreign job")
-            return
-        if (
-            operation is None
-            or operation["provider"] != "comfyui"
-            or operation["operation_kind"] != "comfy.queue_prompt"
-            or operation["reservation_id"] != authorization.reservation_id
-            or operation["job_id"] != authorization.job_id
-            or operation["state"] in {"FAILED", "CANCELLED", "SUCCEEDED"}
-        ):
-            raise EffectDenied("ComfyUI HTTP request lacks a matching durable operation")
-        if (
-            authorization_key is not None
-            and operation["external_id"] is not None
-            # The prompt-id equality control applies where the request key names the
-            # prompt (dispatch, status, history). A /view fetch keys its output file
-            # (node:filename), which the operation match above already binds.
-            and (path == "/prompt" or path.startswith("/history") or path == "/queue")
-            and authorization_key != operation["external_id"]
-        ):
-            raise EffectDenied("ComfyUI request key differs from durable prompt ID")
+    comfy_request_guard = durable_comfy_request_guard(db)
 
     def comfy_dispatch_guard(authorization: Any) -> None:
         if authorization.operation_id is None:

@@ -57,6 +57,12 @@ class RenderWorld:
         self.provider = provider or FakePodProvider(
             clock=self.clock, ids=SequentialIds("render-pods"), scenarios=create_steps
         )
+        # CN-2 (2026-11-09, canary-night review): bind a created pod id to its
+        # lease the moment the provider accepts the create - same durability the
+        # live RunpodRestProvider gets through created_pod_recorder.
+        from microdrama.rendering.leases import durable_created_pod_recorder
+
+        self.provider.created_pod_recorder = durable_created_pod_recorder(db, self.clock.now)
         self.ids = SequentialIds("render")
         self.budget = BudgetService(db, self.clock, self.ids, self.settings)
         self.manager = PodManager(

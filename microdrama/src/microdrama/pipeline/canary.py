@@ -878,6 +878,11 @@ def run_execute(
             if attempts_used >= authorization.caps.max_attempts:
                 record["blocked_or_uncertain"] += " attempt cap reached;"
                 return False
+            # CN-6: checked immediately before every submit attempt, including a
+            # retry that follows a poll-window sleep.
+            if clock.now() >= deadline:
+                record["deadline_hit"] = True
+                return False
             request = request_for(index, prompt, attempt_number)
             job_id = ensure_job(request)
             attempts_used += 1
@@ -887,10 +892,11 @@ def run_execute(
                 if status.prompt_id:
                     record["prompt_ids"].append(status.prompt_id)
                 while status.state.value not in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                    poll_sleep()
+                    # CN-6: re-checked right after sleeping, before the next poll.
                     if clock.now() >= deadline:
                         record["deadline_hit"] = True
                         return False
-                    poll_sleep()
                     status = world.comfy.poll(status.operation_id)
             except NeedsReconciliation as exc:
                 record["ambiguous"].append(
@@ -934,8 +940,24 @@ def run_execute(
     def restore_handlers() -> None:
         return None
 
+    # CN-6 (2026-11-09, canary-night review): a no-op reset until the deadline is
+    # installed inside the try below; while it is set, every live transport
+    # request's timeout is bounded by the time remaining to the run deadline.
+    def restore_request_deadline() -> None:
+        return None
+
     try:
         _saved_handlers, restore_handlers = _install_interrupt_handlers()
+        from microdrama.rendering.diagnostics import (
+            reset_request_deadline,
+            set_request_deadline,
+        )
+
+        _deadline_token = set_request_deadline(deadline, clock.now)
+
+        def restore_request_deadline() -> None:  # noqa: F811 - installed like the handlers
+            reset_request_deadline(_deadline_token)
+
         # Runbook step 1: reserve and create the owned-name Pod.
         handle = world.leases.claim(
             PodLeaseClaimRequest(
@@ -957,16 +979,19 @@ def run_execute(
         # lease's create-request proof and deterministic pod name make each
         # retry reconcile the same Pod instead of creating another.
         while True:
+            # CN-6 (2026-11-09, canary-night review): the deadline is checked
+            # immediately before EVERY attempt, including the one right after
+            # sleeping - no provider call may start after expiry.
+            if clock.now() >= deadline:
+                record["deadline_hit"] = True
+                raise Conflict(
+                    "the created Pod exposed no Comfy endpoint before the deadline",
+                    lease_id=str(lease_id),
+                )
             try:
                 handle = world.leases.ensure_pod(lease_id)
                 break
             except TransientProviderError:
-                if clock.now() >= deadline:
-                    record["deadline_hit"] = True
-                    raise Conflict(
-                        "the created Pod exposed no Comfy endpoint before the deadline",
-                        lease_id=str(lease_id),
-                    ) from None
                 poll_sleep()
         record["pod_id"] = handle.lease.pod_id
         step("create_pod", {"pod_id": record["pod_id"]})
@@ -978,16 +1003,18 @@ def run_execute(
         # endpoint or the run deadline runs out.
         pod_info = None
         while True:
-            read_back = world.manager.get(handle.lease.pod_id)
-            if read_back is not None and read_back.endpoint_url:
-                pod_info = read_back
-                break
+            # CN-6: checked immediately before every read-back attempt, including
+            # the one right after sleeping.
             if clock.now() >= deadline:
                 record["deadline_hit"] = True
                 raise Conflict(
                     "the created Pod exposed no Comfy endpoint before the run deadline",
                     pod_id=handle.lease.pod_id,
                 )
+            read_back = world.manager.get(handle.lease.pod_id)
+            if read_back is not None and read_back.endpoint_url:
+                pod_info = read_back
+                break
             poll_sleep()
         world.comfy_client.bind_pod_endpoint(handle.lease.pod_id, pod_info.endpoint_url)
         step("comfy_endpoint_bound", {"endpoint": pod_info.endpoint_url})
@@ -1002,6 +1029,14 @@ def run_execute(
         # documented platform behavior). Retry the gate through that boot window
         # at the poll floor until the run deadline; any other error still fails.
         while True:
+            # CN-6: checked immediately before every catalog attempt, including
+            # the one right after sleeping through the boot window.
+            if clock.now() >= deadline:
+                record["deadline_hit"] = True
+                raise Conflict(
+                    "the ComfyUI catalog never became reachable before the deadline",
+                    pod_id=handle.lease.pod_id,
+                )
             try:
                 with world.comfy_client.authorization_scope(
                     reservation_id=first_request.reservation_id,
@@ -1013,7 +1048,7 @@ def run_execute(
                 break
             except ProviderError as exc:
                 status = exc.details.get("status")
-                if status in (404, 502, 503, 524) and clock.now() < deadline:
+                if status in (404, 502, 503, 524):
                     poll_sleep()
                     continue
                 raise
@@ -1060,6 +1095,11 @@ def run_execute(
         # are ignored and logged (a default-action kill mid-shutdown would strand
         # the Pod and lose the record); the previous handlers are restored only
         # after the record is written, at the end of this finally.
+        #
+        # CN-6: the request-deadline bound comes off FIRST - the shutdown path's
+        # stop/terminate/sweep provider calls must run with the transport default,
+        # never with the sub-second remainder of an expired run.
+        restore_request_deadline()
         _ignore_interrupts_during_shutdown(record["ignored_interrupts"].append)
         record["attempts_used"] = attempts_used
         # T045-FIX B-S3: the record is written even when the shutdown or the sweep

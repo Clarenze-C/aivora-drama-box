@@ -42,17 +42,23 @@ class MappedBillingIngest:
 
 def _record_hash(record: object) -> str:
     """Content hash of one provider record: deterministic across runs and revisions."""
-    return canonical_hash(
-        {
-            "pod_id": record.pod_id,
-            "interval_start": record.interval_start,
-            "interval_end": record.interval_end,
-            "total_micro_usd": record.total_micro_usd,
-            "gpu_micro_usd": record.gpu_micro_usd,
-            "cpu_micro_usd": record.cpu_micro_usd,
-            "disk_micro_usd": record.disk_micro_usd,
-        }
-    )
+    evidence = {
+        "pod_id": record.pod_id,
+        "interval_start": record.interval_start,
+        "interval_end": record.interval_end,
+        "total_micro_usd": record.total_micro_usd,
+        "gpu_micro_usd": record.gpu_micro_usd,
+        "cpu_micro_usd": record.cpu_micro_usd,
+        "disk_micro_usd": record.disk_micro_usd,
+    }
+    # Legacy internal fixtures/observations keep their original content hash.
+    if record.raw_amounts is not None:
+        evidence.update(
+            raw_amounts=list(record.raw_amounts),
+            raw_discrepancy_usd=record.raw_discrepancy_usd,
+            normalization_policy=record.normalization_policy,
+        )
+    return canonical_hash(evidence)
 
 
 def durable_pod_ownership_probe(
@@ -83,6 +89,44 @@ def durable_pod_ownership_probe(
 def _delta_microseconds(delta: timedelta) -> int:
     """Exact microseconds of a timedelta, pure integer arithmetic (T045-FIX B-N1)."""
     return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+def _record_benchmark_raw_evidence(db: Database, record: object) -> None:
+    """Persist nonsecret exact provider strings before bucket allocation."""
+    with db.transaction(readonly=True) as tx:
+        owner = tx.fetchone(
+            "SELECT a.experiment_id, a.acquisition_id FROM benchmark_acquisitions a "
+            "JOIN pod_leases p ON p.id=a.lease_id WHERE p.provider='runpod' "
+            "AND p.pod_id=%s ORDER BY a.generation DESC LIMIT 1",
+            (record.pod_id,),
+        )
+    if owner is None:
+        return
+    if record.raw_amounts is None or record.raw_discrepancy_usd is None:
+        raise Conflict("benchmark billing observation is missing exact provider amount strings")
+    from microdrama.contracts.hashing import canonical_hash
+    from microdrama.rendering.benchmark_experiments import BenchmarkRepository
+
+    identity = canonical_hash(
+        {
+            "pod_id": record.pod_id,
+            "interval_start": record.interval_start,
+            "interval_end": record.interval_end,
+        }
+    )
+    BenchmarkRepository(db, clock=None).record_billing_evidence(
+        owner["experiment_id"],
+        owner["acquisition_id"],
+        {
+            "observation_identity": identity,
+            "amounts": dict(zip(("total", "gpu", "cpu", "disk"), record.raw_amounts, strict=True)),
+            "pod_id": record.pod_id,
+            "interval_start": record.interval_start.isoformat(),
+            "interval_end": record.interval_end.isoformat(),
+            "normalization_policy": record.normalization_policy or "unknown",
+            "discrepancy": record.raw_discrepancy_usd,
+        },
+    )
 
 
 #: The integer-epoch reference instant for the bucket rounding below.
@@ -171,6 +215,10 @@ def map_billing_history(
             size,
         )
         record_hash = _record_hash(record)
+        # §G: preserve exact raw strings before they are converted into canonical
+        # micro-USD allocations. The evidence table is supplementary, never the
+        # budget authority.
+        _record_benchmark_raw_evidence(db, record)
         if identity in seen:
             if seen[identity] != record_hash:
                 raise Conflict(
@@ -190,7 +238,7 @@ def map_billing_history(
         if prior is not None and prior["raw_response_sha256"] == record_hash:
             replayed += 1
             continue  # exact replay of the stored latest revision: adds nothing
-        components_match = record.total_micro_usd == (
+        components_match = record.raw_components_match and record.total_micro_usd == (
             record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
         )
         buckets.append(

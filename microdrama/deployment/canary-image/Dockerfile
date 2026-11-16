@@ -45,6 +45,14 @@ RUN pip install --no-cache-dir -r /opt/ComfyUI/requirements.txt \
 RUN python /tmp/make_fake_checkpoint.py && rm /tmp/make_fake_checkpoint.py
 
 WORKDIR /opt/ComfyUI
+# CN-5 (2026-11-09, canary-night review): the exposed port is a token-checking
+# gateway, not ComfyUI itself. ComfyUI binds 127.0.0.1:8189 ONLY; the gateway
+# owns 0.0.0.0:8188 (the port the Runpod proxy serves) and refuses every request
+# without the run's bearer token (env MICRODRAMA_COMFY_TOKEN, set at pod-create
+# time from the pipeline's credential ref - no secret in the image). ComfyUI
+# stays PID 1 (a crash still kills the pod); the gateway fails closed: without
+# a token env it 401s everything, and while ComfyUI boots it 502s (the canary's
+# documented boot-window retry covers that).
+COPY canary_gateway.py /opt/canary_gateway.py
 EXPOSE 8188
-# --listen 0.0.0.0 is REQUIRED: the Runpod proxy cannot reach a localhost bind.
-CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188"]
+CMD ["sh", "-c", "python /opt/canary_gateway.py & exec python main.py --listen 127.0.0.1 --port 8189"]

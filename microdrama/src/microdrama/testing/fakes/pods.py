@@ -19,6 +19,7 @@ Scenarios:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -64,6 +65,10 @@ class PodCreateScenario(StrEnum):
     CREATE_TIMEOUT_NOT_CREATED = "CREATE_TIMEOUT_NOT_CREATED"
     NO_CAPACITY = "NO_CAPACITY"
     LATE_BILLING = "LATE_BILLING"
+    # CN-2 (2026-11-09, canary-night review): the create POST succeeds and the
+    # secondary verification GET then fails - the failure window that used to
+    # lose the pod id before the lease could bind it.
+    CREATE_VERIFY_502 = "CREATE_VERIFY_502"
 
 
 class PodStopScenario(StrEnum):
@@ -123,6 +128,7 @@ class FakePodProvider(FakeBase):
         ids: SequentialIds,
         foreign_pods: tuple[ForeignPodSeed, ...] = DEFAULT_FOREIGN_PODS,
         scenarios: tuple[PodCreateScenario, ...] = (),
+        created_pod_recorder: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__(clock=clock, ids=ids, scenarios=())
         self._create_steps = ScenarioQueue(PodCreateScenario.HAPPY, scenarios)
@@ -130,6 +136,13 @@ class FakePodProvider(FakeBase):
         self._pods: dict[str, _Pod] = {}
         self._counter = 0
         self.foreign_touches: list[str] = []
+        # CN-2: mirrors RunpodRestProvider.created_pod_recorder - binds a fresh
+        # pod id to its lease the moment the create is accepted. Settable after
+        # construction so shared test worlds can wire it.
+        self.created_pod_recorder = created_pod_recorder
+        # CN-2: when True, find_pods reports nothing - eventual-consistency list
+        # lag that temporarily hides even an owned, running pod.
+        self.list_lag = False
         for seed in foreign_pods:
             self._pods[seed.pod_id] = _Pod(
                 pod_id=seed.pod_id,
@@ -204,10 +217,20 @@ class FakePodProvider(FakeBase):
             late_billing=step is PodCreateScenario.LATE_BILLING,
         )
         self._pods[pod_id] = pod
+        # CN-2: the pod exists at the provider from this line on - bind it to the
+        # lease before any post-create step can fail or hang.
+        if self.created_pod_recorder is not None:
+            self.created_pod_recorder(request.client_token, pod_id)
         if step is PodCreateScenario.CREATE_TIMEOUT_BUT_CREATED:
             raise NeedsReconciliation(
                 "fake pod create timed out after the pod was accepted",
                 client_token=request.client_token,
+            )
+        if step is PodCreateScenario.CREATE_VERIFY_502:
+            raise TransientProviderError(
+                "fake verification GET failed with 502 after a successful create",
+                client_token=request.client_token,
+                pod_id=pod_id,
             )
         return self._info(pod)
 
@@ -226,6 +249,8 @@ class FakePodProvider(FakeBase):
         self, *, owned_tag: str | None = None, client_token: str | None = None
     ) -> list[PodInfo]:
         self._record("find_pods", "-", f"{owned_tag}|{client_token}")
+        if self.list_lag:
+            return []  # CN-2: list lag hides even an owned, running pod
         return [
             self._info(pod)
             for pod in self._pods.values()

@@ -1,0 +1,36 @@
+{
+  "format_version": 1,
+  "kind": "PINNED_MODEL_PROVISIONING_MANIFEST",
+  "repository": "Comfy-Org/MiniMax-H3",
+  "revision": "54472221d27c695fca9621b0c3ed52f06c4af707",
+  "files": [
+    {
+      "path": "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "size": 20970379616,
+      "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779"
+    },
+    {
+      "path": "loras/pika_h3_flex_ref2va_v1_bf16.safetensors",
+      "size": 1956172304,
+      "sha256": "de3745ceb7d8d5c20898dd8fa3a05f1c0b00089ccd55297b2a8bab95c766b0e0"
+    },
+    {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "size": 15687142551,
+      "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6"
+    },
+    {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "size": 605254808,
+      "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48"
+    },
+    {
+      "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "size": 2811065184,
+      "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e"
+    }
+  ],
+  "total_bytes": 42030014463,
+  "network_during_startup": false,
+  "headroom_bytes": 8589934592
+}

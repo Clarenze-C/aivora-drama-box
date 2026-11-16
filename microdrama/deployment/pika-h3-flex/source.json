@@ -1,0 +1,7 @@
+{
+  "repository": "Comfy-Org/ComfyUI",
+  "revision": "63e5bf594339f676b4b15e072529873e3448409e",
+  "archive_url": "https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/63e5bf594339f676b4b15e072529873e3448409e",
+  "archive_sha256": "22ebca008dc6cbc8ab7cf2b456a3580a9195e3d81102f9d07d54c44b889f8257",
+  "base": "pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime@sha256:7b324d212a4450795b49edba9949b7cdc72429148a64e974334bfe5774d51385"
+}

@@ -379,6 +379,19 @@
       "default": null,
       "title": "Retry After Ms"
     },
+    "sampler_ms": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sampler Ms"
+    },
     "schema_version": {
       "const": "1.0",
       "default": "1.0",

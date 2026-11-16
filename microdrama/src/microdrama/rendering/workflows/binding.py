@@ -61,6 +61,7 @@ class BoundWorkflow:
     semantic_template_sha256: str | None = None
     prompt_manifest_sha256: str | None = None
     source_hashes: tuple[str, ...] = ()
+    pika_context: Any = None
 
     @property
     def media_kinds(self) -> tuple[str, ...]:

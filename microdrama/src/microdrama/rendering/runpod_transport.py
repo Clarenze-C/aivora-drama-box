@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -33,6 +33,13 @@ from microdrama.contracts.errors import (
     TransientProviderError,
 )
 from microdrama.contracts.providers import PodCreateRequest, PodInfo
+from microdrama.rendering.diagnostics import (
+    DIAGNOSTIC_READ_LIMIT,
+    bound_request_timeout,
+    collect_body_secrets,
+    safe_diagnostic,
+    uncertainty_cause,
+)
 
 
 @dataclass(frozen=True)
@@ -100,7 +107,7 @@ class RunpodQuoteAttestation:
 
 @dataclass(frozen=True)
 class RunpodBillingRecord:
-    """Unmodified provider billing bucket, not a per-second lease receipt."""
+    """Provider bucket with raw evidence and atom projection, not a lease receipt."""
 
     pod_id: str
     interval_start: datetime
@@ -109,6 +116,11 @@ class RunpodBillingRecord:
     gpu_micro_usd: int
     cpu_micro_usd: int
     disk_micro_usd: int
+    # Exact provider decimal strings and policy accompany the rounded projection.
+    raw_amounts: tuple[str, str, str, str] | None = None  # total, GPU, CPU, disk
+    raw_discrepancy_usd: str | None = None
+    normalization_policy: str | None = None
+    raw_components_match: bool = True
 
 
 @dataclass(frozen=True)
@@ -154,12 +166,24 @@ class UrllibRunpodTransport:
     ) -> RunpodResponse:
         request = Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed Runpod origin
+            # CN-6: the timeout is bounded by the time remaining to the run deadline.
+            with urlopen(  # noqa: S310 - fixed Runpod origin
+                request, timeout=bound_request_timeout(30)
+            ) as response:
                 return _Response(response.status, response.read())
         except HTTPError as exc:
-            return _Response(exc.code, exc.read())
+            try:
+                detail = safe_diagnostic(exc.read(DIAGNOSTIC_READ_LIMIT), headers)
+            except Exception:  # noqa: BLE001 - diagnostics are best-effort
+                detail = ""
+            return _Response(exc.code, detail.encode())
         except (TimeoutError, URLError) as exc:
-            raise NeedsReconciliation("Runpod request timed out; Pod outcome is unknown") from exc
+            # CN-3 (2026-11-09): the cause is the exception type plus a sanitised
+            # category; the raw exception text never reaches the message.
+            raise NeedsReconciliation(
+                "Runpod request failed before any response; Pod outcome is unknown "
+                f"(cause: {uncertainty_cause(exc)})"
+            ) from None
 
 
 def pod_name(namespace: str, client_token: str) -> str:
@@ -194,6 +218,8 @@ class RunpodRestProvider:
         reservation_guard: Callable[[PodCreateRequest, RunpodQuoteAttestation], None],
         cleanup_guard: Callable[[str, str], None],
         absent_pod_ownership_probe: Callable[[str], bool] | None = None,
+        created_pod_recorder: Callable[[str, str], None] | None = None,
+        comfy_token_provider: Callable[[], str | None] | None = None,
         transport: RunpodTransport | None = None,
     ) -> None:
         self._settings = settings
@@ -206,6 +232,17 @@ class RunpodRestProvider:
         # T045 R9: durable DB ownership proof for billing reads once the Pod is gone
         # from the provider (a terminated Pod cannot be looked up there anymore).
         self._absent_pod_ownership_probe = absent_pod_ownership_probe
+        # CN-5 (2026-11-09, canary-night review): the pod's exposed ComfyUI port is
+        # a token-checking gateway inside the image; this resolves the run's Comfy
+        # bearer token so the create request can set it as a pod env var. The token
+        # never enters the image and is never logged; a configured provider whose
+        # token does not resolve refuses the create (fail closed).
+        self._comfy_token_provider = comfy_token_provider
+        # CN-2 (2026-11-09, canary-night review): called with (client_token,
+        # pod_id) the moment a create POST is accepted, BEFORE any secondary
+        # verification GET can fail - so the lease binds the pod id durably even
+        # if that verification raises.
+        self._created_pod_recorder = created_pod_recorder
         self._transport = transport or UrllibRunpodTransport()
         self._owned_tag = f"microdrama-owned:{attestation.namespace}"
 
@@ -242,13 +279,16 @@ class RunpodRestProvider:
                 "Runpod API temporarily unavailable", status=response.status
             )
         if response.status < 200 or response.status >= 300:
-            # T031 run3 (2026-11-04): three consecutive create refusals were
-            # diagnosed blind because the provider's error body and status never
-            # reached the operator. Carry both in the message (bounded excerpt;
-            # provider error bodies are diagnostics, not secrets).
-            detail = ""
-            if response.body:
-                detail = response.body.decode("utf-8", "replace").strip()[:500]
+            # CN2-2 (2026-11-10, re-review round 2): the redaction context is
+            # every resolved credential THIS request carries - the header
+            # credentials and any secret the body bears (the create payload's
+            # env carries the Comfy gateway token) - so an unlabelled echo of
+            # either in the rejection body cannot survive into the message.
+            detail = safe_diagnostic(
+                response.body[:DIAGNOSTIC_READ_LIMIT],
+                headers,
+                extra_secrets=collect_body_secrets(body),
+            )
             raise ProviderError(
                 f"Runpod rejected request: HTTP {response.status} {detail}".strip(),
                 status=response.status,
@@ -257,8 +297,8 @@ class RunpodRestProvider:
             return {}
         try:
             return json.loads(response.body, parse_float=Decimal)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProviderError("Runpod returned invalid JSON", status=response.status) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ProviderError("Runpod returned invalid JSON", status=response.status) from None
 
     def _to_info(self, data: Mapping[str, Any]) -> PodInfo:
         try:
@@ -339,6 +379,21 @@ class RunpodRestProvider:
         }
         if request.volume_gb:
             payload["mounts"] = {"persistent": {"size": request.volume_gb, "path": "/workspace"}}
+        if self._comfy_token_provider is not None:
+            comfy_token = self._comfy_token_provider()
+            if not comfy_token:
+                raise EffectDenied(
+                    "the Comfy gateway token did not resolve; refusing to create a pod "
+                    "whose ComfyUI endpoint would be unreachable (fail closed)"
+                )
+            # CN-5: the in-image gateway's token rides the pod env, set at create
+            # time from the credential ref - never baked into the image, never logged.
+            payload["env"] = {"MICRODRAMA_COMFY_TOKEN": comfy_token}
+        if request.provision_models:
+            # T031 R5a: start.sh provisions the pinned weights only when this
+            # env is "1" - the world-agnostic mapping of the composed request's
+            # frozen provisioning flag, beside the gateway token.
+            payload.setdefault("env", {})["MICRODRAMA_PROVISION_MODELS"] = "1"
         try:
             created = self._call("POST", "/pods", body=payload)
         except NeedsReconciliation as exc:
@@ -353,6 +408,8 @@ class RunpodRestProvider:
                     "Runpod create outcome is unknown and ownership scan failed"
                 ) from exc
             if len(matches) == 1:
+                if self._created_pod_recorder is not None:
+                    self._created_pod_recorder(request.client_token, matches[0].pod_id)
                 self._verify_existing_match(matches[0], request, name)
                 return matches[0]
             if len(matches) > 1:
@@ -365,6 +422,12 @@ class RunpodRestProvider:
         info = self._to_info(created)
         if info.name != name or info.owned_tag != self._owned_tag:
             raise Conflict("Runpod create returned a Pod outside the expected ownership name")
+        # CN-2 (2026-11-09, canary-night review): the POST succeeded - persist the
+        # pod id durably BEFORE the secondary verification GET below can fail
+        # with a 5xx and lose it. The ownership/name/GPU/image checks still run,
+        # only after the id is durable.
+        if self._created_pod_recorder is not None:
+            self._created_pod_recorder(request.client_token, info.pod_id)
         self._verify_existing_match(info, request, name)
         self._verify_attested_price(info)
         return info
@@ -593,33 +656,103 @@ def _parse_time(value: Any) -> datetime:
     return parsed
 
 
+# Policy: tolerate at most one millionth of a micro-USD of representation noise.
+_BILLING_TOLERANCE_USD = Decimal("0.000000000001")
+# CN-1 (2026-11-09, canary-night review): the total converts to integer micro-USD
+# with a conservative CEILING (never under-record cost); when the exact Decimals
+# are consistent the floored components are topped up to the ceiling total by
+# largest fractional remainder, ties resolved GPU > CPU > disk.
+_BILLING_POLICY = "decimal-total-ceiling-largest-remainder-gpu-cpu-disk-v2;tolerance-usd=1e-12"
+
+
+def _amount_decimal(value: Any) -> Decimal:
+    amount = Decimal(str(value))
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("provider amount must be finite and nonnegative")
+    return amount
+
+
 def _amount_micro(value: Any) -> int:
-    # T031 (2026-11-05, post-run sweep): Runpod's live billing floats carry
-    # sub-microcent precision (observed: gpuAmount 0.03517432510852814); the
-    # micro-USD is the ledger's atom, so amounts round half-up to it instead of
-    # rejecting the provider's real response as malformed. Negative amounts are
-    # still refused here; credits arrive as separate bucket revisions.
-    scaled = Decimal(str(value)) * Decimal(1_000_000)
-    if scaled < 0:
-        raise ValueError("provider amount is negative")
-    return int(scaled.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    """Convert a provider amount to integer micro-USD, rounding UP (CN-1).
+
+    Half-up rounded every fractional atom below 0.5 µUSD down, under-recording
+    each fractional bucket (0.0000014 USD became 1 µUSD instead of 1.4); the
+    house rule is conservative, so the atom conversion never rounds down.
+    """
+    amount = _amount_decimal(value)
+    with localcontext() as ctx:
+        ctx.prec = max(28, len(amount.as_tuple().digits) + abs(amount.adjusted()) + 10)
+        return int((amount * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
 
 
 def _billing_record(value: Any) -> RunpodBillingRecord:
     if not isinstance(value, Mapping):
         raise ValueError("billing row is not an object")
+    fields = ("totalAmount", "gpuAmount", "cpuAmount", "diskAmount")
+    amounts = tuple(_amount_decimal(value[field]) for field in fields)
+    # Use enough precision for the exact input coefficients, exponents and sum.
+    with localcontext() as ctx:
+        ctx.prec = max(
+            28,
+            max(a.adjusted() for a in amounts) - min(a.as_tuple().exponent for a in amounts) + 20,
+        )
+        total, *components = amounts
+        discrepancy = total - sum(components, Decimal(0))
+        matches = abs(discrepancy) <= _BILLING_TOLERANCE_USD
+        total_micro = _amount_micro(total)
+        if matches:
+            scaled = [a * 1_000_000 for a in components]
+            atoms = [int(a.to_integral_value(rounding=ROUND_FLOOR)) for a in scaled]
+            residual = total_micro - sum(atoms)
+            # CN2-1 (2026-11-10, re-review round 2): tolerated representation noise
+            # can cross an integer boundary, so the residual is NOT bounded by the
+            # three components (Codex case: ceiling total 4 with three zero floors).
+            # Allocate the WHOLE residual deterministically by cycling the largest
+            # fractional remainder first, ties GPU > CPU > disk; tolerance noise on
+            # the other side of a boundary instead removes atoms by cycling the
+            # smallest fractional remainder first. Cycling conserves the ceiling
+            # total by construction; no assert backs the money path.
+            if residual > 0:
+                order = sorted(range(3), key=lambda i: (-(scaled[i] - atoms[i]), i))
+                while residual > 0:
+                    for i in order:
+                        atoms[i] += 1
+                        residual -= 1
+                        if residual == 0:
+                            break
+            elif residual < 0:
+                removal = sorted(
+                    (i for i in range(3) if atoms[i]), key=lambda i: (scaled[i] - atoms[i], i)
+                )
+                while residual < 0:
+                    progressed = False
+                    for i in removal:
+                        if atoms[i] > 0:
+                            atoms[i] -= 1
+                            residual += 1
+                            progressed = True
+                            if residual == 0:
+                                break
+                    if not progressed:
+                        raise ProviderError(
+                            "billing residual cannot be conserved without negative components"
+                        )
+        else:
+            # Preserve the mismatching projection; the mapper records DISPUTED.
+            atoms = [_amount_micro(a) for a in components]
     record = RunpodBillingRecord(
         pod_id=str(value["podId"]),
         interval_start=_parse_time(value["startTime"]),
         interval_end=_parse_time(value["endTime"]),
-        total_micro_usd=_amount_micro(value["totalAmount"]),
-        gpu_micro_usd=_amount_micro(value["gpuAmount"]),
-        cpu_micro_usd=_amount_micro(value["cpuAmount"]),
-        disk_micro_usd=_amount_micro(value["diskAmount"]),
+        total_micro_usd=total_micro,
+        gpu_micro_usd=atoms[0],
+        cpu_micro_usd=atoms[1],
+        disk_micro_usd=atoms[2],
+        raw_amounts=tuple(str(value[field]) for field in fields),
+        raw_discrepancy_usd=str(discrepancy),
+        normalization_policy=_BILLING_POLICY,
+        raw_components_match=matches,
     )
-    # T045 R4/R9: a total that does not equal its components is carried through and
-    # stored as a DISPUTED bucket by the janitor's mapping — refusing here would
-    # hide the provider's malformed evidence instead of recording it.
     if record.interval_end <= record.interval_start:
         raise ValueError("provider billing bucket has an empty or reversed interval")
     return record

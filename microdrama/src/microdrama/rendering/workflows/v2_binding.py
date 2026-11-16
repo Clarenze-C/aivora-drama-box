@@ -40,8 +40,14 @@ def bind_v2_workflow(
     template: WorkflowTemplate,
     request: RenderRequest,
     manifest: PromptManifest,
+    *,
+    pika_context: Any = None,
 ) -> BoundWorkflow:
     """Produce a graph with explicit semantic input names; unknown roles block closed."""
+    if template.family == "pika_h3_flex_ref2va":
+        from microdrama.rendering.workflows.pika_h3_flex import bind_pika_workflow
+
+        return bind_pika_workflow(template, request, manifest, pika_context)
     verify_v2_record_hash(manifest)
     if request.workflow_sha256 != template_sha256(template):
         raise SchemaInvalid("V2 RenderRequest workflow hash differs from pinned template")
@@ -198,6 +204,11 @@ def verify_bound_v2_workflow(
     bound: BoundWorkflow,
 ) -> None:
     """Revalidate exact V2 graph identity without ever rebuilding via the V1 binder."""
+    if template.family == "pika_h3_flex_ref2va":
+        from microdrama.rendering.workflows.pika_h3_flex import verify_pika_workflow
+
+        verify_pika_workflow(template, request, manifest, bound)
+        return
     verify_v2_record_hash(manifest)
     expected_template_hash = template_sha256(template)
     expected_semantic_hash = semantic_template_sha256(template)

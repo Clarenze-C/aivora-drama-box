@@ -56,6 +56,9 @@ class PodSpec:
     min_host_ram_gb: int
     container_image: str
     volume_gb: int = 0
+    # T031 R5a (R5C-4): the frozen provisioning flag transfers through the
+    # composed create request (LeaseService._spec_for -> to_request).
+    provision_models: bool = False
 
     def to_request(self, *, name: str, client_token: str, owned_tag: str) -> PodCreateRequest:
         return PodCreateRequest(
@@ -67,6 +70,7 @@ class PodSpec:
             min_host_ram_gb=self.min_host_ram_gb,
             container_image=self.container_image,
             volume_gb=self.volume_gb,
+            provision_models=self.provision_models,
         )
 
 

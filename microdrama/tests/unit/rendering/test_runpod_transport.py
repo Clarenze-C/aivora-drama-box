@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -100,6 +101,7 @@ def _provider(
     quote: int = 900_000,
     guard: Any = None,
     cleanup_guard: Any = None,
+    comfy_token_provider: Any = None,
 ) -> RunpodRestProvider:
     settings = Settings(
         execution_mode=mode,
@@ -114,6 +116,7 @@ def _provider(
         now=lambda: NOW,
         reservation_guard=guard or (lambda _request, _attestation: None),
         cleanup_guard=cleanup_guard or (lambda _operation, _pod_id: None),
+        comfy_token_provider=comfy_token_provider,
         transport=transport,
     )
 
@@ -260,6 +263,147 @@ def test_create_pod_declares_the_comfy_http_port() -> None:
     provider.create_pod(_request())
     assert bodies, "create_pod must POST once"
     assert bodies[0].get("ports") == ["8188/http"]
+
+
+def test_create_pod_sets_the_gateway_token_env_from_the_credential_ref(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CN-5 (2026-11-09, canary-night review): the pod's exposed ComfyUI port is
+    a token-checking gateway inside the image, so the create request must set
+    its token as a pod env var - resolved from the same credential ref the
+    ComfyUI client authenticates with. The token never enters the image and is
+    never printed."""
+
+    def handler(method: str, url: str, body: bytes | None) -> Response:
+        if method == "POST":
+            return _json(200, _pod())
+        if method == "GET" and url.endswith("/pods/pod-123"):
+            return _json(200, _pod())
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(
+        ScriptedTransport(handler), comfy_token_provider=lambda: "synthetic-gateway-token"
+    )
+    seen: list[dict[str, Any]] = []
+    original = provider._transport.request
+
+    def recording(method: str, url: str, *, headers: Any, body: bytes | None = None) -> Any:
+        if method == "POST":
+            seen.append(json.loads(body or b"{}"))
+        return original(method, url, headers=headers, body=body)
+
+    provider._transport.request = recording  # type: ignore[method-assign]
+    provider.create_pod(_request())
+    assert seen[0].get("env") == {"MICRODRAMA_COMFY_TOKEN": "synthetic-gateway-token"}
+    captured = capsys.readouterr()
+    assert "synthetic-gateway-token" not in captured.out + captured.err
+
+
+def test_create_rejection_never_reflects_the_body_borne_comfy_token(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CN2-2 (2026-11-10, re-review round 2): the create payload carries the
+    resolved Comfy gateway token in its env. Both Runpod sanitization passes
+    knew only the request headers, so an unlabelled echo of that different
+    credential in a rejection body survived into the exception, its formatted
+    traceback and stderr - and from there into persisted run records. Every
+    resolved credential the request carries (headers AND body env values) is
+    redaction context for that request's diagnostics."""
+    import traceback
+
+    echoed = b'{"detail": "invalid environment value synthetic-new-comfy-token"}'
+
+    def handler(method: str, url: str, body: bytes | None) -> Response:
+        if method == "POST":
+            return Response(400, echoed)
+        raise AssertionError(f"unexpected provider call: {method} {url}")
+
+    provider = _provider(
+        ScriptedTransport(handler), comfy_token_provider=lambda: "synthetic-new-comfy-token"
+    )
+    with pytest.raises(ProviderError) as caught:
+        provider.create_pod(_request())
+    message = str(caught.value)
+    assert "HTTP 400" in message
+    assert "synthetic-new-comfy-token" not in message
+    # The exception's whole formatted traceback is what a worker prints and a
+    # run record can persist; the reflected token must be absent there too.
+    formatted = "".join(
+        traceback.format_exception(type(caught.value), caught.value, caught.value.__traceback__)
+    )
+    assert "synthetic-new-comfy-token" not in formatted
+    print(message, file=sys.stderr)
+    captured = capsys.readouterr()
+    assert "synthetic-new-comfy-token" not in captured.out + captured.err
+
+
+def test_transport_refuses_requests_that_start_after_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CN2-4 (2026-11-10, re-review round 2): outer deadline checks cannot
+    protect requests nested inside one acquisition operation - Codex's probe
+    recorded a list GET consuming the remaining time and the paid create POST
+    still starting afterwards with a full 1 s timeout. The real urllib transport
+    (urlopen faked in memory, clock advancing inside each request) must cap
+    every timeout at the actual positive remainder and refuse to start any
+    request once the deadline has passed."""
+    import io
+
+    from microdrama.rendering import runpod_transport as rt
+    from microdrama.rendering.diagnostics import (
+        reset_request_deadline,
+        set_request_deadline,
+    )
+
+    class FakeResponse(io.BytesIO):
+        status = 200
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+    base = NOW
+    clock = {"now": base}
+    starts: list[Any] = []
+    timeouts: list[float] = []
+
+    def fake_urlopen(request: Any, timeout: Any = None) -> FakeResponse:
+        starts.append(clock["now"])
+        timeouts.append(timeout)
+        # The request itself consumes wall time (a slow read).
+        clock["now"] = clock["now"] + timedelta(seconds=2)
+        return FakeResponse(json.dumps({"pods": []}).encode())
+
+    monkeypatch.setattr(rt, "urlopen", fake_urlopen)
+    transport = rt.UrllibRunpodTransport()
+    token = set_request_deadline(base + timedelta(seconds=0.25), lambda: clock["now"])
+    try:
+        # Sub-second remainder: the timeout is the actual remainder, not a 1 s floor.
+        transport.request("GET", "https://api.runpod.io/v2/pods", headers={})
+        assert timeouts == [pytest.approx(0.25)]
+        # The slow read pushed the clock past the deadline: the nested follow-up
+        # request must refuse at the transport boundary, never reaching urlopen.
+        with pytest.raises(EffectDenied, match="deadline"):
+            transport.request("POST", "https://api.runpod.io/v2/pods", headers={}, body=b"{}")
+        assert len(starts) == 1
+    finally:
+        reset_request_deadline(token)
+    # After the reset (the cleanup deadline reset), the default applies again.
+    transport.request("GET", "https://api.runpod.io/v2/pods", headers={})
+    assert timeouts[-1] == 30
+    assert len(starts) == 2
+
+
+def test_create_refuses_when_the_gateway_token_does_not_resolve() -> None:
+    """CN-5: fail closed - a configured gateway token that does not resolve
+    means the pod's ComfyUI endpoint would be unreachable by the runner, so no
+    pod may be created."""
+    transport = ScriptedTransport(lambda *_: pytest.fail("create must be refused pre-POST"))
+    provider = _provider(transport, comfy_token_provider=lambda: None)
+    with pytest.raises(EffectDenied, match="gateway token did not resolve"):
+        provider.create_pod(_request())
 
 
 def test_same_name_collision_with_different_image_fails_closed() -> None:
@@ -584,19 +728,449 @@ def test_expired_quote_blocks_before_external_effect() -> None:
     assert not transport.calls
 
 
-def test_billing_amounts_round_to_the_microcent_atom() -> None:
+def test_billing_amounts_round_up_to_the_microcent_atom() -> None:
     """T031 (2026-11-05, post-run sweep): Runpod's live billing floats carry
     sub-microcent precision (pod xykul8kobl1e6s: gpuAmount
     0.03517432510852814, disk 0.0005787037080153823) and the parser demanded
     exact whole micro-USD, rejecting the real response as malformed and
-    blocking the canary's settlement. The micro-USD is the ledger's atom:
-    amounts round half-up to it (<=0.5 micro error per field, well under the
-    invoice-verification tolerance)."""
+    blocking the canary's settlement. The micro-USD is the ledger's atom.
+
+    CN-1 (2026-11-09, canary-night review): half-up rounded every fractional
+    atom below 0.5 µUSD DOWN, under-recording cost on each bucket. The house
+    rule is conservative - never under-record - so amounts now round UP
+    (ceiling); the run-14 observed gpuAmount 0.03517432510852814 USD is
+    35174.325… µUSD and converts to 35_175, not 35_174."""
     from microdrama.rendering.runpod_transport import _amount_micro
 
-    assert _amount_micro(0.03517432510852814) == 35_174
+    assert _amount_micro(0.03517432510852814) == 35_175  # CN-1: ceiling, was 35_174
     assert _amount_micro(0.0005787037080153823) == 579
+    assert _amount_micro(0.0000014) == 2  # CN-1: 1.4 µUSD must not become 1
     assert _amount_micro(0) == 0
     assert _amount_micro("1.25") == 1_250_000
     with pytest.raises(ValueError):
         _amount_micro(-0.01)
+
+
+def test_billing_fractional_buckets_accumulate_without_under_recording() -> None:
+    """CN-1 (2026-11-09, canary-night review): a 24-sample canary run of
+    fractional buckets must never under-record. With half-up totals each
+    0.0000014-USD bucket recorded 1 µUSD instead of 1.4, leaking 0.4 µUSD per
+    bucket (9.6 µUSD across the run) with no retained remainder."""
+    from decimal import Decimal
+
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    rows = [
+        {
+            "podId": "pod-123",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": "0.0000014",
+            "gpuAmount": "0.0000014",
+            "cpuAmount": "0",
+            "diskAmount": "0",
+        }
+        for _ in range(24)
+    ]
+    records = [_billing_record(row) for row in rows]
+    exact_micro = Decimal("0.0000014") * 1_000_000 * 24
+    # Every bucket records at least its exact amount, so the sum does too.
+    for record in records:
+        assert Decimal(record.total_micro_usd) >= Decimal("0.0000014") * 1_000_000
+    assert Decimal(sum(record.total_micro_usd for record in records)) >= exact_micro
+
+
+def test_billing_consistent_fractional_projection_is_not_disputed() -> None:
+    """CN-1 (2026-11-09, canary-night review): GPU 0.6 µUSD + disk 0.6 µUSD
+    with total 1.2 µUSD is consistent provider data. Independent per-field
+    rounding manufactured GPU=1, disk=1, total=1 and a DISPUTED bucket that
+    blocked invoice finalization; the consistency check must run on the exact
+    provider Decimals before any rounding."""
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    record = _billing_record(
+        {
+            "podId": "pod-123",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": "0.0000012",
+            "gpuAmount": "0.0000006",
+            "cpuAmount": "0",
+            "diskAmount": "0.0000006",
+        }
+    )
+    assert record.raw_components_match
+    atoms = (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd)
+    assert sum(atoms) == record.total_micro_usd
+
+
+@pytest.mark.parametrize(
+    "total,gpu,cpu,disk,expected",
+    [
+        # CN-1 (2026-11-09): the total rounds UP (ceiling) and the floored
+        # components are topped up by largest fractional remainder, ties to GPU.
+        ("0.0357532", "0.0351746", "0", "0.0005786", (35175, 0, 579)),
+        ("0.0000008", "0.0000004", "0", "0.0000004", (1, 0, 0)),
+        ("0.0000015", "0.0000005", "0.0000005", "0.0000005", (1, 1, 0)),
+        ("0.0000012", "0.0000004", "0.0000004", "0.0000004", (1, 1, 0)),
+        ("0", "0", "0", "0", (0, 0, 0)),
+        # CN-1 (2026-11-09): the run-14 observed amounts convert per the
+        # ceiling rule - gpu 35174.325 µUSD tops up to 35175, disk 578.704 µUSD
+        # to 579, totalling the ceiling of 35753.029 µUSD = 35754.
+        (
+            "0.03575302881654352",
+            "0.03517432510852814",
+            "0",
+            "0.0005787037080153823",
+            (35175, 0, 579),
+        ),
+        ("0.000001000001", "0.000001", "0", "0", (2, 0, 0)),
+        ("0.000000999999", "0.000001", "0", "0", (1, 0, 0)),
+    ],
+)
+def test_billing_allocation_conserves_total_and_raw_evidence(
+    total: str,
+    gpu: str,
+    cpu: str,
+    disk: str,
+    expected: tuple[int, int, int],
+) -> None:
+    from microdrama.rendering.runpod_transport import _amount_micro, _billing_record
+
+    record = _billing_record(
+        {
+            "podId": "pod-123",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": total,
+            "gpuAmount": gpu,
+            "cpuAmount": cpu,
+            "diskAmount": disk,
+        }
+    )
+    atoms = (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd)
+    assert atoms == expected
+    assert sum(atoms) == record.total_micro_usd == _amount_micro(total)
+    assert record.raw_amounts == (total, gpu, cpu, disk)
+    assert record.raw_components_match
+    assert "tolerance-usd=1e-12" in record.normalization_policy
+
+
+@pytest.mark.parametrize("bad", ["NaN", "sNaN", "Infinity", "-Infinity", "-0.1", "bad"])
+def test_billing_invalid_money_is_refused(bad: str) -> None:
+    from decimal import InvalidOperation
+
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    for field in ("totalAmount", "gpuAmount", "cpuAmount", "diskAmount"):
+        row = {
+            "podId": "p",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": "0",
+            "gpuAmount": "0",
+            "cpuAmount": "0",
+            "diskAmount": "0",
+        }
+        row[field] = bad
+        with pytest.raises((ValueError, InvalidOperation)):
+            _billing_record(row)
+
+
+@pytest.mark.parametrize("total", ["0.0000010000011", "0.0000009999989", "0.1"])
+def test_billing_real_mismatch_is_not_normalized(total: str) -> None:
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    record = _billing_record(
+        {
+            "podId": "p",
+            "startTime": NOW.isoformat(),
+            "endTime": (NOW + timedelta(hours=1)).isoformat(),
+            "totalAmount": total,
+            "gpuAmount": "0.000001",
+            "cpuAmount": "0",
+            "diskAmount": "0",
+        }
+    )
+    assert not record.raw_components_match
+    assert record.gpu_micro_usd == 1
+
+
+def test_billing_tolerance_crossing_an_integer_boundary_conserves_the_ceiling() -> None:
+    """CN2-1 (2026-11-10, re-review round 2): the discrepancy 4e-13 USD is inside
+    the declared 1e-12 tolerance, but the ceiling total is 4 micro-USD while all
+    three component floors are zero. The old single-pass top-up visited each
+    component once, produced a sum of 3 and raised AssertionError - aborting
+    billing ingestion instead of reaching settlement. The whole residual must be
+    allocated deterministically (cycling largest-fractional-remainder order, ties
+    GPU > CPU > disk), with no assert backing the money path."""
+    from microdrama.rendering.runpod_transport import _amount_micro, _billing_record
+
+    row = {
+        "podId": "p",
+        "startTime": NOW.isoformat(),
+        "endTime": (NOW + timedelta(hours=1)).isoformat(),
+        "totalAmount": "0.0000030000001",
+        "gpuAmount": "0.0000009999999",
+        "cpuAmount": "0.0000009999999",
+        "diskAmount": "0.0000009999999",
+    }
+    record = _billing_record(row)
+    assert _amount_micro("0.0000030000001") == 4
+    assert record.raw_components_match
+    assert (
+        record.gpu_micro_usd,
+        record.cpu_micro_usd,
+        record.disk_micro_usd,
+    ) == (2, 1, 1)
+    assert (
+        record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
+        == record.total_micro_usd
+        == 4
+    )
+
+
+def test_billing_residual_allocation_conserves_the_ceiling_for_every_case() -> None:
+    """CN2-1: property-style conservation. For every tolerated combination the
+    component atoms sum to exactly the ceiling total - never more (a fake
+    dispute), never less (an under-recorded leak)."""
+    from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+
+    from microdrama.rendering.runpod_transport import _BILLING_TOLERANCE_USD, _billing_record
+
+    tolerance = _BILLING_TOLERANCE_USD
+    grid = [Decimal("0.00000") + Decimal(i) * Decimal("0.0000004") for i in range(0, 13)]
+    checked = 0
+    for total in grid:
+        for gpu in grid:
+            for cpu in grid:
+                disk_exact = total - gpu - cpu
+                if disk_exact < 0:
+                    continue
+                # Split tolerated noise across the fields so the exact Decimals
+                # stay consistent within the declared tolerance.
+                noise = tolerance / Decimal(4)
+                fields = (total + noise, gpu - noise / 2, cpu - noise / 4, disk_exact - noise / 4)
+                if any(value < 0 for value in fields):
+                    continue
+                row = {
+                    "podId": "p",
+                    "startTime": NOW.isoformat(),
+                    "endTime": (NOW + timedelta(hours=1)).isoformat(),
+                    "totalAmount": str(fields[0]),
+                    "gpuAmount": str(fields[1]),
+                    "cpuAmount": str(fields[2]),
+                    "diskAmount": str(fields[3]),
+                }
+                record = _billing_record(row)
+                assert record.raw_components_match
+                expected_total = int(
+                    (fields[0] * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING)
+                )
+                assert record.total_micro_usd == expected_total
+                assert (
+                    record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
+                    == record.total_micro_usd
+                )
+                # Never under-record a component relative to its exact amount.
+                for amount, atom in zip(
+                    fields[1:],
+                    (record.gpu_micro_usd, record.cpu_micro_usd, record.disk_micro_usd),
+                    strict=True,
+                ):
+                    exact_atom = (amount * Decimal(1_000_000)).to_integral_value(
+                        rounding=ROUND_FLOOR
+                    )
+                    assert atom >= exact_atom
+                checked += 1
+    assert checked > 200  # a genuine grid, not a handful of hand-picked cases
+
+
+def test_billing_boundary_noise_needs_a_negative_residual_and_still_conserves() -> None:
+    """CN2-1: tolerated noise the other side of the boundary - components whose
+    floors already exceed the ceiling total - must remove atoms deterministically
+    and still conserve, again without an assert on the money path."""
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    row = {
+        "podId": "p",
+        "startTime": NOW.isoformat(),
+        "endTime": (NOW + timedelta(hours=1)).isoformat(),
+        # total 2.9999999999996 micro-USD -> ceiling 3; components floor to 1 each.
+        "totalAmount": "0.0000029999999999996",
+        "gpuAmount": "0.0000010000000000001",
+        "cpuAmount": "0.0000010000000000001",
+        "diskAmount": "0.0000009999999999996",
+    }
+    record = _billing_record(row)
+    assert record.raw_components_match
+    assert record.total_micro_usd == 3
+    assert (
+        record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd
+        == record.total_micro_usd
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"GPU A40 unavailable; reflected fixture-secret",
+        b'{"aUtHoRiZaTiOn": "bEaReR synthetic-other-secret", "detail": "GPU unavailable"}',
+        b"X-Api-Key: synthetic-other-secret\nGPU unavailable",
+    ],
+)
+def test_runpod_error_redacts_credentials_preserves_gpu(body: bytes) -> None:
+    provider = _provider(ScriptedTransport(lambda *_: Response(401, body)))
+    with pytest.raises(ProviderError) as caught:
+        provider._call("GET", "/pods")
+    message = str(caught.value)
+    assert "fixture-secret" not in message
+    assert "synthetic-other-secret" not in message
+    assert "GPU" in message
+    assert len(message) < 600
+
+
+def test_runpod_error_body_read_and_uncertain_cause_are_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.rendering import runpod_transport as rt
+    from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT
+
+    class BoundedBody(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            assert size == DIAGNOSTIC_READ_LIMIT
+            return super().read(size)
+
+    def refuses(*args: Any, **kwargs: Any) -> Any:
+        raise rt.HTTPError(
+            "https://runpod.invalid",
+            401,
+            "no",
+            {},
+            BoundedBody(b"GPU unavailable\nAuthorization: Bearer hidden-token\n" + b"x" * 10000),
+        )
+
+    monkeypatch.setattr(rt, "urlopen", refuses)
+    response = rt.UrllibRunpodTransport().request("GET", "https://runpod.invalid", headers={})
+    assert len(response.body) <= 500
+    assert b"hidden-token" not in response.body
+    assert b"GPU unavailable" in response.body
+
+    def uncertain(*args: Any, **kwargs: Any) -> Any:
+        raise rt.URLError("fixture-secret connection reset; Authorization: Bearer hidden-token")
+
+    monkeypatch.setattr(rt, "urlopen", uncertain)
+    headers = {"Authorization": "Bearer fixture-secret"}
+    with pytest.raises(NeedsReconciliation) as caught:
+        rt.UrllibRunpodTransport().request("POST", "https://runpod.invalid", headers=headers)
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "fixture-secret" not in rendered and "hidden-token" not in rendered
+    # CN-3 (2026-11-09): the cause is the exception type plus a sanitised
+    # category; the raw exception text never reaches the message or traceback.
+    assert "URLError/transport-error" in str(caught.value)
+    assert "connection reset" not in str(caught.value)
+    assert "connection reset" not in rendered
+
+
+@pytest.mark.parametrize(
+    "sensitive",
+    [
+        "Cookie: theme=dark; sessionid=synthetic-session-secret",
+        "Authorization: Bearer\n synthetic-continuation-secret",
+        '"Authorization": "Bearer synthetic-prefix,synthetic-secret-tail"',
+        '"Authorization": "Bearer synthetic-prefix;synthetic-secret-tail"',
+    ],
+)
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_complete_unknown_sensitive_values_are_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: str,
+    uncertain: bool,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.rendering import runpod_transport as transport_module
+
+    # No reflected value is present in request headers or the credential resolver.
+    body = ("GPU unavailable\n" + sensitive + '\n{"detail":"schema mismatch"}').encode()
+
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        if uncertain:
+            raise transport_module.URLError(body.decode())
+        raise transport_module.HTTPError(
+            "https://provider.invalid", 401, "no", {}, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(transport_module, "urlopen", fails)
+    expected = NeedsReconciliation if uncertain else ProviderError
+    with pytest.raises(expected) as caught:
+        _provider(transport_module.UrllibRunpodTransport())._call("POST", "/pods")
+    rendered = "".join(traceback.format_exception(caught.value))
+    for marker in (
+        "synthetic-session-secret",
+        "synthetic-continuation-secret",
+        "synthetic-prefix",
+        "synthetic-secret-tail",
+    ):
+        assert marker not in rendered
+    if uncertain:
+        # CN-3 (2026-11-09): an uncertainty cause is the exception type plus a
+        # sanitised category only - never sanitized-but-raw body text.
+        assert "URLError/transport-error" in str(caught.value)
+    else:
+        assert "GPU unavailable" in str(caught.value)
+        assert "schema mismatch" in str(caught.value)
+
+
+def test_benchmark_raw_billing_writer_receives_original_amount_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from microdrama.rendering import runpod_billing
+    from microdrama.rendering.benchmark_experiments import BenchmarkRepository
+
+    captured = []
+
+    class Tx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def fetchone(self, query, params):
+            assert "benchmark_acquisitions" in query
+            return {"experiment_id": "exp-1", "acquisition_id": "acq-1"}
+
+    class DB:
+        def transaction(self, *, readonly=False):
+            return Tx()
+
+    monkeypatch.setattr(
+        BenchmarkRepository,
+        "record_billing_evidence",
+        lambda self, experiment_id, acquisition_id, evidence: captured.append(
+            (experiment_id, acquisition_id, evidence)
+        ),
+    )
+    record = SimpleNamespace(
+        pod_id="pod-1",
+        interval_start=NOW,
+        interval_end=NOW + timedelta(hours=1),
+        raw_amounts=("0.0000030000001", "0.0000009999999", "0.0000009999999", "0.0000009999999"),
+        raw_discrepancy_usd="0.0000000000004",
+        normalization_policy="ceiling-v1",
+    )
+    runpod_billing._record_benchmark_raw_evidence(DB(), record)
+    assert captured[0][0:2] == ("exp-1", "acq-1")
+    assert captured[0][2]["amounts"] == {
+        "total": "0.0000030000001",
+        "gpu": "0.0000009999999",
+        "cpu": "0.0000009999999",
+        "disk": "0.0000009999999",
+    }

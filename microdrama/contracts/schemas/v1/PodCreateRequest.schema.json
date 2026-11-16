@@ -49,6 +49,11 @@
       "title": "Owned Tag",
       "type": "string"
     },
+    "provision_models": {
+      "default": false,
+      "title": "Provision Models",
+      "type": "boolean"
+    },
     "schema_version": {
       "const": "1.0",
       "default": "1.0",

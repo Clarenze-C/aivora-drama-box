@@ -29,7 +29,7 @@ Recovery rules this module is built on:
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -79,7 +79,7 @@ from microdrama.contracts.infra import Clock, IdGenerator, ObjectStore
 from microdrama.contracts.media import AssetDescriptor
 from microdrama.contracts.providers import ComfyClient, ComfyOutputFile, ComfyProgressEvent
 from microdrama.contracts.v2 import PromptManifest, verify_v2_record_hash
-from microdrama.core.events import append_event
+from microdrama.core.events import append_event, list_events
 from microdrama.core.provider_ops import begin, needs_reconcile, record_result
 from microdrama.persistence.db import Database, Tx
 from microdrama.rendering.comfy_assets import persist_output, prepare_output
@@ -178,11 +178,39 @@ class ComfyAttemptStatus:
     error_code: str | None = None
     settled_micro_usd: int = 0
     replayed: bool = False
+    # T031 R5b (R5C-12): genuine sampler timing evidence carried through the
+    # transport when the provider history has it; None otherwise.
+    sampler_ms: int | None = None
 
 
 def render_client_token(semantic_key: str) -> str:
     """Deterministic idempotency token for one attempt (retries can never fork prompts)."""
     return f"md-comfy-{sha256_hex(semantic_key.encode('utf-8'))[:24]}"
+
+
+FIRST_SEND_CLAIMED_EVENT = "provider_operation.first_send_claimed"
+
+
+def _claim_first_send(tx: Tx, operation_id: UUID, *, now: datetime, correlation_id: UUID) -> bool:
+    """HB-7 (SC2-1): atomically consume the operation's exclusive first-send
+    right. Returns True for the caller that appended the claim; False when a
+    claim already exists (a paused original, a takeover, any replay). Called
+    under the operation row lock inside the begin transaction."""
+    from microdrama.core.events import list_events
+
+    for event in list_events(tx, operation_id):
+        if event.event_type == FIRST_SEND_CLAIMED_EVENT:
+            return False
+    append_event(
+        tx,
+        aggregate_type="provider_operation",
+        aggregate_id=operation_id,
+        event_type=FIRST_SEND_CLAIMED_EVENT,
+        payload={"claimed_at": now.isoformat()},
+        correlation_id=correlation_id,
+        occurred_at=now,
+    )
+    return True
 
 
 def render_client_id(semantic_key: str) -> str:
@@ -306,6 +334,7 @@ class ComfyRenderService:
         *,
         progress: ComfyProgressEvent | None = None,
         replayed: bool = False,
+        sampler_ms: int | None = None,
     ) -> ComfyAttemptStatus:
         return ComfyAttemptStatus(
             operation_id=op_row["id"],
@@ -317,6 +346,7 @@ class ComfyRenderService:
             error_code=(op_row["last_result"] or {}).get("error_code"),
             settled_micro_usd=self._settled_amount(op_row["reservation_id"]),
             replayed=replayed,
+            sampler_ms=sampler_ms,
         )
 
     # --- reservation -------------------------------------------------------------------
@@ -425,6 +455,52 @@ class ComfyRenderService:
 
     # --- submission ----------------------------------------------------------------------
 
+    def adopt_reserved_attempt(self, request: RenderRequest, reservation_id: UUID) -> Reservation:
+        """Adopt the exact durable benchmark hold without making a second reservation."""
+        if request.reservation_id != reservation_id or request.attempt_number != 1:
+            raise Conflict("benchmark adoption requires its fixed first-attempt reservation")
+        self._verify_reservation(request)
+        with self._db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT r.*, a.episode_id account_episode_id FROM reservations r JOIN budget_accounts a ON a.id=r.account_id WHERE r.id=%s",
+                (reservation_id,),
+            )
+            owned = tx.fetchone(
+                "SELECT s.job_id FROM benchmark_samples s JOIN benchmark_reservation_links l ON l.reservation_id=s.reservation_id WHERE s.reservation_id=%s AND l.sample_id=s.sample_id AND l.experiment_id=s.experiment_id AND l.purpose='PROMPT'",
+                (reservation_id,),
+            )
+        expected = self._reservation_request(
+            episode_id=request.episode_id, semantic_key=request.semantic_key
+        )
+        if (
+            row is None
+            or owned is None
+            or owned["job_id"] is None
+            or any(
+                (
+                    row["account_episode_id"] != request.episode_id,
+                    row["reserved_micro_usd"] != expected.worst_case_micro_usd,
+                    row["expires_at"] <= self._now(),
+                    row["job_id"] is not None and row["job_id"] != owned["job_id"],
+                )
+            )
+        ):
+            raise Conflict(
+                "pre-reserved prompt hold size, account, expiry or sample ownership differs"
+            )
+        self._verify_job(owned["job_id"], request)
+        return Reservation(
+            id=row["id"],
+            account_id=row["account_id"],
+            category=BudgetCategory(row["category"]),
+            semantic_key=row["semantic_key"],
+            state=ReservationState(row["state"]),
+            reserved_micro_usd=row["reserved_micro_usd"],
+            accrued_micro_usd=row["accrued_micro_usd"],
+            settled_micro_usd=row["settled_micro_usd"],
+            replayed=True,
+        )
+
     def _template_for(self, request: RenderRequest) -> WorkflowTemplate:
         template = PRESET_TEMPLATES.get(request.preset_id)
         if template is None:
@@ -434,7 +510,13 @@ class ComfyRenderService:
             )
         return template
 
-    def submit(self, request: RenderRequest, *, job_id: UUID) -> ComfyAttemptStatus:
+    def submit(
+        self,
+        request: RenderRequest,
+        *,
+        job_id: UUID,
+        send_authorizer: Callable[[Any], None] | None = None,
+    ) -> ComfyAttemptStatus:
         """Validate, bind, durably begin and dispatch one paid prompt attempt.
 
         Replays are safe: if a durable operation already exists for this attempt's
@@ -443,6 +525,12 @@ class ComfyRenderService:
         terminal outcome) instead of re-rendering it. Only the call that creates the
         operation dispatches; job-lease exclusivity (core T004) serializes workers, and
         ``begin``'s advisory locks arbitrate any residual race.
+
+        ``send_authorizer`` (T031 HCF HC-5) is an optional predicate the caller
+        supplies; it runs INSIDE the first-send claim's transaction, so the
+        right to the first POST is consumed only while the caller's send
+        authorization is still valid. A refusal rolls begin and claim back
+        whole (nothing consumed, nothing sent).
         """
         if self._config.price is None:
             raise UnknownPrice(
@@ -494,7 +582,9 @@ class ComfyRenderService:
             # it would otherwise sit as reserved exposure until expiry.
             self._release_attempt_hold_quietly(request)
             raise
-        return self._submit_bound_graph(request, bound, job_id=job_id, token=token)
+        return self._submit_bound_graph(
+            request, bound, job_id=job_id, token=token, send_authorizer=send_authorizer
+        )
 
     def submit_v2(
         self,
@@ -502,6 +592,7 @@ class ComfyRenderService:
         bound_workflow: BoundWorkflow,
         *,
         job_id: UUID,
+        send_authorizer: Callable[[Any], None] | None = None,
     ) -> ComfyAttemptStatus:
         """Submit a pre-bound semantic graph without the legacy positional binder.
 
@@ -567,7 +658,9 @@ class ComfyRenderService:
         except MicrodramaError:
             self._release_attempt_hold_quietly(request)
             raise
-        return self._submit_bound_graph(request, bound_workflow, job_id=job_id, token=token)
+        return self._submit_bound_graph(
+            request, bound_workflow, job_id=job_id, token=token, send_authorizer=send_authorizer
+        )
 
     def _load_current_prompt_manifest(self, request: RenderRequest) -> PromptManifest:
         """Load the current exact manifest and verify both document and V2 content hashes."""
@@ -604,8 +697,28 @@ class ComfyRenderService:
         *,
         job_id: UUID,
         token: str,
+        send_authorizer: Callable[[Any], None] | None = None,
     ) -> ComfyAttemptStatus:
-        """Begin operation, queue the supplied graph and persist its external prompt ID."""
+        """Begin operation, queue the supplied graph and persist its external prompt ID.
+
+        HB-7 (SC2-1): the exclusive first-send right is consumed ATOMICALLY.
+        ``begin`` is idempotent on the client token, so an original caller
+        paused between begin and POST, a takeover, or any replay re-entering
+        the same intent would each find the same PENDING_SUBMIT row and each
+        treat it as dispatchable. The claim below - one append-only
+        ``first_send_claimed`` event under the operation lock, in the SAME
+        transaction as begin - distinguishes CREATION of the intent from
+        replay of it: only the caller that appends the claim may POST; every
+        later caller finds the claim consumed and raises NeedsReconciliation
+        (the send's outcome is uncertain - reconciliation owns it, and no
+        second POST ever leaves, I1).
+
+        HC-5 (T031 HCF): when ``send_authorizer`` is supplied it runs inside
+        this same transaction, BEFORE the claim is consumed - the right to the
+        first POST is consumed only by a caller whose send authorization is
+        still valid at claim time. A refusal rolls begin and claim back whole:
+        nothing consumed, nothing sent; an effect authorized before fencing
+        stays with reconciliation (I2)."""
         now = self._now()
         deadline = now + timedelta(milliseconds=self._config.timeout_ms)
         with self._db.transaction() as tx:
@@ -621,6 +734,16 @@ class ComfyRenderService:
                 reservation_id=request.reservation_id,
                 episode_id=request.episode_id,
             )
+            if send_authorizer is not None and operation.state in _DISPATCHABLE:
+                send_authorizer(tx)
+            if operation.state in _DISPATCHABLE and not _claim_first_send(
+                tx, operation.operation_id, now=now, correlation_id=request.reservation_id
+            ):
+                raise NeedsReconciliation(
+                    "the prompt's first-send right was already consumed; the "
+                    "send's outcome is owned by reconciliation (never a second POST)",
+                    operation_id=str(operation.operation_id),
+                )
         if operation.state not in _DISPATCHABLE:
             return self.poll(operation.operation_id)
         try:
@@ -723,6 +846,7 @@ class ComfyRenderService:
         external_id: str | None = None,
         error_code: str | None = None,
         outputs: tuple[OutputRef, ...] = (),
+        sampler_ms: int | None = None,
     ) -> ProviderOperationResult:
         return ProviderOperationResult(
             operation_id=operation_id,
@@ -731,6 +855,8 @@ class ComfyRenderService:
             outputs=list(outputs),
             error_code=error_code,
             provenance=self.provenance,
+            # R5V-8: sampler evidence rides the durable terminal result.
+            sampler_ms=sampler_ms,
         )
 
     def _fail_without_dispatch(self, operation_id: UUID, exc: Exception) -> None:
@@ -761,10 +887,20 @@ class ComfyRenderService:
         except Conflict:
             pass  # already closed by an earlier attempt of the same recovery
 
+    def mark_operation_unknown(self, operation_id: UUID) -> None:
+        """§5.2 (SC-4): takeover moves an unrefused PENDING_SUBMIT to UNKNOWN.
+
+        Only recovery takeover calls this, and only after proving the
+        coordinator token is gone: a live coordinator is never preempted. The
+        transition runs under the operation lock and keeps every hold (I2:
+        PENDING_SUBMIT alone never proves the send did not happen).
+        """
+        self._mark_unknown(operation_id, now=self._now())
+
     def _mark_unknown(self, operation_id: UUID, *, now: datetime) -> None:
         with self._db.transaction() as tx:
             row = tx.fetchone(
-                "SELECT state FROM provider_operations WHERE id = %s FOR UPDATE",
+                "SELECT state, external_id FROM provider_operations WHERE id = %s FOR UPDATE",
                 (operation_id,),
             )
             if row is None:
@@ -774,10 +910,18 @@ class ComfyRenderService:
                 ProviderOperationState.SUBMITTED.value,
                 ProviderOperationState.RUNNING.value,
             ):
+                # HB-5: a poll-discovered ambiguity on a SUBMITTED/RUNNING
+                # operation keeps its durable prompt id - UNKNOWN-with-id stays
+                # recoverable by prompt-id poll (§5.1/§5.2); only the outcome
+                # becomes uncertain, never the send's positive linkage.
                 record_result(
                     tx,
                     operation_id,
-                    self._result(operation_id, ProviderOperationState.UNKNOWN),
+                    self._result(
+                        operation_id,
+                        ProviderOperationState.UNKNOWN,
+                        external_id=row["external_id"],
+                    ),
                     now=now,
                 )
 
@@ -799,8 +943,20 @@ class ComfyRenderService:
         state = ProviderOperationState(row["state"])
         if state in _TERMINAL:
             self._settle_if_needed(row)
-            return self._status(self._load_row(operation_id), replayed=True)
-        if state is ProviderOperationState.UNKNOWN:
+            row = self._load_row(operation_id)
+            # R5V-8: the persisted terminal result carries the sampler
+            # evidence (written with the completion); a replayed terminal
+            # poll reports it again instead of losing it with the transient
+            # completion return.
+            persisted_sampler = (row["last_result"] or {}).get("sampler_ms")
+            return self._status(row, replayed=True, sampler_ms=persisted_sampler)
+        if state is ProviderOperationState.UNKNOWN and row["external_id"] is None:
+            # H-2 (2026-11-10, GLM harness review): an UNKNOWN submit without a
+            # durable prompt id has nothing to re-poll yet - the reconciler
+            # adopts the id by deterministic client id first (reconcile_unknown).
+            # An UNKNOWN row WITH its prompt id falls through to the guarded
+            # history/queue recovery below: it re-polls by durable prompt id and
+            # never resubmits blindly.
             raise NeedsReconciliation(
                 "attempt outcome is unknown; reconcile before any resubmission",
                 operation_id=str(operation_id),
@@ -905,11 +1061,184 @@ class ComfyRenderService:
                     ProviderOperationState.SUCCEEDED,
                     external_id=prompt_id,
                     outputs=outputs,
+                    # R5V-8: the sampler evidence persists WITH the terminal
+                    # completion, so a replay after an interruption before the
+                    # sample projection still recovers it.
+                    sampler_ms=history.sampler_ms,
                 ),
                 now=self._now(),
             )
         self._settle_if_needed(self._load_row(operation_id))
-        return self._status(self._load_row(operation_id))
+        return self._status(self._load_row(operation_id), sampler_ms=history.sampler_ms)
+
+    def reconcile_unknown(self, operation_id: UUID) -> ComfyAttemptStatus:
+        """H-2 (2026-11-10, GLM harness review): the §E provider-operation reconciler.
+
+        An UNKNOWN submit whose prompt id never became durable is reconciled by
+        its DETERMINISTIC client id: a read-only queue/history scan adopts the
+        prompt id the server did receive, then the normal guarded poll recovers
+        the outcome. Never resubmits: no POST leaves this path. Returns the
+        status when the operation reaches a state poll can report; raises
+        NeedsReconciliation while the outcome stays genuinely ambiguous.
+        """
+        row = self._load_row(operation_id)
+        state = ProviderOperationState(row["state"])
+        if state in _TERMINAL:
+            return self.poll(operation_id)
+        if state is not ProviderOperationState.UNKNOWN:
+            return self.poll(operation_id)
+        if row["external_id"] is None:
+            finder = getattr(self._client, "find_prompt_id_by_client", None)
+            if finder is None:
+                raise NeedsReconciliation(
+                    "the Comfy client cannot reconcile by client id",
+                    operation_id=str(operation_id),
+                )
+            request = self._request_for_row(row)
+            with self._provider_authorization(
+                request, job_id=row["job_id"], operation_id=operation_id
+            ):
+                prompt_id = finder(render_client_id(request.semantic_key))
+            if not prompt_id:
+                raise NeedsReconciliation(
+                    "submit outcome is unknown and no prompt by the deterministic "
+                    "client id is visible on the queue or in history",
+                    operation_id=str(operation_id),
+                )
+            with self._db.transaction() as tx:
+                record_result(
+                    tx,
+                    operation_id,
+                    self._result(
+                        operation_id, ProviderOperationState.SUBMITTED, external_id=prompt_id
+                    ),
+                    now=self._now(),
+                )
+        return self.poll(operation_id)
+
+    def settle_terminal(self, operation_id: UUID) -> int:
+        """§7.1: complete the canonical settlement/release for a terminal
+        operation's reservation, from durable state alone (network-free,
+        idempotent - the deterministic receipt keys make replays no-ops)."""
+        return self._settle_if_needed(self._load_row(operation_id))
+
+    def resolve_unknown_operation(
+        self,
+        operation_id: UUID,
+        *,
+        actor_ref: str,
+        reason: str,
+        evidence_sha256: str,
+        forced: bool = False,
+    ) -> ComfyAttemptStatus:
+        """§7.3 (spec v3): the audited OPERATOR resolution for an UNKNOWN
+        render operation.
+
+        Replay before anything else: an already-terminal operation carrying an
+        operator resolution with the IDENTICAL actor, reason and evidence SHA
+        is a successful replay (a crash between the resolution commit and the
+        finalization converges here). A terminal operation WITHOUT an operator
+        audit is a Conflict (terminal provenance - reconcile replays it
+        terminally); a DIFFERENT attestation is a Conflict.
+
+        A first resolution records the audit event and the terminal FAILED
+        transition in ONE transaction under the operation lock (the transition
+        commits BEFORE financial finalization, R5), then settles exactly like
+        a provider-reported failure. ``forced`` records the R7 override in the
+        audit (the caller proves the live-source matrix demanded it).
+        """
+        if not str(actor_ref or "").strip():
+            raise SchemaInvalid("an UNKNOWN-operation resolution requires an actor")
+        if not str(reason or "").strip():
+            raise SchemaInvalid("an UNKNOWN-operation resolution requires a reason")
+        if not (
+            isinstance(evidence_sha256, str)
+            and len(evidence_sha256) == 64
+            and all(c in "0123456789abcdef" for c in evidence_sha256)
+        ):
+            raise SchemaInvalid("an UNKNOWN-operation resolution requires a sha256 evidence hash")
+        row = self._load_row(operation_id)
+        state = ProviderOperationState(row["state"])
+        if state in _TERMINAL:
+            # §7.3 replay: identical operator attestation replays; anything
+            # else on a terminal operation is a terminal-provenance conflict.
+            with self._db.transaction(readonly=True) as tx:
+                events = [
+                    event
+                    for event in list_events(tx, operation_id)
+                    if event.event_type == "provider_operation.operator_resolved"
+                ]
+            for event in events:
+                payload = event.payload or {}
+                if (
+                    payload.get("actor_ref") == actor_ref.strip()
+                    and payload.get("reason") == reason.strip()
+                    and payload.get("evidence_sha256") == evidence_sha256
+                ):
+                    return self._status(row)
+            if events:
+                raise Conflict(
+                    "a different attestation already resolved this operation",
+                    operation_id=str(operation_id),
+                )
+            raise Conflict(
+                "the operation is terminal without an operator resolution; "
+                "reconcile replays its terminal outcome",
+                operation_id=str(operation_id),
+                state=row["state"],
+            )
+        if state is not ProviderOperationState.UNKNOWN:
+            raise Conflict(
+                "only an UNKNOWN operation can be operator-resolved",
+                operation_id=str(operation_id),
+                state=row["state"],
+            )
+        # The audit event and the terminal transition commit together under
+        # the operation lock (§7.3 atomicity); the settlement runs after the
+        # commit (R5: operator terminal transitions precede financial
+        # finalization).
+        with self._db.transaction() as tx:
+            current = tx.fetchone(
+                "SELECT * FROM provider_operations WHERE id = %s FOR UPDATE", (operation_id,)
+            )
+            if current is None:
+                raise NotFound("comfy operation not found", operation_id=str(operation_id))
+            if ProviderOperationState(current["state"]) is not ProviderOperationState.UNKNOWN:
+                raise Conflict(
+                    "only an UNKNOWN operation can be operator-resolved",
+                    operation_id=str(operation_id),
+                    state=current["state"],
+                )
+            append_event(
+                tx,
+                aggregate_type="provider_operation",
+                aggregate_id=operation_id,
+                event_type="provider_operation.operator_resolved",
+                payload={
+                    "actor_ref": actor_ref.strip(),
+                    "reason": reason.strip(),
+                    "evidence_sha256": evidence_sha256,
+                    "forced_unrecoverable": bool(forced),
+                },
+                correlation_id=current["reservation_id"],
+                occurred_at=self._now(),
+            )
+            record_result(
+                tx,
+                operation_id,
+                self._result(
+                    operation_id,
+                    ProviderOperationState.FAILED,
+                    external_id=current["external_id"],
+                    error_code="OPERATOR_RESOLVED_UNKNOWN",
+                ),
+                now=self._now(),
+            )
+        return self._finish_failure(
+            self._load_row(operation_id),
+            error_code="OPERATOR_RESOLVED_UNKNOWN",
+            detail=reason.strip(),
+        )
 
     def _collect_outputs(
         self, row: Mapping[str, Any], outputs: list[ComfyOutputFile]
@@ -969,6 +1298,11 @@ class ComfyRenderService:
         ``observed_at`` and the interval end both come from the operation row's own
         ``updated_at`` (fixed once terminal), so a crash between the terminal transition
         and this settlement replays byte-identically.
+
+        HB-1: an EXPIRED reservation settles through the SAME canonical
+        calculation as an ACTIVE one - never a blanket zero write-off. Only a
+        lease-covered attempt (the pod lease's invoice bucket is the only GPU
+        cost) and a positively-unused hold settle at zero.
         """
         with self._db.transaction(readonly=True) as tx:
             reservation = tx.fetchone(
@@ -979,18 +1313,29 @@ class ComfyRenderService:
                 "render attempt reservation not found",
                 reservation_id=str(row["reservation_id"]),
             )
-        if reservation["state"] != ReservationState.ACTIVE.value:
+        state = reservation["state"]
+        if state not in (ReservationState.ACTIVE.value, ReservationState.EXPIRED.value):
             return self._settled_amount(row["reservation_id"])
+        # §3.3 (spec v3): an EXPIRED reservation retains its exposure until a
+        # settlement reconciles it (canonical expired-accrual policy). Terminal
+        # finalization settles that liability through the canonical path below -
+        # never reactivates the hold, never releases it, never counts twice.
         if row["submitted_at"] is None:
-            # Never dispatched (validation refusal): release the unused hold.
-            try:
-                self._budget.release(
-                    row["reservation_id"],
-                    reason=f"comfy attempt {row['id']} never dispatched",
-                )
-            except Conflict:
-                pass
-            return 0
+            # Never dispatched (validation refusal): the hold is positively
+            # unused. An ACTIVE hold is released; an EXPIRED one is past
+            # release, so its retained exposure closes through the canonical
+            # zero settlement instead.
+            if state == ReservationState.ACTIVE.value:
+                try:
+                    self._budget.release(
+                        row["reservation_id"],
+                        reason=f"comfy attempt {row['id']} never dispatched",
+                    )
+                except Conflict:
+                    pass
+                return 0
+            self._record_zero_settlement(row)
+            return self._settled_amount(row["reservation_id"])
         if self._config.lease_covered:
             # T045-FIX B-S10 + F-4: a FAILED lease-covered attempt must NOT settle
             # the prompt's shared hold while a retry can still reuse it - a settled
@@ -1000,41 +1345,24 @@ class ComfyRenderService:
             # hold, so its FAILED lease-covered attempts settle here at once, as
             # before the hold-reuse change. The failed attempt's GPU cost is not
             # forgiven either way: the Pod lease's invoice bucket carries every
-            # attempt's execution seconds.
+            # attempt's execution seconds. An EXPIRED hold can never dispatch
+            # again, so the deferral does not apply to it (HB-1).
             if (
-                row["state"] == ProviderOperationState.FAILED.value
+                state == ReservationState.ACTIVE.value
+                and row["state"] == ProviderOperationState.FAILED.value
                 and self._config.retry_reuses_hold
             ):
                 return 0
             # T045-FIX B-B1: a render on a leased Runpod Pod is paid once — by the
             # Pod lease's BILLED settlement (the provider invoice bucket). The
-            # attempt's hold settles at zero charge: same deterministic receipt key,
-            # zero amount, so the lease's invoice stays the only GPU cost and a
-            # replay is still byte-identical.
-            interval_end = row["updated_at"]
-            self._budget.record_usage(
-                UsageReceipt(
-                    receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
-                    provider=row["provider"],
-                    provider_receipt_id=f"comfy-settle:{row['id']}",
-                    kind=ReceiptKind.SETTLEMENT,
-                    cost_basis=CostBasis.BILLED,
-                    reservation_id=row["reservation_id"],
-                    episode_id=row["episode_id"],
-                    season_id=None,
-                    job_id=row["job_id"],
-                    category=BudgetCategory.GPU_GENERATION,
-                    amount_micro_usd=0,
-                    currency="USD",
-                    units=0,
-                    unit=PriceUnit.GPU_SECOND,
-                    interval_start=row["submitted_at"],
-                    interval_end=interval_end,
-                    observed_at=interval_end,
-                    provenance=self.provenance,
-                )
-            )
+            # attempt's hold settles at zero charge on ACTIVE and EXPIRED alike:
+            # same deterministic receipt key, zero amount, so the lease's invoice
+            # stays the only GPU cost and a replay is still byte-identical.
+            self._record_zero_settlement(row)
             return self._settled_amount(row["reservation_id"])
+        # HB-1: an independently charged execution settles at the measured
+        # seconds and the configured price, whether the hold is still ACTIVE or
+        # already EXPIRED-with-exposure (SETTLED_AFTER_EXPIRY closes it).
         price = self._config.price
         if price is None:
             raise UnknownPrice(
@@ -1069,6 +1397,41 @@ class ComfyRenderService:
         )
         self._budget.record_usage(receipt)
         return self._settled_amount(row["reservation_id"])
+
+    def _record_zero_settlement(self, row: Mapping[str, Any]) -> None:
+        """HB-1: the canonical zero-charge SETTLEMENT — for a lease-covered
+        attempt (the pod lease's invoice bucket is the only GPU cost) and for a
+        positively-unused EXPIRED hold (nothing executed; the hold is past
+        release). Deterministic receipt id: a replay is byte-identical and the
+        hold closes exactly once, whatever boundary a later crash hit."""
+        interval_start = row["submitted_at"]
+        observed_at = row["updated_at"]
+        receipt = UsageReceipt(
+            receipt_id=uuid5(RENDERING_NAMESPACE, f"render-settle:{row['id']}"),
+            provider=row["provider"],
+            provider_receipt_id=f"comfy-settle:{row['id']}",
+            kind=ReceiptKind.SETTLEMENT,
+            cost_basis=(
+                CostBasis.SYNTHETIC_FAKE
+                if self.provenance is Provenance.FAKE_SYNTHETIC
+                else CostBasis.BILLED
+            ),
+            reservation_id=row["reservation_id"],
+            episode_id=row["episode_id"],
+            season_id=None,
+            job_id=row["job_id"],
+            category=BudgetCategory.GPU_GENERATION,
+            amount_micro_usd=0,
+            currency="USD",
+            units=0,
+            unit=PriceUnit.GPU_SECOND,
+            interval_start=interval_start,
+            interval_end=observed_at if interval_start is not None else None,
+            observed_at=observed_at,
+            provenance=self.provenance,
+        )
+        policy.check_receipt_admissible(receipt, self._settings)
+        self._budget.record_usage(receipt)
 
     def settle_open_prompt_hold(
         self, reservation_id: UUID, *, reason: str, now: datetime | None = None

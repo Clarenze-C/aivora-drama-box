@@ -93,6 +93,16 @@ EXPECTED_TABLES = {
     "v2_contract_documents",
     "runpod_billing_period_evidence",
     "runpod_billing_query_skipped_buckets",
+    "benchmark_experiments",
+    "benchmark_samples",
+    "benchmark_seals",
+    "benchmark_authorizations",
+    "benchmark_acquisitions",
+    "benchmark_dispatch_slots",
+    "benchmark_reservation_links",
+    "benchmark_uploads",
+    "benchmark_screenings",
+    "benchmark_billing_evidence",
 }
 
 
@@ -142,7 +152,7 @@ def test_v2_contract_document_migration_and_json_readback(pg_server_dsn: str) ->
     assert migrate(dsn, target="0018")[-1] == "0018"
     with psycopg.connect(dsn) as conn:
         assert conn.execute("SELECT to_regclass('v2_contract_documents')").fetchone()[0] is None
-    assert migrate(dsn) == ["0019", "0020", "0021", "0022", "0023", "0024", "0025"]
+    assert migrate(dsn) == ["0019", "0020", "0021", "0022", "0023", "0024", "0025", "0026"]
     with psycopg.connect(dsn) as conn:
         assert conn.execute("SELECT to_regclass('approved_slot_metadata')").fetchone()[0]
         assert conn.execute("SELECT to_regclass('release_approval_manifests')").fetchone()[0]
@@ -211,7 +221,7 @@ def test_season_story_ledger_migration_preserves_existing_document(pg_server_dsn
             ),
         )
 
-    assert migrate(dsn) == ["0020", "0021", "0022", "0023", "0024", "0025"]
+    assert migrate(dsn) == ["0020", "0021", "0022", "0023", "0024", "0025", "0026"]
     ledger = v2_season_story_ledger()
     ledger_body = ledger.model_dump(mode="json")
     ledger_hash = canonical_hash(ledger)
@@ -267,7 +277,7 @@ def test_pre_0019_backup_restore_recovers_checkpoint(pg_server_dsn: str, tmp_pat
     subprocess.run([pg_dump, "--format=custom", "--file", str(backup), source_dsn], check=True)
     assert backup.is_file() and backup.stat().st_size > 0
 
-    assert migrate(source_dsn) == ["0019", "0020", "0021", "0022", "0023", "0024", "0025"]
+    assert migrate(source_dsn) == ["0019", "0020", "0021", "0022", "0023", "0024", "0025", "0026"]
     restored_dsn = _fresh_db(pg_server_dsn)
     subprocess.run(
         [pg_restore, "--exit-on-error", "--dbname", restored_dsn, str(backup)], check=True

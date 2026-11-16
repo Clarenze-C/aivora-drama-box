@@ -250,7 +250,7 @@ class Janitor:
             if cause is None:
                 continue
             try:
-                action = self._clean_lease(row, cause, now)
+                action = self._clean_lease(row, cause, now, report)
             except MicrodramaError as exc:
                 report.failures.append(
                     JanitorAction(
@@ -299,7 +299,9 @@ class Janitor:
                 event.event_type == "pod_lease.stop_failed" for event in list_events(tx, lease_id)
             )
 
-    def _clean_lease(self, row: dict[str, Any], cause: str, now: datetime) -> JanitorAction:
+    def _clean_lease(
+        self, row: dict[str, Any], cause: str, now: datetime, report: JanitorReport
+    ) -> JanitorAction:
         lease_id: UUID = row["id"]
         terminal = {
             "heartbeat_expired": LeaseState.ORPHANED.value,
@@ -311,10 +313,30 @@ class Janitor:
             stray = self._manager.reconcile_by_token(row["client_token"])
             if stray is None:
                 return self._close_without_compute(lease_id, terminal, cause, now)
+            resolved = self._db_query(
+                "SELECT 1 FROM runpod_podless_create_resolutions "
+                "WHERE lease_id=%s AND contradicted_at IS NULL",
+                (lease_id,),
+            )
+            if resolved:
+                # T031 H-2 §6.4: a pod appearing after an audited no-create
+                # resolution reopens its liability: bind + contradict (the
+                # L-locked late-adoption pair) and finish through the
+                # late-adoption tail - never the ordinary accrual path, whose
+                # receipts would restate the settled hold; the late cost
+                # arrives as ADJUSTMENT receipts on the settled reservation.
+                return self._adopt_late_pod(stray, lease_id, now, report)
             self._attach_stray(lease_id, stray, now)
             pod_id = stray.pod_id
         else:
             pod_id = row["pod_id"]
+            # CN2-3 (2026-11-10, re-review round 2): heal any missing ownership
+            # BEFORE termination and accounting - a pod bound by the POST-accept
+            # recorder whose ownership open was lost (pre-fix durable state)
+            # must not have its disk interval vanish when the verified terminate
+            # closes a missing row; positive disk charges would fall to the
+            # recovery pool. Idempotent, mirroring LeaseService.shutdown's heal.
+            open_storage_ownership(self._db, lease_id, pod_id)
         self._accrue(lease_id, now)
         self._mark_release_started(lease_id, now)
         pod_state = self._manager.stop(pod_id)
@@ -445,6 +467,24 @@ class Janitor:
                 {"pod_id": pod.pod_id, "adopted_by": "janitor"},
                 now,
             )
+            # T031 H-2 §6.4: a pod discovered after an audited no-create
+            # resolution contradicts it in the same L-locked transaction -
+            # whether the lease was still live (stray attach) or already
+            # terminal (late adoption). The pod binding plus this contradiction
+            # is the reopened obligation the benchmark derives as U5.
+            contradicted = tx.execute(
+                "UPDATE runpod_podless_create_resolutions SET contradicted_at=%s, "
+                "contradicted_pod_id=%s WHERE lease_id=%s AND contradicted_at IS NULL",
+                (now, pod.pod_id, lease_id),
+            )
+            if contradicted:
+                self._lease_event(
+                    tx,
+                    lease_id,
+                    "billing.podless_resolution_contradicted",
+                    {"pod_id": pod.pod_id, "contradicted_at": now.isoformat()},
+                    now,
+                )
         # An adopted stray pod is storage the pipeline owns from its create request
         # (T045 R3): open (or confirm) its ownership interval for the chain root.
         open_storage_ownership(self._db, lease_id, pod.pod_id)

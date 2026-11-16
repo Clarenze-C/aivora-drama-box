@@ -23,7 +23,7 @@ Durability rules this module is built on:
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -59,6 +59,7 @@ from microdrama.contracts.errors import (
     IdempotencyConflict,
     InvalidTransition,
     MicrodramaError,
+    NeedsReconciliation,
     NotFound,
     PolicyDenied,
 )
@@ -135,6 +136,9 @@ class PodLeaseConfig:
     unbound_grace_ms: int = 60_000
     create_attempts: int = 2
     stop_attempts: int = 2
+    # T031 R5a (R5C-4): benchmark worlds set this from the sealed runtime
+    # profile; _spec_for transfers it into every composed create request.
+    provision_models: bool = False
 
     @classmethod
     def for_mock(cls) -> PodLeaseConfig:
@@ -168,6 +172,8 @@ class PodLeaseClaimRequest:
     job_id: UUID | None = None
     pod_name: str = "microdrama-render"
     lease_ttl_ms: int | None = None
+    # T031 R5a: frozen in the acquisition intent; carried into the claim shape.
+    provision_models: bool = False
 
 
 @dataclass(frozen=True)
@@ -189,6 +195,64 @@ class ShutdownResult:
 def client_token_for(semantic_key: str) -> str:
     """Deterministic create token: retries of one logical claim can never fork pods."""
     return f"md-pod-{sha256_hex(semantic_key.encode('utf-8'))[:24]}"
+
+
+def durable_created_pod_recorder(
+    db: Database, now: Callable[[], datetime]
+) -> Callable[[str, str], None]:
+    """CN-2 (2026-11-09, canary-night review): bind a freshly created pod to its
+    lease the moment the provider reports the create was accepted - before any
+    secondary verification GET can fail.
+
+    The provider knows the create's ``client_token``, not the lease id, so the
+    binding resolves the lease by token. Same contract as
+    ``LeaseService._record_pod_id``: idempotent per lease, refuses a binding to
+    a different pod, and an unknown token (no lease row) is a no-op so the
+    recorder can never block a provider call.
+    """
+
+    def record(client_token: str, pod_id: str) -> None:
+        with db.transaction() as tx:
+            row = tx.fetchone(
+                "SELECT id, revision, pod_id, create_requested_at, compute_window_start_at "
+                "FROM pod_leases WHERE client_token = %s ORDER BY id FOR UPDATE",
+                (client_token,),
+            )
+            if row is None:
+                return
+            updates: dict[str, Any] = {}
+            if row["pod_id"] != pod_id:
+                if row["pod_id"] is not None:
+                    raise Conflict(
+                        "lease is bound to a different pod",
+                        lease_id=str(row["id"]),
+                        pod_id=row["pod_id"],
+                    )
+                updates["pod_id"] = pod_id
+            if row["create_requested_at"] is None:
+                # A create the provider accepted IS a create request (CN-2): the
+                # crash window where only the recorder ran must leave the same
+                # durable proof ensure_pod's own recording would have.
+                updates["create_requested_at"] = now()
+                updates["compute_window_start_at"] = now()
+            if updates:
+                update_with_revision(
+                    tx,
+                    "pod_leases",
+                    row["id"],
+                    row["revision"],
+                    updates,
+                    now=now(),
+                )
+            # CN2-3 (2026-11-10, re-review round 2): open storage ownership
+            # ATOMICALLY with the binding. A worker that dies immediately after
+            # the create POST never runs another ensure, activation or its
+            # shutdown handler - without this row the pod's disk interval is
+            # unowned and its positive disk charges fall to the recovery pool.
+            # Idempotent: a replay against an already-owned pod opens nothing.
+            open_storage_ownership_in_tx(tx, row["id"], pod_id)
+
+    return record
 
 
 def _ceil_div(value: int, divisor: int) -> int:
@@ -416,37 +480,46 @@ def open_storage_ownership(db: Database, lease_id: UUID, pod_id: str) -> None:
     creating lease. A warm transfer never touches it; only the verified terminate closes.
     """
     with db.transaction() as tx:
-        lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s", (lease_id,))
-        if lease is None:
-            raise NotFound("pod lease not found", lease_id=str(lease_id))
-        root = tx.fetchone(
-            "SELECT id, owner_episode_id, create_requested_at FROM pod_leases "
-            "WHERE provider = %s AND pod_id = %s AND transferred_from IS NULL "
-            "ORDER BY created_at LIMIT 1",
-            (lease["provider"], pod_id),
+        open_storage_ownership_in_tx(tx, lease_id, pod_id)
+
+
+def open_storage_ownership_in_tx(tx: Tx, lease_id: UUID, pod_id: str) -> None:
+    """The ownership open inside a caller-owned transaction (CN2-3).
+
+    The POST-accept recorder opens storage ownership ATOMICALLY with its pod
+    binding, so a worker that dies immediately after the create POST - before
+    any verification, activation or shutdown handler - still leaves the disk
+    interval attributed to the lease.
+    """
+    lease = tx.fetchone("SELECT * FROM pod_leases WHERE id = %s", (lease_id,))
+    if lease is None:
+        raise NotFound("pod lease not found", lease_id=str(lease_id))
+    root = tx.fetchone(
+        "SELECT id, owner_episode_id, create_requested_at FROM pod_leases "
+        "WHERE provider = %s AND pod_id = %s AND transferred_from IS NULL "
+        "ORDER BY created_at LIMIT 1",
+        (lease["provider"], pod_id),
+    )
+    owner = root if root is not None else lease
+    valid_from = owner["create_requested_at"] or lease["create_requested_at"] or owner["created_at"]
+    existing = tx.fetchval(
+        "SELECT 1 FROM pod_storage_ownership WHERE provider = %s AND pod_id = %s "
+        "AND creating_lease_id = %s",
+        (lease["provider"], pod_id, owner["id"]),
+    )
+    if existing is None:
+        tx.execute(
+            "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
+            "valid_from, creating_lease_id) VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                uuid5(RENDERING_NAMESPACE, f"storage-ownership:{owner['id']}"),
+                lease["provider"],
+                pod_id,
+                owner["owner_episode_id"],
+                valid_from,
+                owner["id"],
+            ),
         )
-        owner = root if root is not None else lease
-        valid_from = (
-            owner["create_requested_at"] or lease["create_requested_at"] or owner["created_at"]
-        )
-        existing = tx.fetchval(
-            "SELECT 1 FROM pod_storage_ownership WHERE provider = %s AND pod_id = %s "
-            "AND creating_lease_id = %s",
-            (lease["provider"], pod_id, owner["id"]),
-        )
-        if existing is None:
-            tx.execute(
-                "INSERT INTO pod_storage_ownership (id, provider, pod_id, owner_episode_id, "
-                "valid_from, creating_lease_id) VALUES (%s, %s, %s, %s, %s, %s)",
-                (
-                    uuid5(RENDERING_NAMESPACE, f"storage-ownership:{owner['id']}"),
-                    lease["provider"],
-                    pod_id,
-                    owner["owner_episode_id"],
-                    valid_from,
-                    owner["id"],
-                ),
-            )
 
 
 def close_storage_ownership(db: Database, provider: str, pod_id: str, instant: datetime) -> None:
@@ -617,6 +690,7 @@ class LeaseService:
             max_hourly_price_micro_usd=self._config.max_hourly_price_micro_usd,
             min_host_ram_gb=self._config.min_host_ram_gb,
             container_image=self._config.container_image,
+            provision_models=self._config.provision_models,
         )
 
     def _load(self, lease_id: UUID) -> dict[str, Any]:
@@ -714,6 +788,71 @@ class LeaseService:
                 except MicrodramaError:
                     pass
             raise
+
+    def claim_pre_reserved(
+        self, request: PodLeaseClaimRequest, reservation_id: UUID
+    ) -> LeaseHandle:
+        """Recover a benchmark intent's existing hold before any provider effect.
+
+        This never reserves, renews expiry or creates a Pod. Ordinary claim defaults
+        and the one-live-lease rule remain enforced by the same insertion path.
+        """
+        spec = PodSpec(
+            gpu_type_allowlist=(request.gpu_type,),
+            max_hourly_price_micro_usd=self._config.max_hourly_price_micro_usd,
+            min_host_ram_gb=request.host_ram_gb,
+            container_image=self._config.container_image,
+        )
+        check_acquisition_filters(
+            spec,
+            allowed_gpu_types=self._config.allowed_gpu_types,
+            min_host_ram_gb=self._config.min_host_ram_gb,
+            price=self._config.price,
+        )
+        ttl = request.lease_ttl_ms or self._config.lease_ttl_ms
+        assert self._config.price is not None
+        worst = self._config.price.unit_price_micro_usd * _ceil_div(
+            ttl + self._config.shutdown_margin_ms, 1000
+        )
+        token = client_token_for(request.semantic_key)
+        with self._db.transaction(readonly=True) as tx:
+            row = tx.fetchone(
+                "SELECT r.*, a.episode_id account_episode_id FROM reservations r JOIN budget_accounts a ON a.id=r.account_id WHERE r.id=%s",
+                (reservation_id,),
+            )
+            bound = tx.fetchone(
+                "SELECT * FROM pod_leases WHERE reservation_id=%s", (reservation_id,)
+            )
+        if row is None or any(
+            (
+                row["semantic_key"] != request.semantic_key,
+                row["episode_id"] != request.episode_id,
+                row["account_episode_id"] != request.episode_id,
+                row["provider"] != self._manager.provider_id,
+                row["operation_kind"] != LEASE_OPERATION_KIND,
+                row["reserved_micro_usd"] != worst,
+                row["job_id"] != request.job_id,
+            )
+        ):
+            raise Conflict("pre-reserved hold does not belong to this lease intent")
+        if bound is not None:
+            if bound["client_token"] != token or bound["owner_job_id"] != request.job_id:
+                raise Conflict("pre-reserved hold is already owned by another lease")
+            return LeaseHandle(self._contract(bound), replayed=True)
+        if row["state"] != "ACTIVE" or row["expires_at"] <= self._now():
+            raise Conflict("pre-reserved lease hold is inactive or expired")
+        reservation = Reservation(
+            id=row["id"],
+            account_id=row["account_id"],
+            category=BudgetCategory(row["category"]),
+            semantic_key=row["semantic_key"],
+            state=ReservationState(row["state"]),
+            reserved_micro_usd=row["reserved_micro_usd"],
+            accrued_micro_usd=row["accrued_micro_usd"],
+            settled_micro_usd=row["settled_micro_usd"],
+            replayed=True,
+        )
+        return self._insert_claim(request, reservation, token, ttl)
 
     def _find_by_token(self, token: str) -> dict[str, Any] | None:
         with self._db.transaction(readonly=True) as tx:
@@ -887,21 +1026,36 @@ class LeaseService:
                     lease_id=str(lease_id),
                     pod_id=row["pod_id"],
                 )
+            # CN-4 (2026-11-09, canary-night review) + T045-FIX A-S6: storage
+            # ownership opens with the durable pod binding, BEFORE verification can
+            # fail - a pod bound while its lease was still CLAIMED that never
+            # verifies until the deadline must not lose its disk interval. The open
+            # is idempotent per (provider, pod, creating lease); any re-ensure heals.
+            open_storage_ownership(self._db, lease_id, row["pod_id"])
             self._manager.verify(pod, spec, settings=self._settings)
             if row["lease_state"] == "CLAIMED":
                 self._activate(lease_id, pod)
-            # T045-FIX A-S6: a crash between the ACTIVE write and the ownership open
-            # must not leave the pod's disk unowned forever — any re-ensure heals it,
-            # and the open itself is idempotent per (provider, pod, creating lease).
-            open_storage_ownership(self._db, lease_id, row["pod_id"])
         else:
             # Durable create-request proof is committed in its own transaction BEFORE the
             # create call is sent (T045 R8/G13): with it, a later list miss can no longer
             # be read as "nothing was sent" and the hold cannot be quietly released.
-            self._record_create_request(lease_id)
-            pod = self._manager.acquire_or_reconcile(
-                spec, name=self._pod_name(row), client_token=row["client_token"]
-            )
+            # CN-2 (2026-11-09, canary-night review): once that proof exists, every
+            # later acquisition attempt is reconciliation-only - it never POSTs a
+            # second create under one reservation. A list miss stays
+            # NeedsReconciliation: absence is not proof the pod was not created.
+            _, first_create_request = self._record_create_request(lease_id)
+            if first_create_request:
+                pod = self._manager.acquire_or_reconcile(
+                    spec, name=self._pod_name(row), client_token=row["client_token"]
+                )
+            else:
+                pod = self._manager.reconcile_by_token(row["client_token"])
+                if pod is None:
+                    raise NeedsReconciliation(
+                        "pod create was already requested for this lease and no owned "
+                        "pod is currently visible; reconcile before any retry",
+                        client_token=row["client_token"],
+                    )
             # T031 defect 7 (2026-11-05, observed twice live): bind the created pod
             # to the lease BEFORE anything can fail - verification warmup
             # transients, price alarms, a SIGINT - so the shutdown path, the sweep
@@ -909,6 +1063,10 @@ class LeaseService:
             # ACTIVATE before, any failure in between orphaned the pod to manual
             # cleanup while it kept billing.
             self._record_pod_id(lease_id, pod.pod_id)
+            # CN-4 (2026-11-09): ownership opens the moment the pod id is durably
+            # bound, before verification can fail for the rest of the deadline
+            # window (idempotent; _activate re-opens harmlessly).
+            open_storage_ownership(self._db, lease_id, pod.pod_id)
             self._manager.verify(pod, spec, settings=self._settings)
             self._activate(lease_id, pod)
         return LeaseHandle(self._contract(self._load(lease_id)))
@@ -937,8 +1095,13 @@ class LeaseService:
                 now=self._now(),
             )
 
-    def _record_create_request(self, lease_id: UUID) -> datetime:
-        """Commit the create-request instant (and the root's window start) before create."""
+    def _record_create_request(self, lease_id: UUID) -> tuple[datetime, bool]:
+        """Commit the create-request instant (and the root's window start) before create.
+
+        Returns ``(requested_at, first_request)`` - ``first_request`` is True only
+        for the call that durably recorded the request (CN-2): only that call may
+        send the create; every later attempt is reconciliation-only.
+        """
         now = self._now()
         with self._db.transaction() as tx:
             row = tx.fetchone(
@@ -958,8 +1121,8 @@ class LeaseService:
                     {"create_requested_at": now, "compute_window_start_at": now},
                     now=now,
                 )
-                return now
-            return row["create_requested_at"]
+                return now, True
+            return row["create_requested_at"], False
 
     @staticmethod
     def _pod_name(row: Mapping[str, Any]) -> str:
@@ -1015,6 +1178,50 @@ class LeaseService:
         open_storage_ownership(self._db, lease_id, pod.pod_id)
 
     # --- operation ---------------------------------------------------------------------
+
+    def boot_heartbeat(self, lease_id: UUID) -> datetime:
+        """T031 R5b (R5C-8): lease liveness DURING the boot window.
+
+        A provisioning boot can legitimately outlive the heartbeat timeout (a
+        25-minute weight download while the default timeout is 5 minutes), and
+        the lease is still CLAIMED while ``ensure_pod``'s verification waits -
+        the ordinary ``heartbeat`` refuses that state. This refreshes
+        ``heartbeat_at`` for a lease that is either ACTIVE or CLAIMED WITH a
+        bound pod, WITHOUT extending the hard deadline and WITHOUT reviving a
+        fenced/terminal lease: ``lease_expires_at`` still bounds everything,
+        and every other state refuses.
+        """
+        now = self._now()
+        with self._db.transaction() as tx:
+            row = tx.fetchone(
+                "SELECT l.*, e.state AS episode_state FROM pod_leases l "
+                "LEFT JOIN episodes e ON e.id=l.owner_episode_id "
+                "WHERE l.id = %s FOR UPDATE OF l",
+                (lease_id,),
+            )
+            if row is None:
+                raise NotFound("pod lease not found", lease_id=str(lease_id))
+            if row["episode_state"] in HUMAN_WAIT_STATES:
+                raise PolicyDenied(
+                    "episode is in a human wait; the lease cannot be heartbeated",
+                    lease_id=str(lease_id),
+                    episode_state=row["episode_state"],
+                )
+            live = row["lease_state"] in ("CLAIMED", "ACTIVE")
+            if not live or (row["lease_state"] == "CLAIMED" and not row["pod_id"]):
+                raise InvalidTransition(
+                    "boot liveness applies only to a pod-bound or active lease",
+                    state=row["lease_state"],
+                )
+            if row["lease_expires_at"] <= now:
+                raise InvalidTransition(
+                    "the lease deadline has passed; boot waiting cannot extend it",
+                    state=row["lease_state"],
+                )
+            update_with_revision(
+                tx, "pod_leases", lease_id, row["revision"], {"heartbeat_at": now}, now=now
+            )
+        return now
 
     def heartbeat(self, lease_id: UUID) -> datetime:
         """Proof of life. The janitor treats a stale heartbeat as a dead worker."""
@@ -1131,6 +1338,14 @@ class LeaseService:
             spec = self._spec_for(row)
             self._manager.verify(pod, spec, settings=self._settings)
             self._activate(lease_id, pod)
+        else:
+            # CN-4 (2026-11-09, canary-night review): heal any missing ownership
+            # BEFORE shutdown and accounting - a pod bound early that never
+            # activated (verification failed to the deadline) must not have its
+            # disk interval vanish when the verified terminate closes it; without
+            # this row the close updates nothing and later positive disk charges
+            # fall to the recovery pool (RECOVERY_REQUIRED).
+            open_storage_ownership(self._db, lease_id, row["pod_id"])
         self.begin_shutdown(lease_id, reason=reason)
         row = self._load(lease_id)
         cleanup_id = self._reserve_cleanup_grant(row)

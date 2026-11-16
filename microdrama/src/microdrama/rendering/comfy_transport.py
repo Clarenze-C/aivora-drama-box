@@ -22,12 +22,18 @@ from uuid import UUID
 
 from microdrama.config import Settings
 from microdrama.contracts.enums import EffectKind, Provenance
-from microdrama.contracts.errors import EffectDenied, NeedsReconciliation, ProviderError
+from microdrama.contracts.errors import Conflict, EffectDenied, NeedsReconciliation, ProviderError
 from microdrama.contracts.providers import (
     ComfyHistoryEntry,
     ComfyNodeInfo,
     ComfyOutputFile,
     ComfyProgressEvent,
+)
+from microdrama.rendering.diagnostics import (
+    DIAGNOSTIC_READ_LIMIT,
+    bound_request_timeout,
+    safe_diagnostic,
+    uncertainty_cause,
 )
 
 
@@ -50,8 +56,51 @@ class ComfyRequestAuthorization:
     operation_id: UUID | None
 
 
+@dataclass(frozen=True)
+class AcquisitionReadAuthorization:
+    """T031 R5b (placement (a), R5C-10): the narrowly guarded boot-read scope.
+
+    Authorizes ONLY the two boot reads (``/__drama/ready`` and the boot-window
+    ``/object_info``) through exact acquisition / COMPUTE-hold / lease / pod
+    linkage, BEFORE any sample job or PROMPT hold exists. The sample-job scope
+    (``ComfyRequestAuthorization``) stays unchanged beside it.
+    """
+
+    acquisition_id: UUID
+    reservation_id: UUID
+    lease_id: UUID
+    pod_id: str
+    episode_id: UUID
+
+
+#: The only paths the acquisition-read scope may carry (R5b/R5C-10).
+BOOT_READ_PATHS = ("/__drama/ready", "/object_info")
+
+#: T031 R5b (R5V-5): the gateway/proxy failures a boot read TOLERATES and
+#: keeps waiting through - the canary's documented set through the RunPod
+#: proxy (connection refused maps to NeedsReconciliation, HTTP 404/502/503/
+#: 524 to ProviderError). Every other HTTP failure (401/403/500/...) is
+#: permanent: retrying it is a paid wait that can never succeed.
+BOOT_TOLERATED_HTTP_STATUSES = frozenset({404, 502, 503, 524})
+
+
+def boot_failure_tolerated(exc: BaseException) -> bool:
+    """Whether ONE failed boot read keeps the boot window waiting (R5V-5).
+
+    Connection-layer failures (refused, DNS, uncertain transport) and the
+    tolerated HTTP statuses wait; any other provider failure is permanent and
+    must classify immediately through the typed pre-sample boot path.
+    """
+    if isinstance(exc, (NeedsReconciliation, OSError)):
+        return True
+    if isinstance(exc, ProviderError):
+        status = exc.details.get("status")
+        return status is None or status in BOOT_TOLERATED_HTTP_STATUSES
+    return False
+
+
 class UrllibTransport:
-    """Small stdlib transport; no retries and no response bodies in raised errors."""
+    """Small stdlib transport; no retries, bounded sanitized diagnostics."""
 
     def request(
         self,
@@ -63,30 +112,28 @@ class UrllibTransport:
     ) -> bytes:
         request = Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - configured endpoint
+            # CN-6: the timeout is bounded by the time remaining to the run deadline.
+            with urlopen(  # noqa: S310 - configured endpoint
+                request, timeout=bound_request_timeout(30)
+            ) as response:
                 return response.read()
         except HTTPError as exc:
-            # T031 run9 (2026-11-05): the first live ComfyUI call failed with a
-            # bare message - carry the status and a bounded body excerpt (the
-            # endpoint's own error text is diagnostics, not a secret), same as
-            # the Runpod transport does since T031 run3.
-            detail = ""
             try:
-                detail = exc.read().decode("utf-8", "replace").strip()[:500]
-            except Exception:  # noqa: BLE001 - the excerpt is best-effort
+                detail = safe_diagnostic(exc.read(DIAGNOSTIC_READ_LIMIT), headers)
+            except Exception:  # noqa: BLE001 - diagnostics are best-effort
                 detail = ""
             raise ProviderError(
                 f"ComfyUI returned an HTTP error: {exc.code} {detail}".strip(),
                 status=exc.code,
-            ) from exc
+            ) from None
         except (TimeoutError, URLError) as exc:
-            # T031 run13 (2026-11-05): name the cause - a sub-second
-            # connection-level failure stopped the run for a human and the
-            # recorded reason carried nothing diagnosable.
+            # CN-3 (2026-11-09, canary-night review): the cause is the exception
+            # type plus a sanitised category; the raw exception text never
+            # reaches the message.
             raise NeedsReconciliation(
                 "ComfyUI transport outcome is uncertain; reconcile by durable "
-                f"prompt ID (cause: {type(exc).__name__}: {exc})"
-            ) from exc
+                f"prompt ID (cause: {uncertainty_cause(exc)})"
+            ) from None
 
 
 class ComfyHttpClient:
@@ -101,7 +148,7 @@ class ComfyHttpClient:
         endpoint: str | None = None,
         credential_ref: str | None,
         credential_resolver: Callable[[str], str | None],
-        request_guard: Callable[[str, str | None, ComfyRequestAuthorization], None],
+        request_guard: Callable[..., None],
         dispatch_guard: Callable[[ComfyRequestAuthorization], None],
         transport: HttpTransport | None = None,
     ) -> None:
@@ -115,6 +162,11 @@ class ComfyHttpClient:
         self._transport = transport or UrllibTransport()
         self._authorization: ContextVar[ComfyRequestAuthorization | None] = ContextVar(
             f"comfy_auth_{id(self)}", default=None
+        )
+        # T031 R5b: the boot-read scope (AcquisitionReadAuthorization) lives
+        # BESIDE the sample-job scope; a boot read never fabricates a job.
+        self._acquisition_read: ContextVar[AcquisitionReadAuthorization | None] = ContextVar(
+            f"comfy_acq_read_{id(self)}", default=None
         )
 
     def bind_pod_endpoint(self, pod_id: str, endpoint_url: str | None) -> None:
@@ -144,6 +196,30 @@ class ComfyHttpClient:
             return
         self._endpoint = expected
         self._bound_pod_id = pod_id
+
+    @contextmanager
+    def acquisition_read_scope(
+        self,
+        *,
+        acquisition_id: UUID,
+        reservation_id: UUID,
+        lease_id: UUID,
+        pod_id: str,
+        episode_id: UUID,
+    ):
+        """Bind the boot-read authorization to the reads made in this scope."""
+        auth = AcquisitionReadAuthorization(
+            acquisition_id=acquisition_id,
+            reservation_id=reservation_id,
+            lease_id=lease_id,
+            pod_id=pod_id,
+            episode_id=episode_id,
+        )
+        token = self._acquisition_read.set(auth)
+        try:
+            yield auth
+        finally:
+            self._acquisition_read.reset(token)
 
     @contextmanager
     def authorization_scope(
@@ -194,6 +270,7 @@ class ComfyHttpClient:
         query: Mapping[str, str] = (),
         body: Any = None,
         authorization_key: str | None = None,
+        binding: tuple[str | None, str | None] | None = None,
     ) -> bytes:
         # Every route is a live effect boundary. Refuse the effect and check the caller's
         # reservation/operation context before resolving a credential or touching HTTP.
@@ -204,8 +281,19 @@ class ComfyHttpClient:
             raise EffectDenied("the Comfy endpoint is not bound; it is derived from the leased Pod")
         authorization = self._authorization.get()
         if authorization is None:
-            raise EffectDenied("ComfyUI request has no scoped durable reservation/operation")
-        self._request_guard(path, authorization_key, authorization)
+            # T031 R5b: the boot reads may run under the acquisition-read
+            # scope before any sample job/operation exists - through the SAME
+            # guard, with the acquisition-read authorization shape.
+            acquisition_read = self._acquisition_read.get()
+            if acquisition_read is None or path not in BOOT_READ_PATHS:
+                raise EffectDenied("ComfyUI request has no scoped durable reservation/operation")
+            authorization = acquisition_read
+        if binding is not None:
+            # R5C-5: the role/subject binding scopes upload/readback guard
+            # lookups; callers without one keep the three-argument contract.
+            self._request_guard(path, authorization_key, authorization, binding=binding)
+        else:
+            self._request_guard(path, authorization_key, authorization)
         headers = self._headers()
         if body is not None:
             headers["Content-Type"] = "application/json"
@@ -214,6 +302,32 @@ class ComfyHttpClient:
             url += "?" + urlencode(query)
         payload = None if body is None else json.dumps(body, separators=(",", ":")).encode()
         return self._transport.request(method, url, headers=headers, body=payload)
+
+    def ready_state(self) -> dict[str, Any]:
+        """T031 R5b: the gateway's provisioning readiness (GET /__drama/ready).
+
+        Answered from the pod's state file by the in-image gateway; never
+        proxied to ComfyUI. Requires the acquisition-read scope.
+        """
+        value = json.loads(self._request("GET", "/__drama/ready"))
+        if not isinstance(value, dict):
+            raise ProviderError("gateway ready state must be an object")
+        return value
+
+    def boot_object_info(self) -> dict[str, Any] | None:
+        """T031 R5b: one boot-window /object_info read; None while ComfyUI is
+        still unreachable through a TOLERATED failure (the caller keeps
+        waiting inside its boot budget). A permanent gateway failure
+        (R5V-5: e.g. HTTP 401/403) propagates so the boot window classifies
+        it immediately instead of paying to retry it."""
+        try:
+            return json.loads(self._request("GET", "/object_info"))
+        except (NeedsReconciliation, OSError):
+            return None
+        except ProviderError as exc:
+            if boot_failure_tolerated(exc):
+                return None
+            raise
 
     def object_info(self) -> dict[str, ComfyNodeInfo]:
         data = json.loads(self._request("GET", "/object_info"))
@@ -308,6 +422,38 @@ class ComfyHttpClient:
             for item in data.get(group, [])
         )
 
+    def find_prompt_id_by_client(self, client_id: str) -> str | None:
+        """H-2 (2026-11-10, GLM harness review): reconcile a submit whose outcome
+        is UNKNOWN by its DETERMINISTIC client id. A POST that timed out may
+        still have been accepted server-side; the queue and history entries
+        carry the client id in their extra_data, so a read-only scan adopts the
+        durable prompt id - this NEVER resubmits and never invents an id."""
+        matches: list[str] = []
+        queue = json.loads(self._request("GET", "/queue", authorization_key=client_id))
+        for group in ("queue_running", "queue_pending"):
+            for item in queue.get(group, []) if isinstance(queue, dict) else []:
+                if not isinstance(item, list) or len(item) < 4:
+                    continue
+                extra = item[3]
+                if isinstance(extra, dict) and str(extra.get("client_id")) == client_id:
+                    matches.append(str(item[1]))
+        history = json.loads(self._request("GET", "/history", authorization_key=client_id))
+        if isinstance(history, dict):
+            for _prompt_id, entry in history.items():
+                prompt = entry.get("prompt") if isinstance(entry, dict) else None
+                if not isinstance(prompt, list) or len(prompt) < 4:
+                    continue
+                extra = prompt[3]
+                if isinstance(extra, dict) and str(extra.get("client_id")) == client_id:
+                    matches.append(str(prompt[1]))
+        if len(set(matches)) > 1:
+            # §5.2 rule 3: never adopt the first of several matches.
+            raise Conflict(
+                "the deterministic client id matches more than one prompt",
+                client_id=client_id,
+            )
+        return matches[0] if matches else None
+
     def progress_events(self, prompt_id: str) -> list[ComfyProgressEvent]:
         # HTTP API has no durable progress history route; the service polls queue/history.
         return []
@@ -327,6 +473,8 @@ class ComfyHttpClient:
 
 
 __all__ = [
+    "AcquisitionReadAuthorization",
+    "BOOT_READ_PATHS",
     "ComfyHttpClient",
     "ComfyRequestAuthorization",
     "HttpTransport",

@@ -772,6 +772,194 @@ def test_a_hard_stop_deadline_stops_and_terminates(db: Database, tmp_path: Path)
     assert runpod_transport.state == "GONE"  # stopped AND terminated at the provider
 
 
+class _AttemptRecorder:
+    """CN-6: wraps a scripted transport and records the run clock instant of
+    every RUN-attempt call. Recording stops when the run's finally block (the
+    cleanup phase: settle/stop/terminate/sweep) begins - those calls
+    legitimately run past the deadline - marked via ``mark_cleanup``."""
+
+    def __init__(self, inner: Any, clock: FakeClock) -> None:
+        self.inner = inner
+        self.clock = clock
+        self.attempts: list[tuple[datetime, str, str]] = []
+        self._shutdown_seen = False
+
+    def mark_cleanup(self) -> None:
+        self._shutdown_seen = True
+
+    def request(self, method: str, url: str, *, headers: Any, body: bytes | None = None) -> Any:
+        if not self._shutdown_seen:
+            self.attempts.append((self.clock.now(), method, url))
+        return self.inner.request(method, url, headers=headers, body=body)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+def _mark_cleanup_phase(monkeypatch: pytest.MonkeyPatch, *recorders: _AttemptRecorder) -> None:
+    """Flip every recorder to cleanup mode when run_execute's finally begins."""
+    import microdrama.pipeline.canary as canary_module
+
+    original = canary_module._ignore_interrupts_during_shutdown
+
+    def marker(append: Any) -> Any:
+        for recorder in recorders:
+            recorder.mark_cleanup()
+        return original(append)
+
+    monkeypatch.setattr(canary_module, "_ignore_interrupts_during_shutdown", marker)
+
+
+def _assert_no_attempt_after_deadline(
+    attempts: list[tuple[datetime, str, str]], deadline: datetime
+) -> None:
+    assert attempts, "the run must have made at least one provider attempt"
+    late = [(when, method, url) for when, method, url in attempts if when >= deadline]
+    assert late == [], f"provider attempts started at/after the deadline: {late}"
+
+
+def test_no_pod_attempt_starts_after_the_deadline_during_warmup(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-6 (2026-11-09, canary-night review): the ensure_pod retry loop used to
+    sleep, then dispatch another provider call without re-checking - a warmup
+    failure at deadline-1s led to a pod API call AT/after the authorized wall
+    limit. The deadline is now checked immediately before every attempt,
+    including right after sleeping (fake clock; no real waiting)."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(no_comfy_port=True)
+    recorder = _AttemptRecorder(runpod_transport, clock)
+    _mark_cleanup_phase(monkeypatch, recorder)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=recorder,
+            comfy_transport=ComfyCanaryTransport(),
+            max_wall_seconds=2,
+        )
+    _assert_no_attempt_after_deadline(recorder.attempts, T0 + timedelta(seconds=2))
+
+
+def test_no_readback_attempt_starts_after_the_deadline(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-6: the endpoint read-back loop must not start another pod GET after
+    the deadline; a pod that never exposes its port stops at the wall limit."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    runpod_transport = RunpodCanaryTransport(never_port_reads=True)
+    recorder = _AttemptRecorder(runpod_transport, clock)
+    _mark_cleanup_phase(monkeypatch, recorder)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=recorder,
+            comfy_transport=ComfyCanaryTransport(),
+            max_wall_seconds=2,
+        )
+    _assert_no_attempt_after_deadline(recorder.attempts, T0 + timedelta(seconds=2))
+
+
+def test_no_catalog_attempt_starts_after_the_deadline(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CN-6: the /object_info boot-window retry must not start another request
+    after the deadline (it used to sleep first and dispatch with the fixed
+    30-second transport timeout)."""
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    comfy_transport = ComfyCanaryTransport(booting_object_info=10**6)
+    recorder = _AttemptRecorder(comfy_transport, clock)
+    _mark_cleanup_phase(monkeypatch, recorder)
+    with pytest.raises(CanaryRunNotClean):
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=RunpodCanaryTransport(),
+            comfy_transport=recorder,
+            max_wall_seconds=2,
+        )
+    _assert_no_attempt_after_deadline(recorder.attempts, T0 + timedelta(seconds=2))
+
+
+def test_a_pod_that_never_verifies_keeps_disk_ownership_through_termination(
+    db: Database, tmp_path: Path
+) -> None:
+    """CN-4 (2026-11-09, canary-night review): a pod bound while its lease was
+    still CLAIMED, whose endpoint verification fails until the deadline, must
+    still get a storage-ownership interval - opened with the durable pod
+    binding and healed before shutdown - so the verified terminate closes it and
+    billing ingest attributes the pod's disk to the lease's episode, never the
+    recovery pool; readiness never becomes RECOVERY_REQUIRED."""
+    from uuid import UUID
+
+    from microdrama.budget.billing import lease_billing_readiness
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    # No exposed 8188 port at all: verification fails from the first ensure_pod
+    # until the deadline, so the lease stays CLAIMED with a bound pod id.
+    runpod_transport = RunpodCanaryTransport(no_comfy_port=True)
+    comfy_transport = ComfyCanaryTransport()
+    # Effects were sent (the Pod existed), so the deadline run raises NOT CLEAN
+    # after the shutdown path and the record write.
+    with pytest.raises(CanaryRunNotClean) as caught:
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=runpod_transport,
+            comfy_transport=comfy_transport,
+            max_wall_seconds=2,
+        )
+    record = json.loads(caught.value.record_path.read_text())
+    assert record["deadline_hit"] is True
+    assert record["terminate_verified_at"] is not None
+    with db.transaction(readonly=True) as tx:
+        lease = tx.fetchone(
+            "SELECT id, owner_episode_id, lease_state, terminate_verified_at "
+            "FROM pod_leases WHERE provider='runpod'"
+        )
+        ownership = tx.fetchone(
+            "SELECT owner_episode_id, valid_from, valid_until FROM pod_storage_ownership "
+            "WHERE provider='runpod' AND pod_id=%s",
+            (POD,),
+        )
+    assert lease is not None
+    assert lease["lease_state"] == "RELEASED"  # shutdown ran with the bound pod
+    # The ownership interval existed (healed before shutdown) and closed at the
+    # verified terminate, owned by the lease's episode.
+    assert ownership is not None, "storage ownership must exist for an early-bound pod"
+    assert str(ownership["owner_episode_id"]) == CANARY_EPISODE_ID
+    assert ownership["valid_until"] == lease["terminate_verified_at"]
+
+    # Billing ingest over the terminated pod: disk goes to the episode, not the
+    # recovery pool, and the lease's readiness never becomes RECOVERY_REQUIRED.
+    clock.advance(seconds=2 * 3600 + 1800)
+    world = _world_for_sweep(
+        db, tmp_path, clock, runpod_transport, comfy_transport, seq="cn4-sweep"
+    )
+    sweep = world.janitor.sweep()
+    assert sweep.failures == []
+    with db.transaction(readonly=True) as tx:
+        disk_rows = tx.fetchall(
+            "SELECT a.owner_kind, a.owner_id FROM runpod_billing_allocations a "
+            "JOIN runpod_billing_buckets b ON b.observation_id=a.bucket_observation_id "
+            "WHERE b.pod_id=%s AND a.component='DISK' AND a.delta_micro_usd > 0",
+            (POD,),
+        )
+    assert disk_rows, "the terminated pod's disk bucket must allocate"
+    assert all(row["owner_kind"] == "EPISODE" for row in disk_rows)
+    assert {row["owner_id"] for row in disk_rows} == {str(UUID(CANARY_EPISODE_ID))}
+    assert lease_billing_readiness(db, lease["id"]).state != "RECOVERY_REQUIRED"
+
+
 def test_an_object_info_mismatch_submits_nothing(db: Database, tmp_path: Path) -> None:
     from microdrama.rendering.workflows import MOCK_VIDEO_TEMPLATE
 
@@ -818,6 +1006,74 @@ def test_a_create_timeout_that_created_the_pod_reconciles_to_the_same_pod(
     with db.transaction(readonly=True) as tx:
         leases = tx.fetchall("SELECT pod_id FROM pod_leases WHERE provider='runpod'")
     assert [row["pod_id"] for row in leases] == [POD]
+
+
+def test_a_rejection_echoing_credentials_never_reaches_the_record_or_stderr(
+    db: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CN-3 (2026-11-09, canary-night review): an upstream rejection that echoes
+    the run's bearer token, an api_key field, URL userinfo and a signed URL must
+    be sanitized by the REAL transport before its message exists - and the
+    sanitized message is what the persisted run record and stderr can carry.
+    All secrets are synthetic; none is a real credential."""
+
+    class RealSanitizingComfyTransport:
+        """Delegates to the real UrllibTransport so the production redaction runs."""
+
+        def request(
+            self, method: str, url: str, *, headers: Any, body: bytes | None = None
+        ) -> bytes:
+            import io
+
+            from microdrama.rendering import comfy_transport as ct
+
+            def refuses(request: Any, timeout: int) -> Any:
+                raise ct.HTTPError(
+                    request.full_url,
+                    401,
+                    "Unauthorized",
+                    {},
+                    io.BytesIO(
+                        b'{"detail":"unauthorized","api_key":"synthetic-api-key-echo",'
+                        b'"token":"synthetic-token-echo","url":"https://u:synthetic-userinfo@cdn.invalid/f.mp4'
+                        b'?X-Goog-Signature=synthetic-signed-url-value"}' + b"y" * 9000
+                    ),
+                )
+
+            monkeypatch.setattr(ct, "urlopen", refuses)
+            return ct.UrllibTransport().request(method, url, headers=headers, body=body)
+
+    _seed_everything(db)
+    clock = FakeClock(T0)
+    # Effects were sent (the Pod existed), so the failed run raises NOT CLEAN -
+    # after the record was written; the exception itself must also be clean.
+    with pytest.raises(CanaryRunNotClean) as caught:
+        _execute(
+            db,
+            tmp_path,
+            clock=clock,
+            runpod_transport=RunpodCanaryTransport(),
+            comfy_transport=RealSanitizingComfyTransport(),
+        )
+    record_text = caught.value.record_path.read_text()
+    stderr = capsys.readouterr().err
+    rendered = str(caught.value)
+    for secret in (
+        "synthetic-api-key-echo",
+        "synthetic-token-echo",
+        "synthetic-userinfo",
+        "synthetic-signed-url-value",
+        "fixture-dummy-value",
+    ):
+        assert secret not in record_text, secret
+        assert secret not in stderr, secret
+        assert secret not in rendered, secret
+    # The sanitized diagnostic is still informative: status and non-secret detail.
+    assert "401" in record_text and "unauthorized" in record_text
+    assert "[REDACTED]" in rendered
 
 
 def test_a_worker_crash_mid_run_leaves_the_janitor_to_stop_and_terminate(

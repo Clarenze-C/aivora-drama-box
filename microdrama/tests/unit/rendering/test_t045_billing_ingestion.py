@@ -1504,3 +1504,127 @@ def test_no_float_time_math_remains_in_the_rounding_paths() -> None:
     assert ".timestamp()" not in janitor_source
     billing_source = Path(inspect.getfile(billing_module)).read_text()
     assert "total_seconds()" not in billing_source
+
+
+@pytest.mark.parametrize(
+    ("gpu", "total"),
+    # CN-1 (2026-11-09): the raw mismatch must dispute even when the rounded
+    # atoms coincide; under the ceiling rule the pairs are chosen so both
+    # fields still round to the same atom.
+    [
+        ("0.0000010000005", "0.0000010000016"),  # +1.1e-12 USD, both ceil to 2
+        ("0.000001", "0.0000009999989"),  # -1.1e-12 USD, both ceil to 1
+    ],
+)
+def test_raw_mismatch_disputes_even_when_rounded_atoms_match(
+    db: Database, gpu: str, total: str
+) -> None:
+    from microdrama.budget.billing import lease_billing_readiness
+
+    lease, _, _ = _seed_terminated_lease(db)
+    transport = ScriptedBillingTransport(
+        records=[_record(gpu=gpu, cpu="0", disk="0", total=total)],
+        pod_present=False,
+    )
+    assert _janitor(db, _provider(transport, db)).sweep().failures == []
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT total_amount_micro_usd, gpu_amount_micro_usd, finality_state "
+            "FROM runpod_billing_buckets"
+        )
+    assert row["total_amount_micro_usd"] == row["gpu_amount_micro_usd"]
+    assert row["finality_state"] == "DISPUTED"
+    assert lease_billing_readiness(db, lease).state == "DISPUTED"
+
+
+def test_consistent_fractional_projection_is_not_disputed(db: Database) -> None:
+    """CN-1 (2026-11-09, canary-night review): GPU 0.6 µUSD + disk 0.6 µUSD
+    with total 1.2 µUSD is consistent provider data - the exact-Decimal check
+    must not let the rounding rule manufacture a DISPUTED bucket."""
+    from microdrama.budget.billing import lease_billing_readiness
+
+    lease, _, _ = _seed_terminated_lease(db)
+    transport = ScriptedBillingTransport(
+        records=[_record(gpu="0.0000006", cpu="0", disk="0.0000006", total="0.0000012")],
+        pod_present=False,
+    )
+    assert _janitor(db, _provider(transport, db)).sweep().failures == []
+    with db.transaction(readonly=True) as tx:
+        row = tx.fetchone(
+            "SELECT total_amount_micro_usd, gpu_amount_micro_usd, cpu_amount_micro_usd, "
+            "disk_amount_micro_usd, finality_state FROM runpod_billing_buckets"
+        )
+    assert row["finality_state"] == "ALLOCATED_PROVIDER_REPORTED"
+    assert row["total_amount_micro_usd"] == 2
+    assert (
+        row["gpu_amount_micro_usd"] + row["cpu_amount_micro_usd"] + row["disk_amount_micro_usd"]
+        == row["total_amount_micro_usd"]
+    )
+    assert lease_billing_readiness(db, lease).state != "DISPUTED"
+
+
+def test_normalized_fractional_billing_replay_and_adjustment(db: Database) -> None:
+    _seed_terminated_lease(db)
+    transport = ScriptedBillingTransport(
+        records=[_record(gpu="0.0351746", cpu="0", disk="0.0005786", total="0.0357532")],
+        pod_present=False,
+    )
+    provider = _provider(transport, db)
+    assert _janitor(db, provider).sweep().failures == []
+    first_counts = _counts(db)
+    first_charges = _charge_amounts(db)
+    assert 35175 in first_charges
+    with db.transaction() as tx:
+        tx.execute("UPDATE pod_leases SET next_finality_check_at = NULL")
+    assert _janitor(db, provider, now=SWEEP_AT + timedelta(minutes=30)).sweep().failures == []
+    assert _counts(db) == first_counts
+    assert _charge_amounts(db) == first_charges
+
+    transport.records = [_record(gpu="0.0351756", cpu="0", disk="0.0005786", total="0.0357542")]
+    with db.transaction() as tx:
+        tx.execute("UPDATE pod_leases SET next_finality_check_at = NULL")
+    assert (
+        _janitor(db, provider, now=SWEEP_AT + timedelta(hours=1), seq="fractional-revise")
+        .sweep()
+        .failures
+        == []
+    )
+    assert sorted(_charge_amounts(db)) == sorted(first_charges + [1])
+    with db.transaction(readonly=True) as tx:
+        rows = tx.fetchall(
+            "SELECT total_amount_micro_usd, gpu_amount_micro_usd, "
+            "cpu_amount_micro_usd, disk_amount_micro_usd FROM runpod_billing_buckets"
+        )
+    assert len(rows) == 2
+    for row in rows:
+        assert row["total_amount_micro_usd"] == (
+            row["gpu_amount_micro_usd"] + row["cpu_amount_micro_usd"] + row["disk_amount_micro_usd"]
+        )
+
+
+def test_raw_hash_commits_subatom_evidence_and_preserves_legacy_hash() -> None:
+    from dataclasses import replace
+
+    from microdrama.contracts.hashing import canonical_hash
+    from microdrama.rendering.runpod_billing import _record_hash
+    from microdrama.rendering.runpod_transport import _billing_record
+
+    record = _billing_record(_record(gpu="0.000001", cpu="0", disk="0", total="0.000001"))
+    # CN-1 (2026-11-09): under the ceiling rule a positive sub-atom delta
+    # (0.0000010000001) crosses the atom boundary; downward sub-atom noise
+    # stays inside the same atom while still changing the raw hash.
+    changed = _billing_record(_record(gpu="0.000001", cpu="0", disk="0", total="0.0000009999999"))
+    assert record.total_micro_usd == changed.total_micro_usd
+    assert _record_hash(record) != _record_hash(changed)
+    legacy = replace(record, raw_amounts=None, raw_discrepancy_usd=None, normalization_policy=None)
+    assert _record_hash(legacy) == canonical_hash(
+        {
+            "pod_id": legacy.pod_id,
+            "interval_start": legacy.interval_start,
+            "interval_end": legacy.interval_end,
+            "total_micro_usd": legacy.total_micro_usd,
+            "gpu_micro_usd": legacy.gpu_micro_usd,
+            "cpu_micro_usd": legacy.cpu_micro_usd,
+            "disk_micro_usd": legacy.disk_micro_usd,
+        }
+    )

@@ -738,6 +738,11 @@ class ProviderOperationResult(VersionedPayload):
     retry_after_ms: DurationMs | None = None
     raw_response_key: ObjectKey | None = Field(default=None, description="Private raw response")
     provenance: Provenance
+    #: T031 R5b (R5V-8): sampler timing evidence carried by the terminal
+    #: completion, persisted with the result so a replay after an interruption
+    #: before sample projection still recovers it. None when the transport's
+    #: history carries no sampler timestamps (exported UNKNOWN, never 0).
+    sampler_ms: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _shape(self) -> ProviderOperationResult:

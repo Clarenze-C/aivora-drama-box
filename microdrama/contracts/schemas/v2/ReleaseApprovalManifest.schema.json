@@ -431,7 +431,7 @@
       "type": "string"
     }
   },
-  "$id": "urn:microdrama:contracts:2.15.0:ReleaseApprovalManifest",
+  "$id": "urn:microdrama:contracts:2.16.0:ReleaseApprovalManifest",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "V2 Gate-2 binding for immutable slot metadata, policy and V1 media package.",

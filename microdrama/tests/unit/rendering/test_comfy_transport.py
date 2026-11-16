@@ -274,24 +274,185 @@ def test_history_maps_the_vhs_gifs_key_to_video_media_kind() -> None:
     assert entry.outputs[0].filename == "a1_1.mp4"
 
 
+def test_every_route_carries_the_bearer_the_gateway_requires() -> None:
+    """CN-5 (2026-11-09, canary-night review): the pod's exposed port is a
+    token-checking gateway that 401s any request without the run's bearer
+    token - so every client route, reads included, must send it."""
+    fixture = FixtureTransport([b"{}", b"{}", b"{}"])
+    client = _client(
+        Settings(execution_mode=ExecutionMode.PAID_BENCHMARK, paid_requests_enabled=True),
+        fixture,
+        lambda _authorization: None,
+    )
+    with client.authorization_scope(
+        reservation_id=uuid4(), episode_id=uuid4(), job_id=uuid4(), operation_id=uuid4()
+    ):
+        client.object_info()
+        client.fetch_output(
+            ComfyOutputFile(
+                node_id="9",
+                filename="out.mp4",
+                subfolder="",
+                folder_type="output",
+                media_kind="video",
+            )
+        )
+        client.in_queue("prompt-1")
+    assert len(fixture.calls) == 3
+    for method, url, headers, _body in fixture.calls:
+        assert headers["Authorization"] == "Bearer fixture-secret", (method, url)
+
+
+def test_the_transport_timeout_is_bounded_by_the_run_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CN-6 (2026-11-09, canary-night review): with 2 s left to the run deadline
+    the transport must not hand urllib a fixed 30-second timeout - the request
+    timeout is bounded by the time remaining."""
+    from datetime import UTC, datetime, timedelta
+
+    from microdrama.rendering import comfy_transport as ct
+    from microdrama.rendering.diagnostics import (
+        reset_request_deadline,
+        set_request_deadline,
+    )
+
+    seen: dict[str, Any] = {}
+
+    def stalls(request: Any, timeout: float) -> Any:
+        seen["timeout"] = timeout
+        raise ct.URLError("connection reset by peer")
+
+    monkeypatch.setattr(ct, "urlopen", stalls)
+    base = datetime(2026, 11, 9, 12, tzinfo=UTC)
+    token = set_request_deadline(base + timedelta(seconds=2), lambda: base)
+    try:
+        with pytest.raises(NeedsReconciliation):
+            ct.UrllibTransport().request("GET", "https://comfy.invalid/object_info", headers={})
+    finally:
+        reset_request_deadline(token)
+    assert seen["timeout"] == 2.0
+
+
 def test_transport_uncertainty_names_its_cause(monkeypatch: pytest.MonkeyPatch) -> None:
     """T031 run13 (2026-11-05): the first live prompt submit died in 0.58s as a
     connection-level URLError and the runner stopped for a human - correctly -
     but the recorded reason carried no cause, leaving the operator blind (the
     third transport-masking bug of the night). The uncertainty message must
-    name the underlying error."""
+    name the underlying error.
+
+    CN-3 (2026-11-09, canary-night review): the cause is the exception type plus
+    a sanitised category - the raw exception text (which can quote credentials,
+    signed URLs or reflected bodies) never reaches the message."""
     from microdrama.contracts.errors import NeedsReconciliation
     from microdrama.rendering import comfy_transport as ct
 
-    def resets(request: Any, timeout: int) -> Any:
-        raise OSError("connection reset by peer")
-
-    class Wrapper(ct.URLError):
-        pass
-
     def resets_wrapped(request: Any, timeout: int) -> Any:
-        raise ct.URLError(OSError("connection reset by peer"))
+        raise ct.URLError(OSError("connection reset by peer; token=synthetic-cause-secret"))
 
     monkeypatch.setattr(ct, "urlopen", resets_wrapped)
-    with pytest.raises(NeedsReconciliation, match="URLError.*connection reset"):
+    with pytest.raises(NeedsReconciliation, match="URLError/socket-error") as caught:
         ct.UrllibTransport().request("POST", "https://comfy.invalid/prompt", headers={})
+    message = str(caught.value)
+    assert "connection reset by peer" not in message
+    assert "synthetic-cause-secret" not in message
+
+
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_diagnostic_redaction_before_exception_or_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    uncertain: bool,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.contracts.errors import ProviderError
+    from microdrama.rendering import comfy_transport as ct
+    from microdrama.rendering.diagnostics import DIAGNOSTIC_READ_LIMIT
+
+    class BoundedBody(io.BytesIO):
+        def read(self, size: int = -1) -> bytes:
+            assert size == DIAGNOSTIC_READ_LIMIT
+            return super().read(size)
+
+    detail = (
+        b"GPU schema invalid; reflected synthetic-key\n"
+        b'{"aUtHoRiZaTiOn": "bEaReR synthetic-unknown"}\n' + b"x" * 10000
+    )
+
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        if uncertain:
+            raise ct.URLError(detail.decode())
+        raise ct.HTTPError("https://comfy.invalid", 401, "no", {}, BoundedBody(detail))
+
+    monkeypatch.setattr(ct, "urlopen", fails)
+    expected = NeedsReconciliation if uncertain else ProviderError
+    headers = {"Authorization": "Bearer synthetic-key"}
+    with pytest.raises(expected) as caught:
+        ct.UrllibTransport().request(
+            "POST",
+            "https://comfy.invalid/prompt",
+            headers=headers,
+        )
+    rendered = "".join(traceback.format_exception(caught.value))
+    assert "synthetic-key" not in rendered and "synthetic-unknown" not in rendered
+    if uncertain:
+        # CN-3 (2026-11-09): uncertainty carries the type and a sanitised
+        # category only; sanitized-but-raw text stays out of the message.
+        assert "URLError/transport-error" in str(caught.value)
+        assert "GPU schema invalid" not in str(caught.value)
+    else:
+        assert "GPU schema invalid" in str(caught.value)
+    assert len(str(caught.value)) < 700
+
+
+@pytest.mark.parametrize(
+    "sensitive",
+    [
+        "Cookie: theme=dark; sessionid=synthetic-session-secret",
+        "Authorization: Bearer\n synthetic-continuation-secret",
+        '"Authorization": "Bearer synthetic-prefix,synthetic-secret-tail"',
+        '"Authorization": "Bearer synthetic-prefix;synthetic-secret-tail"',
+    ],
+)
+@pytest.mark.parametrize("uncertain", [False, True])
+def test_complete_unknown_sensitive_values_are_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+    sensitive: str,
+    uncertain: bool,
+) -> None:
+    import io
+    import traceback
+
+    from microdrama.contracts.errors import ProviderError
+    from microdrama.rendering import comfy_transport as transport_module
+
+    # No reflected value is present in request headers or the credential resolver.
+    body = ("GPU unavailable\n" + sensitive + '\n{"detail":"schema mismatch"}').encode()
+
+    def fails(*args: Any, **kwargs: Any) -> Any:
+        if uncertain:
+            raise transport_module.URLError(body.decode())
+        raise transport_module.HTTPError(
+            "https://provider.invalid", 401, "no", {}, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(transport_module, "urlopen", fails)
+    expected = NeedsReconciliation if uncertain else ProviderError
+    with pytest.raises(expected) as caught:
+        transport_module.UrllibTransport().request("POST", "https://provider.invalid", headers={})
+    rendered = "".join(traceback.format_exception(caught.value))
+    for marker in (
+        "synthetic-session-secret",
+        "synthetic-continuation-secret",
+        "synthetic-prefix",
+        "synthetic-secret-tail",
+    ):
+        assert marker not in rendered
+    if uncertain:
+        # CN-3 (2026-11-09): an uncertainty cause is the exception type plus a
+        # sanitised category only - never sanitized-but-raw body text.
+        assert "URLError/transport-error" in str(caught.value)
+    else:
+        assert "GPU unavailable" in str(caught.value)
+        assert "schema mismatch" in str(caught.value)

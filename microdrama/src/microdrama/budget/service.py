@@ -344,6 +344,11 @@ class BudgetService:
         reserve free. Spill from recovery into production categories also keeps it free, unless the
         request is cleanup.
         """
+        with self._db.transaction() as tx:
+            return self.reserve_in_transaction(tx, request)
+
+    def reserve_in_transaction(self, tx: Tx, request: BudgetReservationRequest) -> Reservation:
+        """Canonical admission inside the caller-owned transaction; all guards remain."""
         policy.check_queue_may_reserve(request.queue, request.category)
         policy.check_price_admissible(request, self._settings)
         if request.scope_kind is BudgetScopeKind.SEASON_RESEARCH and request.episode_id is not None:
@@ -357,129 +362,128 @@ class BudgetService:
             request.operation_kind,
             request.is_shutdown_or_cleanup,
         )
-        with self._db.transaction() as tx:
-            if request.provider.casefold() == "runpod" and not cleanup:
-                unresolved_recovery = tx.fetchval(
-                    "SELECT EXISTS (SELECT 1 FROM runpod_billing_allocations a "
-                    "LEFT JOIN runpod_billing_recovery_resolutions r USING (allocation_id) "
-                    "WHERE a.owner_kind='RECOVERY' AND a.delta_micro_usd>0 AND r.allocation_id IS NULL)"
-                )
-                if unresolved_recovery:
-                    raise BudgetExhausted(
-                        "Runpod paid dispatch is blocked by unresolved provider billing recovery exposure",
-                        provider="runpod",
-                    )
-            if request.scope_kind is BudgetScopeKind.EPISODE:
-                account_id = episode_account_id(tx, request.episode_id)
-            else:
-                account_id = research_account_id(tx, request.season_id)
-            acct = lock_account(tx, account_id)
-            cats = lock_categories(tx, account_id)
-            ledger = self._ledger(tx, acct, cats)
-            # An observed overrun stops all new paid work; shutdown/cleanup is exempt from this
-            # flag but still bound by the cap check below.
-            if acct.blocked and not cleanup:
+        if request.provider.casefold() == "runpod" and not cleanup:
+            unresolved_recovery = tx.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM runpod_billing_allocations a "
+                "LEFT JOIN runpod_billing_recovery_resolutions r USING (allocation_id) "
+                "WHERE a.owner_kind='RECOVERY' AND a.delta_micro_usd>0 AND r.allocation_id IS NULL)"
+            )
+            if unresolved_recovery:
                 raise BudgetExhausted(
-                    "paid dispatch is blocked by an observed overrun",
-                    account_id=str(acct.id),
-                    blocked_reason=acct.blocked_reason,
+                    "Runpod paid dispatch is blocked by unresolved provider billing recovery exposure",
+                    provider="runpod",
                 )
-            if request.season_id is not None and request.season_id != acct.season_id:
-                raise Conflict("reservation season does not match its budget account")
-            existing = reservations_matching(tx, request.request_id, request.semantic_key)
-            if existing:
-                if (
-                    len(existing) == 1
-                    and existing[0].account_id == acct.id
-                    and existing[0].request_hash == request_hash
-                ):
-                    return _as_reservation(existing[0], replayed=True)
-                raise IdempotencyConflict(
-                    "semantic key or request id was reused with different content",
-                    semantic_key=request.semantic_key,
-                )
-            if request.expires_at <= ledger.now:
-                raise SchemaInvalid("reservation expiry must be in the future")
-
-            worst = request.worst_case_micro_usd
-            floor = 0 if cleanup else acct.shutdown_reserve
-            if acct.committed + worst + floor > acct.cap:
-                raise BudgetExhausted(
-                    "episode allowance exhausted",
-                    account_id=str(acct.id),
-                    cap_micro_usd=acct.cap,
-                    committed_micro_usd=acct.committed,
-                    requested_micro_usd=worst,
-                    shutdown_reserve_micro_usd=floor,
-                )
-            category = cats[request.category]
+        if request.scope_kind is BudgetScopeKind.EPISODE:
+            account_id = episode_account_id(tx, request.episode_id)
+        else:
+            account_id = research_account_id(tx, request.season_id)
+        acct = lock_account(tx, account_id)
+        cats = lock_categories(tx, account_id)
+        ledger = self._ledger(tx, acct, cats)
+        # An observed overrun stops all new paid work; shutdown/cleanup is exempt from this
+        # flag but still bound by the cap check below.
+        if acct.blocked and not cleanup:
+            raise BudgetExhausted(
+                "paid dispatch is blocked by an observed overrun",
+                account_id=str(acct.id),
+                blocked_reason=acct.blocked_reason,
+            )
+        if request.season_id is not None and request.season_id != acct.season_id:
+            raise Conflict("reservation season does not match its budget account")
+        existing = reservations_matching(tx, request.request_id, request.semantic_key)
+        if existing:
             if (
-                request.category is _RECOVERY
-                and not cleanup
-                and category.committed + worst + acct.shutdown_reserve > category.allocated
+                len(existing) == 1
+                and existing[0].account_id == acct.id
+                and existing[0].request_hash == request_hash
             ):
+                return _as_reservation(existing[0], replayed=True)
+            raise IdempotencyConflict(
+                "semantic key or request id was reused with different content",
+                semantic_key=request.semantic_key,
+            )
+        if request.expires_at <= ledger.now:
+            raise SchemaInvalid("reservation expiry must be in the future")
+
+        worst = request.worst_case_micro_usd
+        floor = 0 if cleanup else acct.shutdown_reserve
+        if acct.committed + worst + floor > acct.cap:
+            raise BudgetExhausted(
+                "episode allowance exhausted",
+                account_id=str(acct.id),
+                cap_micro_usd=acct.cap,
+                committed_micro_usd=acct.committed,
+                requested_micro_usd=worst,
+                shutdown_reserve_micro_usd=floor,
+            )
+        category = cats[request.category]
+        if (
+            request.category is _RECOVERY
+            and not cleanup
+            and category.committed + worst + acct.shutdown_reserve > category.allocated
+        ):
+            raise BudgetExhausted(
+                "recovery headroom must keep the shutdown reserve free",
+                account_id=str(acct.id),
+                allocated_micro_usd=category.allocated,
+                committed_micro_usd=category.committed,
+                requested_micro_usd=worst,
+            )
+        shortfall = category.committed + worst - category.allocated
+        if shortfall > 0:
+            if not policy.spill_allowed(request.queue, request.category):
                 raise BudgetExhausted(
-                    "recovery headroom must keep the shutdown reserve free",
+                    "category allocation exhausted",
                     account_id=str(acct.id),
+                    category=request.category.value,
                     allocated_micro_usd=category.allocated,
                     committed_micro_usd=category.committed,
                     requested_micro_usd=worst,
                 )
-            shortfall = category.committed + worst - category.allocated
-            if shortfall > 0:
-                if not policy.spill_allowed(request.queue, request.category):
-                    raise BudgetExhausted(
-                        "category allocation exhausted",
-                        account_id=str(acct.id),
-                        category=request.category.value,
-                        allocated_micro_usd=category.allocated,
-                        committed_micro_usd=category.committed,
-                        requested_micro_usd=worst,
-                    )
-                ledger.spill_from_recovery(
-                    target=request.category,
-                    shortfall=shortfall,
-                    floor=floor,
-                    reason=f"auto-spill:{request.semantic_key}",
-                )
+            ledger.spill_from_recovery(
+                target=request.category,
+                shortfall=shortfall,
+                floor=floor,
+                reason=f"auto-spill:{request.semantic_key}",
+            )
 
-            reservation_id = self._new_id()
-            insert_row(
-                tx,
-                "reservations",
-                {
-                    "id": reservation_id,
-                    "account_id": acct.id,
-                    "request_id": request.request_id,
-                    "semantic_key": request.semantic_key,
-                    "request_hash": request_hash,
-                    "category": request.category.value,
-                    "queue": request.queue.value,
-                    "job_id": request.job_id,
-                    "provider": request.provider,
-                    "operation_kind": request.operation_kind,
-                    "price": jsonb(request.price),
-                    "ceilings": jsonb(request.ceilings),
-                    "is_shutdown_or_cleanup": cleanup,
-                    "reserved_micro_usd": worst,
-                    "state": ReservationState.ACTIVE.value,
-                    "expires_at": request.expires_at,
-                    "season_id": acct.season_id,
-                    "episode_id": acct.episode_id,
-                },
-            )
-            ledger.move(request.category, reserved=worst)
-            ledger.flush()
-            return Reservation(
-                id=reservation_id,
-                account_id=acct.id,
-                category=request.category,
-                semantic_key=request.semantic_key,
-                state=ReservationState.ACTIVE,
-                reserved_micro_usd=worst,
-                accrued_micro_usd=0,
-                settled_micro_usd=0,
-            )
+        reservation_id = self._new_id()
+        insert_row(
+            tx,
+            "reservations",
+            {
+                "id": reservation_id,
+                "account_id": acct.id,
+                "request_id": request.request_id,
+                "semantic_key": request.semantic_key,
+                "request_hash": request_hash,
+                "category": request.category.value,
+                "queue": request.queue.value,
+                "job_id": request.job_id,
+                "provider": request.provider,
+                "operation_kind": request.operation_kind,
+                "price": jsonb(request.price),
+                "ceilings": jsonb(request.ceilings),
+                "is_shutdown_or_cleanup": cleanup,
+                "reserved_micro_usd": worst,
+                "state": ReservationState.ACTIVE.value,
+                "expires_at": request.expires_at,
+                "season_id": acct.season_id,
+                "episode_id": acct.episode_id,
+            },
+        )
+        ledger.move(request.category, reserved=worst)
+        ledger.flush()
+        return Reservation(
+            id=reservation_id,
+            account_id=acct.id,
+            category=request.category,
+            semantic_key=request.semantic_key,
+            state=ReservationState.ACTIVE,
+            reserved_micro_usd=worst,
+            accrued_micro_usd=0,
+            settled_micro_usd=0,
+        )
 
     def release(self, reservation_id: UUID, *, reason: str) -> Reservation:
         """Free an ACTIVE reservation that has no usage. Usage must be settled, never released.
@@ -494,53 +498,57 @@ class BudgetService:
         operations are terminal. The core lane must not create a provider operation for a reservation
         that is no longer ACTIVE; this check is only as strong as that guard.
         """
-        cleaned = _closed_reason(reason)
         with self._db.transaction() as tx:
-            account_id = reservation_account_id(tx, reservation_id)
-            acct = lock_account(tx, account_id)
-            cats = lock_categories(tx, account_id)
-            res = lock_reservation(tx, reservation_id)
-            if res.state is not ReservationState.ACTIVE:
-                raise Conflict("only an ACTIVE reservation can be released", state=res.state.value)
-            if res.provider.casefold() == "runpod":
-                # T045 R8/G13: a Runpod hold bound to a lease may only be released on
-                # durable proof that no create was ever sent. Anything else (a create was
-                # requested, or a pod is bound) must close through billing finality (R7).
-                lease = tx.fetchone(
-                    "SELECT create_requested_at, pod_id FROM pod_leases "
-                    "WHERE reservation_id = %s LIMIT 1",
-                    (reservation_id,),
-                )
-                if lease is not None and not (
-                    lease["create_requested_at"] is None and lease["pod_id"] is None
-                ):
-                    raise Conflict(
-                        "a runpod lease hold is released only through billing finality; "
-                        "durable proof that no create was sent is missing",
-                        reservation_id=str(reservation_id),
-                    )
-            if res.accrued != 0:
-                raise Conflict(
-                    "usage was accrued against this reservation; it must be settled, not released"
-                )
-            in_flight = tx.fetchall(
-                "SELECT id, state FROM provider_operations WHERE reservation_id = %s "
-                "AND state IN ('PENDING_SUBMIT', 'SUBMITTED', 'RUNNING', 'UNKNOWN') "
-                "ORDER BY id LIMIT 5",
+            return self.release_in_transaction(tx, reservation_id, reason=reason)
+
+    def release_in_transaction(self, tx: Tx, reservation_id: UUID, *, reason: str) -> Reservation:
+        """Canonical release for atomic experiment closure; every existing guard applies."""
+        cleaned = _closed_reason(reason)
+        account_id = reservation_account_id(tx, reservation_id)
+        acct = lock_account(tx, account_id)
+        cats = lock_categories(tx, account_id)
+        res = lock_reservation(tx, reservation_id)
+        if res.state is not ReservationState.ACTIVE:
+            raise Conflict("only an ACTIVE reservation can be released", state=res.state.value)
+        if res.provider.casefold() == "runpod":
+            # T045 R8/G13: a Runpod hold bound to a lease may only be released on
+            # durable proof that no create was ever sent. Anything else (a create was
+            # requested, or a pod is bound) must close through billing finality (R7).
+            lease = tx.fetchone(
+                "SELECT create_requested_at, pod_id FROM pod_leases "
+                "WHERE reservation_id = %s LIMIT 1",
                 (reservation_id,),
             )
-            if in_flight:
+            if lease is not None and not (
+                lease["create_requested_at"] is None and lease["pod_id"] is None
+            ):
                 raise Conflict(
-                    "provider work is still in flight on this reservation; release only after "
-                    "every operation is terminal",
+                    "a runpod lease hold is released only through billing finality; "
+                    "durable proof that no create was sent is missing",
                     reservation_id=str(reservation_id),
-                    operations=[str(row["id"]) for row in in_flight],
-                    states=[row["state"] for row in in_flight],
                 )
-            ledger = self._ledger(tx, acct, cats)
-            ledger.release(res, reason=cleaned)
-            ledger.flush()
-            return _as_reservation(res)
+        if res.accrued != 0:
+            raise Conflict(
+                "usage was accrued against this reservation; it must be settled, not released"
+            )
+        in_flight = tx.fetchall(
+            "SELECT id, state FROM provider_operations WHERE reservation_id = %s "
+            "AND state IN ('PENDING_SUBMIT', 'SUBMITTED', 'RUNNING', 'UNKNOWN') "
+            "ORDER BY id LIMIT 5",
+            (reservation_id,),
+        )
+        if in_flight:
+            raise Conflict(
+                "provider work is still in flight on this reservation; release only after "
+                "every operation is terminal",
+                reservation_id=str(reservation_id),
+                operations=[str(row["id"]) for row in in_flight],
+                states=[row["state"] for row in in_flight],
+            )
+        ledger = self._ledger(tx, acct, cats)
+        ledger.release(res, reason=cleaned)
+        ledger.flush()
+        return _as_reservation(res)
 
     def expire_stale(self) -> int:
         """Expire ACTIVE reservations whose ``expires_at`` the injected clock has passed.
