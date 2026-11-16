@@ -1,0 +1,158 @@
+{
+  "ambiguous": [
+    {
+      "attempt": 1,
+      "detail": "NEEDS_RECONCILIATION: ComfyUI submit response was not safely understood",
+      "prompt_index": 0
+    }
+  ],
+  "attempts_used": 1,
+  "authorization_sha256": "20064dcd6a30cb0303ccbc33e7da319f84458f14ff35d83f8dd6e717fedf4e73",
+  "billing_pending": true,
+  "billing_readiness": [
+    {
+      "lease_id": "595fb78f-e5fe-41af-91c4-5258efdd119e",
+      "pending_since": "2026-11-05T05:12:19.628489+00:00",
+      "state": "PENDING_PROVIDER_FINALITY"
+    }
+  ],
+  "billing_state": "PENDING_PROVIDER_FINALITY",
+  "blocked_or_uncertain": " ambiguous submit/poll stopped for a human;",
+  "caps": {
+    "max_attempts": 3,
+    "max_prompts": 2,
+    "max_spend_micro_usd": 5000000,
+    "max_storage_gb": 100
+  },
+  "change_ref": "T031-canary-20261105-run13",
+  "client_tokens": [
+    "md-pod-e079c9efd37456bdf3169a8e"
+  ],
+  "deadline_hit": false,
+  "deadline_utc": "2026-11-05T05:49:55+00:00",
+  "episode_id": "1c0ffee0-0000-4000-8000-00000000cafe",
+  "hard_stop_utc": "2026-11-05T05:49:55+00:00",
+  "ignored_interrupts": [],
+  "janitor_summary": {
+    "billing_ingests": [],
+    "budget_holds": [],
+    "failures": []
+  },
+  "max_wall_seconds": 5400,
+  "namespace": "canaryx",
+  "node_schema_mismatch": false,
+  "operator": "clarenze.c",
+  "outcome": "COMPLETE",
+  "output_objects": [],
+  "pins": {
+    "image_ref": "ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f1cf77b85bf987a7a8ccc2d1760186c7c6f088ecd2b3fadacd0cab869",
+    "node_schema_sha256": "00416e6984d2833d310b99631367d6f901d932cbcc2c610e31cf4a5de0734b91",
+    "output_controls_sha256": "2cad3960324f15cf3e686873792c0d8d716dfcf0d744dc967ca5ca6dc9f95dba",
+    "preset_id": "fake-quality-8step",
+    "preset_version": 1,
+    "required_controls": [
+      "SEED",
+      "TEXT_PROMPT"
+    ],
+    "workflow_sha256": "af20bebe9b5c78b09cdff53abcc62ceb6337bfb22e1f80211f9d0e26940727d7"
+  },
+  "pod_id": "kbshvfgpj3edpf",
+  "prompt_ids": [],
+  "prompt_sha256": [
+    "397c08c2db834b15c1935c63c86c8440d26ad4fbd8d35e24ec24736aa8239b7e",
+    "9f093c603c2cd3818048806806e37fa8c59b91e32354f4ee9da398220bff2701"
+  ],
+  "provider_account_ref": "acct:runpod-aivora-ovh-sg",
+  "provider_operation_ids": [],
+  "quote": {
+    "allowed_gpu_types": [
+      "NVIDIA A40",
+      "A40"
+    ],
+    "captured_at": "2026-11-05T03:49:55Z",
+    "compute_micro_usd_per_hour": 590400,
+    "container_disk_gb": 50,
+    "container_storage_micro_usd_per_gb_month": 100000,
+    "currency": "USD",
+    "expires_at": "2026-11-05T05:49:55Z",
+    "host_ram_gb_by_gpu": {
+      "A40": 64,
+      "NVIDIA A40": 64
+    },
+    "max_storage_exposure_micro_usd": 2000000,
+    "maximum_exposure_micro_usd": 5000000,
+    "maximum_runtime_ms": 5400000,
+    "persistent_storage_micro_usd_per_gb_month": 200000,
+    "persistent_volume_gb": 100,
+    "quote_id": "runpod-console-20261105T0334Z-A40"
+  },
+  "reference_sha256": [],
+  "reservation_ids": [
+    "c98c61d1-1025-47df-a54b-e42cdefa1404",
+    "ca25d879-cf8e-43ab-a0fa-e1fcb1f5f076"
+  ],
+  "rights": {
+    "eligible_until": "2026-11-11T00:00:00Z",
+    "rights_evidence_id": "canary:rights-license",
+    "rights_route_id": "route-video-fake",
+    "rights_subject_kind": "MODEL_OUTPUT",
+    "rights_subject_ref": "model-output:qualified",
+    "rights_version": 1,
+    "territories": [
+      "TH"
+    ]
+  },
+  "started_at_utc": "2026-11-05T05:10:53.866916+00:00",
+  "steps": [
+    {
+      "detail": {
+        "lease_id": "595fb78f-e5fe-41af-91c4-5258efdd119e"
+      },
+      "step": "reserve"
+    },
+    {
+      "detail": {
+        "pod_id": "kbshvfgpj3edpf"
+      },
+      "step": "create_pod"
+    },
+    {
+      "detail": {
+        "endpoint": "https://kbshvfgpj3edpf-8188.proxy.runpod.net"
+      },
+      "step": "comfy_endpoint_bound"
+    },
+    {
+      "detail": {
+        "outcome": "MATCH"
+      },
+      "step": "object_info_check"
+    },
+    {
+      "detail": {
+        "attempts_used": 1,
+        "cap_attempts": 3,
+        "cap_prompts": 2,
+        "submitted": 0
+      },
+      "step": "prompts"
+    },
+    {
+      "detail": {
+        "amount": 0,
+        "reason": "prompt ended without success",
+        "reservation_id": "ca25d879-cf8e-43ab-a0fa-e1fcb1f5f076"
+      },
+      "step": "prompt_hold_settled"
+    },
+    {
+      "detail": {
+        "billing_pending": true,
+        "settled_micro_usd": 0
+      },
+      "step": "shutdown"
+    }
+  ],
+  "stop_verified_at": "2026-11-05T05:12:20.036130+00:00",
+  "terminate_verified_at": "2026-11-05T05:12:19.628489+00:00"
+}

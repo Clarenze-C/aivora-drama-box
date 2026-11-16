@@ -1,0 +1,348 @@
+diff --git a/microdrama/src/microdrama/rendering/benchmark_experiments.py b/microdrama/src/microdrama/rendering/benchmark_experiments.py
+index 1cdd7ad..ef8b901 100644
+--- a/microdrama/src/microdrama/rendering/benchmark_experiments.py
++++ b/microdrama/src/microdrama/rendering/benchmark_experiments.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ import json
++from dataclasses import dataclass
+ from datetime import datetime
+ from typing import Any
+ from uuid import UUID
+@@ -17,6 +18,335 @@ from microdrama.persistence.db import Database, Tx, jsonb
+ SCREEN_IDS = ("S01-R1", "S03-R1", "S07-R1")
+ TERMINAL_SAMPLES = {"SUCCEEDED", "FAILED"}
+ 
++TERMINAL_LEASE_STATES = ("RELEASED", "EXPIRED", "ORPHANED")
++TERMINAL_OPERATION_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "NOT_FOUND")
++
++
++@dataclass(frozen=True)
++class UnresolvedItem:
++    """One blocking or replayable item derived from canonical records (§4.1).
++
++    Derived only through immutable linkage - the acquisition's COMPUTE/STORAGE
++    reservation and lease, each sample's fixed ``:a1`` reservation and its job
++    and operation - never from benchmark labels alone.
++    """
++
++    kind: str  # U1, U2, U3, U3p, U3u, U4, U5, U6
++    experiment_id: UUID
++    detail: str
++    acquisition_id: UUID | None = None
++    sample_id: str | None = None
++    reservation_id: UUID | None = None
++    operation_id: UUID | None = None
++
++
++# Blocking scopes (spec §4.1 R2): which gates each kind blocks. U6 blocks only
++# the effect on its own item (its replay is local materialization) and is
++# therefore absent here; callers apply it item-wise.
++BLOCKING_SCOPES: dict[str, frozenset[str]] = {
++    "U1": frozenset({"admission", "claims", "dispatch"}),
++    "U2": frozenset({"admission", "dispatch"}),
++    "U3": frozenset({"admission", "claims", "dispatch"}),
++    "U3p": frozenset({"admission", "claims"}),
++    "U3u": frozenset({"admission", "claims"}),
++    "U4": frozenset({"admission", "claims"}),
++    "U5": frozenset({"admission", "claims", "dispatch"}),
++    "U6": frozenset(),
++}
++
++
++def blocking(
++    items: list[UnresolvedItem],
++    action: str,
++    *,
++    acquisition_id: UUID | None = None,
++    sample_id: str | None = None,
++) -> list[UnresolvedItem]:
++    """The items that block ``action`` (admission/claims/dispatch).
++
++    Acquisition-scoped kinds (U2's dispatch block, U3u's dependent samples)
++    apply only to the named acquisition/sample; uncertain-create, submit and
++    reopened-liability items block the whole experiment (§4.1 R2).
++    """
++    result = []
++    for item in items:
++        scopes = BLOCKING_SCOPES.get(item.kind, frozenset())
++        if action not in scopes:
++            continue
++        if item.kind == "U2" and action == "dispatch":
++            if acquisition_id is not None and item.acquisition_id != acquisition_id:
++                continue
++        if item.kind == "U3u":
++            if acquisition_id is not None and item.acquisition_id != acquisition_id:
++                continue
++        if item.kind == "U6":
++            # U6 never blocks other work; only the exact item's own effect,
++            # which callers evaluate item-wise.
++            if sample_id is not None and item.sample_id != sample_id:
++                continue
++            if item.sample_id is None and acquisition_id is not None:
++                if item.acquisition_id != acquisition_id:
++                    continue
++        result.append(item)
++    return result
++
++
++def unresolved_items(tx: Tx, experiment_id: UUID, *, now: datetime) -> list[UnresolvedItem]:
++    """Every unresolved item, from canonical lease/reservation/operation/upload rows.
++
++    One repository function used by every caller (spec §4.1). ``now`` comes from
++    the caller's clock so the sweep and every gate agree on time.
++    """
++    items: list[UnresolvedItem] = []
++    acquisitions = tx.fetchall(
++        "SELECT a.*, l.lease_state, l.pod_id, l.create_requested_at, "
++        "l.terminate_verified_at FROM benchmark_acquisitions a "
++        "LEFT JOIN pod_leases l ON l.id=a.lease_id WHERE a.experiment_id=%s "
++        "ORDER BY generation",
++        (experiment_id,),
++    )
++    outcome = tx.fetchval(
++        "SELECT execution_outcome FROM benchmark_experiments WHERE experiment_id=%s",
++        (experiment_id,),
++    )
++    by_acquisition: dict[UUID, dict] = {}
++    for row in acquisitions:
++        by_acquisition[row["acquisition_id"]] = row
++    samples = tx.fetchall(
++        "SELECT s.sample_id, s.state, s.job_id, s.operation_id, s.reservation_id, "
++        "s.acquisition_id FROM benchmark_samples s WHERE s.experiment_id=%s "
++        "AND s.reservation_id IS NOT NULL ORDER BY sample_id",
++        (experiment_id,),
++    )
++    operations = {
++        row["reservation_id"]: row
++        for row in tx.fetchall(
++            "SELECT o.id, o.state, o.submitted_at, o.reservation_id FROM provider_operations o "
++            "JOIN benchmark_samples s ON s.reservation_id=o.reservation_id "
++            "WHERE s.experiment_id=%s",
++            (experiment_id,),
++        )
++    }
++    uploads = tx.fetchall(
++        "SELECT u.acquisition_id, COUNT(*) AS open FROM benchmark_uploads u "
++        "JOIN benchmark_acquisitions a ON a.acquisition_id=u.acquisition_id "
++        "WHERE a.experiment_id=%s AND u.state IN ('INTENT','UNKNOWN') "
++        "GROUP BY u.acquisition_id",
++        (experiment_id,),
++    )
++    open_uploads = {row["acquisition_id"]: row["open"] for row in uploads}
++    slot = tx.fetchone(
++        "SELECT sample_id FROM benchmark_dispatch_slots WHERE experiment_id=%s",
++        (experiment_id,),
++    )
++
++    # U1 - create uncertain: committed create intent, no pod, no resolution.
++    for row in acquisitions:
++        if (
++            row["lease_id"] is not None
++            and row["create_requested_at"] is not None
++            and row["pod_id"] is None
++            and not tx.fetchval(
++                "SELECT 1 FROM runpod_podless_create_resolutions WHERE lease_id=%s",
++                (row["lease_id"],),
++            )
++        ):
++            items.append(
++                UnresolvedItem(
++                    kind="U1",
++                    experiment_id=experiment_id,
++                    acquisition_id=row["acquisition_id"],
++                    detail="committed podless create intent without resolution",
++                )
++            )
++
++    # U5 - reopened liability: a contradicted no-create resolution whose
++    # discovered pod is not yet finalized (terminate verified).
++    for row in acquisitions:
++        if row["lease_id"] is None:
++            continue
++        contradicted = tx.fetchone(
++            "SELECT contradicted_at FROM runpod_podless_create_resolutions "
++            "WHERE lease_id=%s",
++            (row["lease_id"],),
++        )
++        if (
++            contradicted is not None
++            and contradicted["contradicted_at"] is not None
++            and row["terminate_verified_at"] is None
++        ):
++            items.append(
++                UnresolvedItem(
++                    kind="U5",
++                    experiment_id=experiment_id,
++                    acquisition_id=row["acquisition_id"],
++                    detail="contradicted no-create resolution with unfinalized pod",
++                )
++            )
++
++    # U2 - cleanup owed: shutdown begun / cleanup required and finalization
++    # incomplete. A healthy ACTIVE acquisition inside its window is NOT U2;
++    # a resolved NO_CREATE_PROVEN whose sweep finalization is incomplete IS
++    # (R1): its partial-index exclusion never authorises the next acquisition.
++    storage_open = {
++        row["acquisition_id"]: row["open"]
++        for row in tx.fetchall(
++            "SELECT l.acquisition_id, COUNT(*) AS open FROM benchmark_reservation_links l "
++            "JOIN reservations r ON r.id=l.reservation_id "
++            "WHERE l.experiment_id=%s AND l.purpose='STORAGE' AND r.state='ACTIVE' "
++            "GROUP BY l.acquisition_id",
++            (experiment_id,),
++        )
++    }
++    ambiguous_samples = {
++        row["sample_id"]
++        for row in samples
++        if row["operation_id"] is not None
++        or (
++            row["reservation_id"] in operations
++            and operations[row["reservation_id"]]["state"]
++            in ("UNKNOWN", "PENDING_SUBMIT", "SUBMITTED", "RUNNING")
++        )
++    }
++    for row in acquisitions:
++        reasons: list[str] = []
++        if row["state"] == "CLEANUP_PENDING":
++            reasons.append("cleanup pending")
++        if row["state"] == "NO_CREATE_PROVEN" and (
++            storage_open.get(row["acquisition_id"], 0) > 0
++        ):
++            reasons.append("resolved no-create storage hold not yet finalized (R1)")
++        if row["state"] not in ("CLOSED", "NO_CREATE_PROVEN"):
++            if row["lease_state"] in TERMINAL_LEASE_STATES or (
++                row["terminate_verified_at"] is not None
++            ):
++                reasons.append("terminal lease awaits acquisition finalization")
++            if outcome is not None:
++                reasons.append("experiment outcome set; cleanup owed")
++            deadline = row["recovery_deadline"]
++            if deadline is not None and now >= deadline:
++                if any(
++                    s["acquisition_id"] == row["acquisition_id"]
++                    and s["sample_id"] in ambiguous_samples
++                    for s in samples
++                ) or (
++                    row["create_requested_at"] is not None
++                    and row["pod_id"] is None
++                    and row["state"] == "UNKNOWN"
++                ):
++                    reasons.append("recovery deadline passed with ambiguity unresolved")
++        if reasons and row["state"] != "CLOSED":
++            items.append(
++                UnresolvedItem(
++                    kind="U2",
++                    experiment_id=experiment_id,
++                    acquisition_id=row["acquisition_id"],
++                    detail="; ".join(reasons),
++                )
++            )
++
++    # U3 / U3p / U4 - sample operation state through the fixed reservation.
++    for sample in samples:
++        operation = operations.get(sample["reservation_id"])
++        if operation is None:
++            if sample["state"] == "CLAIMED" and sample["job_id"] is None:
++                items.append(
++                    UnresolvedItem(
++                        kind="U6",
++                        experiment_id=experiment_id,
++                        acquisition_id=sample["acquisition_id"],
++                        sample_id=sample["sample_id"],
++                        reservation_id=sample["reservation_id"],
++                        detail="sample claim+hold committed without job/operation",
++                    )
++                )
++            continue
++        state = operation["state"]
++        if state == "UNKNOWN" or state == "PENDING_SUBMIT":
++            # I2: PENDING_SUBMIT alone is not proof the send never happened; a
++            # durable pre-dispatch refusal would have moved the operation to
++            # FAILED before any send could be accepted.
++            items.append(
++                UnresolvedItem(
++                    kind="U3",
++                    experiment_id=experiment_id,
++                    acquisition_id=sample["acquisition_id"],
++                    sample_id=sample["sample_id"],
++                    reservation_id=sample["reservation_id"],
++                    operation_id=operation["id"],
++                    detail=f"operation {state.lower()} without proven outcome",
++                )
++            )
++        elif state in ("SUBMITTED", "RUNNING"):
++            items.append(
++                UnresolvedItem(
++                    kind="U3p",
++                    experiment_id=experiment_id,
++                    acquisition_id=sample["acquisition_id"],
++                    sample_id=sample["sample_id"],
++                    reservation_id=sample["reservation_id"],
++                    operation_id=operation["id"],
++                    detail=f"operation {state.lower()} in flight",
++                )
++            )
++        elif state in TERMINAL_OPERATION_STATES:
++            projected = sample["state"] in TERMINAL_SAMPLES
++            slot_held = slot is not None and slot["sample_id"] == sample["sample_id"]
++            reservation = tx.fetchone(
++                "SELECT state FROM reservations WHERE id=%s", (sample["reservation_id"],)
++            )
++            settled = reservation is not None and reservation["state"] in (
++                "SETTLED",
++                "RELEASED",
++            )
++            sample_row = tx.fetchone(
++                "SELECT output FROM benchmark_samples WHERE experiment_id=%s "
++                "AND sample_id=%s",
++                (experiment_id, sample["sample_id"]),
++            )
++            asset_missing = (
++                operation["state"] == "SUCCEEDED"
++                and not (sample_row["output"] or {}).get("sha256")
++            )
++            if not projected or slot_held or not settled or asset_missing:
++                items.append(
++                    UnresolvedItem(
++                        kind="U4",
++                        experiment_id=experiment_id,
++                        acquisition_id=sample["acquisition_id"],
++                        sample_id=sample["sample_id"],
++                        reservation_id=sample["reservation_id"],
++                        operation_id=operation["id"],
++                        detail="terminal operation not fully finalized/projected",
++                    )
++                )
++
++    # U3u - upload uncertain: an unverified upload intent blocks every
++    # dependent sample of that acquisition (R2), never cleanup.
++    for acquisition_id, count in open_uploads.items():
++        items.append(
++            UnresolvedItem(
++                kind="U3u",
++                experiment_id=experiment_id,
++                acquisition_id=acquisition_id,
++                detail=f"{count} upload intent(s) without checksum-verified readback",
++            )
++        )
++
++    # U6 - acquisition materialization incomplete: intent+holds committed
++    # without the canonical lease link (§F ADMITTED_WITHOUT_JOB).
++    for row in acquisitions:
++        if row["lease_id"] is None:
++            items.append(
++                UnresolvedItem(
++                    kind="U6",
++                    experiment_id=experiment_id,
++                    acquisition_id=row["acquisition_id"],
++                    detail="acquisition intent+holds committed without lease/job links",
++                )
++            )
++    return items
++
+ 
+ def document(value: Any) -> dict[str, Any]:
+     return value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)

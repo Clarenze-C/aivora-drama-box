@@ -1,4 +1,4 @@
-# T031 canary — authorization packet (prepared 2 November 2026, NOT run)
+# T031 canary — historical authorization packet (completed 5 November 2026)
 
 This packet asks the operator to approve **one bounded Runpod/Comfy canary**. The canary is T031's
 first step: it proves Drama Box's own lease → reserve → submit → durable output → verified shutdown
@@ -6,7 +6,15 @@ first step: it proves Drama Box's own lease → reserve → submit → durable o
 configuration, Thai voice/quality comparison). That benchmark needs its own authorization once this
 canary's results are in.
 
-Nothing here has been executed. No Pod, paid request or provider call has been made.
+**Status addendum — 6 November:** this historical lifecycle authorization was
+executed, run 14 completed, and later billing settled. Earlier unchecked boxes and
+proposed caps below describe preparation at that time; they are not current
+blockers or fresh authorization. The image used stub video nodes, not Wan or H3
+weights. See [canary close-out](T031-canary-closeout.md).
+
+The next real-model proposal is [Pika H3 Flex with native audio](T031-benchmark-packet.md),
+selected by the operator on 6 November. Its budget is unsigned. The historical
+Wan fallback recommendation below does not select the production model.
 
 ## 1. Preconditions — every box must be true before `execute`
 
@@ -147,7 +155,7 @@ tests) must carry, among the runbook's fields: the `episode_id` the canary is at
 - `microdrama/evidence/provider-qualification/<utc>-canary.json`, holding the runbook's canary-record
   fields: quote, caps, pins, reservation/lease/Pod/prompt ids, output keys with byte length and
   sha256, stop/terminate verification, janitor observation, billing readiness.
-- Billed cost is shown as **pending** until step 3. Provider-reported bucket amounts are never
+- Billed cost is shown as **pending** until invoice verification and the subsequent sweep. Provider-reported bucket amounts are never
   relabelled as billed.
 
 ## 8. Sign-off

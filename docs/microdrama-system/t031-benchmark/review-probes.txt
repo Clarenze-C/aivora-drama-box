@@ -1,0 +1,37 @@
+Offline review probes, 6 November 2026; no real credentials or network calls.
+Run from /root/AIVORA/drama-box/microdrama with PYTHONPATH=src .venv/bin/python.
+
+R1:
+from decimal import Decimal
+from microdrama.rendering.runpod_transport import _billing_record
+row = {
+    "podId": "synthetic-review-pod",
+    "startTime": "2026-11-05T05:00:00Z",
+    "endTime": "2026-11-05T06:00:00Z",
+    "gpuAmount": "0.0351746", "cpuAmount": "0",
+    "diskAmount": "0.0005786", "totalAmount": "0.0357532",
+}
+assert Decimal(row["gpuAmount"]) + Decimal(row["diskAmount"]) == Decimal(row["totalAmount"])
+record = _billing_record(row)
+assert record.total_micro_usd == 35753
+assert record.gpu_micro_usd + record.cpu_micro_usd + record.disk_micro_usd == 35754
+
+R2:
+import importlib.util
+import sys
+from microdrama.contracts.errors import ProviderError
+spec = importlib.util.spec_from_file_location("review_probe_tests", "tests/unit/rendering/test_runpod_transport.py")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+marker = "SYNTHETIC_REVIEW_TOKEN_NOT_A_REAL_SECRET"
+transport = module.ScriptedTransport(
+    lambda method, url, body: module.Response(401, ("Authorization: Bearer " + marker).encode())
+)
+provider = module._provider(transport)
+try:
+    provider.create_pod(module._request())
+except ProviderError as exc:
+    assert marker in exc.message
+else:
+    raise AssertionError("expected the scripted provider refusal")

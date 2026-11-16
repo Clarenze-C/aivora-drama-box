@@ -1,0 +1,17 @@
+{
+  "source": "RunPod console/API billing view, observed by the T031 session on behalf of the operator",
+  "observed_at": "2026-11-05T15:39:20.314199+00:00",
+  "pod_id": "xykul8kobl1e6s",
+  "period": {
+    "start": "2026-11-05T05:00:00Z",
+    "end": "2026-11-05T06:00:00Z"
+  },
+  "amounts_usd": {
+    "gpu": 0.03517432510852814,
+    "cpu": 0.0,
+    "disk": 0.0005787037080153823,
+    "total": 0.03575302881654352
+  },
+  "amount_total_micro_usd": 35753,
+  "note": "canary run 14 (T031-canary-20261105-run14); bucket unchanged across reads at 12:20Z and now"
+}

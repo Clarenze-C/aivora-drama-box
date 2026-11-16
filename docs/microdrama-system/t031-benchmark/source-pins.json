@@ -1,0 +1,192 @@
+{
+  "prepared_at_utc": "2026-11-06T09:41:06.555488+00:00",
+  "status": "RESEARCH_PINS_ONLY_NOT_EXECUTABLE_AUTHORIZATION",
+  "selected_model": "Pika H3 Flex / MiniMax H3",
+  "audio_route": "NATIVE_SYNCHRONIZED_AUDIO",
+  "upstream": [
+    {
+      "repository": "Pika-Labs/Pika-H3-Flex",
+      "revision": "3ff166447d5edb1406107ab8370c42000ce173e4",
+      "url": "https://huggingface.co/Pika-Labs/Pika-H3-Flex/tree/3ff166447d5edb1406107ab8370c42000ce173e4",
+      "files": [
+        {
+          "path": "LICENSE",
+          "size": 17604,
+          "sha256": "59b99642b95ea21630e311198ddbfffbfe05aadba0c2f5d884cbdf4efcc90f44"
+        },
+        {
+          "path": "NOTICE",
+          "size": 397,
+          "sha256": "8fc52805a4f8d034f853b5ed494574e37f292def5cdd326d22547afa2658527b"
+        },
+        {
+          "path": "comfy/README.md",
+          "size": 3837,
+          "sha256": "125b7e6e797d45c319b18479533f1787a5cdc8f5cf7f98918830aa6e4790d700"
+        },
+        {
+          "path": "comfy/SHA256SUMS",
+          "size": 229,
+          "sha256": "0627a01f12cf262e34bdcf1dc7c29c852d5824b02dc3d8547a5827ff77948ad8"
+        },
+        {
+          "path": "comfy/loras/pika_h3_flex_fl2va_comfy_bf16.safetensors",
+          "size": 1956172176,
+          "sha256": "68783e6447696ec365d13c0554941e070bee4cfea13c37da52498ec4f9a53f89"
+        },
+        {
+          "path": "comfy/loras/pika_h3_flex_ref2va_comfy_bf16.safetensors",
+          "size": 1956172176,
+          "sha256": "e4d058fbd027377b925a0ee607b514ddd9037873fee3afa05d73b302e6f7f8e1"
+        }
+      ],
+      "license_sha256": "59b99642b95ea21630e311198ddbfffbfe05aadba0c2f5d884cbdf4efcc90f44"
+    },
+    {
+      "repository": "MiniMaxAI/MiniMax-H3",
+      "revision": "42ed227ee7df40d41602854ae760620d6eb651fe",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/tree/42ed227ee7df40d41602854ae760620d6eb651fe",
+      "files": [],
+      "license_sha256": "59b99642b95ea21630e311198ddbfffbfe05aadba0c2f5d884cbdf4efcc90f44"
+    },
+    {
+      "repository": "Pika-Labs/Pika-H3-Flex",
+      "revision": "06bd434ce0b6e287e6f6c4058420460f47ba031b",
+      "url": "https://github.com/Pika-Labs/Pika-H3-Flex/commit/06bd434ce0b6e287e6f6c4058420460f47ba031b",
+      "commit_time": "2026-11-02T09:07:28Z"
+    },
+    {
+      "repository": "Comfy-Org/ComfyUI",
+      "revision": "63e5bf594339f676b4b15e072529873e3448409e",
+      "url": "https://github.com/Comfy-Org/ComfyUI/commit/63e5bf594339f676b4b15e072529873e3448409e",
+      "commit_time": "2026-11-06T06:32:17Z"
+    },
+    {
+      "repository": "Comfy-Org/workflow_templates",
+      "revision": "ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac",
+      "url": "https://github.com/Comfy-Org/workflow_templates/commit/ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac",
+      "commit_time": "2026-11-05T21:05:59Z"
+    },
+    {
+      "repository": "Comfy-Org/MiniMax-H3",
+      "revision": "54472221d27c695fca9621b0c3ed52f06c4af707",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/tree/54472221d27c695fca9621b0c3ed52f06c4af707",
+      "license_tag": "other",
+      "files": [
+        {
+          "path": "diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+          "size": 20970379616,
+          "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779"
+        },
+        {
+          "path": "loras/pika_h3_flex_ref2va_v1_bf16.safetensors",
+          "size": 1956172304,
+          "sha256": "de3745ceb7d8d5c20898dd8fa3a05f1c0b00089ccd55297b2a8bab95c766b0e0"
+        },
+        {
+          "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+          "size": 15687142551,
+          "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6"
+        },
+        {
+          "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+          "size": 605254808,
+          "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48"
+        },
+        {
+          "path": "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+          "size": 2811065184,
+          "sha256": "52a2c8c73583c86e4f41cdcce3a6ad0ea562987bc0bf3d60a0cef5f5c8e60c0e"
+        }
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "mode": "ref2va",
+      "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac/templates/video_pika_h3_flex_ref2va.json",
+      "repository_revision": "ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac",
+      "local_file": "upstream-pika-h3-flex-ref2va.json",
+      "sha256": "d4aa7a597b22b83a1e815d51265701167bf015192eb4a7f3204c682f7864b881",
+      "format": "COMFY_UI_GRAPH_NOT_API_PROMPT",
+      "node_types": [
+        "BasicGuider",
+        "CLIPLoader",
+        "ComfyMathExpression",
+        "CreateVideo",
+        "KSamplerSelect",
+        "LoadImage",
+        "LoraLoaderModelOnly",
+        "ManualSigmas",
+        "MarkdownNote",
+        "MiniMaxH3ReferenceToVideo",
+        "PrimitiveFloat",
+        "PrimitiveStringMultiline",
+        "RandomNoise",
+        "ResolutionSelector",
+        "SamplerCustomAdvanced",
+        "SaveVideo",
+        "UNETLoader",
+        "VAEDecode",
+        "VAEDecodeAudio",
+        "VAELoader"
+      ]
+    },
+    {
+      "mode": "fl2va",
+      "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac/templates/video_pika_h3_flex_fl2va.json",
+      "repository_revision": "ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac",
+      "local_file": "upstream-pika-h3-flex-fl2va.json",
+      "sha256": "1cf38cd25ea851f93ba13b02cd1463320b5a1f42768b1f70cd83bb3748d95dd9",
+      "format": "COMFY_UI_GRAPH_NOT_API_PROMPT",
+      "node_types": [
+        "79dd8a95-ce9d-4c14-b264-2162e8bec5ce",
+        "GetImageSize",
+        "LoadImage",
+        "MarkdownNote",
+        "SaveVideo"
+      ]
+    },
+    {
+      "mode": "t2v",
+      "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac/templates/video_pika_h3_flex_t2v.json",
+      "repository_revision": "ece24f0add491c5ffdfb7f01a6f8c2e8b654b4ac",
+      "local_file": "upstream-pika-h3-flex-t2v.json",
+      "sha256": "e7498b32c42360112d87d9d1e3dba063e861f7a1fede7fedcb8d917406878ccb",
+      "format": "COMFY_UI_GRAPH_NOT_API_PROMPT",
+      "node_types": [
+        "79dd8a95-ce9d-4c14-b264-2162e8bec5ce",
+        "MarkdownNote",
+        "ResolutionSelector",
+        "SaveVideo"
+      ]
+    }
+  ],
+  "selected_candidate": {
+    "mode": "ref2va",
+    "resolution": "480p_portrait_PENDING_EXACT_BUCKET",
+    "base_precision": "pruned_int8_convrot",
+    "text_encoder_precision": "nvfp4_awq",
+    "adapter_strength": 1.0,
+    "sampler": "lcm",
+    "sigmas": [
+      1.0,
+      0.972973,
+      0.923077,
+      0.8,
+      0.571429,
+      0.333333,
+      0.0
+    ],
+    "runtime_verified": false,
+    "total_component_bytes": 42030014463
+  },
+  "runtime_base_candidate": {
+    "image": "pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime",
+    "digest": "sha256:7b324d212a4450795b49edba9949b7cdc72429148a64e974334bfe5774d51385",
+    "architecture": "amd64",
+    "compressed_bytes": 4448715237,
+    "metadata_verified_at": "2026-11-06",
+    "runtime_tested": false
+  }
+}

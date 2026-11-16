@@ -1,0 +1,45 @@
+{
+  "date": "2026-11-06",
+  "head": "085137415862a309f30df949224e6ed5431e86e4",
+  "step_1": "REVIEW_COMPLETE_FIX_REQUIRED",
+  "step_2": "NOT_BUILT_PENDING_GOLDFISH",
+  "step_3": "NOT_BUILT_PENDING_GOLDFISH",
+  "focused_tests": {
+    "passed": 150,
+    "warnings": 1,
+    "duration_seconds": "60.52",
+    "exit_code": 0
+  },
+  "goldfish": {
+    "exit_code": 75,
+    "model_started": false,
+    "reported_reset_utc": "2026-11-06T12:45:00Z"
+  },
+  "files": [
+    {
+      "path": ".scratch/t031-steps123/canary-review-tests.log",
+      "sha256": "2fcc4d9b278a15f451b2cb69081e2439667174e353d15884f117c4c6159472fa",
+      "size_bytes": 1743
+    },
+    {
+      "path": ".scratch/t031-steps123/goldfish-launch.log",
+      "sha256": "6dfd67c3b1ce07c3664f9bd86636d416553e0032e7d285400943706a2058c13e",
+      "size_bytes": 220
+    },
+    {
+      "path": "docs/microdrama-system/T031-canary-night-review.md",
+      "sha256": "a1f0a6ccaac7bc1f4e87fbe521ad08693c8b6b7c047f6f456d86e83fda649e2e",
+      "size_bytes": 7115
+    },
+    {
+      "path": "docs/microdrama-system/T031-integration-spec.md",
+      "sha256": "eeb89b2c2ddcca9546c5cf255ebb3b5e0fd220cb19ef12e18d17f30fe4ae35dd",
+      "size_bytes": 23024
+    },
+    {
+      "path": "docs/microdrama-system/T031-STEPS-1-3-RESUME.md",
+      "sha256": "159aa536540a8ea9e1985dcc734a4c9524fc290a45b97a5bb0f24f5dc9b52b24",
+      "size_bytes": 5008
+    }
+  ]
+}

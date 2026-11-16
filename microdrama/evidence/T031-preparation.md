@@ -1,4 +1,12 @@
-# T031 canary preparation — 2026-11-04 (no paid run performed)
+# T031 canary preparation and historical live attempt log — 4–5 November 2026
+
+> **Current-status addendum, 6 November 2026:** run 14 completed and later invoice
+> verification/sweep settled billing on 5 November. The earlier preparation-only
+> paragraphs and run-8 “open defect #7” below are historical: `989bf12` subsequently
+> persisted the pod ID before verification. The canary used stub-generated video;
+> no H3/Thai quality acceptance follows. See the reconciled
+> [close-out](../../docs/microdrama-system/T031-canary-closeout.md) and the next
+> [Pika H3 Flex native-audio packet](../../docs/microdrama-system/T031-benchmark-packet.md).
 
 ## Live attempt log (night of 2026-11-04/05)
 

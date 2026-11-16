@@ -1,0 +1,176 @@
+{
+  "ambiguous": [],
+  "attempts_used": 2,
+  "authorization_sha256": "e28ed491d59662aaba663d8023abbfd9be57a830458f8021f52299a3d6d8f0ce",
+  "billing_pending": true,
+  "billing_readiness": [
+    {
+      "lease_id": "4361b87a-cf91-477c-8c39-6530ef959646",
+      "pending_since": "2026-11-05T05:21:38.911205+00:00",
+      "state": "PENDING_PROVIDER_FINALITY"
+    }
+  ],
+  "billing_state": "PENDING_PROVIDER_FINALITY",
+  "blocked_or_uncertain": "billing is PENDING_PROVIDER_FINALITY until the period invoice is verified (canary invoice)",
+  "caps": {
+    "max_attempts": 3,
+    "max_prompts": 2,
+    "max_spend_micro_usd": 5000000,
+    "max_storage_gb": 100
+  },
+  "change_ref": "T031-canary-20261105-run14",
+  "client_tokens": [
+    "md-pod-78659b3fdf990310af639df2"
+  ],
+  "deadline_hit": false,
+  "deadline_utc": "2026-11-05T06:47:57.548157+00:00",
+  "episode_id": "1c0ffee0-0000-4000-8000-00000000cafe",
+  "hard_stop_utc": "2026-11-05T07:15:16+00:00",
+  "ignored_interrupts": [],
+  "janitor_summary": {
+    "billing_ingests": [],
+    "budget_holds": [],
+    "failures": []
+  },
+  "max_wall_seconds": 5400,
+  "namespace": "canaryx",
+  "node_schema_mismatch": false,
+  "operator": "clarenze.c",
+  "outcome": "COMPLETE",
+  "output_objects": [
+    {
+      "object_key": "renders/1c0ffee0-0000-4000-8000-00000000cafe/canary-0/a1/combine.mp4",
+      "sha256": "a79c8e0bdb9d485c0e232f25b5260df2cf8feafa978e9e64da12da9f6675e774",
+      "size_bytes": 38171044
+    },
+    {
+      "object_key": "renders/1c0ffee0-0000-4000-8000-00000000cafe/canary-1/a1/combine.mp4",
+      "sha256": "2bf81cc11ba42031d6fea5530f899a0a3b380bb2432bfa7b3204ea4b9d008934",
+      "size_bytes": 36759237
+    }
+  ],
+  "pins": {
+    "image_ref": "ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f1cf77b85bf987a7a8ccc2d1760186c7c6f088ecd2b3fadacd0cab869",
+    "node_schema_sha256": "00416e6984d2833d310b99631367d6f901d932cbcc2c610e31cf4a5de0734b91",
+    "output_controls_sha256": "2cad3960324f15cf3e686873792c0d8d716dfcf0d744dc967ca5ca6dc9f95dba",
+    "preset_id": "fake-quality-8step",
+    "preset_version": 1,
+    "required_controls": [
+      "SEED",
+      "TEXT_PROMPT"
+    ],
+    "workflow_sha256": "af20bebe9b5c78b09cdff53abcc62ceb6337bfb22e1f80211f9d0e26940727d7"
+  },
+  "pod_id": "xykul8kobl1e6s",
+  "prompt_ids": [
+    "306311d4-5b40-459a-aa23-44c01cdb7480",
+    "a65ff412-2a42-4583-b700-f4d9ef9b31fc"
+  ],
+  "prompt_sha256": [
+    "397c08c2db834b15c1935c63c86c8440d26ad4fbd8d35e24ec24736aa8239b7e",
+    "9f093c603c2cd3818048806806e37fa8c59b91e32354f4ee9da398220bff2701"
+  ],
+  "provider_account_ref": "acct:runpod-aivora-ovh-sg",
+  "provider_operation_ids": [
+    "2a5b4edd-767c-42a0-9807-91d4c98fd946",
+    "067dbfda-280f-425d-8948-b86514b88f68"
+  ],
+  "quote": {
+    "allowed_gpu_types": [
+      "NVIDIA A40",
+      "A40"
+    ],
+    "captured_at": "2026-11-05T05:15:16Z",
+    "compute_micro_usd_per_hour": 590400,
+    "container_disk_gb": 50,
+    "container_storage_micro_usd_per_gb_month": 100000,
+    "currency": "USD",
+    "expires_at": "2026-11-05T07:15:16Z",
+    "host_ram_gb_by_gpu": {
+      "A40": 64,
+      "NVIDIA A40": 64
+    },
+    "max_storage_exposure_micro_usd": 2000000,
+    "maximum_exposure_micro_usd": 5000000,
+    "maximum_runtime_ms": 5400000,
+    "persistent_storage_micro_usd_per_gb_month": 200000,
+    "persistent_volume_gb": 100,
+    "quote_id": "runpod-console-20261105T0525Z-A40"
+  },
+  "reference_sha256": [],
+  "reservation_ids": [
+    "b60c8665-671e-4dd6-984a-ef7807f4b158",
+    "731ecad9-7848-4364-b258-93df1efa5d7a",
+    "1350a14d-1834-43f8-99fd-d9677157e99f"
+  ],
+  "rights": {
+    "eligible_until": "2026-11-11T00:00:00Z",
+    "rights_evidence_id": "canary:rights-license",
+    "rights_route_id": "route-video-fake",
+    "rights_subject_kind": "MODEL_OUTPUT",
+    "rights_subject_ref": "model-output:qualified",
+    "rights_version": 1,
+    "territories": [
+      "TH"
+    ]
+  },
+  "started_at_utc": "2026-11-05T05:17:57.548157+00:00",
+  "steps": [
+    {
+      "detail": {
+        "lease_id": "4361b87a-cf91-477c-8c39-6530ef959646"
+      },
+      "step": "reserve"
+    },
+    {
+      "detail": {
+        "pod_id": "xykul8kobl1e6s"
+      },
+      "step": "create_pod"
+    },
+    {
+      "detail": {
+        "endpoint": "https://xykul8kobl1e6s-8188.proxy.runpod.net"
+      },
+      "step": "comfy_endpoint_bound"
+    },
+    {
+      "detail": {
+        "outcome": "MATCH"
+      },
+      "step": "object_info_check"
+    },
+    {
+      "detail": {
+        "attempt": 1,
+        "prompt_index": 0
+      },
+      "step": "prompt_succeeded"
+    },
+    {
+      "detail": {
+        "attempt": 1,
+        "prompt_index": 1
+      },
+      "step": "prompt_succeeded"
+    },
+    {
+      "detail": {
+        "attempts_used": 2,
+        "cap_attempts": 3,
+        "cap_prompts": 2,
+        "submitted": 2
+      },
+      "step": "prompts"
+    },
+    {
+      "detail": {
+        "billing_pending": true,
+        "settled_micro_usd": 0
+      },
+      "step": "shutdown"
+    }
+  ],
+  "stop_verified_at": "2026-11-05T05:21:39.504556+00:00",
+  "terminate_verified_at": "2026-11-05T05:21:38.911205+00:00"
+}

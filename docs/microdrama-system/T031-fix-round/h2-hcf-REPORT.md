@@ -1,5 +1,7 @@
 # T031 H-2 HCF build report (Codex P4/P5 findings, fix round 3)
 
+H2-HCF: ALL FIXES DONE
+
 Builder: GLM-5.3 build session, 11 Nov 2026. Branch `feat/t031-fix3`, base `4e28514`
 (P5 tip + formatting). Findings: [codex-review-h2-p4p5.md](codex-review-h2-p4p5.md);
 rulings in the task brief (HC-2 ruled first, as package F1).
@@ -11,8 +13,8 @@ rulings in the task brief (HC-2 ruled first, as package F1).
 | F1 | HC-2 (ruling 1: revert + benchmark layer) | **DONE** | `6db5fe8` |
 | F2 | HC-6 lock helper + inventory; HC-5 ownership | **DONE** | `9b736da` |
 | F3 | HC-1 storage finality; HC-7; HC-8; HC-9 | **DONE** | `e521653` |
-| F4 | HC-3 R7 recoverability; HC-4 terminal replay | pending | — |
-| F5 | HC-10 test proofs; HC-11; HC-12 | pending | — |
+| F4 | HC-3 R7 recoverability; HC-4 terminal replay | **DONE** | `c044daf` |
+| F5 | HC-10 test proofs; HC-11; HC-12 | **DONE** | `7060e02` |
 
 ## F1 — HC-2: revert the out-of-spec canonical receipt conversions; benchmark-layer late billing (commit `6db5fe8`)
 
@@ -322,10 +324,236 @@ the refuted early clearing were strengthened, not the code weakened:
   placeholder where this session's trace probes lived (deletion forbidden);
   safe to remove.
 
+## F4 — HC-3 (R7 recoverability through the RECOVERY path); HC-4 (complete terminal replay) (commit `c044daf`)
+
+Resumed from the second z.ai-limit stop: the F4 WIP sat uncommitted in the
+worktree (no stash this time). The red run used the resume procedure's
+`git show HEAD:<path> > <path>` restore (sources only; tests stayed), then
+`git apply` of the saved diff (`.scratch/f4-wip-sources.diff`, untracked).
+
+### What shipped
+
+- **HC-3**: the R7 BOUND-source probe in `resolve_sample` no longer calls a
+  bare `poll` through the resolution's CLEANUP world. It composes a
+  **RECOVERY** world (`self._world(mode="RECOVERY", acquisition_id=...)`) and
+  probes with `comfy.reconcile_unknown` — the canonical client-ID discovery:
+  - UNKNOWN without `external_id` whose POST landed: discovery adopts the
+    prompt and returns its state → **Conflict even with
+    `--force-unrecoverable`** (the old `poll` raised before ever querying the
+    server, so force failed positively recoverable work);
+  - an EXPIRED-but-retained hold: the §3.3 recovery-read exception admits
+    RECOVERY only, so the old CLEANUP `poll` was denied and the work looked
+    unreachable; the RECOVERY probe reads it and refuses;
+  - genuinely unrecoverable work (no prompt visible anywhere —
+    `reconcile_unknown` raises `NeedsReconciliation`) still proceeds to the
+    force matrix, exactly as before.
+- **HC-4**: `finalize_terminal` —
+  - success projects ONLY from the durable asset registry
+    (`assets.generation_key = request_hash`, the same read the canonical
+    completion path writes through `comfy_assets.register_asset`); a
+    SUCCEEDED operation row with outputs only in `last_result` and no
+    durable asset never projects (U4 keeps blocking; never a fabricated
+    success);
+  - a replay on an ALREADY-terminal sample completes every unfinished stage:
+    linkage/output repair (COALESCE, set-once), the matching-slot clear, and
+    the R6 fail-fast restore — while the terminal state itself is never
+    overwritten (monotonic);
+  - `unresolved_items` U4 now includes `failfast_missing` (a FAILED sample
+    whose experiment outcome never committed), so the replay is driven, not
+    just permitted.
+
+### Red → green (`tests/unit/rendering/test_t031_hcf_f4_r7_replay.py`)
+
+Red against committed HEAD `e521653` (edits absent): **`5 failed, 1 passed
+in 14.33s`** — both HC-3 exposures and three HC-4 stages red; the sixth (the
+real UNKNOWN→SUCCEEDED flow projecting the registered durable asset) is the
+green-at-HEAD control. (An earlier draft of the expired-read test was green
+at HEAD — it handed the service the unguarded fixture adapter, bypassing the
+world composition entirely; it was rewritten before being accepted as
+evidence.) Green: **`6 passed in 17.82s`** (re-run after formatting:
+`6 passed in 18.49s`).
+
+Regressions (all green): p4+p5+HCF F1–F4+hb13+lf `55 passed in 96.79s`;
+p1+p2+p3 `1 failed, 54 passed in 231.97s` → both failures fixed as below, p1
+`10 passed in 45.16s`; experiments + world_composition + comfy_recover +
+authorization `58 passed in 72.73s`; AT-26 canonical/canary
+`t045_billing_ingestion + finality_port + canary_gateway + lease_claim/
+lifecycle/shutdown` `99 passed in 69.47s`. `make lint` clean (ruff format +
+one import-order fix applied).
+
+### Regression tests updated to the binding HC-3 semantics
+
+Codex's HC-3 Fix is binding ("positively recoverable work must refuse
+resolution even with force"), so the two tests that force-resolved an
+ACCEPTED prompt were strengthened, not the code weakened:
+
+- AT-12 (R8 exposure) and AT-20 (EXPIRED liability): `_enter_submit_ambiguity`
+  leaves the timed-out POST accepted on the server — positively recoverable
+  by client id, so the audited force resolution now correctly refuses. Both
+  tests first apply the new `_evict_prompt_history` helper (p1): the
+  provider's queue and history no longer show any prompt for the
+  deterministic client id — AT-15's console-evidence shape, the genuinely
+  unrecoverable case the force matrix exists for.
+
+### Judgement calls (F4)
+
+1. **The probe is the canonical mutating recovery action, not a read-only
+   peek.** `reconcile_unknown` adopts the discovered prompt id and polls —
+   canonical, idempotent, deterministic. When it recovers work, the operator
+   resolution refuses and reconciliation owns the projection; there is no
+   canonical read-only discovery to use instead.
+2. **A factory-less service (local preparation) probes through the
+   caller-supplied world.** `resolve_sample` composes the RECOVERY probe via
+   `self._world` only when a world factory is configured; without one (the
+   AT-20 shape, `prepare()`'s service) the passed world is the recovery path
+   it has. Production (the CLI) always wires the factory, so the guarded
+   path always composes RECOVERY.
+3. **The EXPIRED-read exposure is injected at the world boundary in tests.**
+   The fixture adapter wraps the raw fake client (no request guard); the F4
+   test's mode-honoring factory returns the raw adapter for RECOVERY (what
+   §3.3 grants) and a canonical-guard-faithful wrapper (EffectDenied on
+   EXPIRED reads — `live_world.durable_comfy_request_guard`, proven by AT-20)
+   for every other mode, and asserts the probe requested a RECOVERY
+   composition. A full `build_experiment_world` composition over the crash
+   fixture would need its own seal/schema/credential stack (AT-17's), which
+   existing suites already cover; the service-level contract (which mode the
+   probe reads through) is what HC-3 adds.
+4. **`_seed_terminal` (p5) now seeds the durable assets a real success flow
+   registers** (the registry write precedes the terminal result); seeded
+   SUCCEEDED operations with outputs get their assets, so the strengthened
+   suite tests the real durable shape.
+
+## F5 — HC-10 honest test proofs; HC-11 CLI recovery-first; HC-12 durable incidents (commit `7060e02`)
+
+### What shipped
+
+- **HC-11** (`benchmark.py`): an unusable `--authorization-sha256` argument
+  (non-ASCII, wrong length, non-hex) can neither crash nor refuse a resume
+  before its durable recovery: `_sha_argument_blocker` turns it into an
+  admission blocker (a clean `SchemaInvalid` for the strict commands),
+  `compare_digest` never sees it, and `service.resume` — whose internal order
+  is already recovery-first (§4.2) — always runs and reports the blocker with
+  the recovered status.
+- **HC-12** (`benchmark_experiments.py`, `benchmark_service.py`):
+  `contradiction_incidents(tx, experiment_id)` derives the durable §6.4
+  incident record from the canonical rows — attestation (`NO_CREATE_PROVEN`),
+  actor, evidence SHA, contradicted pod, `contradicted_at`,
+  `terminate_verified`, `ownership_open`, and `reopened_liability_final`
+  (the same HC-1 invoice-finality predicate the U5 gate uses). `status()`
+  carries `incidents` and `export()` re-exports them, so the
+  attestation/actor/contradiction distinction survives closure, where the
+  transient U5 description disappears.
+- **HC-10 test proofs** (ruling 5/7; HB-13, L-1, L-2 partials closed):
+  - the billing-wrapper race now calls the REAL canonical wrapper
+    (`BillingRepository.resolve_podless_create`: account → categories →
+    advisory → L) against the benchmark `resolve_create` with the IDENTICAL
+    attestation — one posts, the other replays — instead of a manual account
+    lock;
+  - the admission/sweep/reconcile race swallows nothing: every worker
+    exception is recorded and asserted to be a precise microdrama refusal, a
+    deadlock or anything else fails;
+  - the absent-row R5 race drives the REAL `_gate` (account → categories → E
+    → the one shared-order row helper) against an inserter committing an
+    initially-absent upload intent AND a provider operation; the gate refuses
+    admission naming BOTH rows (`AdmissionBlocked` with U3 + U3u descriptions);
+  - AT-9's charge counts are exact (`== counts0 + 5` plus a
+    `COUNT(*) = COUNT(DISTINCT receipt_id)` no-duplicates proof), never `>=`;
+  - S08 is ACTUALLY BOUND with the changed costume: the LF drive now passes
+    the screen (S01/S03/S07), records the PASS screening, drives the FULL
+    phase until S08 dispatches, and replays `_SealedNativeInputs.bind` for
+    S01/S08 asserting each bound workflow carries its OWN outfit's asset (and
+    not the other's) — manifest()-only derivation is no longer the proof;
+  - the offline cleanup fixture (`_OfflineFinalityWorld`) reports
+    `storage_final` only with canonical financial finality
+    (`terminated and not billing_pending`) — the fabricated
+    termination-only receipt is gone;
+  - the race WORKERS get the bounded `lock_timeout` too (`_bounded_worker_locks`:
+    database default + every idle pooled connection), not just the helper
+    connections.
+- **Acquisition monotonicity** (`benchmark_service.py` sweep): a replayed
+  cleanup on an already-CLOSED/NO_CREATE_PROVEN acquisition never demotes it
+  to CLEANUP_PENDING — the demotion re-entered the partial unique index and
+  collided with the newer generation's row (`DuplicateSemanticKey`), the
+  exact collision class HC-5 names. This is the bug the honest HB-13 fixture
+  exposed.
+
+### Red → green
+
+`tests/unit/rendering/test_t031_hcf_f5_cli_incidents.py` red against HEAD
+`c044daf` (code fixes reverted by `git show HEAD:<path> > <path>`; re-applied
+from `.scratch/f5-wip-sources.diff`): **`3 failed in 10.30s`** — the HC-11
+test crashed in `hmac.compare_digest` with the exact `TypeError` Codex probed
+(recovery never ran), both HC-12 tests failed with `KeyError: 'incidents'`.
+Green: **`3 passed in 12.38s`**. The monotonicity fix's red was the live
+`DuplicateSemanticKey` crash of `test_unknown_create_with_late_pod...` under
+the honest fixture (observed during development); green after the fix. The
+remaining HC-10 items are proof strengthenings of tests that passed against
+correct code; their "red" is the refuted assertions they replaced (the
+swallowed-exception race, the `>=` counts, the manifest-only S08, the
+manual-lock wrapper race).
+
+Regressions (all green): p4+p5+HCF F1–F5+hb13+lf `58 passed in 174.82s`;
+p1+p2+p3 `1 failed, 54 passed in 251.00s` → the failure (AT-05) fixed as
+below, `test_at05...` `1 passed in 9.40s`; experiments + world_composition +
+comfy_recover + authorization `58 passed in 78.80s`; AT-26 canonical/canary
+`99 passed in 72.60s`; post-format sanity lf+p4 `18 passed in 101.25s`.
+`make lint` clean (import-order + format fixes applied).
+
+### Regression tests updated to the binding semantics
+
+- AT-05 (p2): phase A now drives the canonical invoice tail
+  (`_bill_lease_to_billed` + `settle_billed_lease`) before flipping the
+  finality knob — a pod-bound runpod hold is released ONLY through billing
+  finality (R8/G13), so the honest fixture requires it.
+- `test_unknown_create_with_late_pod...` (benchmark_experiments): the strict
+  fixture + the monotonicity fix close the exposed demotion; the test's flow
+  is otherwise unchanged.
+- The LF costume test: the full-phase drive re-stages the five assets on the
+  new pod (upload POSTs 5 → 10, one per asset PER ACQUISITION); the
+  staging/receipt assertions track that.
+
+### Judgement calls (F5)
+
+1. **HC-11 is implemented as crash-proof soft validation, not literal
+   load-after-recovery.** `service.resume` already runs durable recovery
+   before admission internally; making the CLI's document handling unable to
+   raise or refuse (the poisoned SHA becomes a blocker before
+   `compare_digest` can `TypeError`) preserves that order with ONE resume
+   call and no double recovery. The test proves the outcome: exit 0, the
+   accepted prompt recovered to SUCCEEDED, the blocker reported.
+2. **The incidents record is derived, not a new table.** Codex asks for
+   "persistent OR durably derived"; the canonical resolution/lease/ownership/
+   invoice rows already persist everything, so `contradiction_incidents` is a
+   read-side derivation reused by status() and export() — no migration
+   change, nothing new to keep consistent.
+3. **The absent-row R5 inserter stays raw SQL by design** — it is the
+   injected adversarial boundary; the implementation under test (the gate)
+   is now the real one. The wrapper race uses the real wrapper on the other
+   side because Codex's finding named it specifically.
+4. **The pre-existing `settle_from_recorded_usage` seam is documented, not
+   fixed.** For a pod-bound runpod hold with zero recorded usage, its
+   `total==0 → budget.release` path is refused canonically (R8/G13) yet it
+   returns `released=True` — the A-N8 class ("report the durable state"),
+   fixed in `RunpodInvoiceFinality` but not in the synthetic settle. The
+   honest fixture surfaces this as `billing_pending=True` on replays (the
+   replay path reports the reservation state truthfully). Fixing the
+   synthetic settle's return is a canonical change outside F5's named
+   findings; the affected tests drive the real billing tail instead
+   (`_bill_lease_to_billed` + `settle_billed_lease`), which is the honest
+   convergence path for pod-bound holds anyway. Left for the orchestrator if
+   a future round wants the synthetic receipt itself corrected.
+5. **`_bill_lease_to_billed` (F3's helper) now bills a sub-second liability
+   window as one whole second** — the provider model's finest bucket —
+   covering the whole liability (the late-pod adoption inside one clock
+   tick).
+6. **The LF full-phase drive re-births the pod-side server** when the
+   cleaned-up generation's pod takes it down (HB-13 §9.1 new-pod semantics;
+   the AT-17 server has no `reborn()`, so the fresh boot is inline).
+
 ## Resume here
 
-F4 — HC-3 (R7 recoverability refuses `--force-unrecoverable` on positively
-recoverable work, including client-ID discovery and EXPIRED reads through
-the RECOVERY composition); HC-4 (terminal replay completes every stage:
-matching-slot cleanup, output/linkage repair, failed-outcome repair, U4
-includes missing failed outcomes, durable success assets).
+Nothing — F1–F5 are done and committed (`6db5fe8`, `9b736da`, `e521653`,
+`c044daf`, `7060e02`). The orchestrator runs `make check` and the final
+Codex review. Untracked leftovers in the worktree (never staged):
+`test_t031_hcf_f1_receipts.md` (empty stray, F1), `zz_debug_f3.py`
+(docstring-only placeholder, F3), `.scratch/` (the saved red-run diffs).

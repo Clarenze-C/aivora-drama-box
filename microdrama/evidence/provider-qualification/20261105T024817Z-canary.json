@@ -1,0 +1,138 @@
+{
+  "ambiguous": [],
+  "attempts_used": 0,
+  "authorization_sha256": "8e08062ef5b7e3d18772229a530b2152ce8beddd260fcfe4ce5049c83cbed1c2",
+  "billing_pending": true,
+  "billing_readiness": [
+    {
+      "lease_id": "c1e5a374-06b2-405f-9f0b-1c69e5c17984",
+      "pending_since": "2026-11-05T02:48:16.866122+00:00",
+      "state": "PENDING_PROVIDER_FINALITY"
+    }
+  ],
+  "billing_state": "PENDING_PROVIDER_FINALITY",
+  "blocked_or_uncertain": " run stopped: PROVIDER_ERROR: ComfyUI returned an HTTP error: 403 {\"type\":\"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/\",\"title\":\"Error 1010: Access denied\",\"status\":403,\"detail\":\"The site owner has blocked access based on your browser's signature.\",\"instance\":\"a55889baf83e23a5\",\"error_code\":1010,\"error_name\":\"browser_signature_banned\",\"error_category\":\"access_denied\",\"ray_id\":\"a55889baf83e23a5\",\"timestamp\":\"2026-11-05T02:48:10Z\",\"zone\":\"g0tzfydqtgzr58-8188.proxy.runpod.net\",\"cloudflare_error\":t;",
+  "caps": {
+    "max_attempts": 3,
+    "max_prompts": 2,
+    "max_spend_micro_usd": 5000000,
+    "max_storage_gb": 100
+  },
+  "change_ref": "T031-canary-20261105-run10",
+  "client_tokens": [
+    "md-pod-6ba4eb4dcc2c2e838b7a8ee1"
+  ],
+  "deadline_hit": false,
+  "deadline_utc": "2026-11-05T04:18:07.365798+00:00",
+  "episode_id": "1c0ffee0-0000-4000-8000-00000000cafe",
+  "hard_stop_utc": "2026-11-05T04:39:31+00:00",
+  "ignored_interrupts": [],
+  "janitor_summary": {
+    "billing_ingests": [],
+    "budget_holds": [],
+    "failures": []
+  },
+  "max_wall_seconds": 5400,
+  "namespace": "canaryx",
+  "node_schema_mismatch": false,
+  "not_clean_reason": "ProviderError: ComfyUI returned an HTTP error: 403 {\"type\":\"https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/\",\"title\":\"Error 1010: Access denied\",\"status\":403,\"detail\":\"The site owner has blocked access based on your browser's signature.\",\"instance\":\"a55889baf83e23a5\",\"error_code\":1010,\"error_name\":\"browser_signature_banned\",\"error_category\":\"access_denied\",\"ray_id\":\"a55889baf83e23a5\",\"timestamp\":\"2026-11-05T02:48:10Z\",\"zone\":\"g0tzfydqtgzr58-8188.proxy.runpod.net\",\"cloudflare_error\":t",
+  "operator": "clarenze.c",
+  "outcome": "NOT_CLEAN",
+  "output_objects": [],
+  "pins": {
+    "image_ref": "ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f1cf77b85bf987a7a8ccc2d1760186c7c6f088ecd2b3fadacd0cab869",
+    "node_schema_sha256": "00416e6984d2833d310b99631367d6f901d932cbcc2c610e31cf4a5de0734b91",
+    "output_controls_sha256": "2cad3960324f15cf3e686873792c0d8d716dfcf0d744dc967ca5ca6dc9f95dba",
+    "preset_id": "fake-quality-8step",
+    "preset_version": 1,
+    "required_controls": [
+      "SEED",
+      "TEXT_PROMPT"
+    ],
+    "workflow_sha256": "af20bebe9b5c78b09cdff53abcc62ceb6337bfb22e1f80211f9d0e26940727d7"
+  },
+  "pod_id": "g0tzfydqtgzr58",
+  "prompt_ids": [],
+  "prompt_sha256": [
+    "4c80f52b9a2723ae19306e3f4d67d935bc3cc6dd05c7ac22146563a52aea8f03",
+    "9f093c603c2cd3818048806806e37fa8c59b91e32354f4ee9da398220bff2701"
+  ],
+  "provider_account_ref": "acct:runpod-aivora-ovh-sg",
+  "provider_operation_ids": [],
+  "quote": {
+    "allowed_gpu_types": [
+      "NVIDIA A40",
+      "A40"
+    ],
+    "captured_at": "2026-11-05T02:39:31Z",
+    "compute_micro_usd_per_hour": 590400,
+    "container_disk_gb": 50,
+    "container_storage_micro_usd_per_gb_month": 100000,
+    "currency": "USD",
+    "expires_at": "2026-11-05T04:39:31Z",
+    "host_ram_gb_by_gpu": {
+      "A40": 64,
+      "NVIDIA A40": 64
+    },
+    "max_storage_exposure_micro_usd": 2000000,
+    "maximum_exposure_micro_usd": 5000000,
+    "maximum_runtime_ms": 5400000,
+    "persistent_storage_micro_usd_per_gb_month": 200000,
+    "persistent_volume_gb": 100,
+    "quote_id": "runpod-console-20261105T0240Z-A40"
+  },
+  "reference_sha256": [],
+  "reservation_ids": [
+    "db802af0-d716-4dc6-b635-043c55ebf329",
+    "99c2d3d3-8f8e-4b0e-87c8-d580e5130783"
+  ],
+  "rights": {
+    "eligible_until": "2026-11-11T00:00:00Z",
+    "rights_evidence_id": "canary:rights-license",
+    "rights_route_id": "route-video-fake",
+    "rights_subject_kind": "MODEL_OUTPUT",
+    "rights_subject_ref": "model-output:qualified",
+    "rights_version": 1,
+    "territories": [
+      "TH"
+    ]
+  },
+  "started_at_utc": "2026-11-05T02:48:07.365798+00:00",
+  "steps": [
+    {
+      "detail": {
+        "lease_id": "c1e5a374-06b2-405f-9f0b-1c69e5c17984"
+      },
+      "step": "reserve"
+    },
+    {
+      "detail": {
+        "pod_id": "g0tzfydqtgzr58"
+      },
+      "step": "create_pod"
+    },
+    {
+      "detail": {
+        "endpoint": "https://g0tzfydqtgzr58-8188.proxy.runpod.net"
+      },
+      "step": "comfy_endpoint_bound"
+    },
+    {
+      "detail": {
+        "amount": 0,
+        "reason": "prompt ended without success",
+        "reservation_id": "99c2d3d3-8f8e-4b0e-87c8-d580e5130783"
+      },
+      "step": "prompt_hold_settled"
+    },
+    {
+      "detail": {
+        "billing_pending": true,
+        "settled_micro_usd": 0
+      },
+      "step": "shutdown"
+    }
+  ],
+  "stop_verified_at": "2026-11-05T02:48:17.360073+00:00",
+  "terminate_verified_at": "2026-11-05T02:48:16.866122+00:00"
+}

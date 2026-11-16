@@ -1,0 +1,124 @@
+{
+  "ambiguous": [],
+  "attempts_used": 0,
+  "authorization_sha256": "b09bf5fa0b17db996fca288ab02ff8db3398a7ba78d4dc988758d204e9582202",
+  "billing_pending": true,
+  "billing_readiness": [
+    {
+      "lease_id": "631081be-9133-4e87-9fcb-da3911fcfa2c",
+      "pending_since": "2026-11-04T23:36:44.981653+00:00",
+      "state": "PENDING_PROVIDER_FINALITY"
+    }
+  ],
+  "billing_state": "PENDING_PROVIDER_FINALITY",
+  "blocked_or_uncertain": " run stopped: CONFLICT: lease is not live;",
+  "caps": {
+    "max_attempts": 3,
+    "max_prompts": 2,
+    "max_spend_micro_usd": 5000000,
+    "max_storage_gb": 100
+  },
+  "change_ref": "T031-canary-20261104-run1",
+  "client_tokens": [
+    "md-pod-f65e08887f7a042deaf5cce7"
+  ],
+  "deadline_hit": false,
+  "deadline_utc": "2026-11-05T01:11:45.342073+00:00",
+  "episode_id": "1c0ffee0-0000-4000-8000-00000000cafe",
+  "hard_stop_utc": "2026-11-05T01:22:10+00:00",
+  "ignored_interrupts": [],
+  "janitor_summary": {
+    "billing_ingests": [],
+    "budget_holds": [
+      {
+        "action": "settle_terminal",
+        "detail": "billing finality not reached",
+        "outcome": "PENDING",
+        "subject": "lease:631081be-9133-4e87-9fcb-da3911fcfa2c"
+      }
+    ],
+    "failures": []
+  },
+  "max_wall_seconds": 5400,
+  "namespace": "canaryx",
+  "node_schema_mismatch": false,
+  "not_clean_reason": "Conflict: lease is not live",
+  "operator": "clarenze.c",
+  "outcome": "NOT_CLEAN",
+  "output_objects": [],
+  "pins": {
+    "image_ref": "ghcr.io/clarenze-c/drama-canary@sha256:d66ea76f1cf77b85bf987a7a8ccc2d1760186c7c6f088ecd2b3fadacd0cab869",
+    "node_schema_sha256": "00416e6984d2833d310b99631367d6f901d932cbcc2c610e31cf4a5de0734b91",
+    "output_controls_sha256": "2cad3960324f15cf3e686873792c0d8d716dfcf0d744dc967ca5ca6dc9f95dba",
+    "preset_id": "fake-quality-8step",
+    "preset_version": 1,
+    "required_controls": [
+      "SEED",
+      "TEXT_PROMPT"
+    ],
+    "workflow_sha256": "af20bebe9b5c78b09cdff53abcc62ceb6337bfb22e1f80211f9d0e26940727d7"
+  },
+  "pod_id": null,
+  "prompt_ids": [],
+  "prompt_sha256": [
+    "4c80f52b9a2723ae19306e3f4d67d935bc3cc6dd05c7ac22146563a52aea8f03",
+    "9f093c603c2cd3818048806806e37fa8c59b91e32354f4ee9da398220bff2701"
+  ],
+  "provider_account_ref": "acct:runpod-aivora-ovh-sg",
+  "provider_operation_ids": [],
+  "quote": {
+    "allowed_gpu_types": [
+      "NVIDIA A40",
+      "A40"
+    ],
+    "captured_at": "2026-11-04T23:22:10Z",
+    "compute_micro_usd_per_hour": 590400,
+    "container_disk_gb": 50,
+    "container_storage_micro_usd_per_gb_month": 100000,
+    "currency": "USD",
+    "expires_at": "2026-11-05T01:22:10Z",
+    "host_ram_gb_by_gpu": {
+      "A40": 64,
+      "NVIDIA A40": 64
+    },
+    "max_storage_exposure_micro_usd": 2000000,
+    "maximum_exposure_micro_usd": 5000000,
+    "maximum_runtime_ms": 5400000,
+    "persistent_storage_micro_usd_per_gb_month": 200000,
+    "persistent_volume_gb": 100,
+    "quote_id": "runpod-console-20261104T2350Z-A40EU-SE1"
+  },
+  "reference_sha256": [],
+  "reservation_ids": [
+    "b7e51f3f-20b8-492e-acf8-34464b42cb73"
+  ],
+  "rights": {
+    "eligible_until": "2026-11-11T00:00:00Z",
+    "rights_evidence_id": "canary:rights-license",
+    "rights_route_id": "route-video-fake",
+    "rights_subject_kind": "MODEL_OUTPUT",
+    "rights_subject_ref": "model-output:qualified",
+    "rights_version": 1,
+    "territories": [
+      "TH"
+    ]
+  },
+  "started_at_utc": "2026-11-04T23:41:45.342073+00:00",
+  "steps": [
+    {
+      "detail": {
+        "lease_id": "631081be-9133-4e87-9fcb-da3911fcfa2c"
+      },
+      "step": "reserve"
+    },
+    {
+      "detail": {
+        "billing_pending": true,
+        "settled_micro_usd": 0
+      },
+      "step": "shutdown"
+    }
+  ],
+  "stop_verified_at": null,
+  "terminate_verified_at": null
+}

@@ -32,6 +32,10 @@ carve-out decided, the rule-7 round waivers, the A-track fixes, and the closing 
 
 ## In flight at handoff (this session's loop continues until they land)
 
+> **Closed 16 Nov (Opus):** r5-fix1 died on the 00:14Z disk-full with all commits intact; after
+> r5-fix2 and Codex R3 ACCEPT, **T031 R5 is ACCEPTED at `45811d3`** and RR-T3 PASSED (local rebuild).
+> See `HANDOFF.md` CURRENT, 16 Nov update.
+
 - **r5-fix1** (T031's 10 review findings, brief `T031-fix-round/r5-fix1-brief.md`, worktree
   `.scratch/t031-r5`) → verify → R2 review → gate. The RR-T3 image rebuild stays **disk-blocked**
   (needs ≥12GiB free; ~4G at handoff) and the push/paid run stay operator-gated.

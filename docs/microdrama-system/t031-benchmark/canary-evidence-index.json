@@ -1,0 +1,43 @@
+{
+  "inspection_date": "2026-11-06",
+  "head": "085137415862a309f30df949224e6ed5431e86e4",
+  "basis": "LOCAL_SAVED_EVIDENCE_NOT_LIVE_DB_OR_PROVIDER_CHECK",
+  "files": [
+    {
+      "path": "microdrama/evidence/provider-qualification/20261105T052140Z-canary.json",
+      "sha256": "91db38f6b2be9b562de58c31d5170aa84de9360ee420db49a7d6da7e475a241a",
+      "size_bytes": 5087,
+      "git_tracked": false
+    },
+    {
+      "path": "microdrama/evidence/provider-qualification/20261105T052140Z-canary-console-billing.json",
+      "sha256": "a6f1dea38fd66958487fda05fdc197d4350063d5bd245bcbfda906a626f3a8fb",
+      "size_bytes": 558,
+      "git_tracked": false
+    },
+    {
+      "path": "microdrama/evidence/T031-preparation.md",
+      "sha256": "29b649f1b6cd457945cd7056e04c428fdde353e4ab904f41e79831c28d5f9d4a",
+      "size_bytes": 18144,
+      "git_tracked": true
+    },
+    {
+      "path": ".scratch/makecheck-final3.log",
+      "sha256": "49a60ff62ee5a3d7220d258a4c35d27765d8aad7febd24aab81e7916ee462120",
+      "size_bytes": 28565,
+      "git_tracked": false
+    },
+    {
+      "path": "microdrama/deployment/canary-image/README.md",
+      "sha256": "549bb9ed037969ead6fdf28dbd6fba80a36cc558e48ce3422ca117471835e910",
+      "size_bytes": 3504,
+      "git_tracked": true
+    },
+    {
+      "path": "docs/microdrama-system/T045-fix-round/rereview-t045fix7.md",
+      "sha256": "5a589c168a8d0a13dab2ff5921bdcb613b5ee2b3c4fdb94a159960cb685f36f3",
+      "size_bytes": 2810,
+      "git_tracked": true
+    }
+  ]
+}

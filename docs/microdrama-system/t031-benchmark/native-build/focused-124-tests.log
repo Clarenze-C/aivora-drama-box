@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.1.1, pluggy-1.7.0
+rootdir: /root/AIVORA/drama-box/.scratch/t031-native-worktree/microdrama
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+collected 124 items
+
+tests/unit/pipeline/test_benchmark_authorization.py .................    [ 13%]
+tests/unit/rendering/test_benchmark_experiments.py .........             [ 20%]
+tests/unit/rendering/test_pika_h3_flex.py ............................   [ 43%]
+tests/unit/rendering/test_runpod_transport.py .......................... [ 64%]
+.......................                                                  [ 83%]
+tests/unit/rendering/test_comfy_transport.py .....................       [100%]
+
+======================== 124 passed in 82.71s (0:01:22) ========================

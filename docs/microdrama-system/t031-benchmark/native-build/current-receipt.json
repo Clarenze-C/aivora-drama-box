@@ -1,0 +1,57 @@
+{
+  "recorded_at_utc": "2026-11-06T18:20:48.245961+00:00",
+  "worktree": "/root/AIVORA/drama-box/.scratch/t031-native-worktree",
+  "branch": "feat/t031-pika-flex-native",
+  "base": "085137415862a309f30df949224e6ed5431e86e4",
+  "snapshot_files": 81,
+  "snapshot_patch_sha256": "282f95be45dc8477ee432e19395ef4ab61a4434dac8923a4d8662d28eaae94b8",
+  "implementation_status": "IN_PROGRESS_NEEDS_INDEPENDENT_REVIEW",
+  "native_workers": "USAGE_LIMIT_INTERRUPTION",
+  "ai_route_used_after_override": false,
+  "focused_tests": {
+    "passed": 124,
+    "seconds": "82.71",
+    "exit_code": 0,
+    "source": "focused-124-tests.log",
+    "sha256": "cc140eec7c6c3faba7a281f9acf5336c47766a1b6eb8036a9d579df18022c386"
+  },
+  "contracts": {
+    "version": "2.16.0",
+    "schemas": 104,
+    "valid_examples": 74,
+    "invalid_examples": 135,
+    "check": "PASS"
+  },
+  "lint_format": "PASS: 592 source/test/tool files formatted",
+  "runtime_image": {
+    "id": "sha256:773f4df5effd1f9087bacc4b693c97e633dbbbef9f8cbac784bc3ea3896d142d",
+    "bytes": 9541941864,
+    "scope": "CODE_ONLY_CPU_SCHEMA_NO_WEIGHTS",
+    "mapped_nodes": 16
+  },
+  "full_gates": {
+    "unit": "t031-native-offline-gates.service",
+    "invocation": "c5c5188062154e1595994ab124ff42ab",
+    "status": "FAILED_INTEGRATION",
+    "timeout_seconds": 7200,
+    "cpu_quota": "45%",
+    "receipt_directory": "/root/AIVORA/drama-box/.scratch/t031-native-worktree/.scratch/native-gates",
+    "check_exit": 2,
+    "pilot_exit": "NOT_RUN",
+    "overall_exit": 2,
+    "unit_passed": 2879,
+    "contract_passed": 462,
+    "integration_passed": 258,
+    "integration_failed": 8,
+    "integration_setup_errors": 4,
+    "verified_at_utc": "2026-11-07T06:47:03.002488+00:00",
+    "check_log_sha256": "a3622ba4efd591fb74ae405af74981ec7845fcd99816aef9f329eccbd7fd465e"
+  },
+  "independent_reviews": {
+    "slice1": "ACCEPT scoped round2",
+    "binding": "INTERRUPTED_NO_VERDICT",
+    "world_runner_cli": "PENDING"
+  },
+  "paid_actions": false,
+  "commits_pushes": false
+}

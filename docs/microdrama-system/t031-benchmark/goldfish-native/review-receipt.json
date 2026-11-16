@@ -1,0 +1,29 @@
+{
+  "mode": "native_codex",
+  "context_isolation": "fork_turns_none",
+  "ai_route_used_for_native_run": false,
+  "stages_completed": [
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "stage9_rounds": 2,
+  "software_accepted": false,
+  "paid_authorized": false,
+  "target_hashes": {
+    "T031-integration-spec.md": "0019dffd54b568d3a784fdb918685d3294e6b858ce3f292ba636b655c8e08eaf",
+    "T031-integration-contract.md": "f08e3964b3acd519f3716924ab8b23d52e6963a96ba28ea711d88bbbce1f975c"
+  },
+  "author_resolution_hashes": {
+    "T031-integration-spec.md": "0019dffd54b568d3a784fdb918685d3294e6b858ce3f292ba636b655c8e08eaf",
+    "T031-integration-contract.md": "2411a620be4272c18602d32e8e09e5596b5002985daf552607c062d72b45f148"
+  },
+  "independent_contract_guardian": "ACCEPT additive VOICE role; package2.16.0; payload versions unchanged",
+  "final_author_resolutions": [
+    "exclude supplied experiment UUID from plan hash; retain nonce",
+    "post-insertion candidate counted once",
+    "raw billing evidence sink for experiments"
+  ]
+}

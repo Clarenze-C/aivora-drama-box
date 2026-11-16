@@ -4,6 +4,19 @@
 
 Everything below this section is history. This section is the live state.
 
+### Update, 16 Nov 06:5xZ (Opus session f858662b): T031 R5 ACCEPTED, weekend handoff received
+
+- **T031 R5 ACCEPTED at `45811d3`** (`feat/t031-r5`, worktree `.scratch/t031-r5`, NOT merged/pushed).
+  r5-fix1 (`6bcdbfa..c02e918`, killed by the 16 Nov 00:14Z disk-full but all commits intact) → Codex R2
+  FIX-REQUIRED (7/10 fixed + R5W-1/2) → r5-fix2 (`c02e918..45811d3`) → Codex R3 (operator-approved
+  narrow round) **ACCEPT**. `make check` green at `c02e918` and at `45811d3`. RR-T3 PASSED: local
+  rebuild `a9c2092d…`, CPU smoke hash `1a6023e2…` byte-identical, real in-image discovery recorded in
+  `BUILD_EVIDENCE.md`. Trail: `T031-fix-round/r5-review-rulings.md`.
+- **Operator next (T031):** merge decision for `feat/t031-r5`; re-push `a9c2092d…` to GHCR (the pinned
+  `e4ccc004…` predates R5's gateway) and run `tools/t031_schema_predict.py --image <new digest>`; then
+  token file, A40 quote, authorization, live run.
+- Weekend summary + parked items (A2 lock order, A0-R1 fix, F/D specs): `v3-workflow/WEEKEND-HANDOFF.md`.
+
 ### Update, 13 Nov 03:30Z (Opus session e4e3c05c): weekend handover to a GLM orchestrator
 
 - **Weekend front door: [v3-workflow/WEEKEND-GLM-RUNBOOK.md](v3-workflow/WEEKEND-GLM-RUNBOOK.md)**: hard rules, the Q1–Q7 queue,
