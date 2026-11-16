@@ -86,3 +86,39 @@ AssetManager signature, without modifying any upstream runtime code.
   - `ghcr.io/clarenze-c/drama-pika-h3-flex:t031-native`;
   - **pinned reference `ghcr.io/clarenze-c/drama-pika-h3-flex@sha256:e4ccc00404ca11a7a1e3baba7ce591413c0ea3c9d64a8089b6f46703b3354b39`**;
   - verified: an anonymous GHCR token pull of the manifest returns HTTP 200 with that digest, and the local image ID is still `abd32e9e…`.
+
+## Rebuild + real placeholder discovery, 16 November 2026 UTC (R5 fix2, R5V-4/RR-T3)
+
+- The 12 Nov local image was no longer in the local Docker store. The orchestrator rebuilt it
+  02:32–02:39Z (`flock /tmp/t031-native-heavy.lock systemd-run --scope -p CPUQuota=45%`,
+  `build.sh /tmp/t031r5-buildctx`): local tag `drama-pika-h3-flex:t031-native`, **image ID
+  `sha256:a9c2092d823b248de02268e65f5e5e290f48b18d568e0b88199a8c4883fd6d31`** (9.54 GB) — this
+  build INCLUDES R5's `canary_gateway.py` (the 12 Nov image `abd32e9e…` and the pushed digest
+  predate it).
+- CPU schema smoke inside that image with `--network none`:
+  `ACTUAL_RUNTIME_CPU_NO_WEIGHTS`, sha256
+  `1a6023e24ad38cd4ef41e1d3b1c727550a52cba9cd055be2ede8373e487a4c89`, 16 mapped nodes —
+  **byte-identical to `schema-attestation.cpu.json`** (the gateway addition did not drift the
+  mapped schema). **Nothing was pushed, tagged or re-tagged.**
+- **The GHCR digest `e4ccc004…` is the 12 Nov image and predates R5's gateway — the operator
+  re-pushes the `a9c2092d…` build before any run pins it.**
+- **Real placeholder discovery (the RR-T7 path) ran inside THIS local image** (16 Nov, GLM R5
+  fix2 session; `flock /tmp/t031-native-heavy.lock systemd-run --scope -p CPUQuota=45% timeout
+  240 docker run --rm --network none` with the five zero-byte placeholders from `models.json`
+  staged per folder via `t031_schema_predict.stage_placeholders`, bound read-only into
+  `/opt/ComfyUI/models/{diffusion_models,loras,text_encoders,vae}`; exit 0 in well under the
+  240 s cap):
+  - smoke payload: `ACTUAL_RUNTIME_CPU_NO_WEIGHTS`, 16 mapped nodes, payload sha256
+    `e19e0de6f55fedbc6d959db611500493f0544fd3c3c6606772a22a4a1264c615`;
+  - the pinned runtime's loaders REALLY discovered the placeholder files into their enums —
+    `UNETLoader.unet_name` ← `minimax_h3_ref2va_pruned_int8_convrot.safetensors`,
+    `LoraLoaderModelOnly.lora_name` ← `pika_h3_flex_ref2va_v1_bf16.safetensors`,
+    `CLIPLoader.clip_name` ← `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`,
+    `VAELoader.vae_name` ← both `minimax_h3_{audio,video}_vae_*` files — and the capture-time
+    check `predicted_enums_match_manifest` returns **True** on this discovered payload;
+  - discovery-populated `node_schema_sha256`:
+    `3fbd5a9aa8b082af90582290ccac2cf88eb14b4eb332317bec03e588f15da29d` (differs from the
+    weight-free `1a6023e2…` attestation exactly because the enums are now populated);
+  - a full `capture-record.json` is still reserved for the PUSHED registry reference
+    (`registry_manifest_digest` refuses local image IDs by design) — pending the operator's
+    re-push; this section is the local-runtime discovery receipt.
