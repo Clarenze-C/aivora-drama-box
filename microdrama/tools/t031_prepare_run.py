@@ -363,6 +363,22 @@ def cmd_register(args: argparse.Namespace) -> int:
         clock = SystemClock()
         now = _utcnow()
 
+        # R5W-2: EVERY input is validated BEFORE any registration write -
+        # the sha256 gate for all picks, container/PCM validation for the
+        # voices - so a malformed first voice leaves nothing registered and
+        # the corrected retry starts from a clean slate (no entombed drift).
+        prepared: dict[str, bytes] = {}
+        for _, _, ref_id in ROLE_TABLE:
+            if ref_id in prepared:
+                continue
+            pick = picks[ref_id]
+            data = Path(pick["file"]).read_bytes()
+            if sha256_hex(data) != pick["sha256"]:
+                raise SystemExit(f"refused: {ref_id} bytes do not hash to the manifest sha256")
+            if pick["media_kind"] == "audio":
+                _wav_media_info(data)
+            prepared[ref_id] = data
+
         # Frozen-field drift check when the episode already exists (the named
         # frozen set: the episode's EPISODE account, the picked asset bytes,
         # their state/provenance, the current rights records, the preset row
@@ -483,11 +499,8 @@ def cmd_register(args: argparse.Namespace) -> int:
         asset_ids: dict[str, str] = {}
         for role, subject, ref_id in ROLE_TABLE:
             pick = picks[ref_id]
-            path = Path(pick["file"])
-            data = path.read_bytes()
+            data = prepared[ref_id]
             digest = sha256_hex(data)
-            if digest != pick["sha256"]:
-                raise SystemExit(f"refused: {ref_id} bytes do not hash to the manifest sha256")
             audio = pick["media_kind"] == "audio"
             if ref_id not in asset_ids:
                 asset_id = uuid.uuid5(uuid.NAMESPACE_URL, f"t031-asset:{ref_id}")

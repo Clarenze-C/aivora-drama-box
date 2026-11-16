@@ -190,7 +190,10 @@ def _seed_credentials(db, tmp_path: Path) -> None:
 
 
 def _register(db_dsn: str, tmp_path: Path, out: Path) -> None:
-    files = _pick_files(tmp_path)
+    _register_files(db_dsn, tmp_path, out, _pick_files(tmp_path))
+
+
+def _register_files(db_dsn: str, tmp_path: Path, out: Path, files: dict[str, bytes]) -> None:
     r1, r2, voices = _write_manifests(tmp_path, files)
     assert (
         prepare_run.main(
@@ -414,6 +417,62 @@ def test_r5v10_voice_media_derived_from_the_actual_wav_bytes(db, db_dsn, tmp_pat
     )
     with pytest.raises(SystemExit, match="not uncompressed PCM"):
         prepare_run._wav_media_info(mp3_wav)
+
+
+def test_r5w2_malformed_first_voice_registers_nothing_and_retry_succeeds(
+    db, db_dsn, tmp_path
+) -> None:
+    """R5W-2: ALL inputs (the WAVs included) are validated BEFORE any
+    registration write. A malformed first voice leaves NOTHING registered -
+    no episode, no account, no partial assets - so correcting the input and
+    retrying registers the full set cleanly instead of being refused as
+    "stored asset bytes drifted"."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    files = _pick_files(tmp_path)
+    files["A-NEUTRAL"] = b"wav-bytes-A-NEUTRAL-r5d"  # the malformed first voice
+    with pytest.raises(SystemExit, match="not a PCM WAV"):
+        _register_files(db_dsn, tmp_path, out, files)
+
+    # Nothing was written: the malformed voice is caught BEFORE the episode,
+    # the EPISODE account and the six image assets are registered.
+    with db.transaction(readonly=True) as tx:
+        assert (
+            tx.fetchval(
+                "SELECT count(*) FROM episodes WHERE id=%s",
+                (prepare_run.BENCHMARK_EPISODE_ID,),
+            )
+            == 0
+        )
+        assert (
+            tx.fetchval(
+                "SELECT count(*) FROM budget_accounts WHERE episode_id=%s",
+                (prepare_run.BENCHMARK_EPISODE_ID,),
+            )
+            == 0
+        )
+        assert (
+            tx.fetchval(
+                "SELECT count(*) FROM assets WHERE episode_id=%s",
+                (prepare_run.BENCHMARK_EPISODE_ID,),
+            )
+            == 0
+        )
+
+    # Correcting the input and retrying registers the FULL set (the old
+    # behaviour entombed the partial registration and refused the retry).
+    files["A-NEUTRAL"] = _wav_bytes(ms=VOICE_WAV_MS["A-NEUTRAL"])
+    _register_files(db_dsn, tmp_path, out, files)
+    with db.transaction(readonly=True) as tx:
+        assert (
+            tx.fetchval(
+                "SELECT count(*) FROM assets WHERE episode_id=%s",
+                (prepare_run.BENCHMARK_EPISODE_ID,),
+            )
+            == len(ALL_REF_IDS)
+        )
+    # A further run replays the now-complete registration without drift.
+    _register(db_dsn, tmp_path, out)
 
 
 def test_r5v9_replay_enforces_the_named_frozen_fields(db, db_dsn, tmp_path, monkeypatch) -> None:
