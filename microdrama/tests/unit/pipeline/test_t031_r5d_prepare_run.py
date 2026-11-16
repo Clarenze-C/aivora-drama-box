@@ -669,6 +669,93 @@ def test_r5v9_replay_enforces_the_named_frozen_fields(db, db_dsn, tmp_path, monk
         _register_again()
 
 
+def test_r5v9_asset_identity_and_object_key_drift_is_refused(db, db_dsn, tmp_path) -> None:
+    """R5V-9 (round 2): a stored row under a picked sha with the RIGHT
+    kind/state/provenance but a FOREIGN asset id and object key is drift -
+    the replay enforces each asset's deterministic identity, not just its
+    bytes."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    _register(db_dsn, tmp_path, out)
+    image_sha = sha256_hex(_pick_files(tmp_path)["A2"])
+
+    # A decoy row under the picked sha: every previously-checked field
+    # matches; only the identity (id + object key) is foreign.
+    decoy = uuid.uuid4()
+    descriptor = {
+        "asset_id": str(decoy),
+        "asset_kind": "IMAGE",
+        "object_key": f"t031/inputs/foreign-{decoy}.png",
+        "sha256": image_sha,
+        "size_bytes": 4,
+        "media_type": "image/png",
+        "media": None,
+        "state": "ACCEPTED",
+        "provenance": "LIVE_PROVIDER",
+        "version": 1,
+    }
+    with db.transaction() as tx:
+        tx.execute(
+            "INSERT INTO assets (id, asset_kind, object_key, sha256, size_bytes, media_type, "
+            "media, descriptor, state, provenance, episode_id, created_at) VALUES "
+            "(%s,'IMAGE',%s,%s,4,'image/png',NULL,%s,'ACCEPTED','LIVE_PROVIDER',%s,now())",
+            (
+                decoy,
+                descriptor["object_key"],
+                image_sha,
+                jsonb(descriptor),
+                prepare_run.BENCHMARK_EPISODE_ID,
+            ),
+        )
+    with pytest.raises(SystemExit, match="asset identity drifted"):
+        _register(db_dsn, tmp_path, out)
+
+
+def test_r5v9_rights_expiry_drift_is_refused(db, db_dsn, tmp_path, monkeypatch) -> None:
+    """R5V-9 (round 2): a rights grant whose frozen record carries an expiry
+    (the benchmark grants NEVER expire) is drift. Stored-side drift is
+    structurally impossible here - expires_at is in the trigger-immutable
+    set, the table is append-only (DELETE rejected by md_forbid_mutation)
+    and a replacement row must bump the version, which the version check
+    already refuses - so the probe drifts the AUTHOR-side frozen record
+    (the same technique as the immutable account-cap probe)."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    _register(db_dsn, tmp_path, out)
+
+    original = prepare_run._expected_binding_grant
+
+    def _expected_with_expiry(role: str, subject: str, ref_id: str) -> dict:
+        grant = dict(original(role, subject, ref_id))
+        if (role, subject, ref_id) == ("character_identity", "a", "A2"):
+            grant["expires_at"] = _utcnow() + timedelta(days=30)
+        return grant
+
+    monkeypatch.setattr(prepare_run, "_expected_binding_grant", _expected_with_expiry)
+    with pytest.raises(SystemExit, match="rights content drifted"):
+        _register(db_dsn, tmp_path, out)
+
+
+def test_r5v9_rights_disclosures_drift_is_refused(db, db_dsn, tmp_path) -> None:
+    """R5V-9 (round 2): a stored current rights row that suddenly requires an
+    attribution disclosure (the frozen grants require none) is drift.
+    required_disclosures sits OUTSIDE the immutable set, so the drift is a
+    direct UPDATE."""
+    out = tmp_path / "out"
+    _seed_credentials(db, tmp_path)
+    _register(db_dsn, tmp_path, out)
+    grant = prepare_run._expected_binding_grant("character_identity", "a", "A2")
+
+    with db.transaction() as tx:
+        tx.execute(
+            "UPDATE rights_registry SET required_disclosures=%s "
+            "WHERE rights_route_id=%s AND current",
+            (jsonb(["ATTRIBUTION"]), grant["route"]),
+        )
+    with pytest.raises(SystemExit, match="rights content drifted"):
+        _register(db_dsn, tmp_path, out)
+
+
 def test_r5v9_preset_replacement_current_row_is_drift(db, db_dsn, tmp_path) -> None:
     """R5V-9: a replacement CURRENT preset row (v2) with different pins is
     drift even though 'a current disabled row' still exists."""

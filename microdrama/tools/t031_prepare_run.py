@@ -230,6 +230,8 @@ def _expected_binding_grant(role: str, subject: str, ref_id: str) -> dict:
         "territories": TERRITORIES,
         "commercial_use": True,
         "output_release_allowed": True,
+        "expires_at": None,
+        "required_disclosures": [],
         "evidence": [
             {
                 "source": (
@@ -258,6 +260,8 @@ def _expected_model_output_grant() -> dict:
         "territories": TERRITORIES,
         "commercial_use": True,
         "output_release_allowed": True,
+        "expires_at": None,
+        "required_disclosures": [],
         "evidence": [
             {
                 "source": EvidenceSource.LICENSE_DOCUMENT.value,
@@ -297,9 +301,10 @@ def _expected_preset_pins() -> dict:
 
 def _assert_rights_frozen(rows: list) -> None:
     """R5V-9: every benchmark rights row matches its exact frozen content -
-    named identities, version, territories, commercial/output-release terms
-    and evidence - not merely a count of ELIGIBLE rows (a replacement current
-    version with drifted content keeps the count)."""
+    named identities, version, territories, commercial/output-release terms,
+    expiry and required disclosures, and evidence - not merely a count of
+    ELIGIBLE rows (a replacement current version with drifted content keeps
+    the count)."""
     expected = {
         grant["route"]: grant
         for grant in (
@@ -321,6 +326,8 @@ def _assert_rights_frozen(rows: list) -> None:
             or list(row["territories"] or []) != grant["territories"]
             or bool(row["commercial_use"]) != grant["commercial_use"]
             or bool(row["output_release_allowed"]) != grant["output_release_allowed"]
+            or row["expires_at"] != grant["expires_at"]
+            or list(row["required_disclosures"] or []) != grant["required_disclosures"]
             or [item["source"] for item in row["evidence"] or []]
             != [item["source"] for item in grant["evidence"]]
             or [item["ref"] for item in row["evidence"] or []]
@@ -409,7 +416,8 @@ def cmd_register(args: argparse.Namespace) -> int:
                 (BENCHMARK_EPISODE_ID,),
             )
             assets = tx.fetchall(
-                "SELECT sha256, asset_kind, state, provenance FROM assets WHERE episode_id=%s",
+                "SELECT id, sha256, object_key, asset_kind, state, provenance "
+                "FROM assets WHERE episode_id=%s",
                 (BENCHMARK_EPISODE_ID,),
             )
             canary_spend = tx.fetchval(
@@ -421,7 +429,8 @@ def cmd_register(args: argparse.Namespace) -> int:
             )
             rights_rows = tx.fetchall(
                 "SELECT rights_route_id, subject_kind, subject_ref, version, territories, "
-                "commercial_use, output_release_allowed, evidence FROM rights_registry "
+                "commercial_use, output_release_allowed, required_disclosures, "
+                "expires_at, evidence FROM rights_registry "
                 "WHERE current AND status='ELIGIBLE' "
                 "AND (rights_route_id=%s OR rights_route_id LIKE 't031-rights-%%')",
                 (MODEL_OUTPUT_ROUTE,),
@@ -464,6 +473,27 @@ def cmd_register(args: argparse.Namespace) -> int:
                         "refused: stored asset fields drifted "
                         f"({row['sha256'][:12]}: kind {row['asset_kind']} != {want}, "
                         f"state {row['state']}, provenance {row['provenance']})"
+                    )
+            # R5V-9 (round 2): each stored row must also carry the exact
+            # IDENTITY the author path derives - the deterministic asset id
+            # and its object key - not merely the right bytes/kind under it.
+            expected_identity = {}
+            for _, _, ref_id in ROLE_TABLE:
+                if ref_id in expected_identity:
+                    continue
+                audio = picks[ref_id]["media_kind"] == "audio"
+                asset_id = uuid.uuid5(uuid.NAMESPACE_URL, f"t031-asset:{ref_id}")
+                expected_identity[picks[ref_id]["sha256"]] = (
+                    asset_id,
+                    f"t031/inputs/{asset_id}.{'wav' if audio else 'png'}",
+                )
+            for row in assets:
+                want_id, want_key = expected_identity[row["sha256"]]
+                if row["id"] != want_id or row["object_key"] != want_key:
+                    raise SystemExit(
+                        "refused: stored asset identity drifted "
+                        f"({row['sha256'][:12]}: id {row['id']} != {want_id}, "
+                        f"object key {row['object_key']!r} != {want_key!r})"
                     )
             _assert_rights_frozen(rights_rows)
             _assert_preset_frozen(preset_row)
