@@ -464,13 +464,10 @@ def test_r5w2_malformed_first_voice_registers_nothing_and_retry_succeeds(
     files["A-NEUTRAL"] = _wav_bytes(ms=VOICE_WAV_MS["A-NEUTRAL"])
     _register_files(db_dsn, tmp_path, out, files)
     with db.transaction(readonly=True) as tx:
-        assert (
-            tx.fetchval(
-                "SELECT count(*) FROM assets WHERE episode_id=%s",
-                (prepare_run.BENCHMARK_EPISODE_ID,),
-            )
-            == len(ALL_REF_IDS)
-        )
+        assert tx.fetchval(
+            "SELECT count(*) FROM assets WHERE episode_id=%s",
+            (prepare_run.BENCHMARK_EPISODE_ID,),
+        ) == len(ALL_REF_IDS)
     # A further run replays the now-complete registration without drift.
     _register(db_dsn, tmp_path, out)
 
